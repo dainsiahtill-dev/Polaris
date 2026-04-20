@@ -1,0 +1,77 @@
+card_id: "vc-20260326-turn-engine-transactional-tool-flow"
+bug_summary: >
+  TurnEngine currently mixes thinking, native tool events, textual wrapper
+  parsing, tool execution, and transcript-driven continuation, which can make a
+  single user turn appear to execute tools twice or issue hidden post-tool LLM
+  requests.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_engine.py"
+  method: "run / run_stream"
+  symptom: "One turn can have ambiguous tool execution authority and implicit extra LLM continuation after tool results."
+
+assumptions:
+  - id: "A1"
+    statement: "I assume run() and run_stream() still own turn-internal continuation loops instead of behaving as single-transaction processors."
+    status: verified_true
+    evidence: "turn_engine.py contains loop-driven execution in run() and run_stream() (see method anchors around lines 651/729 and 887/996)."
+  - id: "A2"
+    statement: "I assume tool execution authority is currently derived from both native tool calls and textual fallback parsing."
+    status: verified_true
+    evidence: "output_parser.py parse_execution_tool_calls() merges native_tool_calls with textual wrapper parsing; llm_caller.py prepares both native tool schemas and text fallback modes."
+  - id: "A3"
+    statement: "I assume tool receipts are appended back into transcript history and drive another LLM turn by default."
+    status: verified_true
+    evidence: "tool_loop_controller.py append_tool_cycle() writes assistant text and tool results into history; build_context_request() then feeds that history into the next turn."
+  - id: "A4"
+    statement: "I assume workflow_runtime already exists as the correct higher layer for multi-step exploration and async waiting."
+    status: verified_true
+    evidence: "docs/graph/catalog/cells.yaml declares orchestration.workflow_runtime and execution_governance_pipeline subgraph already references it."
+
+pre_mortem:
+  failure_point: >
+    If the redesign is wrong, the most likely failure is that we only suppress
+    visible duplicate output while leaving execution authority split across
+    parser, stream, and transcript continuation paths.
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    - "polaris/cells/roles/kernel/internal/output_parser.py"
+    - "polaris/cells/roles/kernel/internal/llm_caller.py"
+    - "polaris/cells/roles/kernel/internal/tool_loop_controller.py"
+    - "polaris/cells/orchestration/workflow_runtime/**"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_turn_engine_transactional_flow.py"
+      description: "Only TurnDecision.tool_batch may execute tools; thinking and visible text remain non-executable."
+      expected: "No tool execution occurs from thinking or duplicate textual/native sources in the same turn."
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_turn_engine_finalization_policy.py"
+      description: "Verify none/local/llm_once finalization modes."
+      expected: "Tool completion does not auto-trigger another LLM call unless llm_once is explicitly selected."
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_turn_engine_stream_parity.py"
+      description: "Streaming and non-streaming paths share one state machine contract."
+      expected: "run() and run_stream() produce equivalent transactional outcomes for the same decision."
+      status: new
+  integration_tests:
+    - description: "Workflow handoff takes over when a task needs repeated read-analyze-read exploration."
+      command: "python -m pytest -q polaris/cells/orchestration/workflow_runtime/tests/test_turn_handoff_workflow.py"
+      status: new
+    - description: "CLI renders decision/tool_batch/finalization as explicit phases."
+      command: "python -m pytest -q polaris/delivery/cli/tests/test_turn_phase_rendering.py"
+      status: new
+  manual_check:
+    - "Run a Director code-domain turn with read_file and confirm the CLI shows either one decision request plus one tool batch, or one explicit finalization request labelled as such."
+    - "Run a document-domain role and confirm post-tool synthesis, if present, is shown as finalization rather than an implicit continuation."
+
+related_adrs:
+  - "ADR-0053"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-03-26"
+  verified_by: "codex"
+  verified_at: "2026-03-26"

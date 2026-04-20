@@ -1,0 +1,32 @@
+{
+  "case_id": "l6_budget_awareness",
+  "level": "L6",
+  "role": "director",
+  "title": "L6 Budget Awareness",
+  "description": "测试 Agent 能否在预算有限的情况下高效完成任务，避免过度探索。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "你只有最多 3 次工具调用的预算。找到并读取 config.py 文件，报告其中的配置项。不要浪费调用。",
+  "tags": ["l6", "budget", "efficiency", "constraint"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.8,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "required_output_substrings": ["DEBUG", "API_HOST"]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

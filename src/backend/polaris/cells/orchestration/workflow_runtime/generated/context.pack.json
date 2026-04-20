@@ -1,0 +1,78 @@
+{
+  "id": "orchestration.workflow_runtime",
+  "title": "Workflow Runtime",
+  "kind": "capability",
+  "purpose": "Own workflow engine runtime, activity and workflow registration, and workflow state persistence for PM, Director and QA orchestration.",
+  "summary": "Business capability boundary for orchestration.workflow_runtime.",
+  "owned_paths": [
+    "polaris/application/orchestration/runtime_engine/**",
+    "polaris/application/orchestration/core/runtime_orchestrator.py",
+    "polaris/application/orchestration/core/event_stream.py",
+    "polaris/kernelone/workflow/**",
+    "polaris/infrastructure/db/repositories/workflow_runtime_store.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "StartWorkflowCommandV1",
+      "CancelWorkflowCommandV1"
+    ],
+    "queries": [
+      "QueryWorkflowStatusV1",
+      "QueryWorkflowEventsV1"
+    ],
+    "events": [
+      "WorkflowExecutionStartedEventV1",
+      "WorkflowExecutionCompletedEventV1"
+    ],
+    "results": [
+      "WorkflowExecutionResultV1"
+    ],
+    "errors": [
+      "WorkflowRuntimeErrorV1"
+    ]
+  },
+  "neighbors": [
+    "runtime.state_owner",
+    "policy.workspace_guard",
+    "policy.permission",
+    "audit.evidence",
+    "events.fact_stream"
+  ],
+  "state_owners": [
+    "runtime/workflows/*",
+    "runtime/state/workflow/*"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/**",
+    "fs.write:runtime/workflows/*",
+    "fs.write:runtime/state/workflow/*",
+    "fs.write:runtime/events/runtime.events.jsonl",
+    "db.read_write:workflow_runtime",
+    "process.spawn:workflow/*"
+  ],
+  "invariants": [
+    "All state writes must remain single-owner and contract-driven.",
+    "Append-only evidence and event semantics must be preserved.",
+    "All text file reads and writes must use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/application/orchestration/runtime_engine/**",
+    "polaris/application/orchestration/core/runtime_orchestrator.py",
+    "polaris/application/orchestration/core/event_stream.py",
+    "polaris/kernelone/workflow/**",
+    "polaris/infrastructure/db/repositories/workflow_runtime_store.py"
+  ],
+  "test_targets": [
+    "tests/orchestration/test_workflow_runtime.py",
+    "tests/test_embedded_orchestration_dag.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

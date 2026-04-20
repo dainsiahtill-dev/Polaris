@@ -1,0 +1,33 @@
+{
+  "case_id": "scout_dependency_analysis",
+  "role": "scout",
+  "title": "Scout Analyzes Dependencies",
+  "description": "The Scout role must identify and assess project dependencies.",
+  "workspace_fixture": "director_safe_scope_plan",
+  "prompt": "Analyze project dependencies and their status. Return JSON: {direct_deps: [{name, version, purpose}], transitive_deps: int, outdated: [{name, current, latest, risk}], vulnerable: [{name, cve, severity, fix}], license_issues: [string]}.",
+  "tags": [
+    "scout",
+    "dependencies",
+    "security"
+  ],
+  "judge": {
+    "score_threshold": 0.80,
+    "required_tools": [
+      "repo_tree",
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "direct_deps",
+      "outdated",
+      "vulnerable"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "scout_dependency_report"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 8
+  }
+}

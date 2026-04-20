@@ -1,0 +1,43 @@
+{
+  "case_id": "l1_basic_tool_call_no_arg",
+  "role": "director",
+  "title": "L1 Basic Tool Call - No Arguments",
+  "description": "测试模型在无参数情况下能否正确调用 repo_tree。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请显示当前工作区的根目录结构。",
+  "tags": [
+    "l1",
+    "basic",
+    "tool-call",
+    "repo_tree"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": ".",
+        "description": "path 参数使用默认值或显式为 '.'"
+      }
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

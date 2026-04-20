@@ -1,0 +1,37 @@
+{
+  "case_id": "l6_error_recovery_after_failure",
+  "level": "L6",
+  "role": "director",
+  "title": "L6 Error Recovery After Tool Failure",
+  "description": "验证模型在工具执行失败后能正确恢复，不陷入重试循环。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "尝试读取一个不存在的文件 src/nonexistent_file_xyz.py，如果失败就告诉我原因。",
+  "tags": ["l6", "error_recovery", "graceful_degradation", "tool_failure"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "first_tool": "read_file",
+      "first_call_arg_contains": "nonexistent",
+      "require_graceful_handling": true,
+      "forbidden_patterns": [
+        "retry same file 3+ times",
+        "infinite loop after failure"
+      ]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "require_graceful_handling": true
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

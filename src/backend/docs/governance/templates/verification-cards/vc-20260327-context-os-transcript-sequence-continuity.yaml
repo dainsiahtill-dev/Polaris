@@ -1,0 +1,75 @@
+card_id: "vc-20260327-context-os-transcript-sequence-continuity"
+bug_summary: >
+  Context OS 在 existing_snapshot 续接时，新增消息 sequence 从 0 重新编号，
+  造成 transcript 顺序紊乱，run_card.latest_user_intent 与 active_window 回退到旧轮次。
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/context/context_os/runtime.py"
+  method: "_merge_transcript / _build_run_card"
+  symptom: "用户在续接轮次回复“好的，继续”后，run_card.latest_user_intent 仍显示旧值“需要”"
+
+assumptions:
+  - id: "A1"
+    statement: "续接轮次的 sequence 必须基于 existing transcript 最大 sequence 单调递增"
+    status: verified_true
+    evidence: >
+      旧实现使用 enumerate fallback 作为 sequence，续接消息默认从 0 开始，和历史 sequence 冲突，
+      导致 transcript 排序后新消息不在末尾。
+
+  - id: "A2"
+    statement: "latest_user_intent 依赖 transcript 尾部顺序，sequence 冲突会导致焦点回退"
+    status: verified_true
+    evidence: >
+      run_card 通过 reversed(transcript) 提取最新 user turn；当新消息 sequence 回落后，
+      实际命中历史 user 事件。
+
+  - id: "A3"
+    statement: "resolved follow-up 不应在后续无关轮次继续占据 run_card 字段"
+    status: verified_true
+    evidence: >
+      旧实现只要 pending_followup 对象存在就写入 run_card，confirmed/denied 状态会在后续轮次残留。
+
+pre_mortem:
+  failure_point: >
+    若仅修 sequence 不修 run_card 展示策略，仍会在后续轮次看到 resolved follow-up 残留；
+    若只修 run_card 而不修 sequence，latest_user_intent 仍会错位。
+  risk_zone:
+    - "polaris/kernelone/context/context_os/runtime.py"
+    - "polaris/kernelone/context/tests/test_attention_runtime.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/context/tests/test_attention_runtime.py"
+      description: "existing_snapshot 续接后 latest_user_intent 必须是当前轮次用户输入"
+      expected: "latest_user_intent == '好的，继续'"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_attention_runtime.py"
+      description: "续接后 transcript sequence 单调递增，最新事件在 active_window 中"
+      expected: "sequence 递增且 last_event 属于 active_window"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_attention_runtime.py"
+      description: "resolved follow-up 在后续轮次不再暴露到 run_card"
+      expected: "pending_followup_action/pending_followup_status 为空"
+      status: updated
+  integration_tests:
+    - description: "Context OS 回归（attention + continuity）"
+      command: >
+        pytest polaris/kernelone/context/tests/test_attention_runtime.py
+        polaris/kernelone/context/tests/test_context_os.py
+        polaris/kernelone/context/tests/test_continuity.py -q
+      status: existing_fix
+  manual_check:
+    - "复现路径：登录实现 -> assistant follow-up -> user'需要' -> 下一轮 user'好的，继续'"
+    - "确认 run_card.latest_user_intent 与 transcript 最后一条 user 事件一致"
+    - "确认 run_card 不再显示已 resolved follow-up"
+
+related_adrs:
+  - "ADR-0063"
+
+sign_off:
+  completed_by: "codex-gpt5"
+  completed_at: "2026-03-27"
+  verified_by: "self (tests + manual replay)"
+  verified_at: "2026-03-27"

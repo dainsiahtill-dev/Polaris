@@ -1,0 +1,54 @@
+id: delivery.api_gateway
+title: API Gateway
+kind: capability
+visibility: public
+stateful: false
+owner: delivery
+purpose: 'Canonical delivery entry for HTTP/WebSocket protocol translation and route
+  dispatch. Must remain stateless and delegate business writes downstream.
+
+  '
+current_modules:
+- polaris.cells.delivery.api_gateway.public.contracts
+tags: []
+owned_paths:
+- polaris/delivery/http/app_factory.py
+- polaris/delivery/http/dependencies.py
+- polaris/delivery/http/error_handlers.py
+- polaris/delivery/http/middleware/**
+- polaris/delivery/http/routers/__init__.py
+- polaris/delivery/http/routers/_shared.py
+- polaris/delivery/http/routers/sse_utils.py
+- polaris/delivery/http/v2/__init__.py
+public_contracts:
+  modules:
+  - polaris.cells.delivery.api_gateway.public.contracts
+  commands:
+  - ApiCommandV1
+  queries:
+  - ApiQueryV1
+  events:
+  - ApiResponseEventV1
+  results:
+  - ApiResponseV1
+  errors:
+  - ApiGatewayErrorV1
+depends_on:
+- runtime.projection
+- policy.workspace_guard
+subgraphs:
+- storage_archive_pipeline
+state_owners: []
+effects_allowed:
+- http.inbound:*
+- ws.inbound:*
+- fs.read:runtime/*
+- fs.read:workspace/history/*
+verification:
+  tests:
+  - tests/architecture/test_polaris_layout.py
+  gaps:
+  - Router-level capability routing is still in migration.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

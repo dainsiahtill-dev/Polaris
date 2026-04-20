@@ -1,0 +1,464 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PM Tasks Contract",
+  "description": "PM -> Director contract. Goal/acceptance fields are immutable during execution; evidence may be appended.",
+  "type": "object",
+  "examples": [
+    {
+      "schema_version": 2,
+      "run_id": "pm-2026-02-02-0001",
+      "timestamp": "2026-02-02T12:00:00Z",
+      "pm_iteration": 1,
+      "focus": "docs",
+      "overall_goal": "Improve AI readiness documentation",
+      "tasks": [
+        {
+          "id": "task-001",
+          "priority": "P1",
+          "status": "todo",
+          "assigned_to": "Director",
+          "dependencies": [],
+          "spec": "docs/agent/architecture.md",
+          "title": "Add AI context files",
+          "goal": "Create .ai-agent context artifacts for faster agent onboarding",
+          "acceptance_criteria": [
+            ".ai-agent/context.json exists",
+            "docs/agent/README.md links to .ai-agent context"
+          ],
+          "acceptance": [
+            ".ai-agent/context.json exists",
+            "docs/agent/README.md links to .ai-agent context"
+          ],
+          "required_evidence": {
+            "validation_paths": [
+              ".ai-agent/context.json",
+              "docs/agent/README.md"
+            ]
+          },
+          "target_files": [
+            ".ai-agent/context.json",
+            "docs/agent/README.md"
+          ],
+          "scope_mode": "module",
+          "scope_paths": [
+            ".ai-agent",
+            "docs/agent"
+          ]
+        }
+      ]
+    }
+  ],
+  "required": [
+    "schema_version",
+    "run_id",
+    "pm_iteration",
+    "tasks"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1,
+        2
+      ],
+      "description": "Schema version. v2 is the current contract; v1 is accepted for backward compatibility."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Unique identifier for this PM run (links artifacts and events).",
+      "examples": [
+        "pm-2026-02-02-0001"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp of PM contract emission."
+    },
+    "pm_iteration": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic PM iteration counter."
+    },
+    "focus": {
+      "type": "string",
+      "description": "Current high-level focus or phase.",
+      "examples": [
+        "docs",
+        "refactor",
+        "bugfix"
+      ]
+    },
+    "overall_goal": {
+      "type": "string",
+      "description": "The overarching goal for this iteration.",
+      "examples": [
+        "Stabilize director loop error handling"
+      ]
+    },
+    "policy_overrides": {
+      "type": "object",
+      "description": "Global policy overrides for this run (optional).",
+      "additionalProperties": true
+    },
+    "engine": {
+      "type": "object",
+      "description": "Optional engine execution hints for PM->Director orchestration.",
+      "properties": {
+        "director_execution_mode": {
+          "type": "string",
+          "enum": [
+            "single",
+            "multi"
+          ],
+          "description": "Director execution mode. multi is forward-compatible and may degrade to single in older runtimes."
+        },
+        "max_directors": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Upper bound of Director workers when mode=multi."
+        },
+        "scheduling_policy": {
+          "type": "string",
+          "enum": [
+            "fifo",
+            "priority",
+            "dag"
+          ],
+          "description": "Task scheduling policy used by polaris-engine."
+        }
+      },
+      "additionalProperties": true
+    },
+    "tasks": {
+      "type": "array",
+      "description": "Ordered list of tasks in this contract.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "priority",
+          "dependencies",
+          "spec",
+          "acceptance_criteria",
+          "assigned_to"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable task identifier within the PM contract.",
+            "examples": [
+              "task-001"
+            ]
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "Fingerprint of immutable task fields (goal/acceptance)."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short human-readable task title."
+          },
+          "priority": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "pattern": "^[Pp]?[0-9]+$"
+              }
+            ],
+            "description": "Task priority. Lower numbers mean higher urgency (e.g. P0)."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "todo",
+              "in_progress",
+              "review",
+              "done",
+              "failed",
+              "blocked"
+            ],
+            "description": "Task lifecycle status in PM queue."
+          },
+          "assigned_to": {
+            "type": "string",
+            "enum": [
+              "Architect",
+              "PM",
+              "Director",
+              "Auditor",
+              "PolicyGate",
+              "FinOps"
+            ],
+            "description": "Role assignment for execution routing."
+          },
+          "goal": {
+            "type": "string",
+            "description": "Immutable objective for this task. Director must not modify.",
+            "examples": [
+              "Refactor io_utils to improve error traceability"
+            ]
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Task IDs that must complete before this task starts."
+          },
+          "parallel_group": {
+            "type": "string",
+            "description": "Optional group token for tasks that may run in parallel."
+          },
+          "capability": {
+            "type": "string",
+            "description": "Optional capability routing hint for Director worker selection."
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "standard",
+              "creative"
+            ],
+            "description": "Director execution mode. strict=follow blueprint exactly, standard=allow some flexibility, creative=allow autonomous decisions within constraints."
+          },
+          "director_level": {
+            "type": "string",
+            "enum": [
+              "L1",
+              "L2",
+              "L3"
+            ],
+            "description": "Required Director capability level. L1=weak local model (strict only), L2=standard local model, L3=strong model (creative allowed)."
+          },
+          "shardable": {
+            "type": "boolean",
+            "description": "Whether the task can be sharded/parallelized by engine."
+          },
+          "max_parallel_hint": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional upper bound hint for parallel sharding of this task."
+          },
+          "spec": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
+            ],
+            "description": "Optional implementation spec pointer or embedded spec object."
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Hard constraints or prohibitions for this task."
+          },
+          "target_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact file list for strict lock mode (`scope_mode=exact_files`). Optional in module scope mode."
+          },
+          "scope_mode": {
+            "type": "string",
+            "enum": [
+              "module",
+              "exact_files"
+            ],
+            "description": "Write-scope strategy. `module` is default and prefers directory/module prefixes via `scope_paths`."
+          },
+          "scope_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Module/directory prefixes allowed for Director writes. Used when `scope_mode=module`."
+          },
+          "acceptance": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Acceptance criteria strings used by QA. Immutable during execution."
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Canonical acceptance criteria alias (equivalent to acceptance)."
+          },
+          "required_evidence": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Legacy v1 format. Treated as validation_paths."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "validation_paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Validation-only artifact/file paths used by QA/Auditor after execution."
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "source_task_id": {
+                    "type": "string"
+                  },
+                  "defect_ticket": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "policy_decision": {
+                    "type": "string"
+                  },
+                  "audit_result": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "description": "v2 format. VALIDATION-ONLY for Director tasks: this field must not contain read/search instructions and must not be used to drive Director context collection."
+              }
+            ],
+            "description": "Validation metadata only. Director must infer context from workspace and task contract, not from required_evidence."
+          },
+          "qa_contract": {
+            "type": "object",
+            "description": "Post-Director QA adjudication contract consumed by Engine-side Auditor plugin.",
+            "properties": {
+              "schema_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source": {
+                "type": "string",
+                "description": "Contract source marker such as pm_contract or auto_compat."
+              },
+              "plugin": {
+                "type": "string",
+                "description": "QA plugin identifier. rules_v1 is the built-in deterministic rules engine."
+              },
+              "plugin_hint": {
+                "type": "string",
+                "description": "Optional PM/Router hint for QA acceptance route selection (e.g. playwright, pytest_api)."
+              },
+              "task_type": {
+                "type": "string",
+                "description": "Task category used for plugin routing (e.g. backend_api, ui_canvas)."
+              },
+              "hard_gates": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  ]
+                },
+                "description": "Goal-related gates. Any failed hard gate causes FAIL."
+              },
+              "regression_gates": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  ]
+                },
+                "description": "Regression gates. Any failed regression gate causes FAIL."
+              },
+              "evidence_required": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Required evidence keys/paths. Missing evidence causes INCONCLUSIVE."
+              },
+              "retry_policy": {
+                "type": "object",
+                "properties": {
+                  "max_director_retries": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": true
+              },
+              "coordination": {
+                "type": "object",
+                "description": "Tri-Council coordination policy used when tasks are complex or QA is non-pass.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "max_rounds": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "triggers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          },
+          "policy_overrides": {
+            "type": "object",
+            "description": "Task-level policy overrides (optional).",
+            "additionalProperties": true
+          },
+          "backlog_ref": {
+            "type": "string",
+            "description": "Original backlog item text from plan.md that this task derives from. Empty string if unknown."
+          },
+          "error_code": {
+            "type": "string",
+            "description": "Machine-readable error code from the last Director failure. Present only when status is failed or blocked."
+          },
+          "failure_detail": {
+            "type": "string",
+            "description": "Human-readable failure description. Present only when status is failed or blocked."
+          },
+          "failed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO-8601 UTC timestamp of when the task entered failed/blocked state."
+          }
+        }
+      }
+    }
+  }
+}

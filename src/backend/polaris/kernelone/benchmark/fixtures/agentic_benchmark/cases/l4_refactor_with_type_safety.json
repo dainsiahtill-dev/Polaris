@@ -1,0 +1,55 @@
+{
+  "case_id": "l4_refactor_with_type_safety",
+  "role": "director",
+  "title": "L4 Type-Safe Refactor",
+  "description": "将 compute_checksum 函数改为支持 list[str | int] 类型，并更新所有调用点。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "将 compute_checksum 函数改为支持 list[str | int] 类型，并更新所有调用点。",
+  "tags": [
+    "l4",
+    "refactor",
+    "type-safety",
+    "type-hint"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg",
+      "search_replace"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 12,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "compute_checksum",
+        "description": "搜索函数定义和调用点"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "list[str | int]",
+        "description": "更新类型注解"
+      }
+    ],
+    "required_output_substrings": [
+      "list[str | int]",
+      "def compute_checksum"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

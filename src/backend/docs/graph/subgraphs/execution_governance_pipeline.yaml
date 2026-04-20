@@ -1,0 +1,228 @@
+version: 1
+id: execution_governance_pipeline
+title: Execution Governance Pipeline
+purpose: >
+  End-to-end business execution chain from PM planning and dispatch to ChiefEngineer blueprint,
+  Director execution, QA verdict, and evidence or event publication under policy and budget guards.
+entry_cells:
+  - delivery.api_gateway
+  - docs.court_workflow
+cells:
+  - orchestration.pm_planning
+  - orchestration.pm_dispatch
+  - chief_engineer.blueprint
+  - director.execution
+  - factory.pipeline
+  - factory.cognitive_runtime
+  - qa.audit_verdict
+  - policy.permission
+  - policy.workspace_guard
+  - finops.budget_guard
+  - orchestration.workflow_runtime
+  - runtime.task_runtime
+  - runtime.task_market
+  - runtime.execution_broker
+  - runtime.state_owner
+  - runtime.projection
+  - events.fact_stream
+  - audit.evidence
+  - context.engine
+  - llm.control_plane
+  # Shared execution infrastructure (not business cells — no entry/exit role)
+  - roles.kernel        # RoleExecutionKernel: unified CHAT | WORKFLOW execution engine
+  - roles.runtime       # RoleRuntimeService: facade + lifecycle management
+exit_cells:
+  - qa.audit_verdict
+  - runtime.projection
+  - audit.evidence
+relations:
+  - from: delivery.api_gateway
+    to: orchestration.pm_planning
+    type: commands
+    contract: GeneratePmTaskContractCommandV1
+  - from: orchestration.pm_planning
+    to: orchestration.pm_dispatch
+    type: emits
+    contract: PmTaskContractGeneratedEventV1
+  - from: orchestration.pm_dispatch
+    to: runtime.task_market
+    type: commands
+    contract: PublishTaskWorkItemCommandV1
+  - from: runtime.task_market
+    to: chief_engineer.blueprint
+    type: commands
+    contract: ClaimTaskWorkItemCommandV1
+  - from: chief_engineer.blueprint
+    to: runtime.task_market
+    type: commands
+    contract: PublishTaskWorkItemCommandV1
+  - from: runtime.task_market
+    to: director.execution
+    type: commands
+    contract: ClaimTaskWorkItemCommandV1
+  - from: director.execution
+    to: factory.pipeline
+    type: commands
+    contract: RunProjectionExperimentCommandV1
+  - from: director.execution
+    to: factory.pipeline
+    type: commands
+    contract: ReprojectProjectionExperimentCommandV1
+  - from: director.execution
+    to: factory.pipeline
+    type: commands
+    contract: RefreshProjectionBackMappingCommandV1
+  - from: director.execution
+    to: runtime.task_market
+    type: commands
+    contract: AcknowledgeTaskStageCommandV1
+  - from: director.execution
+    to: qa.audit_verdict
+    type: emits
+    contract: DirectorTaskCompletedEventV1
+  - from: director.execution
+    to: factory.cognitive_runtime
+    type: commands
+    contract: RecordRuntimeReceiptCommandV1
+  - from: director.execution
+    to: factory.cognitive_runtime
+    type: commands
+    contract: ExportHandoffPackCommandV1
+  - from: qa.audit_verdict
+    to: runtime.task_market
+    type: commands
+    contract: RequeueTaskCommandV1
+  - from: qa.audit_verdict
+    to: audit.evidence
+    type: emits
+    contract: QaVerdictIssuedEventV1
+  - from: director.execution
+    to: runtime.task_runtime
+    type: commands
+    contract: UpdateRuntimeTaskCommandV1
+  - from: orchestration.pm_planning
+    to: runtime.execution_broker
+    type: commands
+    contract: LaunchExecutionProcessCommandV1
+  - from: orchestration.workflow_runtime
+    to: runtime.execution_broker
+    type: commands
+    contract: LaunchExecutionProcessCommandV1
+  - from: roles.runtime
+    to: runtime.execution_broker
+    type: commands
+    contract: LaunchExecutionProcessCommandV1
+  - from: qa.audit_verdict
+    to: runtime.task_runtime
+    type: commands
+    contract: ReopenRuntimeTaskCommandV1
+  - from: runtime.task_runtime
+    to: events.fact_stream
+    type: emits
+    contract: FactEventAppendedV1
+  - from: orchestration.workflow_runtime
+    to: runtime.state_owner
+    type: owns_state
+    contract: WorkflowExecutionResultV1
+  - from: runtime.task_runtime
+    to: runtime.state_owner
+    type: depends_on
+    contract: RuntimeStateWriteResultV1
+  - from: policy.permission
+    to: director.execution
+    type: governs
+    contract: EvaluatePermissionCommandV1
+  - from: finops.budget_guard
+    to: llm.control_plane
+    type: governs
+    contract: ReserveBudgetCommandV1
+  - from: roles.runtime
+    to: factory.cognitive_runtime
+    type: commands
+    contract: RecordRuntimeReceiptCommandV1
+  - from: roles.runtime
+    to: factory.cognitive_runtime
+    type: commands
+    contract: ExportHandoffPackCommandV1
+critical_contracts:
+  - GeneratePmTaskContractCommandV1
+  - PmTaskContractResultV1
+  - DispatchPmTasksCommandV1
+  - PublishTaskWorkItemCommandV1
+  - ClaimTaskWorkItemCommandV1
+  - AcknowledgeTaskStageCommandV1
+  - RequeueTaskCommandV1
+  - RunProjectionExperimentCommandV1
+  - ReprojectProjectionExperimentCommandV1
+  - RefreshProjectionBackMappingCommandV1
+  - RunQaAuditCommandV1
+  - EvaluatePermissionCommandV1
+  - ReserveBudgetCommandV1
+  - StartWorkflowCommandV1
+  - LaunchExecutionProcessCommandV1
+  - UpdateRuntimeTaskCommandV1
+  - ReopenRuntimeTaskCommandV1
+  - AppendFactEventCommandV1
+state_boundaries:
+  - owner: orchestration.pm_planning
+    state: runtime/state/pm/*
+  - owner: orchestration.pm_dispatch
+    state: runtime/state/dispatch/*
+  - owner: chief_engineer.blueprint
+    state: runtime/state/blueprints/*
+  - owner: director.execution
+    state: runtime/state/director/*
+  - owner: qa.audit_verdict
+    state: runtime/state/qa/*
+  - owner: finops.budget_guard
+    state: runtime/state/budget/*
+  - owner: orchestration.workflow_runtime
+    state: runtime/workflows/*
+  - owner: runtime.task_runtime
+    state: runtime/tasks/*
+  - owner: runtime.task_market
+    state: runtime/task_market/*
+  - owner: runtime.state_owner
+    state: runtime/contracts/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+  - owner: runtime.state_owner
+    state: runtime/runs/*
+  - owner: factory.cognitive_runtime
+    state: runtime/cognitive_runtime/*
+  - owner: events.fact_stream
+    state: runtime/events/*
+  - owner: audit.evidence
+    state: runtime/evidence/*
+verify_targets:
+  tests:
+    - tests/test_pm_task_quality_gate.py
+    - tests/test_dispatch_pipeline_engine_dispatch.py
+    - tests/test_chief_engineer_preflight.py
+    - tests/test_director_service_convergence.py
+    - tests/test_integration_qa_command.py
+    - tests/test_permission_service.py
+    - tests/test_llm_token_budget.py
+    - tests/orchestration/test_workflow_runtime.py
+    - tests/test_runtime_event_fanout.py
+    - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+    - polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py
+    - polaris/cells/runtime/task_market/tests/test_service.py
+  contracts:
+    - GeneratePmTaskContractCommandV1
+    - DispatchPmTasksCommandV1
+    - PublishTaskWorkItemCommandV1
+    - ClaimTaskWorkItemCommandV1
+    - AcknowledgeTaskStageCommandV1
+    - RequeueTaskCommandV1
+    - RunQaAuditCommandV1
+    - EvaluatePermissionCommandV1
+    - ReserveBudgetCommandV1
+    - AppendFactEventCommandV1
+migration_notes:
+  - Subgraph declared during business-cell convergence; some legacy routes may still proxy to Polaris entrypoints.
+  - Director's projection-oriented execution backend is opt-in and currently routed through roles.adapters during migration.
+  - Cognitive Runtime is wired in shadow mode only; receipt/handoff sidecar is live, but lease/gate authority is not yet on the production decision path.
+  - runtime.task_market is the single business broker for PM/ChiefEngineer/Director/QA stage publication, claim, ack, requeue, and dead-letter transitions.
+  - runtime.execution_broker remains a technical process broker and must not be used as business task routing authority.
+  - mainline-full is currently a bounded inline migration mode; durable Pull Consumer ownership and outbox-atomic fact publication are still required for final cutover.

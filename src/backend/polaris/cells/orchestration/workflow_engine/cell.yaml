@@ -1,0 +1,45 @@
+id: orchestration.workflow_engine
+title: Workflow Engine
+kind: capability
+visibility: public
+stateful: true
+owner: orchestration
+purpose: 'Owns the KernelOne WorkflowEngine — a self-hosted DAG/sequential workflow
+  executor with retry, fail-fast, pause/resume, and signal support.  Provides the
+  HandlerRegistry protocol for Cell-internal registry injection.  This cell owns the
+  engine runtime and is the only cell that may modify kernelone/workflow/engine.py.
+
+  '
+current_modules:
+- polaris.cells.orchestration.workflow_engine.public.contracts
+tags: []
+owned_paths:
+- polaris/kernelone/workflow/engine.py
+public_contracts:
+  modules:
+  - polaris.cells.orchestration.workflow_engine.public.contracts
+  commands: []
+  queries:
+  - CellHandlerRegistry
+  events: []
+  results: []
+  errors: []
+depends_on:
+- kernelone.process
+- kernelone.trace
+- infrastructure.db
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:runtime/**
+- db.read_write:workflow_runtime
+verification:
+  tests:
+  - polaris/kernelone/workflow/tests/test_activity_execution.py
+  - polaris/kernelone/workflow/tests/test_kernelone_c_fixes.py
+  gaps:
+  - test_workflow_engine.py not yet written (Phase 2 deliverable).
+  - HandlerRegistry protocol integration tests pending.
+  smoke_commands: []
+generated_artifacts: []

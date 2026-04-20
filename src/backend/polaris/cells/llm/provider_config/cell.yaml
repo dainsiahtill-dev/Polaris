@@ -1,0 +1,51 @@
+id: llm.provider_config
+title: LLM Provider Config
+kind: capability
+visibility: public
+stateful: false
+owner: llm
+purpose: 'Resolve provider request/test contexts and synchronize process settings
+  from canonical LLM config with explicit contract boundaries.
+
+  '
+current_modules:
+- polaris.cells.llm.provider_config.public.service
+- polaris.cells.llm.provider_config.internal.provider_context
+- polaris.cells.llm.provider_config.internal.test_context
+- polaris.cells.llm.provider_config.internal.settings_sync
+tags: []
+owned_paths:
+- polaris/cells/llm/provider_config/**
+public_contracts:
+  modules:
+  - polaris.cells.llm.provider_config.public.contracts
+  commands:
+  - ResolveProviderContextCommandV1
+  - ResolveLlmTestExecutionContextCommandV1
+  - SyncSettingsFromLlmCommandV1
+  queries: []
+  events:
+  - ProviderConfigResolvedEventV1
+  results:
+  - ProviderConfigResultV1
+  errors:
+  - LlmProviderConfigErrorV1
+depends_on:
+- llm.control_plane
+- storage.layout
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:config/llm/*
+- fs.read:workspace/.polaris/**
+verification:
+  tests:
+  - tests/test_llm_provider_request_context.py
+  - tests/test_llm_test_context.py
+  gaps:
+  - Existing application imports still reference internal modules in a few callsites.
+  smoke_commands: []
+generated_artifacts: []

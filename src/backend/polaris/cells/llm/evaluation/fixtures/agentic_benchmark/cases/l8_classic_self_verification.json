@@ -1,0 +1,45 @@
+{
+  "case_id": "l8_classic_self_verification",
+  "role": "director",
+  "title": "L8 Classic Self-Verification",
+  "description": "测试自我验证能力：读取 → 修改 → 自己验证。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 config.py，然后修改它，最后验证修改是否正确（自己检查）。",
+  "tags": [
+    "l8",
+    "classic",
+    "self-verification",
+    "read-modify-verify"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head",
+      "search_replace",
+      "repo_rg"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 5,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_read_head"],
+        "fragment": "config.py",
+        "description": "读取原始文件"
+      },
+      {
+        "tools": ["search_replace"],
+        "fragment": "config.py",
+        "description": "修改文件"
+      },
+      {
+        "tools": ["repo_read_head"],
+        "fragment": "config.py",
+        "description": "验证修改"
+      }
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "self_verification_check"
+    ]
+  }
+}

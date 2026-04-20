@@ -1,0 +1,163 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.270333Z",
+  "source_hash": "6426d8c24067cd90",
+  "cell_id": "runtime.execution_broker",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ExecutionBrokerService",
+      "description": "Cell-layer broker over KernelOne execution runtime facade.",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "facade",
+          "doc": ""
+        },
+        {
+          "name": "submit_async_task",
+          "doc": ""
+        },
+        {
+          "name": "submit_blocking_io",
+          "doc": ""
+        },
+        {
+          "name": "get_process_status",
+          "doc": ""
+        },
+        {
+          "name": "get_process_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "resolve_process_handle_sync",
+          "doc": "Synchronous version for non-async contexts (e.g., get_process_snapshot)."
+        },
+        {
+          "name": "resolve_runtime_process",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_stdin",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_to_process_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_exit_code",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_execution_broker_service",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "class",
+      "name": "ExecutionProcessStatusV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionErrorCode",
+      "description": "Execution broker error codes for machine-parseable error classification.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LaunchExecutionProcessCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetExecutionProcessStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionProcessHandleV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionProcessLaunchResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionProcessWaitResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionBrokerError",
+      "description": "Raised when ``runtime.execution_broker`` fails to process a contract.",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "blocking_job",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_command_rejects_empty_user_metadata",
+      "description": "Empty user metadata should be handled gracefully.",
+      "defined_in": "polaris/cells/runtime/execution_broker/tests/test_service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

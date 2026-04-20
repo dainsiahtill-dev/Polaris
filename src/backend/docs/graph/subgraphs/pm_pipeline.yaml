@@ -1,0 +1,87 @@
+version: 1
+id: pm_pipeline
+title: PM Planning Pipeline
+purpose: >
+  Defines PM planning and dispatch flow from directive intake to task contract
+  generation, dispatch staging, and projection-ready runtime state writes.
+entry_cells:
+  - delivery.api_gateway
+  - docs.court_workflow
+cells:
+  - orchestration.pm_planning
+  - orchestration.pm_dispatch
+  - runtime.task_market
+  - chief_engineer.blueprint
+  - llm.control_plane
+  - policy.workspace_guard
+  - runtime.state_owner
+  - runtime.projection
+exit_cells:
+  - orchestration.pm_dispatch
+  - runtime.projection
+relations:
+  - from: delivery.api_gateway
+    to: orchestration.pm_planning
+    type: commands
+    contract: GeneratePmTaskContractCommandV1
+  - from: orchestration.pm_planning
+    to: orchestration.pm_dispatch
+    type: emits
+    contract: PmTaskContractGeneratedEventV1
+  - from: orchestration.pm_dispatch
+    to: runtime.task_market
+    type: commands
+    contract: PublishTaskWorkItemCommandV1
+  - from: runtime.task_market
+    to: chief_engineer.blueprint
+    type: commands
+    contract: ClaimTaskWorkItemCommandV1
+  - from: orchestration.pm_planning
+    to: llm.control_plane
+    type: calls
+    contract: InvokeRoleProviderCommandV1
+  - from: policy.workspace_guard
+    to: orchestration.pm_dispatch
+    type: governs
+    contract: WorkspaceWriteGuardQueryV1
+  - from: orchestration.pm_dispatch
+    to: runtime.state_owner
+    type: commands
+    contract: PersistRuntimeContractCommandV1
+  - from: runtime.state_owner
+    to: runtime.projection
+    type: projects_to
+    contract: RuntimeProjectionQueryV1
+critical_contracts:
+  - GeneratePmTaskContractCommandV1
+  - PmTaskContractGeneratedEventV1
+  - DispatchPmTasksCommandV1
+  - PublishTaskWorkItemCommandV1
+  - ClaimTaskWorkItemCommandV1
+  - WorkspaceWriteGuardQueryV1
+  - PersistRuntimeContractCommandV1
+  - RuntimeProjectionQueryV1
+state_boundaries:
+  - owner: orchestration.pm_planning
+    state: runtime/state/pm/*
+  - owner: orchestration.pm_dispatch
+    state: runtime/state/dispatch/*
+  - owner: runtime.task_market
+    state: runtime/task_market/*
+  - owner: runtime.state_owner
+    state: runtime/contracts/*
+verify_targets:
+  tests:
+    - tests/test_pm_task_quality_gate.py
+    - tests/test_pm_orchestration_api.py
+    - tests/test_dispatch_pipeline_engine_dispatch.py
+    - tests/orchestration/test_workflow_runtime.py
+  contracts:
+    - GeneratePmTaskContractCommandV1
+    - DispatchPmTasksCommandV1
+    - PublishTaskWorkItemCommandV1
+    - PersistRuntimeContractCommandV1
+migration_notes:
+  - PM planning remains the upstream source for Director dispatch contract quality gates.
+  - runtime.task_market is the single business broker for PM -> ChiefEngineer design-stage handoff.
+  - Staged modes (off, shadow, mainline, mainline-design, mainline-full) still exist; mainline-full is an inline migration path, and durable Pull Consumer plus outbox atomicity remain open gaps.

@@ -1,0 +1,46 @@
+{
+  "case_id": "l8_focus_drift_repeated_distraction",
+  "role": "director",
+  "title": "L8 Repeated Distraction Recovery",
+  "description": "重复 2 次干扰后回归原始目标。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先搜索 \"TODO\"，然后告诉我现在时间，再搜索 \"FIXME\"，然后告诉我天气，现在回到最初的任务：读取 config.py 并用表格展示其内容。",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "repeated",
+    "distraction"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "config.py",
+        "description": "必须读取 config.py"
+      }
+    ],
+    "required_output_substrings": [
+      "|",
+      "---",
+      "config.py"
+    ],
+    "forbidden_output_substrings": [
+      "时间",
+      "天气",
+      "忘记了"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check",
+      "structured_output_required"
+    ]
+  }
+}

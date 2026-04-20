@@ -1,0 +1,53 @@
+id: director.delivery
+title: Director Delivery
+kind: capability
+visibility: public
+stateful: false
+owner: engineering
+purpose: 'Director CLI and terminal console transport surface. Owns the standalone
+  Director CLI entry point under polaris/delivery/cli/director/**.
+
+  '
+current_modules:
+- polaris.cells.director.delivery.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/director/delivery/**
+- polaris/delivery/cli/director/**
+public_contracts:
+  modules:
+  - polaris.cells.director.delivery.public.contracts
+  commands:
+  - RunDirectorIterationCommandV1
+  - ExecuteDirectorTaskCommandV1
+  - CreateDirectorSessionCommandV1
+  queries:
+  - GetDirectorIterationStatusQueryV1
+  - GetReadyTasksQueryV1
+  events: []
+  results:
+  - DirectorIterationResultV1
+  - DirectorTaskExecutionResultV1
+  - DirectorSessionResultV1
+  - ReadyTasksResultV1
+  errors:
+  - DirectorDeliveryError
+  - IterationExecutionError
+  - TaskExecutionError
+depends_on:
+- director.planning
+- director.tasking
+- director.execution
+- roles.runtime
+- runtime.execution_broker
+subgraphs: []
+state_owners: []
+effects_allowed:
+- process.spawn:director/delivery/*
+verification:
+  gaps:
+  - 'Migration in progress: implementation resides in director.execution/internal/director_cli.py
+    pending Cell extraction.'
+  smoke_commands: []
+  tests: []
+generated_artifacts: []

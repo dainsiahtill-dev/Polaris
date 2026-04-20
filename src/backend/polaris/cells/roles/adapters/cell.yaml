@@ -1,0 +1,76 @@
+id: roles.adapters
+title: Roles Adapters
+kind: composite
+visibility: public
+stateful: false
+owner: roles
+purpose: 'Provide the stable adapter factory and structured output schemas for role
+  execution entrypoints, including PM, Director, QA, Architect, and Chief Engineer
+  adapters, while Director routing remains the migration-time bridge for optional
+  execution backends such as projection generation.
+
+  '
+current_modules:
+- polaris.cells.roles.adapters.public.service
+- polaris.cells.roles.adapters.internal
+- polaris.cells.roles.adapters.internal.schemas
+- polaris.cells.roles.adapters.internal.architect_adapter
+- polaris.cells.roles.adapters.internal.pm_adapter
+- polaris.cells.roles.adapters.internal.director_adapter
+- polaris.cells.roles.adapters.internal.director_execution_backend
+- polaris.cells.roles.adapters.internal.qa_adapter
+- polaris.cells.roles.adapters.internal.chief_engineer_adapter
+tags:
+- composite
+owned_paths:
+- polaris/cells/roles/adapters/**
+public_contracts:
+  modules:
+  - polaris.cells.roles.adapters.public.contracts
+  commands:
+  - CreateRoleAdapterCommandV1
+  queries:
+  - ListSupportedRoleAdaptersQueryV1
+  events:
+  - RoleAdapterRegisteredEventV1
+  results:
+  - RoleAdapterResultV1
+  errors:
+  - RoleAdaptersErrorV1
+depends_on:
+- director.execution
+- factory.pipeline
+- llm.dialogue
+- orchestration.pm_planning
+- orchestration.workflow_runtime
+- roles.engine
+- roles.kernel
+- roles.profile
+- roles.runtime
+- roles.session
+- runtime.task_runtime
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:runtime/signals/*
+- fs.write:runtime/events/*
+- ws.outbound:runtime/*
+- process.spawn:roles/*
+- llm.invoke:roles/*
+verification:
+  tests:
+  - tests/test_role_adapters_taskboard_alignment.py
+  - tests/test_runtime_role_binding.py
+  - tests/test_role_chat_status.py
+  gaps:
+  - Director adapter import remains best-effort because its upstream application package
+    still fails on import.
+  - Director optional execution backends still route through roles.adapters while
+    business-cell convergence into director.execution remains in progress.
+  - Some adapter internals still touch legacy application call paths during migration.
+  - Structured output schema exports are stable, but implementation convergence is
+    ongoing.
+  smoke_commands: []
+generated_artifacts: []

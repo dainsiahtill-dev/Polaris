@@ -1,0 +1,1474 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.358502Z",
+  "source_hash": "75ea15ac6be0f42c",
+  "cell_id": "director.execution",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "CodeGenerationPolicyViolationError",
+      "description": "Raised when forbidden code-writing behavior is requested.",
+      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CodeGenerationEngine",
+      "description": "Policy guard for legacy code-generation entry points.",
+      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "resolve_llm_timeout",
+          "doc": "Resolve per-call LLM timeout with sane upper/lower bounds."
+        },
+        {
+          "name": "resolve_task_timeout_budget",
+          "doc": "Resolve total timeout budget for one task, not per round."
+        },
+        {
+          "name": "remaining_timeout",
+          "doc": "Return remaining whole seconds to deadline."
+        },
+        {
+          "name": "resolve_patch_retry_attempts",
+          "doc": "Resolve retry attempts for legacy call sites."
+        },
+        {
+          "name": "_env_flag",
+          "doc": ""
+        },
+        {
+          "name": "stress_strict_mode_enabled",
+          "doc": "Return strict-mode switch."
+        },
+        {
+          "name": "allow_template_fallback",
+          "doc": "Always deny template fallback to enforce policy."
+        },
+        {
+          "name": "resolve_spin_guard_repeat_limit",
+          "doc": "Resolve spin-guard limit for legacy call sites."
+        },
+        {
+          "name": "is_low_signal_response",
+          "doc": "Check low-signal responses (utility retained for compatibility)."
+        },
+        {
+          "name": "register_spin_guard",
+          "doc": "Register spin guard and detect repeated prompt-output pairs."
+        },
+        {
+          "name": "invoke_runtime_provider",
+          "doc": "Blocked: runtime provider invocation for code writing."
+        },
+        {
+          "name": "invoke_ollama",
+          "doc": "Blocked: LLM invocation for code writing."
+        },
+        {
+          "name": "build_patch_retry_prompt",
+          "doc": "Blocked: patch prompt construction for code writing."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_raise_policy_violation",
+      "description": "Raise a fail-closed policy error for forbidden actions.",
+      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_fallback_code_content",
+      "description": "Blocked: deterministic fallback code generation is forbidden.",
+      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_phase_aware_fallback_content",
+      "description": "Blocked: phase-aware fallback code generation is forbidden.",
+      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "GatheredContext",
+      "description": "Container for all context collected before the CodeWriter LLM call.",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "as_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "gather",
+      "description": "Collect context appropriate for *mode* without any LLM involvement.",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_log",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_package_meta",
+      "description": "Read the first package/dependency manifest found in the workspace.",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_gather_create",
+      "description": "Context strategy for CREATE mode: find similar existing files as examples.",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_gather_modify",
+      "description": "Context strategy for MODIFY (and MIXED) mode: read the existing targets.",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_file_safe",
+      "description": "Read a file via the repo_read_head tool; return None on any failure.",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_text",
+      "description": "Pull plain text from a tool result dict (handles content list or stdout str).",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_files_with_ext",
+      "description": "Parse a tree text block and return relative file paths matching *ext*.",
+      "defined_in": "polaris/cells/director/execution/internal/context_gatherer.py"
+    },
+    {
+      "type": "class",
+      "name": "ExecutionRecord",
+      "description": "Record of a task execution.",
+      "defined_in": "polaris/cells/director/execution/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        },
+        {
+          "name": "complete",
+          "doc": ""
+        },
+        {
+          "name": "assess_risk",
+          "doc": "Assess risk of the changes."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RiskRegistry",
+      "description": "Registry for tracking identified risks.",
+      "defined_in": "polaris/cells/director/execution/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_dirs",
+          "doc": ""
+        },
+        {
+          "name": "record_risk",
+          "doc": ""
+        },
+        {
+          "name": "get_open_risks",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QualityTracker",
+      "description": "Track quality metrics for executions.",
+      "defined_in": "polaris/cells/director/execution/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_dirs",
+          "doc": ""
+        },
+        {
+          "name": "record_qa_result",
+          "doc": ""
+        },
+        {
+          "name": "get_qa_history",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorAgent",
+      "description": "Autonomous Director Agent.",
+      "defined_in": "polaris/cells/director/execution/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "worker_pool",
+          "doc": "Get Worker pool for parallel execution."
+        },
+        {
+          "name": "taskboard",
+          "doc": "Get unified task runtime service for task coordination."
+        },
+        {
+          "name": "risk_registry",
+          "doc": ""
+        },
+        {
+          "name": "quality_tracker",
+          "doc": ""
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": "Setup Director-specific tools."
+        },
+        {
+          "name": "_tool_execute_task",
+          "doc": "Execute a task."
+        },
+        {
+          "name": "_execute_task_impl",
+          "doc": "Internal implementation of task execution for metrics collection."
+        },
+        {
+          "name": "_tool_get_execution",
+          "doc": "Get execution by ID."
+        },
+        {
+          "name": "_tool_get_execution_history",
+          "doc": "Get execution history."
+        },
+        {
+          "name": "_tool_assess_risk",
+          "doc": "Assess risk of execution."
+        },
+        {
+          "name": "_tool_get_open_risks",
+          "doc": "Get all open risks."
+        },
+        {
+          "name": "_tool_resolve_risk",
+          "doc": "Mark a risk as resolved."
+        },
+        {
+          "name": "_tool_run_qa",
+          "doc": "Run QA checks on execution."
+        },
+        {
+          "name": "_tool_get_qa_history",
+          "doc": "Get QA history."
+        },
+        {
+          "name": "_tool_apply_patch",
+          "doc": "Apply a code patch with broadcast support."
+        },
+        {
+          "name": "_tool_run_command",
+          "doc": "Run a validated command without shell expansion."
+        },
+        {
+          "name": "_tool_spawn_worker",
+          "doc": "Spawn a new Worker."
+        },
+        {
+          "name": "_tool_list_workers",
+          "doc": "List all workers."
+        },
+        {
+          "name": "_tool_submit_task_to_worker",
+          "doc": "Submit task to worker."
+        },
+        {
+          "name": "handle_message",
+          "doc": "Handle incoming message from PM or other agents."
+        },
+        {
+          "name": "run_cycle",
+          "doc": "Main Director processing cycle."
+        },
+        {
+          "name": "_load_snapshot",
+          "doc": "Load data from snapshot."
+        },
+        {
+          "name": "save_snapshot",
+          "doc": "Save current state as snapshot."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_contains_shell_metacharacters",
+      "description": "Return whether the command contains shell control operators.",
+      "defined_in": "polaris/cells/director/execution/internal/tools/security.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_command_safety",
+      "description": "Validate that a command does not contain shell metacharacters.",
+      "defined_in": "polaris/cells/director/execution/internal/tools/security.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_commands_batch",
+      "description": "Validate a batch of commands for shell safety.",
+      "defined_in": "polaris/cells/director/execution/internal/tools/security.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_pass_fail",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/logic.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_acceptance",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/logic.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_defect_ticket",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/logic.py"
+    },
+    {
+      "type": "function",
+      "name": "write_gate_check",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/logic.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_rebind_director_service",
+      "description": "Lazily import rebind_director_service to avoid circular import issues.",
+      "defined_in": "polaris/cells/director/execution/public/__init__.py"
+    },
+    {
+      "type": "class",
+      "name": "ExecuteDirectorTaskCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RetryDirectorTaskCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectorTaskStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorTaskStartedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorTaskCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorExecutionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorExecutionError",
+      "description": "Raised when `director.execution` contract processing fails.",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorCodeIntelMixin",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorState",
+      "description": "Director lifecycle state.",
+      "defined_in": "polaris/cells/director/execution/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorConfig",
+      "description": "Director configuration.",
+      "defined_in": "polaris/cells/director/execution/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorService",
+      "description": "Director service that orchestrates task execution.",
+      "defined_in": "polaris/cells/director/execution/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_collect_deadlocked_pending_ids",
+          "doc": ""
+        },
+        {
+          "name": "_emit_cognitive_runtime_shadow_task_artifacts",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCodeGenerationPolicyViolationError",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_raise_policy_violation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCodeGenerationEngineInit",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_init_basic",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveLlmTimeout",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_resolve_llm_timeout_default",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_llm_timeout_from_env",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_llm_timeout_invalid_env",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_llm_timeout_bounds_min",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_llm_timeout_bounds_max",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveTaskTimeoutBudget",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_resolve_task_timeout_budget_default",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_task_timeout_budget_from_task",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_task_timeout_budget_from_env",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRemainingTimeout",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_remaining_timeout_future",
+          "doc": ""
+        },
+        {
+          "name": "test_remaining_timeout_past",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEnvFlag",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_env_flag_true_values",
+          "doc": ""
+        },
+        {
+          "name": "test_env_flag_false_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAllowTemplateFallback",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_allow_template_fallback_always_false",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIsLowSignalResponse",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_is_low_signal_short_response",
+          "doc": ""
+        },
+        {
+          "name": "test_is_low_signal_normal_response",
+          "doc": ""
+        },
+        {
+          "name": "test_is_low_signal_refusal_markers",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRegisterSpinGuard",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_register_spin_guard_first_call",
+          "doc": ""
+        },
+        {
+          "name": "test_register_spin_guard_repeat_detection",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBlockedEntryPoints",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_invoke_runtime_provider_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_invoke_ollama_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_build_patch_retry_prompt_blocked",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBlockedModuleFunctions",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "test_generate_fallback_code_content_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_generate_phase_aware_fallback_content_blocked",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SecurityService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py",
+      "methods": [
+        {
+          "name": "is_command_safe",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TodoService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py",
+      "methods": [
+        {
+          "name": "on_round_complete",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TokenService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TranscriptService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py",
+      "methods": [
+        {
+          "name": "start_session",
+          "doc": ""
+        },
+        {
+          "name": "end_session",
+          "doc": ""
+        },
+        {
+          "name": "record_message",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MessageBus",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkerService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_build_service",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py"
+    },
+    {
+      "type": "function",
+      "name": "test_emit_shadow_task_artifacts_respects_mode_off",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py"
+    },
+    {
+      "type": "function",
+      "name": "_raise_if_called",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py"
+    },
+    {
+      "type": "class",
+      "name": "TestGatheredContext",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_context_gatherer.py",
+      "methods": [
+        {
+          "name": "test_init_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_as_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractText",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_context_gatherer.py",
+      "methods": [
+        {
+          "name": "test_extract_from_content_list",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_from_stdout",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_empty_result",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractFilesWithExt",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_context_gatherer.py",
+      "methods": [
+        {
+          "name": "test_extract_python_files",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_with_exclude",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGatherFunction",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_context_gatherer.py",
+      "methods": [
+        {
+          "name": "test_gather_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_gather_create_mode",
+          "doc": ""
+        },
+        {
+          "name": "test_gather_handles_exception_gracefully",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecutionRecord",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_director_agent_advanced.py",
+      "methods": [
+        {
+          "name": "test_init_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_from_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_complete",
+          "doc": ""
+        },
+        {
+          "name": "test_assess_risk_many_files",
+          "doc": ""
+        },
+        {
+          "name": "test_assess_risk_auth_files",
+          "doc": ""
+        },
+        {
+          "name": "test_assess_risk_max_score",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRiskRegistry",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_director_agent_advanced.py",
+      "methods": [
+        {
+          "name": "test_init",
+          "doc": ""
+        },
+        {
+          "name": "test_record_risk",
+          "doc": ""
+        },
+        {
+          "name": "test_get_open_risks_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQualityTracker",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_director_agent_advanced.py",
+      "methods": [
+        {
+          "name": "test_init",
+          "doc": ""
+        },
+        {
+          "name": "test_record_qa_result",
+          "doc": ""
+        },
+        {
+          "name": "test_get_qa_history_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorAgentSnapshot",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_director_agent_advanced.py",
+      "methods": [
+        {
+          "name": "test_save_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "test_load_snapshot",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteDirectorTaskCommandV1",
+      "description": "Tests for ExecuteDirectorTaskCommandV1 contract.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_construction",
+          "doc": "Test basic command construction."
+        },
+        {
+          "name": "test_command_with_run_id",
+          "doc": "Test command with run_id."
+        },
+        {
+          "name": "test_command_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_command_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_command_empty_instruction_raises",
+          "doc": "Test that empty instruction raises ValueError."
+        },
+        {
+          "name": "test_command_invalid_attempt_raises",
+          "doc": "Test that attempt < 1 raises ValueError."
+        },
+        {
+          "name": "test_command_default_metadata",
+          "doc": "Test that metadata defaults to empty dict."
+        },
+        {
+          "name": "test_command_with_metadata",
+          "doc": "Test command with metadata."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRetryDirectorTaskCommandV1",
+      "description": "Tests for RetryDirectorTaskCommandV1 contract.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_retry_command_construction",
+          "doc": "Test retry command construction."
+        },
+        {
+          "name": "test_retry_command_custom_max_attempts",
+          "doc": "Test retry command with custom max_attempts."
+        },
+        {
+          "name": "test_retry_command_invalid_max_attempts",
+          "doc": "Test that max_attempts < 1 raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetDirectorTaskStatusQueryV1",
+      "description": "Tests for GetDirectorTaskStatusQueryV1 contract.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_status_query_construction",
+          "doc": "Test status query construction."
+        },
+        {
+          "name": "test_status_query_with_run_id",
+          "doc": "Test status query with run_id."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorTaskStartedEventV1",
+      "description": "Tests for DirectorTaskStartedEventV1 contract.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_started_event_construction",
+          "doc": "Test started event construction."
+        },
+        {
+          "name": "test_started_event_with_run_id",
+          "doc": "Test started event with run_id."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorTaskCompletedEventV1",
+      "description": "Tests for DirectorTaskCompletedEventV1 contract.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_completed_event_construction",
+          "doc": "Test completed event construction."
+        },
+        {
+          "name": "test_completed_event_failed",
+          "doc": "Test completed event for failed task."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionResultV1",
+      "description": "Tests for DirectorExecutionResultV1 contract.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_success_result",
+          "doc": "Test successful result construction."
+        },
+        {
+          "name": "test_success_result_with_evidence",
+          "doc": "Test successful result with evidence paths."
+        },
+        {
+          "name": "test_failed_result_requires_error",
+          "doc": "Test that failed result requires error_code or error_message."
+        },
+        {
+          "name": "test_failed_result_with_error_code",
+          "doc": "Test failed result with error_code."
+        },
+        {
+          "name": "test_failed_result_with_error_message",
+          "doc": "Test failed result with error_message."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionError",
+      "description": "Tests for DirectorExecutionError contract.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_error_basic",
+          "doc": "Test basic error construction."
+        },
+        {
+          "name": "test_error_with_code",
+          "doc": "Test error with custom code."
+        },
+        {
+          "name": "test_error_with_details",
+          "doc": "Test error with details."
+        },
+        {
+          "name": "test_error_empty_message_raises",
+          "doc": "Test that empty message raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskLifecycle",
+      "description": "Tests for task lifecycle scenarios.",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_task_lifecycle_flow",
+          "doc": "Test complete task lifecycle from start to completion."
+        },
+        {
+          "name": "test_task_retry_flow",
+          "doc": "Test task retry flow."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetDirectorTaskStatusQuery",
+      "description": "任务状态查询测试",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_edge_cases.py",
+      "methods": [
+        {
+          "name": "test_query_with_task_id",
+          "doc": "测试基本查询"
+        },
+        {
+          "name": "test_query_with_empty_task_id",
+          "doc": "测试空任务ID - 应该抛出错误"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionResult",
+      "description": "执行结果测试",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_edge_cases.py",
+      "methods": [
+        {
+          "name": "test_result_success",
+          "doc": "测试成功结果"
+        },
+        {
+          "name": "test_result_failure",
+          "doc": "测试失败结果"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskCancellation",
+      "description": "任务取消测试",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_edge_cases.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestWorkerPool",
+      "description": "工作线程池测试",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_edge_cases.py",
+      "methods": [
+        {
+          "name": "test_pool_full",
+          "doc": "测试线程池满载"
+        },
+        {
+          "name": "submit_task",
+          "doc": ""
+        },
+        {
+          "name": "test_pool_available",
+          "doc": "测试线程池有空闲"
+        },
+        {
+          "name": "submit_task",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCodeGeneration",
+      "description": "代码生成测试",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_edge_cases.py",
+      "methods": [
+        {
+          "name": "test_syntax_error_detection",
+          "doc": "测试语法错误检测"
+        },
+        {
+          "name": "test_valid_code",
+          "doc": "测试有效代码"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_service.py",
+      "methods": [
+        {
+          "name": "test_init_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_init_with_security",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteDirectorTaskCommandV1HappyPath",
+      "description": "ExecuteDirectorTaskCommandV1 is constructed and validated correctly.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_minimal_fields_accepted",
+          "doc": ""
+        },
+        {
+          "name": "test_default_attempt_is_one",
+          "doc": ""
+        },
+        {
+          "name": "test_metadata_dict_is_copied",
+          "doc": ""
+        },
+        {
+          "name": "test_run_id_optional_default_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRetryDirectorTaskCommandV1HappyPath",
+      "description": "RetryDirectorTaskCommandV1 boundary values.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_default_max_attempts",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_max_attempts",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteDirectorTaskCommandV1EdgeCases",
+      "description": "Empty / whitespace fields must be rejected.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_instruction_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_attempt_zero_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRetryDirectorTaskCommandV1EdgeCases",
+      "description": "Boundary: max_attempts must be >= 1.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_max_attempts_zero_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_max_attempts_negative_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetDirectorTaskStatusQueryV1",
+      "description": "Query accepts optional run_id.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_query_without_run_id",
+          "doc": ""
+        },
+        {
+          "name": "test_query_with_run_id",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorTaskEvents",
+      "description": "Event dataclasses enforce non-empty required fields.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_started_event_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_started_event_empty_event_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_completed_event_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_completed_event_empty_status_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionResultV1",
+      "description": "ok/error invariant and evidence_paths coercion.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_success_result_accepts_no_error",
+          "doc": ""
+        },
+        {
+          "name": "test_failed_result_without_error_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_failed_result_with_error_code_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_evidence_paths_coerced_to_tuple",
+          "doc": ""
+        },
+        {
+          "name": "test_evidence_paths_default_empty_tuple",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionError",
+      "description": "Structured exception carries code and details.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_default_code",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_code_and_details",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPatchApplyEnginePureTextHelpers",
+      "description": "parse_full_file_blocks and parse_search_replace_blocks are pure getters.",
+      "defined_in": "polaris/cells/director/execution/tests/test_task_lifecycle_contract.py",
+      "methods": [
+        {
+          "name": "test_parse_full_file_blocks_returns_list",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_full_file_blocks_returns_file_operations",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_full_file_blocks_empty_input_returns_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_search_replace_blocks_returns_list",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_search_replace_blocks_no_match_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_full_file_blocks_multiple_blocks",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorRunOrchestrationRequest",
+      "description": "Director 运行编排请求",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorOrchestrationResponse",
+      "description": "Director 编排响应",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskCreateRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskResponse",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorStatusResponse",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_merge_director_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_debug",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_workflow_snapshot_sync",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

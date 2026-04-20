@@ -1,0 +1,57 @@
+{
+  "case_id": "director_root_cause_locator",
+  "role": "director",
+  "title": "Director Locates Root Cause With Local Evidence",
+  "description": "The director role must search the local workspace, inspect the buggy source and test, and identify the exact defect without editing files.",
+  "workspace_fixture": "director_root_cause_locator",
+  "prompt": "A local test about median calculation is failing. Search the workspace, inspect the relevant source and test files, and explain the exact root cause without editing anything. Name the file path and the defect precisely.",
+  "tags": [
+    "director",
+    "root-cause",
+    "read-only"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "read_file"
+    ],
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "search_code",
+          "grep"
+        ],
+        "fragment": "median",
+        "description": "must search for the median symbol"
+      },
+      {
+        "tools": [
+          "read_file"
+        ],
+        "fragment": "src/median.py",
+        "description": "must inspect the buggy source file"
+      },
+      {
+        "tools": [
+          "read_file"
+        ],
+        "fragment": "tests/test_median.py",
+        "description": "must inspect the failing test"
+      }
+    ],
+    "required_output_substrings": [
+      "src/median.py",
+      "empty list"
+    ],
+    "forbidden_output_substrings": [
+      "<thinking>",
+      "<tool_call>"
+    ],
+    "validators": [
+      "no_prompt_leakage",
+      "no_hallucinated_paths"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 8
+  }
+}

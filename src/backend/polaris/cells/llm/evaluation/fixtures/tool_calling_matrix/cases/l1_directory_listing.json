@@ -1,0 +1,32 @@
+{
+  "case_id": "l1_directory_listing",
+  "level": "L1",
+  "role": "director",
+  "title": "L1 Directory Listing",
+  "description": "验证模型能正确列出目录内容。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请列出当前项目的根目录结构。",
+  "tags": ["l1", "directory", "listing"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.90,
+    "stream": {
+      "required_tools": ["repo_tree"],
+      "forbidden_tools": ["execute_command", "ripgrep", "read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "repo_tree"
+    },
+    "non_stream": {
+      "required_tools": ["repo_tree"],
+      "forbidden_tools": ["execute_command", "ripgrep", "read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

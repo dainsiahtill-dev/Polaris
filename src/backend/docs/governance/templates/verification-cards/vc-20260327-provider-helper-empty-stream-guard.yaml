@@ -1,0 +1,92 @@
+card_id: "vc-20260327-provider-helper-empty-stream-guard"
+bug_summary: >
+  `agentic_benchmark` 在外部 workspace (`X:/BaselineTest`) 真实调用
+  `anthropic_compat` / `kimi-for-coding` 时，provider streaming helper 会把 SSE
+  `data:` 事件静默吞掉，导致 runtime 收到“空内容 + 空 thinking + 0 tool_calls”的空回合，
+  最终被 TurnEngine/Kernel 误判为正常完成。
+
+classification: structural
+
+bug_path:
+  file: "polaris/infrastructure/llm/providers/provider_helpers.py"
+  method: "invoke_stream_with_retry()"
+  symptom: "真实 provider 流返回 status=200 且 content-type=text/event-stream，但 helper 最终 yield 0 events，benchmark 审计中出现 empty complete"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设真实 Kimi coding 端点并不是 WebSocket-only，而是确实返回 SSE 流。"
+    status: verified_true
+    evidence: >
+      直接对 `anthropic_compat-1771249789301` 在 `X:/BaselineTest` 的真实配置发起
+      HTTP POST，得到 `status=200`、`content-type=text/event-stream;charset=utf-8`，
+      且首批 chunk 包含 `event:message_start` 与 `data:{...}`。
+
+  - id: "A2"
+    statement: "我假设 helper 不是没收到事件，而是在 JSON decode 阶段把所有事件都吞掉了。"
+    status: verified_true
+    evidence: >
+      读取 `polaris/infrastructure/llm/providers/provider_helpers.py`，
+      `invoke_stream_with_retry()` 内使用 `json.loads(data_str)`，
+      但模块顶部未 `import json`；异常被 `except Exception: continue` 静默吞掉，
+      因而所有 SSE `data:` 帧都会被跳过。
+
+  - id: "A3"
+    statement: "我假设即使 provider 侧零事件，runtime 仍把空回合当成功完成。"
+    status: verified_true
+    evidence: >
+      读取 `polaris/cells/roles/kernel/internal/turn_engine.py`，
+      当前只在 thinking-only 时返回 `assistant_visible_output_empty`，对
+      `content=''`、`thinking=''`、`parsed_tool_calls=[]` 的空回合直接走 `complete`；
+      同时 `polaris/cells/roles/kernel/internal/kernel.py` 里 `tool_only_turn`
+      只按空文本判断，没有要求真实工具证据。
+
+pre_mortem:
+  failure_point: >
+    如果我只补 `import json`，仍然让 zero-event stream 和空回合走成功路径，
+    后续任何 provider 契约漂移、空 body 或非结构化流都还会复现“审计看起来成功、实际结果为空”的假阳性。
+  risk_zone:
+    - "polaris/infrastructure/llm/providers/provider_helpers.py"
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    - "polaris/cells/roles/kernel/internal/kernel.py"
+
+verification_plan:
+  unit_tests:
+    - file: "tests/test_provider_helpers.py"
+      description: "SSE `data:` 事件必须被 decode 成结构化 dict，而不是静默丢弃"
+      expected: "helper 至少 yield 一条 `{\"type\": \"message_start\"}`"
+      status: new
+    - file: "tests/test_provider_helpers.py"
+      description: "当 provider 返回 `application/json` 时，stream helper 要走 JSON fallback"
+      expected: "helper yield 返回的 JSON object，并正常结束"
+      status: new
+    - file: "tests/test_provider_helpers.py"
+      description: "当 stream 一个结构化事件都没解出来时，helper 必须抛出 `provider_stream_empty`"
+      expected: "测试捕获 RuntimeError，而不是静默成功"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "stream blank response 必须报 `assistant_visible_output_empty`，不能 complete"
+      expected: "events 中存在 error，不存在 complete"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "run blank response 必须报 `assistant_visible_output_empty`"
+      expected: "RoleTurnResult.error 非空，is_complete=False"
+      status: new
+  integration_tests:
+    - description: "provider/helper + turn engine 定向回归"
+      command: "python -m pytest -q tests/test_provider_helpers.py tests/test_anthropic_compat_streaming.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py tests/test_roles_kernel.py"
+      status: planned
+    - description: "chief engineer benchmark 单 case 回归"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace X:/BaselineTest --suite agentic_benchmark --case-id chief_engineer_blueprint_review"
+      status: planned
+    - description: "agentic benchmark 全量回归"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace X:/BaselineTest --suite agentic_benchmark"
+      status: planned
+
+related_adrs:
+  - "ADR-0059"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-27"
+  verified_by: "self"
+  verified_at: "2026-03-27"

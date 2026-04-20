@@ -1,0 +1,21 @@
+{
+  "case_id": "l7_self_correction_duplicate",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Self-Correction - Duplicate File Names",
+  "description": "测试 Agent 在遇到同名文件时能否正确处理。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 搜索项目里所有叫 utils.py 的文件 2. 告诉我一共有几个 utils.py 3. 读取其中一个的内容",
+  "tags": ["l7", "self-correction", "duplicate-files"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": ["repo_rg", "repo_tree"],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "validators": [
+      "handles_duplicate_filenames"
+    ]
+  }
+}

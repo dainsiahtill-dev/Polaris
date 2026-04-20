@@ -1,0 +1,12 @@
+{
+  "cell_id": "roles.session",
+  "version": "1.0.0",
+  "read_order": [
+    "cell.yaml",
+    "README.agent.md",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/role_session_service.py"
+  ],
+  "notes": "Minimal context pack for role session lifecycle and persistence."
+}

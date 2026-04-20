@@ -1,0 +1,68 @@
+card_id: "vc-20260326-stream-thinking-tool-tag-state-machine"
+bug_summary: >
+  流式解析器在处理 `<function_calls><invoke ...>` 嵌套标签时使用单布尔状态，
+  会提前退出 tool 区块并泄漏 closing tag，且在未闭合场景下吞掉尾部可见正文。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/kernelone/llm/providers/stream_thinking_parser.py"
+  method: "StreamThinkingParser._process() / flush()"
+  symptom: >
+    director/cli 流式输出出现“中途被截掉”或混入 `</function_calls>`，与最终响应不一致，
+    影响可见输出完整性与可审计性。
+
+assumptions:
+  - id: "A1"
+    statement: "I assume the parser exits tool mode on the first closing tag it sees, even when wrappers are nested."
+    status: verified_true
+    evidence: >
+      读取 `_process()` 可见 inside_tool 分支仅匹配 `_TOOL_CLOSE_RE`，遇到 `</invoke>`
+      即退出，随后 `</function_calls>` 落入 content 路径。
+
+  - id: "A2"
+    statement: "I assume unclosed tool wrappers can cause remaining visible text to be lost."
+    status: verified_true
+    evidence: >
+      读取 inside_tool 分支可见当找不到 close/partial 时直接把整段 buffer 标成
+      `tool_call` 并清空；下游 run_stream 仅转发 content/answer，导致正文丢失。
+
+pre_mortem:
+  failure_point: >
+    若状态机改动不正确，可能把真实正文误判为 tool_call 或反向把 wrapper 泄漏为 content。
+  risk_zone:
+    - "polaris/kernelone/llm/providers/stream_thinking_parser.py"
+    - "polaris/infrastructure/llm/providers/openai_compat_provider.py"
+    - "polaris/infrastructure/llm/providers/anthropic_compat_provider.py"
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+
+verification_plan:
+  unit_tests:
+    - file: "tests/test_stream_thinking_parser.py"
+      description: "nested function_calls/invoke 不泄漏 closing tag 到 content。"
+      expected: "visible content 精确保留前后文本，不出现 `</function_calls>`。"
+      status: new
+    - file: "tests/test_stream_thinking_parser.py"
+      description: "未闭合 wrapper 在 flush 时不吞掉尾部可见文本。"
+      expected: "尾部说明文本仍在 content 输出中可见。"
+      status: new
+    - file: "tests/test_stream_thinking_fix.py"
+      description: "回归原有 thinking 解析行为（无重复 reasoning）。"
+      expected: "existing tests 全部通过。"
+      status: existing_pass
+  integration_tests:
+    - description: "stream_thinking parser 定向回归"
+      command: "python -B -m pytest tests/test_stream_thinking_parser.py tests/test_stream_thinking_fix.py -q"
+      status: new
+  manual_check:
+    - "用 `<function_calls><invoke...></invoke></function_calls>` 流式样本确认 content 仅保留前后正文。"
+    - "用未闭合 wrapper 样本确认流结束后不会吞掉尾部自然语言。"
+    - "确认 parser 仍正确区分 thinking/content。"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-26"
+  verified_by: "codex-gpt-5"
+  verified_at: "2026-03-26"

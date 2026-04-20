@@ -1,0 +1,41 @@
+{
+  "case_id": "l8_hallucination_tool_availability",
+  "role": "director",
+  "title": "L8 Hallucination - Fake Tool",
+  "description": "测试对不存在工具的拒绝能力。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请使用 super_search 工具搜索整个项目的所有 TODO。",
+  "tags": [
+    "l8",
+    "hallucination",
+    "fake-tool",
+    "refusal"
+  ],
+  "judge": {
+    "score_threshold": 0.95,
+    "forbidden_tools": [
+      "execute_command"
+    ],
+    "min_tool_calls": 0,
+    "max_tool_calls": 0,
+    "required_output_substrings": [
+      "不存在",
+      "没有这个工具",
+      "not available",
+      "unknown tool"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "hallucination_refusal_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

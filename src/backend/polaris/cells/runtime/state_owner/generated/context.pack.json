@@ -1,0 +1,73 @@
+{
+  "id": "runtime.state_owner",
+  "title": "Runtime State Owner",
+  "kind": "capability",
+  "purpose": "Act as the single writer for runtime task, contract, run, and state files.",
+  "summary": "Owns runtime source-of-truth writes and exposes controlled query surfaces for projection and archive consumers.",
+  "owned_paths": [
+    "polaris/application/runtime/state.py",
+    "polaris/application/runtime/maintenance.py",
+    "polaris/application/orchestration/contracts/pm_contract_store.py",
+    "polaris/application/services/artifact_service.py",
+    "polaris/application/services/role_session_artifact_service.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "PersistRuntimeTaskStateCommandV1",
+      "PersistRuntimeContractCommandV1",
+      "PersistRuntimeRunCommandV1"
+    ],
+    "queries": [
+      "GetRuntimeSnapshotQueryV1",
+      "GetRuntimeRunQueryV1"
+    ],
+    "events": [
+      "RuntimeStateChangedEventV1"
+    ],
+    "results": [
+      "RuntimeStateWriteResultV1"
+    ],
+    "errors": [
+      "RuntimeStateOwnerErrorV1"
+    ]
+  },
+  "neighbors": [
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "runtime/tasks/*",
+    "runtime/contracts/*",
+    "runtime/state/*",
+    "runtime/runs/*"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/*",
+    "fs.write:runtime/tasks/*",
+    "fs.write:runtime/contracts/*",
+    "fs.write:runtime/state/*",
+    "fs.write:runtime/runs/*"
+  ],
+  "invariants": [
+    "runtime source-of-truth writes remain single-owner",
+    "history publication is delegated to archive cells",
+    "all text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "polaris/application/services/artifact_service.py",
+    "polaris/application/orchestration/contracts/pm_contract_store.py"
+  ],
+  "test_targets": [
+    "tests/architecture/test_architecture_invariants.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
+

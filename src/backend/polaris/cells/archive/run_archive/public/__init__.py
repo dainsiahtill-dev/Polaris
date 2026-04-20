@@ -1,0 +1,41 @@
+"""Public boundary for `archive.run_archive` cell."""
+
+from polaris.cells.archive.run_archive.public.service import (
+    ArchiveManifestV1,
+    ArchiveRunCommandV1,
+    FactoryIndexEntry,
+    GetArchiveManifestQueryV1,
+    HistoryManifestRepository,
+    HistoryRunsResultV1,
+    ListHistoryRunsQueryV1,
+    RunArchivedEventV1,
+    RunArchiveError,
+    TaskIndexEntry,
+    archive_run,
+    create_run_archive_service,
+    get_run_events,
+    get_run_manifest,
+    list_history_runs,
+    trigger_factory_archive,
+    trigger_run_archive,
+)
+
+__all__ = [
+    "ArchiveManifestV1",
+    "ArchiveRunCommandV1",
+    "FactoryIndexEntry",
+    "GetArchiveManifestQueryV1",
+    "HistoryManifestRepository",
+    "HistoryRunsResultV1",
+    "ListHistoryRunsQueryV1",
+    "RunArchiveError",
+    "RunArchivedEventV1",
+    "TaskIndexEntry",
+    "archive_run",
+    "create_run_archive_service",
+    "get_run_events",
+    "get_run_manifest",
+    "list_history_runs",
+    "trigger_factory_archive",
+    "trigger_run_archive",
+]

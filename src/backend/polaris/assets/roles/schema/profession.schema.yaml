@@ -1,0 +1,173 @@
+# YAML Schema: Profession (专业领域)
+# Y-Axis: Profession 配置验证 Schema
+
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: "profession.schema.yaml"
+
+type: object
+
+required:
+  - id
+  - type
+  - version
+  - name
+  - identity
+  - expertise
+  - engineering_standards
+  - task_protocols
+  - output_format
+
+properties:
+  id:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+    description: Profession 唯一标识符
+
+  type:
+    const: "profession"
+    description: 必须为 profession
+
+  version:
+    type: string
+    pattern: "^\\d+\\.\\d+$"
+    description: 版本号
+
+  parent:
+    type: string
+    description: 父 Profession ID，用于继承
+
+  name:
+    type: string
+    description: 显示名称
+
+  description:
+    type: string
+    description: 详细描述
+
+  identity:
+    type: string
+    minLength: 20
+    description: 身份定义
+
+  expertise:
+    type: array
+    items:
+      type: string
+    minItems: 3
+    description: 专业知识领域
+
+  workflow:
+    type: object
+    required:
+      - type
+      - stages
+    properties:
+      type:
+        type: string
+        enum:
+          - sequential
+          - parallel
+          - blueprint_then_execute
+          - threat_modeling_first
+          - review_then_verify
+      stages:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+            - name
+            - description
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            description:
+              type: string
+            trigger_on:
+              type: array
+              items:
+                type: string
+      task_type_mapping:
+        type: object
+        additionalProperties:
+          type: array
+          items:
+            type: string
+
+  engineering_standards:
+    type: object
+    required:
+      - coverage_mode
+      - standards
+      - red_lines
+    properties:
+      coverage_mode:
+        type: string
+        enum:
+          - inherit
+          - extend
+          - strict
+          - override
+      standards:
+        type: object
+        additionalProperties:
+          type: array
+          items:
+            type: string
+      red_lines:
+        type: array
+        items:
+          type: string
+
+  task_protocols:
+    type: object
+    properties:
+      new_code:
+        type: object
+      refactor:
+        type: object
+      code_review:
+        type: object
+      bug_fix:
+        type: object
+      security_review:
+        type: object
+      architecture_change:
+        type: object
+    additionalProperties:
+      type: object
+
+  output_format:
+    type: object
+    required:
+      - default
+    properties:
+      default:
+        type: string
+      formats:
+        type: object
+        additionalProperties:
+          type: object
+          properties:
+            sections:
+              type: array
+              items:
+                type: object
+
+  provider:
+    type: object
+    properties:
+      primary:
+        type: string
+      fallback:
+        type: string
+      complexity_threshold:
+        type: string
+        enum:
+          - low
+          - medium
+          - high
+
+additionalProperties: false

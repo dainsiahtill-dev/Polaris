@@ -1,0 +1,581 @@
+{
+  "status": "FAIL",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "generated_at": "2026-04-17T00:37:34.778884+00:00",
+  "benchmark": {
+    "suite": "tool_calling_matrix",
+    "run_id": "78200687",
+    "role_scope": "all",
+    "provider_id": "runtime_binding",
+    "model": "runtime_binding",
+    "transport_mode": "stream"
+  },
+  "score": {
+    "overall_percent": 92.75,
+    "average_score": 0.9275,
+    "pass_rate": 0.8947,
+    "total_cases": 19,
+    "passed_cases": 17,
+    "failed_cases": 2
+  },
+  "failures": [
+    {
+      "case_id": "l3_file_edit_sequence",
+      "role": "director",
+      "title": "L3 File Edit Sequence",
+      "score_percent": 72.0,
+      "threshold_percent": 80.0,
+      "summary": "failed checks: stream:required_tool:repo_read_head, stream:required_tool:append_to_file, stream:min_tool_calls, stream:ordered_tool_groups",
+      "root_cause": {
+        "code": "stream:min_tool_calls",
+        "category": "tooling",
+        "critical": false,
+        "message": "tool_calls count must be >= 2",
+        "evidence": {
+          "tool_call_count": 1
+        }
+      },
+      "failed_checks": [
+        {
+          "code": "stream:min_tool_calls",
+          "category": "tooling",
+          "critical": false,
+          "message": "tool_calls count must be >= 2",
+          "evidence": {
+            "tool_call_count": 1
+          }
+        },
+        {
+          "code": "stream:ordered_tool_groups",
+          "category": "tooling",
+          "critical": false,
+          "message": "tool groups must appear in the declared order",
+          "evidence": {
+            "groups": [
+              {
+                "group": [
+                  "repo_read_head"
+                ],
+                "index": -1
+              }
+            ],
+            "observed_tools": [
+              "read_file"
+            ]
+          }
+        },
+        {
+          "code": "stream:required_tool:append_to_file",
+          "category": "tooling",
+          "critical": false,
+          "message": "required tool `append_to_file` must appear",
+          "evidence": {
+            "observed_tools": [
+              "read_file"
+            ]
+          }
+        },
+        {
+          "code": "stream:required_tool:repo_read_head",
+          "category": "tooling",
+          "critical": false,
+          "message": "required tool `repo_read_head` must appear",
+          "evidence": {
+            "observed_tools": [
+              "read_file"
+            ]
+          }
+        }
+      ],
+      "repair_suggestions": [
+        "Tune tool-call loop policy to keep calls within benchmark bounds.",
+        "Adjust tool invocation policy to satisfy deterministic benchmark expectations.",
+        "Enforce required tool `append_to_file` in role policy and add trace assertion in regression suite."
+      ],
+      "expected_contract": {
+        "prompt_preview": "先读取 utils.py，然后在末尾添加一行注释 '# Added by test'，最后再读取一次确认。",
+        "tags": [
+          "l3",
+          "sequence",
+          "edit"
+        ],
+        "judge": {
+          "score_threshold": 0.8,
+          "stream": {
+            "required_tools": [
+              "repo_read_head",
+              "append_to_file"
+            ],
+            "forbidden_tools": [
+              "execute_command"
+            ],
+            "min_tool_calls": 2,
+            "max_tool_calls": 3,
+            "ordered_tool_groups": [
+              [
+                "repo_read_head"
+              ],
+              [
+                "append_to_file"
+              ]
+            ]
+          },
+          "non_stream": {
+            "required_tools": [
+              "repo_read_head",
+              "append_to_file"
+            ],
+            "min_tool_calls": 2
+          },
+          "parity": {
+            "required": true,
+            "compare_mode": "ordered"
+          }
+        }
+      },
+      "observed_trace": {
+        "tool_call_count": 1,
+        "tool_names": [
+          "read_file"
+        ],
+        "tool_calls_preview": [
+          {
+            "tool": "read_file",
+            "args_preview": "{\"file\": \"utils.py\"}",
+            "event_index": 0
+          }
+        ],
+        "output_preview": "臣已核实任务：读取 `utils.py`，追加注释，再读取确认。按律执行三步。**read_file**: {'file': 'utils.py', 'content': '\"\"\"Utility fixture file.\"\"\"\\n\\n\\ndef add(a: int, b: int) -> int:\\n return a + b\\n', 'truncated': False, 'line_count': 5}",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 1857,
+        "event_count": 28,
+        "event_type_histogram": {
+          "complete": 1,
+          "content_chunk": 23,
+          "fingerprint": 2,
+          "tool_call": 1,
+          "tool_result": 1
+        },
+        "raw_event_samples": [
+          {
+            "index": 0,
+            "type": "fingerprint",
+            "fingerprint": {
+              "profile_id": "canonical_balanced",
+              "profile_hash": "73ec9d8322ec98841f6d7a062ad3357b77370ef0163dc98a8f8aaebd8a54b3ca",
+              "bundle_id": "kernelone.default.v1",
+              "bundle_version": "1.0.0",
+              "run_id": "1d41eb37-aca6-4edb-bf2d-e2f3c7c9aa66",
+              "turn_index": 0
+            }
+          },
+          {
+            "index": 1,
+            "type": "fingerprint",
+            "keys": [
+              "fingerprint",
+              "type"
+            ]
+          },
+          {
+            "index": 2,
+            "type": "content_chunk",
+            "content_preview": "臣"
+          },
+          {
+            "index": 3,
+            "type": "content_chunk",
+            "content_preview": "已"
+          },
+          {
+            "index": 4,
+            "type": "content_chunk",
+            "content_preview": "核实"
+          },
+          {
+            "index": 5,
+            "type": "content_chunk",
+            "content_preview": "任务"
+          },
+          {
+            "index": 6,
+            "type": "content_chunk",
+            "content_preview": "："
+          },
+          {
+            "index": 7,
+            "type": "content_chunk",
+            "content_preview": "读取"
+          }
+        ],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {
+          "stream": {
+            "tool_call_count": 1,
+            "tool_names": [
+              "read_file"
+            ],
+            "tool_calls_preview": [
+              {
+                "tool": "read_file",
+                "args_preview": "{\"file\": \"utils.py\"}",
+                "event_index": 0
+              }
+            ],
+            "output_preview": "臣已核实任务：读取 `utils.py`，追加注释，再读取确认。按律执行三步。**read_file**: {'file': 'utils.py', 'content': '\"\"\"Utility fixture file.\"\"\"\\n\\n\\ndef add(a: int, b: int) -> int:\\n return a + b\\n', 'truncated': False, 'line_count': 5}",
+            "thinking_preview": "",
+            "error": "",
+            "duration_ms": 1857,
+            "event_count": 28
+          }
+        },
+        "transport_modes": [
+          "stream"
+        ]
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": true,
+        "transport_errors": {},
+        "transport_tool_counts": {
+          "stream": 1
+        }
+      },
+      "evidence": {
+        "sandbox_workspace": "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_file_edit_sequence-14fa457f9d07",
+        "raw_event_count": 28,
+        "raw_event_types": {
+          "complete": 1,
+          "content_chunk": 23,
+          "fingerprint": 2,
+          "tool_call": 1,
+          "tool_result": 1
+        },
+        "tool_call_count": 1,
+        "benchmark_artifact": "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\TOOL_CALLING_MATRIX_REPORT.json"
+      }
+    },
+    {
+      "case_id": "l3_search_replace",
+      "role": "director",
+      "title": "L3 Search and Replace",
+      "score_percent": 82.5,
+      "threshold_percent": 85.0,
+      "summary": "failed checks: stream:required_tool:search_replace, stream:min_tool_calls",
+      "root_cause": {
+        "code": "stream:min_tool_calls",
+        "category": "tooling",
+        "critical": false,
+        "message": "tool_calls count must be >= 2",
+        "evidence": {
+          "tool_call_count": 1
+        }
+      },
+      "failed_checks": [
+        {
+          "code": "stream:min_tool_calls",
+          "category": "tooling",
+          "critical": false,
+          "message": "tool_calls count must be >= 2",
+          "evidence": {
+            "tool_call_count": 1
+          }
+        },
+        {
+          "code": "stream:required_tool:search_replace",
+          "category": "tooling",
+          "critical": false,
+          "message": "required tool `search_replace` must appear",
+          "evidence": {
+            "observed_tools": [
+              "repo_rg"
+            ]
+          }
+        }
+      ],
+      "repair_suggestions": [
+        "Tune tool-call loop policy to keep calls within benchmark bounds.",
+        "Enforce required tool `search_replace` in role policy and add trace assertion in regression suite."
+      ],
+      "expected_contract": {
+        "prompt_preview": "在 server.py 中查找所有 'localhost' 并替换为 '0.0.0.0'。",
+        "tags": [
+          "l3",
+          "search_replace",
+          "refactor"
+        ],
+        "judge": {
+          "score_threshold": 0.85,
+          "stream": {
+            "required_tools": [
+              "ripgrep",
+              "search_replace"
+            ],
+            "min_tool_calls": 2,
+            "max_tool_calls": 4
+          },
+          "non_stream": {
+            "required_tools": [
+              "ripgrep",
+              "search_replace"
+            ],
+            "min_tool_calls": 2
+          },
+          "parity": {
+            "required": true
+          }
+        }
+      },
+      "observed_trace": {
+        "tool_call_count": 1,
+        "tool_names": [
+          "repo_rg"
+        ],
+        "tool_calls_preview": [
+          {
+            "tool": "repo_rg",
+            "args_preview": "{\"context_lines\": 2, \"path\": \"server.py\", \"pattern\": \"localhost\"}",
+            "event_index": 0
+          }
+        ],
+        "output_preview": "臣已核实任务：在 `server.py` 中将所有 `localhost` 替换为 `0.0.0.0`。先勘察 `server.py` 的当前内容，定位所有 `localhost` 出现的位置。**repo_rg**: {'query': 'localhost', 'total_results': 0, 'returned_count': 0, 'results': [], 'backend': 'rg', 'truncated': False}",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 2351,
+        "event_count": 54,
+        "event_type_histogram": {
+          "complete": 1,
+          "content_chunk": 49,
+          "fingerprint": 2,
+          "tool_call": 1,
+          "tool_result": 1
+        },
+        "raw_event_samples": [
+          {
+            "index": 0,
+            "type": "fingerprint",
+            "fingerprint": {
+              "profile_id": "canonical_balanced",
+              "profile_hash": "73ec9d8322ec98841f6d7a062ad3357b77370ef0163dc98a8f8aaebd8a54b3ca",
+              "bundle_id": "kernelone.default.v1",
+              "bundle_version": "1.0.0",
+              "run_id": "df2b802f-ba62-47a4-aa04-3b1a9eea495b",
+              "turn_index": 0
+            }
+          },
+          {
+            "index": 1,
+            "type": "fingerprint",
+            "keys": [
+              "fingerprint",
+              "type"
+            ]
+          },
+          {
+            "index": 2,
+            "type": "content_chunk",
+            "content_preview": "臣"
+          },
+          {
+            "index": 3,
+            "type": "content_chunk",
+            "content_preview": "已"
+          },
+          {
+            "index": 4,
+            "type": "content_chunk",
+            "content_preview": "核实"
+          },
+          {
+            "index": 5,
+            "type": "content_chunk",
+            "content_preview": "任务"
+          },
+          {
+            "index": 6,
+            "type": "content_chunk",
+            "content_preview": "："
+          },
+          {
+            "index": 7,
+            "type": "content_chunk",
+            "content_preview": "在"
+          }
+        ],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {
+          "stream": {
+            "tool_call_count": 1,
+            "tool_names": [
+              "repo_rg"
+            ],
+            "tool_calls_preview": [
+              {
+                "tool": "repo_rg",
+                "args_preview": "{\"context_lines\": 2, \"path\": \"server.py\", \"pattern\": \"localhost\"}",
+                "event_index": 0
+              }
+            ],
+            "output_preview": "臣已核实任务：在 `server.py` 中将所有 `localhost` 替换为 `0.0.0.0`。先勘察 `server.py` 的当前内容，定位所有 `localhost` 出现的位置。**repo_rg**: {'query': 'localhost', 'total_results': 0, 'returned_count': 0, 'results': [], 'backend': 'rg', 'truncated': False}",
+            "thinking_preview": "",
+            "error": "",
+            "duration_ms": 2351,
+            "event_count": 54
+          }
+        },
+        "transport_modes": [
+          "stream"
+        ]
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": true,
+        "transport_errors": {},
+        "transport_tool_counts": {
+          "stream": 1
+        }
+      },
+      "evidence": {
+        "sandbox_workspace": "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_search_replace-557549634869",
+        "raw_event_count": 54,
+        "raw_event_types": {
+          "complete": 1,
+          "content_chunk": 49,
+          "fingerprint": 2,
+          "tool_call": 1,
+          "tool_result": 1
+        },
+        "tool_call_count": 1,
+        "benchmark_artifact": "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\TOOL_CALLING_MATRIX_REPORT.json"
+      }
+    }
+  ],
+  "tool_audit": {
+    "total_calls": 22,
+    "by_tool": {
+      "execute_command": 1,
+      "file_exists": 3,
+      "glob": 4,
+      "read_file": 6,
+      "repo_read_head": 1,
+      "repo_read_tail": 1,
+      "repo_rg": 4,
+      "repo_tree": 2
+    },
+    "critical_failures": 0,
+    "safety_violations": []
+  },
+  "repair_plan": [
+    {
+      "priority": "P2",
+      "action": "Adjust tool invocation policy to satisfy deterministic benchmark expectations.",
+      "case_ids": [
+        "l2_path_inference",
+        "l3_edit_then_verify",
+        "l3_file_edit_sequence",
+        "l3_glob_then_read",
+        "l3_search_then_read",
+        "l3_wildcard_file_discovery"
+      ],
+      "check_codes": [
+        "stream:ordered_tool_groups",
+        "stream:required_any_tools:read_file",
+        "stream:required_any_tools:repo_rg|repo_rg",
+        "stream:required_any_tools:search_replace|edit_file|append_to_file|precision_edit"
+      ]
+    },
+    {
+      "priority": "P2",
+      "action": "Tune tool-call loop policy to keep calls within benchmark bounds.",
+      "case_ids": [
+        "l3_edit_then_verify",
+        "l3_file_edit_sequence",
+        "l3_glob_then_read",
+        "l3_idempotent_read",
+        "l3_search_replace",
+        "l3_search_then_read"
+      ],
+      "check_codes": [
+        "stream:min_tool_calls"
+      ]
+    },
+    {
+      "priority": "P2",
+      "action": "Enforce required tool `read_file` in role policy and add trace assertion in regression suite.",
+      "case_ids": [
+        "l3_glob_then_read",
+        "l3_search_then_read"
+      ],
+      "check_codes": [
+        "stream:required_tool:read_file"
+      ]
+    },
+    {
+      "priority": "P2",
+      "action": "Enforce required tool `append_to_file` in role policy and add trace assertion in regression suite.",
+      "case_ids": [
+        "l3_file_edit_sequence"
+      ],
+      "check_codes": [
+        "stream:required_tool:append_to_file"
+      ]
+    },
+    {
+      "priority": "P2",
+      "action": "Enforce required tool `repo_read_head` in role policy and add trace assertion in regression suite.",
+      "case_ids": [
+        "l3_file_edit_sequence"
+      ],
+      "check_codes": [
+        "stream:required_tool:repo_read_head"
+      ]
+    },
+    {
+      "priority": "P2",
+      "action": "Enforce required tool `search_replace` in role policy and add trace assertion in regression suite.",
+      "case_ids": [
+        "l3_search_replace"
+      ],
+      "check_codes": [
+        "stream:required_tool:search_replace"
+      ]
+    }
+  ],
+  "errors": [],
+  "evidence_paths": {
+    "benchmark_artifact": "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\TOOL_CALLING_MATRIX_REPORT.json",
+    "audit_package": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\runtime\\llm_evaluations\\78200687\\AGENTIC_EVAL_AUDIT.json",
+    "case_sandboxes": [
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l1_directory_listing-f477b1dec045",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l1_directory_navigation-3bfc4ac1c5ed",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l1_grep_search-19db07e3198b",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l1_read_tail-8ab5c102e74b",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l1_single_tool_accuracy-918bf3f78adb",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l2_complex_types_enum-0bcc8470d977",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l2_glob_pattern_matching-c74b9312c2d5",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l2_multi_file_read-32aadf541d02",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l2_path_inference-bacd65b0c497",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l2_subdirectory_read-d897c93489e1",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_command_with_validation-1a03badd6df3",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_edit_then_verify-90913fbd3dba",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_file_edit_sequence-14fa457f9d07",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_glob_then_read-e3af2b0681d2",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_idempotent_read-6f22f05c1e6d",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_parallel_calls-70cc5cdeaaf5",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_search_replace-557549634869",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_search_then_read-082ee91c5f20",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\78200687\\sandboxes\\l3_wildcard_file_discovery-8876b769b6d4"
+    ]
+  }
+}

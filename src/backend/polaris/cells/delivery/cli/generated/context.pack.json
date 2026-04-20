@@ -1,0 +1,66 @@
+{
+  "cell_id": "delivery.cli",
+  "generated_at": "2026-03-23T00:00:00Z",
+  "contract_types": [
+    {
+      "name": "ExecuteCliCommandV1",
+      "module": "polaris.cells.delivery.cli.public.contracts",
+      "kind": "command",
+      "fields": [
+        {"name": "command", "type": "str", "required": true},
+        {"name": "workspace", "type": "str", "required": true},
+        {"name": "execution_mode", "type": "ExecutionMode", "required": true},
+        {"name": "arguments", "type": "Mapping[str, Any]", "required": false},
+        {"name": "role", "type": "str | None", "required": false},
+        {"name": "session_id", "type": "str | None", "required": false},
+        {"name": "timeout_seconds", "type": "int | None", "required": false},
+        {"name": "metadata", "type": "Mapping[str, Any]", "required": false}
+      ],
+      "description": "Primary command contract for CLI execution"
+    },
+    {
+      "name": "CommandResultV1",
+      "module": "polaris.cells.delivery.cli.public.contracts",
+      "kind": "result",
+      "fields": [
+        {"name": "ok", "type": "bool", "required": true},
+        {"name": "exit_code", "type": "int", "required": true},
+        {"name": "command", "type": "str", "required": true},
+        {"name": "workspace", "type": "str", "required": true},
+        {"name": "output", "type": "str", "required": false},
+        {"name": "structured", "type": "Mapping[str, Any]", "required": false},
+        {"name": "duration_ms", "type": "int | None", "required": false},
+        {"name": "session_id", "type": "str | None", "required": false},
+        {"name": "error_code", "type": "str | None", "required": false},
+        {"name": "error_message", "type": "str | None", "required": false}
+      ],
+      "description": "Unified result for all CLI commands"
+    },
+    {
+      "name": "CommandErrorV1",
+      "module": "polaris.cells.delivery.cli.public.contracts",
+      "kind": "error",
+      "fields": [
+        {"name": "code", "type": "str", "required": true},
+        {"name": "details", "type": "Mapping[str, Any]", "required": false},
+        {"name": "exit_code", "type": "int", "required": false}
+      ],
+      "description": "Structured CLI error with machine-readable code"
+    }
+  ],
+  "execution_modes": {
+    "MANAGEMENT": "Direct handler, no LLM, no tool loop",
+    "ROLE_EXECUTION": "RoleRuntimeService facade, RoleExecutionKernel handles tool loop",
+    "DAEMON": "Background server mode (placeholder)"
+  },
+  "command_types": [
+    "pm.init", "pm.status", "pm.requirement", "pm.task",
+    "pm.health", "pm.report", "pm.coverage", "pm.api_server",
+    "pm.document", "pm.task_history",
+    "director.run", "director.serve", "director.status",
+    "director.task", "director.worker", "director.console",
+    "architect.analyze", "architect.design",
+    "chief_engineer.analysis", "chief_engineer.task"
+  ],
+  "depends_on": ["roles.runtime"]
+}

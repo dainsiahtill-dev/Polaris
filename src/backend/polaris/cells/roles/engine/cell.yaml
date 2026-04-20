@@ -1,0 +1,63 @@
+id: roles.engine
+title: Roles Engine
+kind: capability
+visibility: public
+stateful: false
+owner: roles
+purpose: 'Provide shared role engine selection, classification, registry, and hybrid
+  orchestration primitives for role runtime execution.
+
+  '
+current_modules:
+- polaris.cells.roles.engine.public.service
+- polaris.cells.roles.engine.internal.base
+- polaris.cells.roles.engine.internal.classifier
+- polaris.cells.roles.engine.internal.registry
+- polaris.cells.roles.engine.internal.hybrid
+- polaris.cells.roles.engine.internal.sequential_adapter
+- polaris.cells.roles.engine.internal.react
+- polaris.cells.roles.engine.internal.plan_solve
+- polaris.cells.roles.engine.internal.tot
+tags:
+- composite
+owned_paths:
+- polaris/cells/roles/engine/**
+public_contracts:
+  modules:
+  - polaris.cells.roles.engine.public.contracts
+  commands:
+  - SelectEngineCommandV1
+  - RegisterEngineCommandV1
+  queries:
+  - ClassifyTaskQueryV1
+  - EngineRegistrySnapshotQueryV1
+  events:
+  - EngineSelectedEventV1
+  results:
+  - EngineSelectionResultV1
+  - EngineExecutionResultV1
+  - EngineRegistrySnapshotResultV1
+  errors:
+  - RolesEngineErrorV1
+depends_on:
+- llm.control_plane
+- policy.permission
+- roles.kernel
+- roles.profile
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- llm.invoke:roles/*
+verification:
+  tests:
+  - tests/test_sequential_engine.py
+  - tests/test_roles_kernel.py
+  - tests/test_runtime_role_binding.py
+  - tests/test_role_kernel_write_budget.py
+  gaps:
+  - Sequential compatibility shim remains intentionally minimal and should be validated
+    against any future role-runtime parity requirement.
+  smoke_commands: []
+generated_artifacts: []

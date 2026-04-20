@@ -1,0 +1,44 @@
+# YAML Schema: Recipe (角色配方)
+# 组合 Anchor + Persona + Profession
+
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: "recipe.schema.yaml"
+
+type: object
+
+required:
+  - recipes
+
+properties:
+  recipes:
+    type: object
+    additionalProperties:
+      type: object
+      required:
+        - anchor
+        - persona
+        - profession
+      properties:
+        anchor:
+          type: string
+          description: Anchor ID
+        persona:
+          type: string
+          description: Persona ID
+        profession:
+          type: string
+          description: Profession ID
+        domain:
+          type: string
+          description: 可选的 Domain ID
+        description:
+          type: string
+          description: 配方描述
+        version:
+          type: string
+          pattern: "^\\d+\\.\\d+$"
+        backward_compatible:
+          type: boolean
+        legacy_id:
+          type: string
+          description: 旧版角色 ID，用于向后兼容

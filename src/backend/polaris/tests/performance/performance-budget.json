@@ -1,0 +1,6 @@
+{
+  "tool_call_p95_ms": 500,
+  "context_assembly_p95_ms": 100,
+  "llm_invoke_p95_ms": 5000,
+  "turn_engine_p95_ms": 1000
+}

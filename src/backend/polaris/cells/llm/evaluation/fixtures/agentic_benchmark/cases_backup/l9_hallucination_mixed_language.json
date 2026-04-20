@@ -1,0 +1,46 @@
+{
+  "case_id": "l9_hallucination_mixed_language",
+  "role": "director",
+  "title": "L9 Hallucination - Mixed Language",
+  "description": "测试多语言环境下的幻觉。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "用英文告诉我项目结构，再用中文告诉我 helpers.py 的第 1 个函数签名。",
+  "tags": [
+    "l9",
+    "hallucination",
+    "mixed-language",
+    "multilingual"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree",
+      "repo_rg",
+      "repo_read_head"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 3,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_tree"],
+        "fragment": ".",
+        "description": "英文项目结构"
+      },
+      {
+        "tools": ["repo_rg", "repo_read_head"],
+        "fragment": "src/utils/helpers.py",
+        "description": "helpers.py 函数"
+      }
+    ],
+    "required_output_substrings": [
+      "helpers.py",
+      "def ",
+      "├──",
+      "└──"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "multilingual_check"
+    ]
+  }
+}

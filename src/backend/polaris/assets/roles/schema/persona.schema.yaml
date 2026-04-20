@@ -1,0 +1,91 @@
+# YAML Schema: Persona (人格特征)
+# Z-Axis: Persona 配置验证 Schema
+
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: "persona.schema.yaml"
+
+type: object
+
+required:
+  - id
+  - type
+  - version
+  - name
+  - traits
+  - tone
+  - vocabulary
+  - expression
+
+properties:
+  id:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+    description: Persona 唯一标识符
+
+  type:
+    const: "persona"
+    description: 必须为 persona
+
+  version:
+    type: string
+    pattern: "^\\d+\\.\\d+$"
+    description: 版本号
+
+  name:
+    type: string
+    description: 显示名称
+
+  description:
+    type: string
+    description: 详细描述
+
+  traits:
+    type: string
+    minLength: 10
+    description: 性格特点描述
+
+  tone:
+    type: string
+    minLength: 10
+    description: 语气特点描述
+
+  vocabulary:
+    type: array
+    items:
+      type: string
+    minItems: 3
+    description: 特色词汇列表
+
+  expression:
+    type: object
+    required:
+      - greeting
+      - thinking_prefix
+      - thinking_suffix
+      - conclusion_prefix
+      - farewell
+    properties:
+      greeting:
+        type: string
+      thinking_prefix:
+        type: string
+      thinking_suffix:
+        type: string
+      conclusion_prefix:
+        type: string
+      farewell:
+        type: string
+
+  compatible_anchors:
+    type: array
+    items:
+      type: string
+    description: 兼容的 Anchor 列表
+
+  compatible_professions:
+    type: array
+    items:
+      type: string
+    description: 兼容的 Profession 列表
+
+additionalProperties: false

@@ -1,0 +1,52 @@
+{
+  "case_id": "l9_classic_instruction_adherence",
+  "role": "director",
+  "title": "L9 Classic Strict Instruction Following",
+  "description": "严格指令遵循测试。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "只允许使用 repo_rg 工具，其他工具一律不准用。现在搜索 \"TODO\"。",
+  "tags": [
+    "l9",
+    "classic",
+    "instruction-adherence",
+    "tool-restriction"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_rg"
+    ],
+    "forbidden_tools": [
+      "repo_tree",
+      "repo_read_head",
+      "search_replace",
+      "append_to_file",
+      "execute_command"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "TODO",
+        "description": "只允许调用 repo_rg"
+      }
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "critical_case",
+      "instruction_adherence_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

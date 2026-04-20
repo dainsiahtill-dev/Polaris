@@ -1,0 +1,66 @@
+{
+  "id": "archive.factory_archive",
+  "title": "Factory Archive",
+  "kind": "capability",
+  "purpose": "Archive terminal factory outputs into immutable workspace history factory records.",
+  "summary": "Owns archived factory history publication and index updates while keeping runtime source-of-truth unchanged.",
+  "owned_paths": [
+    "polaris/application/services/history_archive_service.py",
+    "polaris/application/services/factory_run_service.py",
+    "polaris/application/services/archive_hook.py",
+    "polaris/application/services/history_manifest_repository.py",
+    "polaris/delivery/http/routers/history.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ArchiveFactoryRunCommandV1"
+    ],
+    "queries": [
+      "GetFactoryArchiveManifestQueryV1"
+    ],
+    "events": [
+      "FactoryArchivedEventV1"
+    ],
+    "results": [
+      "ArchiveManifestV1"
+    ],
+    "errors": [
+      "FactoryArchiveErrorV1"
+    ]
+  },
+  "neighbors": [
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "workspace/history/factory/*",
+    "workspace/history/index/factory.index.jsonl"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/factory/*",
+    "fs.write:workspace/history/factory/*",
+    "fs.write:workspace/history/index/factory.index.jsonl"
+  ],
+  "invariants": [
+    "factory archive publication is append-only",
+    "runtime state remains untouched by factory archiving",
+    "all text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "polaris/application/services/history_archive_service.py",
+    "polaris/application/services/factory_run_service.py"
+  ],
+  "test_targets": [
+    "tests/archive/test_factory_archive_contracts.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
+

@@ -1,0 +1,20 @@
+{
+  "case_id": "perf_context_window_efficiency",
+  "title": "Performance Context Window Efficiency",
+  "description": "Tests efficient use of context window",
+  "role": "architect",
+  "prompt": "分析整个项目并生成一份包含所有模块、它们的关系、入口点的完整架构文档。",
+  "tags": ["performance", "context", "efficiency"],
+  "weight": 1.0,
+  "critical": false,
+  "metadata": {
+    "metric": "context_tokens_used",
+    "max_tokens": 8000,
+    "measurement": "output_analysis"
+  },
+  "judge": {
+    "score_threshold": 0.70,
+    "required_tools": ["repo_tree", "ripgrep"],
+    "min_tool_calls": 2
+  }
+}

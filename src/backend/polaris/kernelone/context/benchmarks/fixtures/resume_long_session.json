@@ -1,0 +1,17 @@
+{
+  "case_id": "resume_long_session",
+  "description": "Resume a long coding session by reconstructing open loops, active context, and pending work from session receipts.",
+  "user_prompt": "A session was interrupted after 20 turns. The receipts are stored in runtime/strategy_runs/. Reconstruct the current state: what was being worked on, what files were open, what edits were in progress, and what the next step should be.",
+  "workspace_fixture": "A session with 20 turns of receipts in runtime/strategy_runs/ covering strategy_benchmark.py, strategy_scoring.py, and strategy_contracts.py edits.",
+  "expected_evidence_path": [
+    "runtime/strategy_runs/"
+  ],
+  "expected_answer_shape": "summary",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 6,
+    "max_wall_time_seconds": 120.0
+  },
+  "canonical_profile": "canonical_balanced",
+  "score_threshold": 0.70
+}

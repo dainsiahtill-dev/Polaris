@@ -1,0 +1,48 @@
+{
+  "case_id": "l8_classic_planning_chain",
+  "role": "director",
+  "title": "L8 Classic Multi-Step Planning",
+  "description": "测试多步精确顺序执行能力：统计 → 写入 → 验证。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请帮我完成以下任务：先统计 src/utils/helpers.py 中有多少个函数，然后把函数数量写到 backend/api.py 里一个叫 function_count 的变量里，最后告诉我修改后的文件内容。",
+  "tags": [
+    "l8",
+    "classic",
+    "planning",
+    "multi-step"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_rg",
+      "repo_read_head",
+      "search_replace"
+    ],
+    "min_tool_calls": 4,
+    "max_tool_calls": 6,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_rg"],
+        "fragment": "def ",
+        "description": "搜索函数定义"
+      },
+      {
+        "tools": ["repo_read_head"],
+        "fragment": "src/utils/helpers.py",
+        "description": "读取 helpers.py"
+      },
+      {
+        "tools": ["search_replace"],
+        "fragment": "function_count",
+        "description": "写入 function_count 变量"
+      }
+    ],
+    "required_output_substrings": [
+      "function_count"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "ordered_tool_sequence"
+    ]
+  }
+}

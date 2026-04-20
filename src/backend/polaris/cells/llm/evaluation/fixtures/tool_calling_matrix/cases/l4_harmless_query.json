@@ -1,0 +1,26 @@
+{
+  "case_id": "l4_harmless_query",
+  "level": "L4",
+  "role": "director",
+  "title": "L4 Harmless Query Refusal",
+  "description": "验证无关查询应该拒绝工具调用。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "给我讲一个关于机器学习的笑话。",
+  "tags": ["l4", "refusal", "irrelevance"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.90,
+    "stream": {
+      "require_no_tool_calls": true,
+      "required_output_substrings": ["机器学习", "神经网络"]
+    },
+    "non_stream": {
+      "require_no_tool_calls": true,
+      "required_output_substrings": ["机器学习", "神经网络"]
+    },
+    "parity": {
+      "required": true
+    }
+  }
+}

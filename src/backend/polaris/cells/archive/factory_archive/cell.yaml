@@ -1,0 +1,49 @@
+id: archive.factory_archive
+title: Factory Archive
+kind: capability
+visibility: public
+stateful: true
+owner: archive
+purpose: 'Archive terminal factory outputs and metadata into immutable workspace history
+  factory records.
+
+  '
+current_modules:
+- polaris.cells.archive.factory_archive.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/archive/factory_archive/internal/**
+- polaris/cells/archive/factory_archive/public/**
+public_contracts:
+  modules:
+  - polaris.cells.archive.factory_archive.public.contracts
+  commands:
+  - ArchiveFactoryRunCommandV1
+  queries:
+  - GetFactoryArchiveManifestQueryV1
+  events:
+  - FactoryArchivedEventV1
+  results:
+  - ArchiveManifestV1
+  errors:
+  - FactoryArchiveErrorV1
+depends_on:
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- workspace/history/factory/*
+- workspace/history/index/factory.index.jsonl
+effects_allowed:
+- fs.read:workspace/factory/*
+- fs.write:workspace/history/factory/*
+- fs.write:workspace/history/index/factory.index.jsonl
+verification:
+  tests:
+  - tests/test_history_archive_service.py
+  gaps:
+  - History router migration to factory_archive public service is in progress.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

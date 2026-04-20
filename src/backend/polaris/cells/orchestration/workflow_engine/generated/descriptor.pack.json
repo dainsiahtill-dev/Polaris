@@ -1,0 +1,175 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.588368Z",
+  "source_hash": "73a6a3706d0f4646",
+  "cell_id": "orchestration.workflow_engine",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "WorkflowRegistryOpsPort",
+      "description": "Minimal read-only ops required from a workflow registry.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": [
+        {
+          "name": "list_workflows",
+          "doc": "List all registered workflow names."
+        },
+        {
+          "name": "get",
+          "doc": "Get a workflow definition by name; result has a `.handler` attribute."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ActivityRegistryOpsPort",
+      "description": "Minimal read-only ops required from an activity registry.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": [
+        {
+          "name": "list_activities",
+          "doc": "List all registered activity names."
+        },
+        {
+          "name": "get",
+          "doc": "Get an activity definition by name; result has a `.handler` attribute."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HandlerRegistryPort",
+      "description": "DI protocol for workflow + activity registry access.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": [
+        {
+          "name": "workflows",
+          "doc": ""
+        },
+        {
+          "name": "activities",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRuntimeStorePort",
+      "description": "Minimal workflow runtime store contract required by WorkflowEngine.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": [
+        {
+          "name": "init_schema",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeState",
+      "description": "Per-task runtime state tracked by the WorkflowEngine.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRuntimeState",
+      "description": "Per-workflow runtime state tracked by the WorkflowEngine.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionOutcome",
+      "description": "Outcome returned by _execute_spec.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowEngine",
+      "description": "Self-hosted workflow runtime with DAG and sequential handler execution support.",
+      "defined_in": "polaris/kernelone/workflow/engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "set_handler_registry",
+          "doc": "Set the handler registry after construction (allows DI frameworks to wire it)."
+        },
+        {
+          "name": "_now",
+          "doc": "Return current UTC timestamp as ISO string."
+        },
+        {
+          "name": "_bootstrap_handlers",
+          "doc": "Register all handlers from the injected HandlerRegistry."
+        },
+        {
+          "name": "register_workflow",
+          "doc": ""
+        },
+        {
+          "name": "register_activity",
+          "doc": ""
+        },
+        {
+          "name": "bind_workflow_context",
+          "doc": ""
+        },
+        {
+          "name": "unbind_workflow_context",
+          "doc": ""
+        },
+        {
+          "name": "cache_workflow_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_input",
+          "doc": ""
+        },
+        {
+          "name": "_extract",
+          "doc": ""
+        },
+        {
+          "name": "_retry_delay",
+          "doc": "Calculate retry delay with exponential backoff and jitter (delegated to shared utility)."
+        },
+        {
+          "name": "_ready_specs",
+          "doc": ""
+        },
+        {
+          "name": "_blocked_ids",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_status",
+          "doc": ""
+        },
+        {
+          "name": "_build_result",
+          "doc": ""
+        },
+        {
+          "name": "_norm",
+          "doc": "Normalize a handler result to a dict with string keys (delegated to shared utility)."
+        },
+        {
+          "name": "_coerce_int",
+          "doc": ""
+        },
+        {
+          "name": "_coerce_float",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

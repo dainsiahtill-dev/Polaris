@@ -1,0 +1,41 @@
+{
+  "case_id": "l7_error_message_understanding",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Error Message Understanding",
+  "description": "测试 Agent 能否正确理解错误消息并采取正确行动。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 nonexistent_folder/some_file.py。仔细阅读错误消息中的路径信息，理解为什么失败，然后用正确的方法找到实际存在的 Python 文件。",
+  "tags": ["l7", "error-understanding", "recovery", "path-analysis"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.65,
+    "stream": {
+      "required_any_tools": [
+        ["read_file"],
+        ["glob", "list_directory", "search_code"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 5,
+      "validators": [
+        "error_message_acknowledged",
+        "successful_recovery"
+      ]
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["read_file"],
+        ["glob", "list_directory", "search_code"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 5
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

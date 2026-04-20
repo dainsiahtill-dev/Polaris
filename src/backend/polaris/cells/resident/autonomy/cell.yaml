@@ -1,0 +1,61 @@
+id: resident.autonomy
+title: Resident Autonomy
+kind: capability
+visibility: public
+stateful: true
+owner: resident
+purpose: 'Provide long-running resident autonomy capability including goal governance,
+  decision traceability, evidence assembly, and self-improvement loops.
+
+  '
+current_modules:
+- polaris.cells.resident.autonomy.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/resident/autonomy/internal/**
+- polaris/delivery/http/v2/resident.py
+public_contracts:
+  modules:
+  - polaris.cells.resident.autonomy.public.contracts
+  commands:
+  - RunResidentCycleCommandV1
+  - RecordResidentEvidenceCommandV1
+  queries:
+  - QueryResidentStatusV1
+  events:
+  - ResidentCycleCompletedEventV1
+  results:
+  - ResidentAutonomyResultV1
+  errors:
+  - ResidentAutonomyErrorV1
+depends_on:
+- context.engine
+- llm.control_plane
+- policy.permission
+- policy.workspace_guard
+- runtime.execution_broker
+- runtime.state_owner
+- runtime.projection
+- audit.evidence
+subgraphs: []
+state_owners:
+- runtime/state/resident/*
+- runtime/resident/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.read:runtime/**
+- fs.write:runtime/state/resident/*
+- fs.write:runtime/events/runtime.events.jsonl
+- process.spawn:resident/*
+- ws.outbound:resident/*
+verification:
+  tests:
+  - tests/test_resident_api.py
+  - tests/test_resident_service.py
+  - tests/test_resident_evidence_integration.py
+  - tests/test_resident_pm_bridge.py
+  gaps:
+  - Resident capability graph and autonomous loop policies are still being tuned for
+    production hardening.
+  smoke_commands: []
+generated_artifacts: []

@@ -1,0 +1,33 @@
+version: 1
+pipeline_id: external-cell-plugin-admission
+description: >
+  Executable admission pipeline template for External Cell Plugin packages.
+  Commands in this template are implemented by
+  `polaris.bootstrap.governance.architecture_guard_cli`.
+
+inputs:
+  plugin_root: path/to/plugin
+
+report_directory: workspace/meta/governance_reports/plugins
+baseline_file: workspace/meta/governance_reports/plugins/plugin_guard_baseline.json
+
+stages:
+  - id: plugin_guard_audit_only
+    purpose: Collect full issues for one plugin package without blocking CI.
+    commands:
+      - python -m polaris.bootstrap.governance.architecture_guard_cli check_external_plugin --plugin-root ${plugin_root} --mode audit-only --output workspace/meta/governance_reports/plugins/plugin_guard.audit.json --write-baseline workspace/meta/governance_reports/plugins/plugin_guard_baseline.json
+
+  - id: plugin_guard_fail_on_new
+    purpose: Block only when new issues are introduced against baseline.
+    commands:
+      - python -m polaris.bootstrap.governance.architecture_guard_cli check_external_plugin --plugin-root ${plugin_root} --mode fail-on-new --baseline workspace/meta/governance_reports/plugins/plugin_guard_baseline.json --output workspace/meta/governance_reports/plugins/plugin_guard.fail_on_new.json
+
+  - id: plugin_guard_hard_fail
+    purpose: Strict gate for cleared plugin domains.
+    commands:
+      - python -m polaris.bootstrap.governance.architecture_guard_cli check_external_plugin --plugin-root ${plugin_root} --mode hard-fail --output workspace/meta/governance_reports/plugins/plugin_guard.hard_fail.json
+
+notes:
+  - Use audit-only mode first to establish a trustworthy baseline.
+  - fail-on-new mode is recommended during migration to avoid freeze-by-debt.
+  - hard-fail mode should be enabled after the plugin domain is cleaned.

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-27T00:00:00Z",
+  "runtime_mode": "shadow",
+  "metadata": {
+    "suite_id": "context-os-runtime-full-gate-v1",
+    "domain": "code"
+  },
+  "core_summary": {
+    "total_cases": 12,
+    "exact_fact_recovery": 0.91,
+    "decision_preservation": 0.93,
+    "open_loop_continuity": 0.90,
+    "artifact_restore_precision": 0.88,
+    "temporal_update_correctness": 0.87,
+    "abstention": 0.95,
+    "compaction_regret": 0.10
+  },
+  "attention_summary": {
+    "total_cases": 24,
+    "pass_rate": 0.96,
+    "intent_carryover_accuracy": 0.96,
+    "latest_turn_retention_rate": 0.99,
+    "focus_regression_rate": 0.02,
+    "false_clear_rate": 0.00,
+    "pending_followup_resolution_rate": 0.97,
+    "seal_while_pending_rate": 0.00,
+    "continuity_focus_alignment_rate": 0.92
+  },
+  "cognitive_runtime_summary": {
+    "total_cases": 10,
+    "receipt_coverage": 1.0,
+    "handoff_roundtrip_success_rate": 1.0,
+    "state_restore_accuracy": 0.99,
+    "transaction_envelope_coverage": 0.99,
+    "receipt_write_failure_rate": 0.0,
+    "sqlite_write_p95_ms": 18.0
+  },
+  "artifacts": {
+    "report_source": "workspace/meta/context_os_eval/latest.json",
+    "raw_results_path": "workspace/meta/context_os_eval/raw_cases.jsonl",
+    "replay_trace_path": "workspace/meta/context_os_eval/replay/"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "case_id": "l1_output_format_consistency",
+  "role": "director",
+  "title": "L1 Output Format Consistency",
+  "description": "测试 Agent 输出格式（表格 + 代码块）的稳定性。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "用表格形式展示 backend/api.py 的前 10 行代码。",
+  "tags": [
+    "l1",
+    "basic",
+    "output-format",
+    "table"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_output_substrings": [
+      "|",
+      "---",
+      "backend/api.py"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

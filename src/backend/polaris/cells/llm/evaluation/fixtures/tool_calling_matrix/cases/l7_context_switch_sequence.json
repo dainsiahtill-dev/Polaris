@@ -1,0 +1,21 @@
+{
+  "case_id": "l7_context_switch_sequence",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Context Switch - Sequence Break",
+  "description": "测试 Agent 在序列中断后能否恢复执行。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 config.py 的第1部分 2. 跳过第2步，直接做第3步：总结 config.py 的主要配置项 3. 然后回头做第2步：列出 config.py 的行数",
+  "tags": ["l7", "context", "switch", "sequence-break"],
+  "weight": 1.0,
+  "critical": false,
+  "judge": {
+    "score_threshold": 0.7,
+    "required_tools": ["read_file"],
+    "min_tool_calls": 2,
+    "max_tool_calls": 3,
+    "validators": [
+      "handles_sequence_break"
+    ]
+  }
+}

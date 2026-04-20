@@ -1,0 +1,32 @@
+{
+  "case_id": "l7_task_persistence",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Task Persistence After Interruption",
+  "description": "测试 Agent 能否在被打断后继续完成原任务。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 config.py 2. 等等，先告诉我今天天气怎么样？算了，还是继续读取 config.py 并告诉我里面的配置项。",
+  "tags": ["l7", "persistence", "interruption", "task-continuation"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "required_output_substrings": ["DEBUG", "API_HOST", "config"]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

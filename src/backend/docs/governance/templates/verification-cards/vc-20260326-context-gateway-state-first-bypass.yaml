@@ -1,0 +1,61 @@
+card_id: "vc-20260326-context-gateway-state-first-bypass"
+bug_summary: >
+  RoleContextGateway 在 State-First Context OS 已生效时，仍按旧的
+  max_context_tokens + sliding/truncate/summarize 路径做二次压缩，导致上下文退化回传统压缩。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/context_gateway.py"
+  method: "build_context / _process_history"
+  symptom: "即使有 state_first_context_os，仍触发传统压缩并丢失上下文连续性"
+
+assumptions:
+  - id: "A1"
+    statement: "LLM 请求链路仍经过 RoleContextGateway 的旧压缩分支"
+    status: verified_true
+    evidence: >
+      LLMCaller._prepare_llm_request 内实例化 RoleContextGateway 并调用 build_context；
+      build_context 在 token 超限时直接调用 _apply_compression。
+
+  - id: "A2"
+    statement: "当 state_first_context_os 已注入时，应跳过 gateway 级旧压缩"
+    status: verified_true
+    evidence: >
+      Context OS 已负责 continuity/object-level 组织，gateway 再压缩会把状态对象降级成传统截断语义，
+      与 State-First 设计冲突。
+
+pre_mortem:
+  failure_point: >
+    若直接全局禁用 _apply_compression，会影响没有 Context OS 注入的路径；
+    需要仅在 state_first mode active 时跳过旧压缩。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/context_gateway.py"
+    - "polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py"
+      description: "新增 state_first 模式下跳过 legacy 压缩回归测试"
+      expected: "不出现 [CONTENT_TRUNCATED]/[Context truncated]，且消息数量保持高于压缩后水平"
+      status: new
+  integration_tests:
+    - description: "Context OS + Cognitive Runtime 相关回归集"
+      command: >
+        pytest polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py
+        polaris/kernelone/tests/test_session_continuity_engine.py
+        polaris/cells/context/engine/tests/test_public_service.py
+        polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+        -q
+      status: existing_fix
+  manual_check:
+    - "带 state_first_context_os 的会话中，确认 debug 事件显示 legacy_compression_skipped=true"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt5"
+  completed_at: "2026-03-26"
+  verified_by: "self (tests)"
+  verified_at: "2026-03-26"
+

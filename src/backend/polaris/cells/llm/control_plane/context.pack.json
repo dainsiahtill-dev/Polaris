@@ -1,0 +1,11 @@
+{
+  "cell_id": "llm.control_plane",
+  "version": "1.0",
+  "summary": "Unified LLM multi-provider control plane",
+  "depends_on": [],
+  "owned_paths": [
+    "polaris/application/llm/evaluation",
+    "polaris/infrastructure/llm/providers",
+    "polaris/infrastructure/llm/token_tracking_wrapper.py"
+  ]
+}

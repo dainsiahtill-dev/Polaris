@@ -1,0 +1,27 @@
+{
+  "case_id": "l7_context_switch_multi",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Context Switch - Multiple Wrong Guesses",
+  "description": "测试 Agent 在多个连续错误后能否自我修正。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 src/utils/helpers.py 2. 读取 src/utils/helpers.py 3. 读取 utils.py 4. 总结这两个文件的区别",
+  "tags": ["l7", "context", "switch", "self-correction"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.8,
+    "stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 4
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 2
+    },
+    "parity": {
+      "required": true
+    }
+  }
+}

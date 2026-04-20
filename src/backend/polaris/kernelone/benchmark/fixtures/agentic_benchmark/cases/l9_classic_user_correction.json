@@ -1,0 +1,56 @@
+{
+  "case_id": "l9_classic_user_correction",
+  "role": "director",
+  "title": "L9 Classic User Correction Handling",
+  "description": "用户纠错响应测试。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "你刚才做错了，现在按我说的改：把所有 TODO 改成 FIXME。",
+  "tags": [
+    "l9",
+    "classic",
+    "user-correction",
+    "instruction-following"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_rg",
+      "search_replace"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 6,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "TODO",
+        "description": "定位 TODO"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "FIXME",
+        "description": "替换为 FIXME"
+      }
+    ],
+    "forbidden_output_substrings": [
+      "没有 TODO",
+      "不存在 TODO"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "correction_response_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

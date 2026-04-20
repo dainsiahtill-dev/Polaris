@@ -1,0 +1,32 @@
+{
+  "case_id": "l3_parallel_calls",
+  "level": "L3",
+  "role": "director",
+  "title": "Parallel Function Calling",
+  "prompt": "分别检查 workspace 根目录下的 config.py、server.py 和 utils.py 这三个文件存不存在。",
+  "description": "验证模型是否触发多次独立 file_exists 调用，而不是伪造数组工具。",
+  "workspace_fixture": "base_tooling_workspace",
+  "tags": ["parallel", "throughput"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.8,
+    "stream": {
+      "required_tools": ["file_exists"],
+      "required_tool_call_counts": {
+        "file_exists": 3
+      },
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file", "append_to_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 8
+    },
+    "non_stream": {
+      "required_tools": ["file_exists"],
+      "min_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

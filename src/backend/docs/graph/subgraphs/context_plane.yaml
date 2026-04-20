@@ -1,0 +1,140 @@
+version: 1
+id: context_plane
+title: Context Plane Retrieval Pipeline
+purpose: >
+  Defines graph-constrained context retrieval flow from API request to catalog
+  descriptor lookup and context assembly for role execution.
+  Extended in Phase 5 (2026-03-25) with canonical code exploration policy:
+  exploration phases, working-set assembly, budget gating, and 5-tier cache.
+entry_cells:
+  - delivery.api_gateway
+  - roles.runtime
+cells:
+  - context.engine
+  - context.catalog
+  - llm.dialogue
+  - llm.provider_config
+  - runtime.projection
+  - workspace.integrity
+  - roles.kernel
+exit_cells:
+  - context.engine
+  - llm.dialogue
+  - roles.kernel
+relations:
+  - from: delivery.api_gateway
+    to: context.engine
+    type: queries
+    contract: BuildContextPackQueryV1
+  - from: context.engine
+    to: context.catalog
+    type: queries
+    contract: SearchDescriptorPackQueryV1
+  - from: context.catalog
+    to: workspace.integrity
+    type: queries
+    contract: ValidateDescriptorCacheQueryV1
+  - from: context.engine
+    to: runtime.projection
+    type: queries
+    contract: RuntimeProjectionQueryV1
+  - from: llm.provider_config
+    to: llm.dialogue
+    type: calls
+    contract: ResolveProviderContextCommandV1
+  # ------------------------------------------------------------------
+  # Phase 5 canonical exploration edges (2026-03-25)
+  # kernelone/context/* capabilities are owned by roles.kernel (kernelone
+  # is the infrastructure layer under roles.kernel).  Edge types are
+  # mapped to the nearest schema-enum value.
+  # ------------------------------------------------------------------
+  # Exploration policy is consumed by working-set assembler (implemented in roles.kernel)
+  - from: context.engine
+    to: roles.kernel
+    type: depends_on
+    contract: IExplorationPolicy.should_expand
+  # Working-set assembler (roles.kernel) consults budget gate
+  - from: roles.kernel
+    to: roles.kernel
+    type: calls
+    contract: ContextBudgetGate.can_add
+  # Budget gate uses context cache
+  - from: roles.kernel
+    to: context.engine
+    type: calls
+    contract: ContextCache.get_cached_pack
+  # roles.kernel depends on workspace.integrity for canonical read tools
+  - from: roles.kernel
+    to: workspace.integrity
+    type: calls
+    contract: repo_read_slice
+  # Context engine coordinates with roles.kernel on compaction
+  - from: context.engine
+    to: roles.kernel
+    type: calls
+    contract: SessionContinuityEngine.project
+  # CompactSnapshot pre/post state tracked by roles.kernel
+  - from: context.engine
+    to: roles.kernel
+    type: owns_state
+    contract: CompactSnapshot
+critical_contracts:
+  - BuildContextPackQueryV1
+  - SearchDescriptorPackQueryV1
+  - ValidateDescriptorCacheQueryV1
+  - RuntimeProjectionQueryV1
+  - ResolveProviderContextCommandV1
+  # Phase 2 canonical read tools (implemented)
+  - repo_read_slice
+  - repo_read_around
+  - repo_read_head
+  - repo_read_tail
+  - repo_rg
+  - repo_symbols_index
+  - treesitter_find_symbol
+  # Phase 2 error types
+  - BudgetExceededError
+  # Phase 5 new contracts
+  - IExplorationPolicy.should_expand
+  - IExplorationPolicy.should_compact
+  - ContextBudgetGate.can_add
+  - ContextBudgetGate.record_usage
+  - SessionContinuityEngine.project
+state_boundaries:
+  - owner: context.catalog
+    state: workspace/meta/context_catalog/*
+  - owner: workspace.integrity
+    state: workspace/meta/integrity/*
+  # Phase 5: roles.kernel (kernelone layer) owns context cache state
+  - owner: roles.kernel
+    state: workspace/.polaris/runtime/context_cache/*
+verify_targets:
+  tests:
+    - polaris/cells/context/catalog/tests/test_service.py
+    - polaris/cells/context/catalog/tests/test_descriptor_validation.py
+    - tests/architecture/test_graph_reality.py
+    # Phase 5 E2E
+    - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
+    - polaris/kernelone/context/tests/test_context_subsystem.py
+  contracts:
+    - BuildContextPackQueryV1
+    - SearchDescriptorPackQueryV1
+    - ValidateDescriptorCacheQueryV1
+    - IExplorationPolicy.should_expand
+    - ContextBudgetGate.can_add
+migration_notes:
+  - Context catalog descriptors are generated assets and must not override graph truth assets.
+  # Phase 2 canonical read tools (2026-03-25)
+  - Canonical read tools (repo_read_slice, repo_read_around, repo_read_head, repo_read_tail,
+    repo_rg, repo_symbols_index, treesitter_find_symbol) are implemented and registered.
+  - read_file is deprecated for files >100 lines; it remains as a high-cost fallback.
+    E2E tests and fitness rules must enforce this ordering constraint.
+  - BudgetExceededError is raised by ContextBudgetGate when an asset exceeds available headroom.
+  # Phase 5 migration notes (2026-03-25)
+  - Session continuity (Tier 1) was already implemented (ADR-0045) and is reused, not replaced.
+  - ContextCache (Tier 1 pack cache) is extended to 5-tier; existing API remains backward-compatible.
+  - Existing 2648 test baseline must not regress after Phase 5 changes.
+  - Phase 5 capability modules (exploration_policy, working_set, budget_gate, session_continuity,
+    compaction) live under polaris/kernelone/context/ and are owned by the roles.kernel cell.
+  - "The 5-tier cache tiers are: Tier 1 Session Continuity, Tier 2 Repo Map, Tier 3 Symbol Index,
+    Tier 4 Hot Slice, Tier 5 Continuity Projection.  Tiers 2-5 are pending implementation."

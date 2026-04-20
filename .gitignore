@@ -1,0 +1,168 @@
+# =============================================================================
+# Polaris .gitignore
+# Policy:
+# - Ignore machine-local state, secrets, caches, and generated artifacts.
+# - Keep source, tests, automation config, and project docs versioned.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OS / editor noise
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.sublime-*
+
+# -----------------------------------------------------------------------------
+# Logs and test artifacts
+# -----------------------------------------------------------------------------
+*.log
+playwright-report/
+test-results/
+reports/
+screenshots/
+.nyc_output/
+.coverage
+coverage/
+htmlcov/
+
+# -----------------------------------------------------------------------------
+# Environment and secrets
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+!.env.template
+
+# -----------------------------------------------------------------------------
+# Python virtualenv / cache / build
+# -----------------------------------------------------------------------------
+.venv/
+venv/
+env/
+langchain_env/
+site-packages/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Extra pycache patterns in nested project paths
+infrastructure/**/__pycache__/
+infrastructure/**/*.pyc
+src/backend/**/__pycache__/
+src/backend/**/*.pyc
+
+# -----------------------------------------------------------------------------
+# Node / frontend / electron build output
+# -----------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/.vite/
+src/frontend/.turbo/
+src/electron/dist/
+src/electron/out/
+
+# -----------------------------------------------------------------------------
+# IDE and local AI tool state (local-only)
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+.windsurf/
+.cursor/
+.trae/
+.claude
+.codebuddy
+.continue
+.gemini
+.kiro
+.opencode
+.qoder
+.roo
+.github
+
+# Local agent runtime directories
+.agent/
+.ai-agent/
+
+# -----------------------------------------------------------------------------
+# Shared automation metadata
+# -----------------------------------------------------------------------------
+# Keep .github versioned (workflows/prompts/docs)
+# (Do not ignore .github)
+
+# .codex can contain both shared configs and local cache.
+# Ignore all by default, then allowlist project-shared files.
+.codex/*
+!.codex/AGENTS.md
+!.codex/skills/
+!.codex/skills/**
+.codex/**/__pycache__/
+.codex/**/*.pyc
+
+# -----------------------------------------------------------------------------
+# Polaris runtime/state
+# -----------------------------------------------------------------------------
+# Ignore generated runtime state by default.
+.polaris/*
+
+# Keep project-level process docs and scripts versioned.
+!.polaris/docs/
+!.polaris/docs/**
+!.polaris/scripts/
+!.polaris/scripts/**
+
+# Always ignore local/sensitive or high-churn runtime data.
+.polaris/config/
+.polaris/runtime/
+.polaris/logs/
+.polaris/snapshots/
+.polaris/memory/
+.polaris/brain/
+.polaris/docs/
+
+# -----------------------------------------------------------------------------
+# Project-specific temporary paths
+# -----------------------------------------------------------------------------
+docs/temp/
+docs/fixes/
+.*_cache/
+.snapshots/
+*.local
+
+# ForRef UI-Framework
+src/minimal/
+nul
+
+cline_mcp_settings.json
+.cocoindex_code/
+.transcripts/
+.polaris-cache/
+tmp_e2e/
+.tmp*/
+
+src/backend/.polaris/*
+src/backend/tmp_**
+src/backend/opencode-dev/*
+src/backend/aider-main/*
+src/backend/debug_*
+
+src/backend/workspace/*
+src/backend/.polaris/*
+src/backend/.kernelone/*
+

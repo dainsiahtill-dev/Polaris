@@ -1,0 +1,351 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ACGA Cell Evolution Proposal
+description: >
+  Machine-readable proposal emitted by the Cell Evolution Engine. A proposal is
+  an advisory artifact only and cannot become architecture truth until it has
+  passed governance and harness validation and has been explicitly approved.
+type: object
+additionalProperties: false
+required:
+  - version
+  - proposal_id
+  - generated_at
+  - workspace
+  - authority_docs
+  - engine_fingerprint
+  - graph_fingerprint
+  - embedding_runtime_fingerprint
+  - proposal_type
+  - status
+  - source_scope
+  - candidate_target
+  - evidence
+  - proposed_changes
+  - validation_plan
+  - risk
+  - activation_policy
+properties:
+  version:
+    type: integer
+    minimum: 1
+  proposal_id:
+    type: string
+    pattern: "^cep-[a-z0-9-]+$"
+  generated_at:
+    type: string
+    minLength: 1
+  workspace:
+    type: string
+    minLength: 1
+  authority_docs:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      minLength: 3
+  engine_fingerprint:
+    type: string
+    minLength: 8
+  graph_fingerprint:
+    type: string
+    minLength: 8
+  embedding_runtime_fingerprint:
+    type: string
+    minLength: 8
+  proposal_type:
+    type: string
+    enum:
+      - merge_candidate
+      - split_candidate
+      - boundary_tightening_candidate
+  status:
+    type: string
+    enum:
+      - draft
+      - candidate
+      - governance_validated
+      - harness_validated
+      - approved
+      - rejected
+      - applied
+      - superseded
+  summary:
+    type: string
+    minLength: 8
+  source_scope:
+    type: object
+    additionalProperties: false
+    required:
+      - source_cells
+      - source_paths
+    properties:
+      source_cells:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 3
+      source_paths:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 3
+      related_subgraphs:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      code_fingerprints:
+        type: array
+        items:
+          type: string
+          minLength: 8
+  candidate_target:
+    type: object
+    additionalProperties: false
+    required:
+      - cell_id
+      - title
+      - kind
+      - owner
+    properties:
+      cell_id:
+        type: string
+        pattern: "^[a-z0-9_]+\\.[a-z0-9_]+$"
+      title:
+        type: string
+        minLength: 3
+      kind:
+        type: string
+        minLength: 2
+      owner:
+        type: string
+        minLength: 2
+      domain:
+        type: string
+        minLength: 2
+      visibility:
+        type: string
+        enum:
+          - public
+          - internal
+      target_assets_status:
+        type: string
+        enum:
+          - absent
+          - partial
+          - existing
+  evidence:
+    type: object
+    additionalProperties: false
+    required:
+      - rationale
+      - semantic_signals
+      - structural_signals
+      - runtime_signals
+      - conflict_signals
+    properties:
+      rationale:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 8
+      semantic_signals:
+        type: array
+        items:
+          $ref: "#/$defs/scored_signal"
+      structural_signals:
+        type: array
+        items:
+          $ref: "#/$defs/scored_signal"
+      runtime_signals:
+        type: array
+        items:
+          $ref: "#/$defs/scored_signal"
+      conflict_signals:
+        type: array
+        items:
+          $ref: "#/$defs/scored_signal"
+  proposed_changes:
+    type: object
+    additionalProperties: false
+    required:
+      - owned_paths
+      - depends_on
+      - state_owners
+      - effects_allowed
+      - contracts
+      - graph_updates
+    properties:
+      owned_paths:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 3
+      depends_on:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      state_owners:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      effects_allowed:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      contracts:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      graph_updates:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 8
+      codemod_preview:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required:
+            - path
+            - action
+            - summary
+          properties:
+            path:
+              type: string
+              minLength: 3
+            action:
+              type: string
+              enum:
+                - add
+                - update
+                - move
+                - split
+                - delete
+            summary:
+              type: string
+              minLength: 8
+  validation_plan:
+    type: object
+    additionalProperties: false
+    required:
+      - governance_checks
+      - harness_checks
+      - targeted_tests
+      - required_human_review
+    properties:
+      governance_checks:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 8
+      harness_checks:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 8
+      targeted_tests:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      required_human_review:
+        type: array
+        items:
+          type: string
+          minLength: 8
+  risk:
+    type: object
+    additionalProperties: false
+    required:
+      - severity
+      - summary
+      - failure_modes
+      - rollback_strategy
+    properties:
+      severity:
+        type: string
+        enum:
+          - low
+          - medium
+          - high
+          - critical
+      summary:
+        type: string
+        minLength: 8
+      failure_modes:
+        type: array
+        items:
+          type: string
+          minLength: 8
+      rollback_strategy:
+        type: string
+        minLength: 8
+  activation_policy:
+    type: object
+    additionalProperties: false
+    required:
+      - may_auto_apply
+      - requires_human_approval
+      - requires_graph_update
+      - apply_after_checks
+      - forbid_conditions
+    properties:
+      may_auto_apply:
+        type: boolean
+      requires_human_approval:
+        type: boolean
+      requires_graph_update:
+        type: boolean
+      apply_after_checks:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 8
+      forbid_conditions:
+        type: array
+        items:
+          type: string
+          minLength: 8
+$defs:
+  scored_signal:
+    type: object
+    additionalProperties: false
+    required:
+      - kind
+      - strength
+      - summary
+      - refs
+    properties:
+      kind:
+        type: string
+        minLength: 3
+      channel:
+        type: string
+        minLength: 3
+      strength:
+        type: number
+        minimum: 0
+        maximum: 1
+      summary:
+        type: string
+        minLength: 8
+      refs:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 3

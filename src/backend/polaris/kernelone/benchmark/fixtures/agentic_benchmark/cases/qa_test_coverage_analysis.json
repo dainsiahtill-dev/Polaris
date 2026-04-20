@@ -1,0 +1,42 @@
+{
+  "case_id": "qa_test_coverage_analysis",
+  "role": "qa",
+  "title": "QA Analyzes Test Coverage Gaps",
+  "description": "The QA role must identify untested code paths and recommend test additions.",
+  "workspace_fixture": "qa_release_verdict",
+  "prompt": "Analyze the codebase and tests for coverage gaps. Return JSON: {coverage_percentage: int, untested_files: [string], edge_cases: [{file, reason, test_suggestion}], critical_paths: [string]}. Focus on happy path, error handling, and boundary conditions.",
+  "tags": [
+    "qa",
+    "coverage",
+    "testing"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_tree",
+      "ripgrep"
+    ],
+    "required_output_substrings": [
+      "coverage_percentage",
+      "untested_files",
+      "edge_cases"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "qa_coverage_analysis"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 8,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

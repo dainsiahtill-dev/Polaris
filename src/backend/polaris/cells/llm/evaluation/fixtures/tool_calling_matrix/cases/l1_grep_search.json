@@ -1,0 +1,36 @@
+{
+  "case_id": "l1_grep_search",
+  "level": "L1",
+  "role": "director",
+  "title": "L1 Grep Search",
+  "description": "验证模型能使用 grep 搜索代码。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在 src/ 目录下搜索包含 'def ' 的行。",
+  "tags": ["l1", "search", "grep"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.90,
+    "stream": {
+      "required_any_tools": [["ripgrep", "repo_rg"]],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool_any": ["ripgrep", "repo_rg"],
+      "first_call_arg_equals": {
+        "path": "src/"
+      },
+      "first_call_required_any": [["pattern"]]
+    },
+    "non_stream": {
+      "required_any_tools": [["ripgrep", "repo_rg"]],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.459779Z",
+  "source_hash": "c43b35801590b338",
+  "cell_id": "policy.workspace_guard",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "_coerce_bool",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_meta_project_root",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/service.py"
+    },
+    {
+      "type": "function",
+      "name": "self_upgrade_mode_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_workspace_target",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/service.py"
+    },
+    {
+      "type": "function",
+      "name": "is_meta_project_target",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_workspace_guard_message",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/service.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_workspace_target_allowed",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

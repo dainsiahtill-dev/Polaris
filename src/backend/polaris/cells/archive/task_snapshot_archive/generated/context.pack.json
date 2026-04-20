@@ -1,0 +1,66 @@
+{
+  "id": "archive.task_snapshot_archive",
+  "title": "Task Snapshot Archive",
+  "kind": "capability",
+  "purpose": "Archive terminal runtime task snapshots and related contracts into immutable workspace history task records.",
+  "summary": "Owns archived task history publication and task index updates without mutating runtime source-of-truth state.",
+  "owned_paths": [
+    "polaris/application/services/history_archive_service.py",
+    "polaris/application/services/archive_hook.py",
+    "polaris/application/services/history_manifest_repository.py",
+    "polaris/delivery/http/routers/history.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ArchiveTaskSnapshotCommandV1"
+    ],
+    "queries": [
+      "GetTaskSnapshotManifestQueryV1"
+    ],
+    "events": [
+      "TaskSnapshotArchivedEventV1"
+    ],
+    "results": [
+      "ArchiveManifestV1"
+    ],
+    "errors": [
+      "TaskSnapshotArchiveErrorV1"
+    ]
+  },
+  "neighbors": [
+    "runtime.state_owner",
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "workspace/history/tasks/*",
+    "workspace/history/index/tasks.index.jsonl"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/tasks/*",
+    "fs.write:workspace/history/tasks/*",
+    "fs.write:workspace/history/index/tasks.index.jsonl"
+  ],
+  "invariants": [
+    "archived task snapshots are immutable after publication",
+    "task archive writes must not mutate runtime source-of-truth",
+    "all text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "polaris/application/services/history_archive_service.py",
+    "polaris/application/services/archive_hook.py"
+  ],
+  "test_targets": [
+    "tests/archive/test_task_snapshot_archive_contracts.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
+

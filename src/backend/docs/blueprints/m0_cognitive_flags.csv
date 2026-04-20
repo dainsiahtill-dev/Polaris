@@ -1,0 +1,24 @@
+开关名称,当前默认值,定义位置,影响范围,备注
+KERNELONE_COGNITIVE_ENABLED,0,polaris/kernelone/cognitive/config.py:8,全局主开关,控制整个认知管道启用状态
+KERNELONE_COGNITIVE_PERCEPTION,0,polaris/kernelone/cognitive/config.py:9,PerceptionLayer,Phase-gated phase switch
+KERNELONE_COGNITIVE_REASONING,0,polaris/kernelone/cognitive/config.py:10,CriticalThinkingEngine,Phase-gated phase switch
+KERNELONE_COGNITIVE_EXECUTION,0,polaris/kernelone/cognitive/config.py:11,CognitivePipeline,Phase-gated phase switch
+KERNELONE_COGNITIVE_EVOLUTION,0,polaris/kernelone/cognitive/config.py:12,EvolutionEngine,Phase-gated phase switch
+KERNELONE_COGNITIVE_PERSONALITY,0,polaris/kernelone/cognitive/config.py:13,PersonalityIntegrator,Phase-gated phase switch
+COGNITIVE_ENABLE_EVOLUTION,0,polaris/kernelone/cognitive/config.py:17,EvolutionEngine,EVOLUTION_ENABLED别名
+COGNITIVE_ENABLE_PERSONALITY,0,polaris/kernelone/cognitive/config.py:18,PersonalityIntegrator,PERSONALITY_ENABLED别名
+COGNITIVE_ENABLE_GOVERNANCE,0,polaris/kernelone/cognitive/config.py:19,CognitiveGovernance,独立治理开关
+COGNITIVE_ENABLE_VALUE_ALIGNMENT,0,polaris/kernelone/cognitive/config.py:20,ValueAlignmentService,值对齐开关
+COGNITIVE_USE_LLM,0,polaris/kernelone/cognitive/config.py:21,Reasoning+MetaCognition,切换LLM/非LLM分析模式
+KERNELONE_COGNITIVE_ENABLE_TELEMETRY,0,polaris/kernelone/cognitive/config.py:45,CognitiveTelemetry,遥测开关
+KERNELONE_RISK_BYPASS_THRESHOLD,0,polaris/kernelone/cognitive/config.py:24,Risk评估,高风险旁路阈值
+KERNELONE_RISK_FAST_THINK_THRESHOLD,1,polaris/kernelone/cognitive/config.py:25,风险评估,快速思考阈值
+KERNELONE_UNCERTAINTY_THRESHOLD,0.6,polaris/kernelone/cognitive/config.py:26,UncertaintyAssessment,不确定性阈值
+KERNELONE_MAX_THINKING_TIME,30.0,polaris/kernelone/cognitive/config.py:32,ThinkingPhaseEngine,最大思考时间(秒)
+KERNELONE_ENABLE_DEVILS_ADVOCATE,1,polaris/kernelone/cognitive/config.py:33,DevilsAdvocate,魔鬼代言人开关
+COGNITIVE_GOVERNANCE_HIGH_RISK,0.7,polaris/kernelone/cognitive/config.py:36,Governance,高风险置信度阈值
+COGNITIVE_GOVERNANCE_MEDIUM_RISK,0.5,polaris/kernelone/cognitive/config.py:37,Governance,中风险置信度阈值
+COGNITIVE_GOVERNANCE_LOW_RISK,0.3,polaris/kernelone/cognitive/config.py:38,Governance,低风险置信度阈值
+COGNITIVE_EVOLUTION_RECURRENCE_THRESHOLD,3,polaris/kernelone/cognitive/config.py:41,EvolutionEngine,recurrence触发阈值
+COGNITIVE_EVOLUTION_CALIBRATION_WINDOW,50,polaris/kernelone/cognitive/config.py:42,EvolutionEngine,校准窗口大小
+KERNELONE_COGNITIVE_RUNTIME_MODE,SHADOW,polaris/kernelone/context/runtime_feature_flags.py:157,CognitiveRuntimePublicService,运行时模式: OFF/SHADOW/MAINLINE

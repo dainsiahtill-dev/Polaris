@@ -1,0 +1,129 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Context OS + Cognitive Runtime Eval Report
+type: object
+additionalProperties: false
+required:
+  - version
+  - generated_at
+  - runtime_mode
+  - core_summary
+  - attention_summary
+  - cognitive_runtime_summary
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  generated_at:
+    type: string
+    minLength: 1
+  runtime_mode:
+    type: string
+    enum:
+      - off
+      - shadow
+      - mainline
+  metadata:
+    type: object
+  core_summary:
+    type: object
+    additionalProperties: false
+    required:
+      - total_cases
+      - exact_fact_recovery
+      - decision_preservation
+      - open_loop_continuity
+      - artifact_restore_precision
+      - temporal_update_correctness
+      - abstention
+      - compaction_regret
+    properties:
+      total_cases:
+        type: integer
+        minimum: 0
+      exact_fact_recovery:
+        type: number
+      decision_preservation:
+        type: number
+      open_loop_continuity:
+        type: number
+      artifact_restore_precision:
+        type: number
+      temporal_update_correctness:
+        type: number
+      abstention:
+        type: number
+      compaction_regret:
+        type: number
+  attention_summary:
+    type: object
+    additionalProperties: false
+    required:
+      - total_cases
+      - pass_rate
+      - intent_carryover_accuracy
+      - latest_turn_retention_rate
+      - focus_regression_rate
+      - false_clear_rate
+      - pending_followup_resolution_rate
+      - seal_while_pending_rate
+      - continuity_focus_alignment_rate
+      - context_redundancy_rate
+    properties:
+      total_cases:
+        type: integer
+        minimum: 0
+      pass_rate:
+        type: number
+      intent_carryover_accuracy:
+        type: number
+      latest_turn_retention_rate:
+        type: number
+      focus_regression_rate:
+        type: number
+      false_clear_rate:
+        type: number
+      pending_followup_resolution_rate:
+        type: number
+      seal_while_pending_rate:
+        type: number
+      continuity_focus_alignment_rate:
+        type: number
+      context_redundancy_rate:
+        type: number
+  cognitive_runtime_summary:
+    type: object
+    additionalProperties: false
+    required:
+      - total_cases
+      - receipt_coverage
+      - handoff_roundtrip_success_rate
+      - state_restore_accuracy
+      - transaction_envelope_coverage
+      - receipt_write_failure_rate
+      - sqlite_write_p95_ms
+    properties:
+      total_cases:
+        type: integer
+        minimum: 0
+      receipt_coverage:
+        type: number
+      handoff_roundtrip_success_rate:
+        type: number
+      state_restore_accuracy:
+        type: number
+      transaction_envelope_coverage:
+        type: number
+      receipt_write_failure_rate:
+        type: number
+      sqlite_write_p95_ms:
+        type: number
+  artifacts:
+    type: object
+    properties:
+      report_source:
+        type: string
+      raw_results_path:
+        type: string
+      replay_trace_path:
+        type: string

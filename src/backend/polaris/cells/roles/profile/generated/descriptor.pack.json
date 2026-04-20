@@ -1,0 +1,1334 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.246106Z",
+  "source_hash": "fd2b601d475bdc69",
+  "cell_id": "roles.profile",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "RoleProfileRegistry",
+      "description": "角色Profile注册表",
+      "defined_in": "polaris/cells/roles/profile/internal/registry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "注册一个角色Profile"
+        },
+        {
+          "name": "get_profile",
+          "doc": "获取角色Profile"
+        },
+        {
+          "name": "get_profile_or_raise",
+          "doc": "获取角色Profile，不存在则抛出异常"
+        },
+        {
+          "name": "get_all_profiles",
+          "doc": "获取所有角色Profile"
+        },
+        {
+          "name": "list_roles",
+          "doc": "列出所有已注册的角色ID"
+        },
+        {
+          "name": "has_role",
+          "doc": "检查角色是否存在"
+        },
+        {
+          "name": "load_from_yaml",
+          "doc": "从YAML文件加载角色配置"
+        },
+        {
+          "name": "load_from_json",
+          "doc": "从JSON文件加载角色配置"
+        },
+        {
+          "name": "save_to_yaml",
+          "doc": "保存所有角色配置到YAML文件"
+        },
+        {
+          "name": "save_to_json",
+          "doc": "保存所有角色配置到JSON文件"
+        },
+        {
+          "name": "_dict_to_profile",
+          "doc": "将字典转换为RoleProfile（处理嵌套结构）"
+        },
+        {
+          "name": "_ensure_dict",
+          "doc": "确保值为字典"
+        },
+        {
+          "name": "validate_all",
+          "doc": "验证所有角色配置"
+        },
+        {
+          "name": "get_loaded_files",
+          "doc": "获取已加载的配置文件列表"
+        },
+        {
+          "name": "reset_for_testing",
+          "doc": "Reset for test isolation."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "load_core_roles",
+      "description": "加载核心角色配置",
+      "defined_in": "polaris/cells/roles/profile/internal/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_role_model_bindings",
+      "description": "确保核心角色的 provider_id 和 model 从 llm_config.json 填充。",
+      "defined_in": "polaris/cells/roles/profile/internal/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_builtin_profiles",
+      "description": "加载内置默认角色配置（当外部配置不存在时使用）",
+      "defined_in": "polaris/cells/roles/profile/internal/registry.py"
+    },
+    {
+      "type": "class",
+      "name": "SequentialMode",
+      "description": "Sequential 执行模式",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SequentialTraceLevel",
+      "description": "Sequential 跟踪级别",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SequentialBudget",
+      "description": "Sequential 预算配置。",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SequentialStatsResult",
+      "description": "Sequential 执行统计结果（用于 RoleTurnResult）",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SequentialConfig",
+      "description": "Sequential 配置（RoleTurnRequest 使用）",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleExecutionMode",
+      "description": "角色执行模式",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RolePromptPolicy",
+      "description": "角色提示词策略",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleToolPolicy",
+      "description": "角色工具策略",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": [
+        {
+          "name": "policy_id",
+          "doc": "生成策略唯一标识（用于追踪）"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleContextPolicy",
+      "description": "角色上下文策略",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleDataPolicy",
+      "description": "角色数据策略",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleLibraryPolicy",
+      "description": "角色Python库能力栈",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfile",
+      "description": "角色Profile - 角色的完整配置定义",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": [
+        {
+          "name": "profile_fingerprint",
+          "doc": "生成Profile指纹（用于一致性校验）"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PromptFingerprint",
+      "description": "提示词指纹",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTurnRequest",
+      "description": "角色回合请求",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_post_init",
+          "doc": "SSOT Bootstrap: Ensure context_os_snapshot exists for all sessions."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleTurnResult",
+      "description": "角色回合结果",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfileDict",
+      "description": "RoleProfile的字典表示（用于YAML/JSON序列化）",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SubjectType",
+      "description": "权限主体类型",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResourceType",
+      "description": "权限资源类型",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Action",
+      "description": "权限操作类型",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PolicyEffect",
+      "description": "策略效果",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Subject",
+      "description": "权限主体",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Resource",
+      "description": "权限资源",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Policy",
+      "description": "RBAC 策略定义",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": [
+        {
+          "name": "matches_subject",
+          "doc": ""
+        },
+        {
+          "name": "matches_resource",
+          "doc": ""
+        },
+        {
+          "name": "matches_action",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PermissionCheckResult",
+      "description": "权限检查结果",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "profile_from_dict",
+      "description": "从字典创建 RoleProfile",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py"
+    },
+    {
+      "type": "function",
+      "name": "profile_to_dict",
+      "description": "将 RoleProfile 转为字典",
+      "defined_in": "polaris/cells/roles/profile/internal/schema.py"
+    },
+    {
+      "type": "class",
+      "name": "RegisterRoleProfileCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LoadRoleProfilesCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SaveRoleProfilesCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetRoleProfileQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListRoleProfilesQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfileRegisteredEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfilesLoadedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfileResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfilesResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfileError",
+      "description": "Structured contract error for `roles.profile`.",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRoleProfileService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py",
+      "methods": [
+        {
+          "name": "register_profile",
+          "doc": "Register one profile."
+        },
+        {
+          "name": "load_profiles",
+          "doc": "Load profiles from file."
+        },
+        {
+          "name": "save_profiles",
+          "doc": "Persist profiles to file."
+        },
+        {
+          "name": "get_profile",
+          "doc": "Get one profile."
+        },
+        {
+          "name": "list_profiles",
+          "doc": "List profiles."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_role_profile_registry_for_test",
+      "description": "Reset the global RoleProfileRegistry for test isolation.",
+      "defined_in": "polaris/cells/roles/profile/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestRegisterRoleProfileCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_full",
+          "doc": ""
+        },
+        {
+          "name": "test_profile_is_copied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRegisterRoleProfileCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_missing_role_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_role_id_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLoadRoleProfilesCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit_format",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLoadRoleProfilesCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_filepath_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_filepath_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_format_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_format_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSaveRoleProfilesCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_json_format",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSaveRoleProfilesCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_filepath_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_format_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetRoleProfileQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetRoleProfileQueryV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_role_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_role_id_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestListRoleProfilesQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfileRegisteredEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfileRegisteredEventV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_event_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_role_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_registered_at_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfilesLoadedEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfilesLoadedEventV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_negative_count_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_zero_count_valid",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfileResultV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_success_result",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_with_code_and_message",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfileResultV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_failed_result_requires_code_or_message",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_with_code_only_is_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_with_message_only_is_valid",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfilesResultV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_success_result",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_result",
+          "doc": ""
+        },
+        {
+          "name": "test_profiles_tuple_is_copied",
+          "doc": ""
+        },
+        {
+          "name": "test_loaded_files_whitespace_filtered",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfilesResultV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_failed_result_requires_code_or_message",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfileError",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_code_and_details",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_code_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIRoleProfileServiceProtocol",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_protocol_defines_required_methods",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRegistryRegister",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "test_register_one_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_register_duplicate_overwrites",
+          "doc": ""
+        },
+        {
+          "name": "test_register_empty_role_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_register_empty_display_name_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_register_allow_override_true_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRegistryGet",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "test_get_existing",
+          "doc": ""
+        },
+        {
+          "name": "test_get_missing_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_get_or_raise_existing",
+          "doc": ""
+        },
+        {
+          "name": "test_get_or_raise_missing_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRegistryList",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "test_list_roles",
+          "doc": ""
+        },
+        {
+          "name": "test_get_all_profiles",
+          "doc": ""
+        },
+        {
+          "name": "test_get_all_profiles_returns_copy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRegistryValidate",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "test_validate_empty_returns_missing_core_roles_error",
+          "doc": ""
+        },
+        {
+          "name": "test_validate_returns_errors_when_whitelist_missing",
+          "doc": ""
+        },
+        {
+          "name": "test_validate_qa_exempt_from_whitelist_check",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLoadBuiltinProfiles",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "_mock_get_role_model",
+          "doc": "Provide deterministic model bindings for builtin profiles in tests."
+        },
+        {
+          "name": "test_loads_all_core_roles",
+          "doc": ""
+        },
+        {
+          "name": "test_builtin_profiles_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_scout_role_loaded",
+          "doc": ""
+        },
+        {
+          "name": "test_director_builtin_profile_exposes_canonical_repo_tools",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCoreRoleYamlProfiles",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "test_director_yaml_profile_exposes_canonical_repo_tools",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLoadedFiles",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "test_get_loaded_files_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_get_loaded_files_after_load",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCoreRoles",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py",
+      "methods": [
+        {
+          "name": "test_core_roles_contains_five_roles",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_registry.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialMode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialTraceLevel",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleExecutionMode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSubjectType",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResourceType",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAction",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPolicyEffect",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRolePromptPolicy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_full_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleToolPolicy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_policy_id_is_deterministic",
+          "doc": ""
+        },
+        {
+          "name": "test_policy_id_differs_on_content",
+          "doc": ""
+        },
+        {
+          "name": "test_policy_id_format",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleContextPolicy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleDataPolicy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleLibraryPolicy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_full",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialBudget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialConfig",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_without_budget",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialStatsResult",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProfile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_default_policies",
+          "doc": ""
+        },
+        {
+          "name": "test_profile_fingerprint",
+          "doc": ""
+        },
+        {
+          "name": "test_profile_fingerprint_is_deterministic",
+          "doc": ""
+        },
+        {
+          "name": "test_profile_fingerprint_differs_on_policy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProfileFromDict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_all_fields",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProfileToDict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_roundtrip",
+          "doc": ""
+        },
+        {
+          "name": "test_includes_all_policy_fields",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleTurnRequest",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleTurnResult",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_post_init_sets_execution_stats",
+          "doc": ""
+        },
+        {
+          "name": "test_full_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSubject",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResource",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPolicyMatchesSubject",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_wildcard_id_matches_all",
+          "doc": ""
+        },
+        {
+          "name": "test_specific_id_matches_only_that",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPolicyMatchesResource",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_wildcard_pattern_matches_all",
+          "doc": ""
+        },
+        {
+          "name": "test_specific_pattern_matches_subset",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPolicyMatchesAction",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_admin_action_matches_all",
+          "doc": ""
+        },
+        {
+          "name": "test_specific_actions_match_only_those",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPolicyToDict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPromptFingerprint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_schema.py",
+      "methods": [
+        {
+          "name": "test_full_hash_auto_computed",
+          "doc": ""
+        },
+        {
+          "name": "test_full_hash_deterministic",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

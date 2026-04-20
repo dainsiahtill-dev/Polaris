@@ -1,0 +1,54 @@
+id: events.fact_stream
+title: Events Fact Stream
+kind: capability
+visibility: public
+stateful: true
+owner: observability
+purpose: 'Provide append-only runtime fact stream ingestion, fanout, and query infrastructure
+  for PM, Director, QA and realtime projection consumers.
+
+  '
+current_modules:
+- polaris.cells.events.fact_stream.public.contracts
+tags: []
+owned_paths:
+- polaris/kernelone/events/**
+- polaris/infrastructure/log_pipeline/**
+- polaris/infrastructure/realtime/process_local/message_event_fanout.py
+- polaris/infrastructure/realtime/process_local/log_fanout.py
+public_contracts:
+  modules:
+  - polaris.cells.events.fact_stream.public.contracts
+  commands:
+  - AppendFactEventCommandV1
+  queries:
+  - QueryFactEventsV1
+  events:
+  - FactEventAppendedV1
+  results:
+  - FactStreamQueryResultV1
+  errors:
+  - FactStreamErrorV1
+depends_on:
+- policy.workspace_guard
+- audit.evidence
+- runtime.projection
+subgraphs:
+- execution_governance_pipeline
+- storage_archive_pipeline
+state_owners:
+- runtime/events/*
+effects_allowed:
+- fs.read:runtime/events/*
+- fs.write:runtime/events/*
+- ws.outbound:runtime/*
+- network.http_outbound:*
+verification:
+  tests:
+  - tests/test_runtime_event_fanout.py
+  - tests/test_realtime_hub_v2.py
+  - tests/test_websocket_signal_hub.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

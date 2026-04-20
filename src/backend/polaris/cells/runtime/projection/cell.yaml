@@ -1,0 +1,61 @@
+id: runtime.projection
+title: Runtime Projection
+kind: projection
+visibility: public
+stateful: false
+owner: runtime
+purpose: 'Read-only runtime/status projection and transport payload assembly for HTTP
+  and WS consumers.
+
+  '
+current_modules:
+- polaris.cells.runtime.projection.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/runtime/projection/internal/**
+- polaris/delivery/http/routers/runtime.py
+- polaris/delivery/ws/runtime_endpoint.py
+- polaris/delivery/ws/runtime_event_query.py
+public_contracts:
+  modules:
+  - polaris.cells.runtime.projection.public.contracts
+  commands: []
+  queries:
+  - RuntimeProjectionQueryV1
+  events:
+  - RuntimeProjectedEventV1
+  - RuntimeObserverEventV1
+  results:
+  - RuntimeProjectionResultV1
+  errors:
+  - RuntimeProjectionErrorV1
+depends_on:
+- audit.evidence
+- director.execution
+- docs.court_workflow
+- llm.evaluation
+- llm.provider_runtime
+- orchestration.pm_planning
+- orchestration.workflow_runtime
+- resident.autonomy
+- runtime.artifact_store
+- runtime.state_owner
+- runtime.task_market
+- runtime.task_runtime
+- storage.layout
+subgraphs:
+- storage_archive_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:runtime/*
+- fs.read:workspace/history/*
+- ws.outbound:runtime/*
+verification:
+  tests:
+  - tests/test_websocket_signal_hub.py
+  - tests/test_runtime_projection_observability.py
+  gaps:
+  - Projection still contains compatibility read-joins pending cleanup.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

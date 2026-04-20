@@ -1,0 +1,59 @@
+id: context.catalog
+title: Context Catalog
+kind: capability
+visibility: public
+stateful: true
+owner: context
+purpose: 'Builds deterministic descriptor cards from graph assets and serves graph-constrained
+  catalog lookup during the first Polaris migration wave.
+
+  '
+current_modules:
+- polaris.cells.context.catalog.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/context/catalog/**
+public_contracts:
+  modules:
+  - polaris.cells.context.catalog.public.contracts
+  commands: []
+  queries:
+  - SearchCellsQueryV1
+  events: []
+  results:
+  - SearchCellsResultV1
+  - CellDescriptorV1
+  errors: []
+depends_on: []
+subgraphs: []
+state_owners:
+- workspace/meta/context_catalog/*
+effects_allowed:
+- fs.read:docs/graph/**
+- fs.write:workspace/meta/context_catalog/*
+verification:
+  tests:
+  - polaris/cells/context/catalog/tests/test_service.py
+  - polaris/cells/context/catalog/tests/test_descriptor_validation.py
+  - polaris/cells/context/catalog/tests/test_descriptor_cache_script.py
+  contracts:
+  - SearchCellsQueryV1
+  - SearchCellsResultV1
+  - CellDescriptorV1
+  smoke_commands: []
+  gaps: []
+generated_artifacts:
+- generated/context.pack.json
+inputs:
+- name: search_cells
+  mode: query
+  contract: SearchCellsQueryV1
+  returns: SearchCellsResultV1
+does_not:
+- override_graph_truth
+- perform_blind_repo_scan
+- write_outside_workspace_scope
+invariants:
+- graph assets remain the source of truth
+- descriptor cache is derived and rebuildable
+- all text writes use explicit utf-8

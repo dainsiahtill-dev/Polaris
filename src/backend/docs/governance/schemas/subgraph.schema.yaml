@@ -1,0 +1,122 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ACGA Subgraph Manifest
+type: object
+additionalProperties: false
+required:
+  - version
+  - id
+  - title
+  - purpose
+  - entry_cells
+  - cells
+  - exit_cells
+  - relations
+  - critical_contracts
+  - state_boundaries
+  - verify_targets
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  template:
+    type: boolean
+  id:
+    type: string
+    pattern: "^[a-z0-9_]+$"
+  title:
+    type: string
+  purpose:
+    type: string
+  entry_cells:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+  cells:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+  exit_cells:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+  relations:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - from
+        - to
+        - type
+        - contract
+      properties:
+        from:
+          type: string
+          pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+        to:
+          type: string
+          pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+        type:
+          type: string
+          enum:
+            - depends_on
+            - depends
+            - calls
+            - commands
+            - queries
+            - emits
+            - subscribes
+            - owns_state
+            - projects_to
+            - governs
+            - wraps_legacy
+        contract:
+          type: string
+        note:
+          type: string
+  critical_contracts:
+    type: array
+    items:
+      type: string
+  state_boundaries:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - owner
+        - state
+      properties:
+        owner:
+          type: string
+          pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+        state:
+          type: string
+        note:
+          type: string
+  verify_targets:
+    type: object
+    additionalProperties: false
+    required:
+      - tests
+      - contracts
+    properties:
+      tests:
+        type: array
+        items:
+          type: string
+      contracts:
+        type: array
+        items:
+          type: string
+  migration_notes:
+    type: array
+    items:
+      type: string

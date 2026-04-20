@@ -1,0 +1,59 @@
+card_id: "vc-20260326-cognitive-runtime-off-mode-read-access"
+bug_summary: >
+  Cognitive Runtime 关闭模式(off)下把查询接口也一并阻断，导致历史 receipt/handoff
+  无法读取，影响审计与排障。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/cells/factory/cognitive_runtime/public/service.py"
+  method: "get_runtime_receipt() / get_handoff_pack()"
+  symptom: "mode=off 时查询返回 cognitive_runtime_disabled，而不是 not_found/数据结果"
+
+assumptions:
+  - id: "A1"
+    statement: "off 模式应阻断写路径与治理动作，但查询路径应保持可读"
+    status: verified_true
+    evidence: >
+      查询接口不产生副作用，且审计场景需要在关闭后读取历史证据；
+      当前实现将所有方法统一 gated，导致读能力丢失。
+
+  - id: "A2"
+    statement: "移除查询方法的 off-gate 不会引入新的写副作用"
+    status: verified_true
+    evidence: >
+      get_runtime_receipt/get_handoff_pack 仅调用 runtime.get_*，只读 SQLite 查询，
+      不包含 write 或 receipt append 行为。
+
+pre_mortem:
+  failure_point: >
+    如果误把写路径也放开，会在 off 模式仍写入 sidecar 资产，破坏开关语义。
+  risk_zone:
+    - "polaris/cells/factory/cognitive_runtime/public/service.py"
+    - "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+      description: "off 模式下写接口阻断，但 get_runtime_receipt 仍可读取已存在记录"
+      expected: "resolve_context 返回 disabled；get_runtime_receipt 返回 ok=True"
+      status: existing_fix
+  integration_tests:
+    - description: "Cognitive Runtime 公共服务回归"
+      command: >
+        pytest polaris/cells/factory/cognitive_runtime/tests/test_public_service.py
+        polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py
+        polaris/delivery/http/routers/test_cognitive_runtime_router.py
+        -q
+      status: existing_fix
+  manual_check:
+    - "设置 POLARIS_COGNITIVE_RUNTIME_MODE=off 后，通过 API 查询历史 receipt 应可返回"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt5"
+  completed_at: "2026-03-26"
+  verified_by: "self (tests)"
+  verified_at: "2026-03-26"
+

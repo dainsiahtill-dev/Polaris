@@ -1,0 +1,84 @@
+id: director.execution
+title: Director Execution
+kind: composite
+visibility: public
+stateful: true
+owner: engineering
+purpose: 'FACADE CELL (migration in progress). Acts as the stable public contract
+  and backward-compatibility surface for Director task execution while implementation
+  is being split into sub-Cells: director.planning, director.tasking, director.runtime,
+  director.delivery. All public contracts remain here; internal modules delegate to
+  sub-Cells as they are migrated.
+
+  '
+current_modules:
+- polaris.cells.director.execution.public.contracts
+tags:
+- composite
+- facade
+- migration-in-progress
+owned_paths:
+- polaris/cells/director/execution/**
+- polaris/delivery/http/v2/director.py
+public_contracts:
+  modules:
+  - polaris.cells.director.execution.public.contracts
+  commands:
+  - ExecuteDirectorTaskCommandV1
+  - RetryDirectorTaskCommandV1
+  queries:
+  - GetDirectorTaskStatusQueryV1
+  events:
+  - DirectorTaskStartedEventV1
+  - DirectorTaskCompletedEventV1
+  results:
+  - DirectorExecutionResultV1
+  errors:
+  - DirectorExecutionErrorV1
+depends_on:
+- chief_engineer.blueprint
+- director.planning
+- director.tasking
+- factory.pipeline
+- factory.cognitive_runtime
+- policy.permission
+- policy.workspace_guard
+- runtime.execution_broker
+- runtime.state_owner
+- runtime.task_runtime
+- audit.evidence
+- audit.verdict
+- finops.budget_guard
+- events.fact_stream
+- llm.control_plane
+- llm.provider_runtime
+- roles.runtime
+- workspace.integrity
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/state/director/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:runtime/tasks/*
+- fs.write:runtime/state/director/*
+- fs.write:runtime/events/director.llm.events.jsonl
+- process.spawn:director/*
+- llm.invoke:director/*
+verification:
+  tests:
+  - tests/test_director_logic.py
+  - tests/test_director_service_convergence.py
+  - polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py
+  gaps:
+  - 'Phase 0: kernelone/tools canonical consolidation — COMPLETE.'
+  - 'Phase 1: 4 sub-Cell skeletons created (planning, tasking, runtime, delivery).
+    Implementation migration from internal/ to sub-Cells is pending.'
+  - 'Sub-Cell owned_paths: director.planning: polaris/cells/director/planning/**,
+    director.tasking: polaris/cells/director/tasking/**, director.runtime: polaris/cells/director/runtime/**
+    + polaris/kernelone/tools/**, director.delivery: polaris/cells/director/delivery/**
+    + polaris/delivery/cli/director/**'
+  - Optional projection execution backends are currently routed through roles.adapters/internal/director_adapter
+    while implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

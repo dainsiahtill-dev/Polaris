@@ -1,0 +1,15 @@
+{
+  "cell_id": "resident.autonomy",
+  "purpose": "Provide long-running resident autonomy capability with evidence and projection support.",
+  "owned_paths": [
+    "polaris/cells/resident/autonomy/**"
+  ],
+  "public_contracts": [
+    "RunResidentCycleCommandV1",
+    "RecordResidentEvidenceCommandV1",
+    "QueryResidentStatusV1",
+    "ResidentCycleCompletedEventV1",
+    "ResidentAutonomyResultV1",
+    "ResidentAutonomyErrorV1"
+  ]
+}

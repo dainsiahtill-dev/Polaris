@@ -1,0 +1,242 @@
+{
+  "navigation": {
+    "settings": {
+      "id": "settings",
+      "aliases": ["设置面板", "打开设置", "设置", "settings"],
+      "step": {
+        "name": "open-settings",
+        "selectorCandidates": [
+          "button:has(svg.lucide-settings)",
+          ".btn-icon:has(svg.lucide-settings)",
+          "[data-testid='open-settings']",
+          "button[aria-label='Settings']",
+          "button[title='Settings']"
+        ],
+        "textCandidates": ["设置", "Settings"],
+        "role": "button",
+        "timeoutMs": 3500
+      }
+    },
+    "llm_settings": {
+      "id": "llm_settings",
+      "aliases": ["llm设置", "llm 设置", "模型设置", "模型", "llm settings"],
+      "step": {
+        "name": "open-llm-settings",
+        "selectorCandidates": [
+          "[data-testid='settings-tab-llm']",
+          "[role='tab']:has-text(\"LLM 设置\")",
+          "button:has-text(\"LLM 设置\")",
+          "button:has-text(\"LLM设置\")",
+          "[data-testid='llm-settings-tab']"
+        ],
+        "textCandidates": ["LLM设置", "LLM 设置", "模型设置", "LLM"],
+        "role": "button",
+        "timeoutMs": 3500
+      }
+    }
+  },
+  "providers": [
+    {
+      "id": "anthropic_compat",
+      "aliases": [
+        "anthropic compatible",
+        "anthropic_compat",
+        "anthropic compat",
+        "anthropic",
+        "claude compatible",
+        "claude兼容",
+        "anthropic兼容"
+      ],
+      "step": {
+        "name": "open-provider-anthropic-compat",
+        "selectorCandidates": [
+          "[data-provider-type='anthropic_compat'] [data-provider-action='edit']",
+          "[data-provider-type='anthropic_compat'] button[title='编辑提供商']",
+          "[data-testid^='provider-edit-button-anthropic']",
+          "[data-provider-name*='anthropic' i] [data-provider-action='edit']"
+        ],
+        "textCandidates": ["Anthropic", "Anthropic Compatible", "Claude"],
+        "role": "button",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "openai_compat",
+      "aliases": [
+        "openai compatible",
+        "openai_compat",
+        "openai compat",
+        "openai兼容",
+        "openai"
+      ],
+      "step": {
+        "name": "open-provider-openai-compat",
+        "selectorCandidates": [
+          "[data-provider-type='openai_compat'] [data-provider-action='edit']",
+          "[data-provider-type='openai_compat'] button[title='编辑提供商']",
+          "[data-testid^='provider-edit-button-openai']",
+          "[data-provider-name*='openai' i] [data-provider-action='edit']"
+        ],
+        "textCandidates": ["OpenAI", "OpenAI Compatible", "OpenAI Compat"],
+        "role": "button",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "minimax",
+      "aliases": ["minimax", "mini max", "minimax provider", "minimax模型", "minimax 提供商"],
+      "step": {
+        "name": "open-provider-minimax",
+        "selectorCandidates": [
+          "[data-provider-type='minimax'] [data-provider-action='edit']",
+          "[data-provider-type='minimax'] button[title='编辑提供商']",
+          "[data-testid^='provider-edit-button-minimax']",
+          "[data-provider-name*='minimax' i] [data-provider-action='edit']"
+        ],
+        "textCandidates": ["MiniMax", "minimax"],
+        "role": "button",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "ollama",
+      "aliases": ["ollama", "本地ollama", "ollama provider", "ollama提供商"],
+      "step": {
+        "name": "open-provider-ollama",
+        "selectorCandidates": [
+          "[data-provider-type='ollama'] [data-provider-action='edit']",
+          "[data-provider-type='ollama'] button[title='编辑提供商']",
+          "[data-testid^='provider-edit-button-ollama']",
+          "[data-provider-name*='ollama' i] [data-provider-action='edit']"
+        ],
+        "textCandidates": ["Ollama", "ollama"],
+        "role": "button",
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "id": "kimi",
+      "aliases": [
+        "kimi",
+        "kimi code - allegretto",
+        "kimi code-allegretto",
+        "kimi code allegretto",
+        "kimi allegretto",
+        "allegretto"
+      ],
+      "step": {
+        "name": "open-provider-kimi",
+        "selectorCandidates": [
+          "[data-provider-type='kimi'] [data-provider-action='edit']",
+          "[data-provider-type='kimi'] button[title='编辑提供商']",
+          "[data-testid^='provider-edit-button-kimi']",
+          "[data-provider-name*='kimi' i] [data-provider-action='edit']"
+        ],
+        "textCandidates": ["Kimi", "Kimi Code - Allegretto", "Kimi Code", "Allegretto"],
+        "role": "button",
+        "timeoutMs": 8000
+      }
+    }
+  ],
+  "fields": [
+    {
+      "id": "model_id",
+      "aliases": ["model id", "模型id", "模型", "模型名称", "model", "model name", "model input"],
+      "action": {
+        "name": "model-id-input",
+        "selectorCandidates": [
+          "[data-testid='anthropic-model-id-input']",
+          "[data-testid='openai-model-id-input']",
+          "[data-testid='kimi-model-id-input']",
+          "[data-testid='minimax-model-id-input']",
+          "[data-testid='ollama-model-id-input']",
+          "input[name='model']",
+          "input[placeholder*='model' i]"
+        ],
+        "labelCandidates": ["Model ID", "模型", "模型名称", "Model", "model"],
+        "placeholderCandidates": ["model", "model id", "third-party-model", "kimi", "MiniMax", "llama"],
+        "inputValue": "third-party-model-demo",
+        "expectContains": "model-demo"
+      }
+    },
+    {
+      "id": "custom_headers",
+      "aliases": ["custom headers", "custom header", "请求头", "自定义请求头", "headers输入框"],
+      "action": {
+        "name": "custom-headers-input",
+        "selectorCandidates": [
+          "[data-testid='anthropic-custom-headers-input']",
+          "[data-testid='openai-custom-headers-input']",
+          "[data-testid='kimi-custom-headers-input']",
+          "textarea[name='customHeaders']",
+          "textarea[id*='custom-header']",
+          "textarea[aria-label*='Custom Headers' i]",
+          "textarea[placeholder*='header' i]"
+        ],
+        "labelCandidates": ["Custom Headers", "Custom Header", "自定义请求头", "请求头"],
+        "placeholderCandidates": ["custom headers", "headers", "请求头"],
+        "inputValue": "{\"x-test-header\":\"abc123\"}",
+        "expectContains": "x-test-header"
+      }
+    },
+    {
+      "id": "api_key",
+      "aliases": ["api key", "apikey", "密钥", "api密钥", "token"],
+      "action": {
+        "name": "api-key-input",
+        "selectorCandidates": [
+          "[data-testid='kimi-api-key-input']",
+          "[data-testid='minimax-api-key-input']",
+          "input[id*='api-key' i]",
+          "input[name='api_key' i]",
+          "input[placeholder*='sk-' i]"
+        ],
+        "labelCandidates": ["API Key", "Api Key", "密钥", "token"],
+        "placeholderCandidates": ["sk-", "api key", "token"],
+        "inputValue": "sk-e2e-demo-key",
+        "expectContains": "sk-e2e"
+      }
+    },
+    {
+      "id": "base_url",
+      "aliases": ["base url", "base_url", "api基础url", "基础url", "服务器地址", "endpoint"],
+      "action": {
+        "name": "base-url-input",
+        "selectorCandidates": [
+          "[data-testid='ollama-base-url-input']",
+          "[data-testid='kimi-base-url-input']",
+          "[data-testid='minimax-base-url-input']",
+          "input[name='base_url' i]",
+          "input[placeholder*='http://127.0.0.1:11434']",
+          "input[placeholder*='https://api' i]"
+        ],
+        "labelCandidates": ["Base URL", "API 基础URL", "Ollama Server URL", "服务器地址", "endpoint"],
+        "placeholderCandidates": ["http://", "https://", "base url"],
+        "inputValue": "http://127.0.0.1:11434",
+        "expectContains": "http://"
+      }
+    },
+    {
+      "id": "api_path",
+      "aliases": ["api path", "path", "接口路径", "api路径"],
+      "action": {
+        "name": "api-path-input",
+        "selectorCandidates": [
+          "[data-testid='openai-api-path-input']",
+          "[data-testid='kimi-api-path-input']",
+          "[data-testid='minimax-api-path-input']",
+          "input[name='api_path' i]",
+          "input[placeholder*='/v1/chat/completions']",
+          "input[placeholder*='/v1/messages']"
+        ],
+        "labelCandidates": ["API Path", "API 路径", "接口路径", "path"],
+        "placeholderCandidates": ["/v1/", "/api/"],
+        "inputValue": "/v1/chat/completions",
+        "expectContains": "/v1/"
+      }
+    }
+  ],
+  "intents": {
+    "input": ["输入", "可输入", "能输入", "正常输入", "editable", "type", "fill", "写入"]
+  }
+}

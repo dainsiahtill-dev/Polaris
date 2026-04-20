@@ -1,0 +1,586 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.450607Z",
+  "source_hash": "bd24430183ac582d",
+  "cell_id": "runtime.task_runtime",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "TaskExecutionSession",
+      "description": "Persisted execution session for a runtime task.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": "Create a fresh active session."
+        },
+        {
+          "name": "from_dict",
+          "doc": "Hydrate a session from storage."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Serialize the session."
+        },
+        {
+          "name": "is_expired",
+          "doc": "Return whether the lease has expired."
+        },
+        {
+          "name": "renew",
+          "doc": "Renew the active lease."
+        },
+        {
+          "name": "mark_completed",
+          "doc": "Mark the session as completed."
+        },
+        {
+          "name": "mark_failed",
+          "doc": "Mark the session as failed."
+        },
+        {
+          "name": "mark_suspended",
+          "doc": "Mark the session as suspended and optionally resumable."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "utc_now",
+      "description": "Return the current UTC timestamp.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "utc_now_iso",
+      "description": "Return the current UTC timestamp in ISO-8601 format.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_utc_iso",
+      "description": "Parse an ISO-8601 UTC timestamp.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "sanitize_summary",
+      "description": "Normalize short human-readable summary text.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_positive_int",
+      "description": "Convert arbitrary input into a bounded positive integer.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeService",
+      "description": "Runtime task lifecycle service for the ``runtime.task_runtime`` cell.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "board",
+          "doc": ""
+        },
+        {
+          "name": "normalize_task_id",
+          "doc": ""
+        },
+        {
+          "name": "task_exists",
+          "doc": ""
+        },
+        {
+          "name": "create",
+          "doc": ""
+        },
+        {
+          "name": "ensure_task_row",
+          "doc": "Materialize a legacy/orchestration task into the canonical taskboard."
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "get_task",
+          "doc": ""
+        },
+        {
+          "name": "update",
+          "doc": ""
+        },
+        {
+          "name": "update_task",
+          "doc": ""
+        },
+        {
+          "name": "reopen",
+          "doc": ""
+        },
+        {
+          "name": "list_all",
+          "doc": ""
+        },
+        {
+          "name": "list_task_rows",
+          "doc": ""
+        },
+        {
+          "name": "select_next_task",
+          "doc": "Return the next claimable task row, preferring resumable work."
+        },
+        {
+          "name": "_candidate_key",
+          "doc": ""
+        },
+        {
+          "name": "claim_execution",
+          "doc": "Claim a task for execution and persist a lease-backed session."
+        },
+        {
+          "name": "heartbeat_execution",
+          "doc": "Renew an existing task lease."
+        },
+        {
+          "name": "complete_execution",
+          "doc": "Finalize a claimed task as completed."
+        },
+        {
+          "name": "fail_execution",
+          "doc": "Finalize a claimed task as failed."
+        },
+        {
+          "name": "suspend_execution",
+          "doc": "Suspend a claimed task so it can be resumed later."
+        },
+        {
+          "name": "list_ready",
+          "doc": ""
+        },
+        {
+          "name": "get_ready_tasks",
+          "doc": ""
+        },
+        {
+          "name": "get_stats",
+          "doc": ""
+        },
+        {
+          "name": "_row_sort_key",
+          "doc": ""
+        },
+        {
+          "name": "_is_row_claimable",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_next_attempt",
+          "doc": ""
+        },
+        {
+          "name": "_task_has_unresolved_dependencies",
+          "doc": ""
+        },
+        {
+          "name": "_get_session_lock",
+          "doc": "Return the per-task session lock, creating it on demand."
+        },
+        {
+          "name": "_session_logical_path",
+          "doc": ""
+        },
+        {
+          "name": "_read_session",
+          "doc": ""
+        },
+        {
+          "name": "_write_session",
+          "doc": ""
+        },
+        {
+          "name": "_append_execution_event",
+          "doc": ""
+        },
+        {
+          "name": "_augment_task_row",
+          "doc": ""
+        },
+        {
+          "name": "_build_runtime_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskStatus",
+      "description": "Task lifecycle states used by the Polaris TaskBoard.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "is_terminal",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskPriority",
+      "description": "Compatibility priority labels (string-valued for JSON serialisation).",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "numeric_value",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "InvalidTaskStateTransitionError",
+      "description": "Raised when a task status transition is not allowed.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Task",
+      "description": "A task with dependency tracking for the Polaris TaskBoard.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "is_terminal",
+          "doc": ""
+        },
+        {
+          "name": "is_blocked",
+          "doc": ""
+        },
+        {
+          "name": "priority_label",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskBoard",
+      "description": "File-backed task board with dependency graph.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_logical_path",
+          "doc": ""
+        },
+        {
+          "name": "transaction",
+          "doc": "Board-level transaction lock for atomic cache+filesystem updates."
+        },
+        {
+          "name": "_load_all",
+          "doc": "Load all tasks from disk into in-memory cache."
+        },
+        {
+          "name": "_save_task",
+          "doc": "Atomically save a task to disk (write-to-temp + os.replace)."
+        },
+        {
+          "name": "_load_max_id",
+          "doc": ""
+        },
+        {
+          "name": "_save_max_id",
+          "doc": ""
+        },
+        {
+          "name": "_file_lock",
+          "doc": "Cross-platform exclusive file lock context manager."
+        },
+        {
+          "name": "_get_next_id",
+          "doc": "Get next task ID with cross-process file locking."
+        },
+        {
+          "name": "create",
+          "doc": "Create a new task."
+        },
+        {
+          "name": "get",
+          "doc": "Get a task by numeric ID. Returns a deep copy."
+        },
+        {
+          "name": "get_task",
+          "doc": "Compatibility helper: get task as dict, supports 'task-N' tokens."
+        },
+        {
+          "name": "_validate_transition",
+          "doc": ""
+        },
+        {
+          "name": "update_status",
+          "doc": "Update task status with state machine validation."
+        },
+        {
+          "name": "_unblock_dependent_tasks",
+          "doc": "Remove completed task from blocked_by lists of dependent tasks."
+        },
+        {
+          "name": "_write_terminal_event",
+          "doc": "Write terminal event to JSONL outside the board transaction lock."
+        },
+        {
+          "name": "update",
+          "doc": "Compatibility update API (delegates to update_status)."
+        },
+        {
+          "name": "assign",
+          "doc": "Assign task owner without changing execution status."
+        },
+        {
+          "name": "claim",
+          "doc": "Claim a task for a worker (READY -> CLAIMED)."
+        },
+        {
+          "name": "complete",
+          "doc": ""
+        },
+        {
+          "name": "fail",
+          "doc": ""
+        },
+        {
+          "name": "reopen",
+          "doc": "Reopen a terminal task for another implementation round."
+        },
+        {
+          "name": "get_ready_tasks",
+          "doc": "Get all tasks that are pending, unblocked, and unclaimed."
+        },
+        {
+          "name": "list_ready",
+          "doc": "Compatibility alias for role-agent worker polling."
+        },
+        {
+          "name": "list_my_tasks",
+          "doc": "List all tasks assigned to a specific worker."
+        },
+        {
+          "name": "get_blocked_tasks",
+          "doc": "Get all tasks that are currently blocked by dependencies."
+        },
+        {
+          "name": "get_dependency_graph",
+          "doc": "Get full dependency graph for a task (upstream + downstream)."
+        },
+        {
+          "name": "get_upstream",
+          "doc": ""
+        },
+        {
+          "name": "get_downstream",
+          "doc": ""
+        },
+        {
+          "name": "list_all",
+          "doc": "List tasks with optional filtering, sorted by priority desc then created_at asc."
+        },
+        {
+          "name": "get_critical_path",
+          "doc": "Estimate the critical path — longest chain of dependencies."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get board statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskBoardToolInterface",
+      "description": "Tool interface for task board operations (LLM tool calling).",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "task_create",
+          "doc": "Tool: Create a new task."
+        },
+        {
+          "name": "task_update",
+          "doc": "Tool: Update task status."
+        },
+        {
+          "name": "task_list",
+          "doc": "Tool: List tasks."
+        },
+        {
+          "name": "task_dependencies",
+          "doc": "Tool: Get dependency graph for a task."
+        },
+        {
+          "name": "task_ready",
+          "doc": "Tool: Get all ready-to-work tasks."
+        },
+        {
+          "name": "task_assign",
+          "doc": "Tool: Assign task to owner."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_priority",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "function",
+      "name": "create_taskboard",
+      "description": "Compatibility factory used by role-agent subsystem.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/task_board.py"
+    },
+    {
+      "type": "class",
+      "name": "CreateRuntimeTaskCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateRuntimeTaskCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReopenRuntimeTaskCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListRuntimeTasksQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetRuntimeTaskQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeTaskLifecycleEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeTaskResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeTaskRuntimeError",
+      "description": "Raised when `runtime.task_runtime` contract processing fails.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_runtime_service_normalizes_task_ids",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_runtime_service_manages_task_rows",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_runtime_service_materializes_legacy_task_and_claims_it",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_runtime_service_surfaces_resumable_task_and_reclaims_it",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_runtime_service_persists_sessions_under_canonical_task_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_runtime_service_emits_execution_events_via_fact_stream",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

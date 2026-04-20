@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Last State Memory Snapshot",
+  "description": "Latest memory snapshot for anthropomorphic memory/reflection state.",
+  "type": "object",
+  "examples": [
+    {
+      "schema_version": 1,
+      "last_run_at": "2026-02-02T12:00:00Z",
+      "last_round_index": 3,
+      "last_target_index": 1,
+      "last_target": "Refactor io_utils error handling",
+      "last_summary": "Completed pass with warnings",
+      "last_next_step": "Run regression tests",
+      "last_log_path": ".polaris/runtime/RUNLOG.md",
+      "last_response_path": ".polaris/runtime/DIRECTOR_RESULT.json",
+      "last_exit_code": 0
+    }
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version (fixed)."
+    },
+    "last_run_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the most recent run."
+    },
+    "last_round_index": {
+      "type": "integer",
+      "description": "Round index for the last run."
+    },
+    "last_target_index": {
+      "type": "integer",
+      "description": "Target index within the run."
+    },
+    "last_target": {
+      "type": "string",
+      "description": "Short description of the last target/task."
+    },
+    "last_summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Summary of the last run outcome."
+    },
+    "last_next_step": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Suggested next step."
+    },
+    "last_log_path": {
+      "type": "string",
+      "description": "Path to the last run log."
+    },
+    "last_response_path": {
+      "type": "string",
+      "description": "Path to the last response/result file."
+    },
+    "last_exit_code": {
+      "type": "integer",
+      "description": "Exit code for the last run."
+    },
+    "last_gap_review_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the last gap review."
+    },
+    "last_gap_report_path": {
+      "type": "string",
+      "description": "Path to the last gap report."
+    },
+    "last_error": {
+      "type": "string",
+      "description": "Last error message (if any)."
+    }
+  }
+}

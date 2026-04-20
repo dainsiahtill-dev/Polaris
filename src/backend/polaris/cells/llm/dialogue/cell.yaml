@@ -1,0 +1,55 @@
+id: llm.dialogue
+title: LLM Dialogue
+kind: capability
+visibility: public
+stateful: false
+owner: llm
+purpose: 'Provide role dialogue and docs dialogue prompt/response orchestration with
+  explicit output validation and typed public boundaries.
+
+  '
+current_modules:
+- polaris.cells.llm.dialogue.public.service
+- polaris.cells.llm.dialogue.internal.role_dialogue
+- polaris.cells.llm.dialogue.internal.docs_dialogue
+- polaris.cells.llm.dialogue.internal.docs_suggest
+tags: []
+owned_paths:
+- polaris/cells/llm/dialogue/**
+public_contracts:
+  modules:
+  - polaris.cells.llm.dialogue.public.contracts
+  commands:
+  - InvokeRoleDialogueCommandV1
+  - InvokeDocsDialogueCommandV1
+  queries:
+  - ValidateRoleOutputQueryV1
+  events:
+  - DialogueTurnCompletedEventV1
+  results:
+  - DialogueTurnResultV1
+  errors:
+  - LlmDialogueErrorV1
+depends_on:
+- context.engine
+- llm.provider_runtime
+- llm.tool_runtime
+- policy.workspace_guard
+- roles.runtime
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- fs.read:runtime/**
+- llm.invoke:roles/*
+- ws.outbound:runtime/*
+verification:
+  tests:
+  - tests/test_role_dialogue_validation_retry.py
+  - tests/test_docs_suggest.py
+  - tests/test_interactive_interview_streaming_fallback.py
+  gaps:
+  - Remaining direct imports to internal modules must be migrated to public service/contracts.
+  smoke_commands: []
+generated_artifacts: []

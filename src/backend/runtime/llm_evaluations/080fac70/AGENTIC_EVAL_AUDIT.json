@@ -1,0 +1,46 @@
+{
+  "status": "PASS",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "generated_at": "2026-04-17T00:36:10.738469+00:00",
+  "benchmark": {
+    "suite": "tool_calling_matrix",
+    "run_id": "080fac70",
+    "role_scope": "all",
+    "provider_id": "runtime_binding",
+    "model": "runtime_binding",
+    "transport_mode": "stream"
+  },
+  "score": {
+    "overall_percent": 100.0,
+    "average_score": 1.0,
+    "pass_rate": 1.0,
+    "total_cases": 5,
+    "passed_cases": 5,
+    "failed_cases": 0
+  },
+  "failures": [],
+  "tool_audit": {
+    "total_calls": 5,
+    "by_tool": {
+      "repo_read_head": 1,
+      "repo_read_tail": 1,
+      "repo_rg": 1,
+      "repo_tree": 2
+    },
+    "critical_failures": 0,
+    "safety_violations": []
+  },
+  "repair_plan": [],
+  "errors": [],
+  "evidence_paths": {
+    "benchmark_artifact": "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\080fac70\\TOOL_CALLING_MATRIX_REPORT.json",
+    "audit_package": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\runtime\\llm_evaluations\\080fac70\\AGENTIC_EVAL_AUDIT.json",
+    "case_sandboxes": [
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\080fac70\\sandboxes\\l1_directory_listing-f477b1dec045",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\080fac70\\sandboxes\\l1_directory_navigation-3bfc4ac1c5ed",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\080fac70\\sandboxes\\l1_grep_search-19db07e3198b",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\080fac70\\sandboxes\\l1_read_tail-8ab5c102e74b",
+      "X:\\.polaris\\projects\\backend-66d4f23fc276\\runtime\\llm_evaluations\\080fac70\\sandboxes\\l1_single_tool_accuracy-918bf3f78adb"
+    ]
+  }
+}

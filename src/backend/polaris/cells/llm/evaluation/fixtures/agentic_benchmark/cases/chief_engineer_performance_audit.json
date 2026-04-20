@@ -1,0 +1,33 @@
+{
+  "case_id": "chief_engineer_performance_audit",
+  "role": "chief_engineer",
+  "title": "Chief Engineer Performs Performance Audit",
+  "description": "The Chief Engineer must identify performance bottlenecks and propose optimizations.",
+  "workspace_fixture": "chief_engineer_blueprint_review",
+  "prompt": "Audit the codebase for performance issues. Return JSON: {hotspots: [{file, function, issue, impact}], optimizations: [{location, before, after, expected_gain}], profiling_plan: [string]}. Focus on algorithmic complexity and I/O efficiency.",
+  "tags": [
+    "chief_engineer",
+    "performance",
+    "audit"
+  ],
+  "judge": {
+    "score_threshold": 0.80,
+    "required_tools": [
+      "ripgrep",
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "hotspots",
+      "optimizations",
+      "impact"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "chief_performance_audit"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 8
+  }
+}

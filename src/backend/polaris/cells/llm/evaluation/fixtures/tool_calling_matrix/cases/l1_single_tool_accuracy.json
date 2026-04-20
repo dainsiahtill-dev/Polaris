@@ -1,0 +1,43 @@
+{
+  "case_id": "l1_single_tool_accuracy",
+  "level": "L1",
+  "role": "director",
+  "title": "Single Tool Accuracy",
+  "prompt": "请帮我读取 src/utils/helpers.py 的内容，只要前 50 行。",
+  "description": "验证模型是否能精确选择单一正确工具并提取参数。",
+  "workspace_fixture": "base_tooling_workspace",
+  "tags": ["base_routing", "exact_extraction"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.9,
+    "stream": {
+      "required_tools": ["repo_read_head"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file", "append_to_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "repo_read_head",
+      "first_call_arg_equals": {
+        "file": "src/utils/helpers.py"
+      },
+      "first_call_arg_one_of": {
+        "n": [50]
+      },
+      "first_call_required_any": [
+        ["n"]
+      ],
+      "first_call_reject_unknown_args": true
+    },
+    "non_stream": {
+      "required_tools": ["repo_read_head"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file", "append_to_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "repo_read_head"
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

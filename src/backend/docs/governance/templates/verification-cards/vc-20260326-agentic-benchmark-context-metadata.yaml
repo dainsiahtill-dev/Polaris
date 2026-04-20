@@ -1,0 +1,67 @@
+card_id: "vc-20260326-agentic-benchmark-context-metadata"
+bug_summary: >
+  `python -m polaris.delivery.cli agentic-eval --workspace .` 每个 benchmark case 都触发
+  `RoleContextGateway` 的 legacy context_override 弃用告警，导致日志噪音并掩盖真实失败信号。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+  method: "_collect_case_observation"
+  symptom: "单次评测运行中重复出现 context_override deprecated 警告"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设告警由 benchmark 元数据被写入 ExecuteRoleSessionCommandV1.context 触发。"
+    status: verified_true
+    evidence: >
+      读取 agentic_benchmark.py 可见 benchmark_case_id/benchmark_run_id/provider/model
+      被写入 command.context；RoleContextGateway 在 request.context_override 非空时走 legacy fallback 并 warning。
+
+  - id: "A2"
+    statement: "我假设这些 benchmark_* 字段属于元数据语义，应放入 command.metadata 而不是 context。"
+    status: verified_true
+    evidence: >
+      ExecuteRoleSessionCommandV1 同时提供 context 与 metadata；
+      benchmark_case_id 等仅用于追踪与审计，不参与业务上下文推理。
+
+  - id: "A3"
+    statement: "我假设将 benchmark_* 迁移到 metadata 不会影响 benchmark 判定结果。"
+    status: verified_true
+    evidence: >
+      更新 tests/test_llm_agentic_benchmark.py 的 Fake executor 从 command.metadata 读取 case_id 后，
+      agentic benchmark 与相关 suite 测试均通过。
+
+pre_mortem:
+  failure_point: >
+    如果迁移后仍有下游代码依赖 command.context.benchmark_case_id，
+    可能导致执行器无法映射 case plan，出现 KeyError 或空事件流。
+  risk_zone:
+    - "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    - "tests/test_llm_agentic_benchmark.py"
+
+verification_plan:
+  unit_tests:
+    - file: "tests/test_llm_agentic_benchmark.py"
+      description: "Fake executor 改为读取 command.metadata.benchmark_case_id，并断言 benchmark id 不在 context"
+      expected: "benchmark 用例仍能正确映射并通过"
+      status: existing_fix
+    - file: "polaris/delivery/cli/tests/test_agentic_eval_cli.py"
+      description: "回归单命令 agentic-eval 入口输出与审计包落盘"
+      expected: "PASS 分支写入 UTF-8 审计包并返回 0"
+      status: existing_pass
+  integration_tests:
+    - description: "评测入口 + benchmark 套件回归"
+      command: "python -m pytest -q polaris/delivery/cli/tests/test_agentic_eval_cli.py tests/test_llm_agentic_benchmark.py tests/test_llm_suite_normalization.py tests/test_llm_evaluation_runner_provider_cfg.py tests/test_llm_test_index_reconcile.py tests/test_llm_evaluation_abstraction.py"
+      status: existing_pass
+  manual_check:
+    - "运行 python -m polaris.delivery.cli agentic-eval --workspace .，确认不再出现 context_override deprecated 警告刷屏。"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-26"
+  verified_by: "self (automated tests)"
+  verified_at: "2026-03-26"
+

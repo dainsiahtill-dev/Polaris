@@ -1,0 +1,60 @@
+card_id: "vc-20260325-role-domain-default-policy"
+bug_summary: >
+  roles.runtime previously defaulted all executions to code domain when domain
+  was absent, which conflicted with role semantics for PM/Architect/Chief
+  Engineer and caused strategy/context routing drift.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/runtime/public/service.py"
+  method: "_resolve_execution_domain"
+  symptom: "PM/Architect/ChiefEngineer sessions without explicit domain were routed as code."
+
+assumptions:
+  - id: "A1"
+    statement: "I assume domain parsing must stay centralized to avoid drift across request builders and stream paths."
+    status: verified_true
+    evidence: "RoleRuntimeService uses _resolve_execution_domain from resolve_strategy_profile/create_strategy_run/_build_* and stream_chat_turn."
+  - id: "A2"
+    statement: "I assume explicit domain inputs must override any role default to preserve caller intent."
+    status: verified_true
+    evidence: "RoleDomainPolicy.resolve checks command/context/metadata in order before role-default fallback."
+  - id: "A3"
+    statement: "I assume role identifiers appear in multiple forms (case/alias/typo), requiring normalization."
+    status: verified_true
+    evidence: "Runtime and profile code paths use director/pm/chief_engineer plus mixed-case aliases; policy tests cover ChiefEngineer/ChiefEnginner."
+
+pre_mortem:
+  failure_point: >
+    If role normalization is incomplete, some callers may bypass the intended
+    role default and silently fall back to global code domain.
+  risk_zone:
+    - "polaris/cells/roles/runtime/internal/role_domain_policy.py"
+    - "polaris/cells/roles/runtime/public/service.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/runtime/tests/test_role_domain_policy.py"
+      description: "Validate alias normalization and role-default resolution precedence."
+      expected: "PM/Architect/ChiefEngineer -> document, Director -> code, explicit domain wins."
+      status: new
+    - file: "polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py"
+      description: "Validate request builders propagate role-default domain into request + metadata."
+      expected: "Session requests use role defaults when domain missing and keep explicit overrides."
+      status: existing_fix
+  integration_tests:
+    - description: "Runtime strategy/domain regression"
+      command: "pytest polaris/cells/roles/runtime/tests/test_role_domain_policy.py polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py -q"
+      status: new
+  manual_check:
+    - "Smoke-call RoleRuntimeService._build_session_request for pm/director and inspect request.domain + metadata.domain."
+
+related_adrs:
+  - "ADR-0050"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-03-25"
+  verified_by: "codex"
+  verified_at: "2026-03-25"

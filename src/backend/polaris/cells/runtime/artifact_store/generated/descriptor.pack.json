@@ -1,0 +1,309 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.245097Z",
+  "source_hash": "4815579e474d48b1",
+  "cell_id": "runtime.artifact_store",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ArrowService",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/arrow_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_arrow_ipc",
+          "doc": "Converts a list of dicts to an Arrow IPC stream (bytes)."
+        },
+        {
+          "name": "get_status",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_arrow_service",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/arrow_service.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_artifact_rel_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_artifact_root_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_base_dir",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_cache_join",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_cache_join_double",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "is_hot_artifact_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_absolute_if_allowed",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_artifact_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_safe_path",
+      "description": "Resolve and validate an artifact path.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "select_latest_artifact",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifact_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "read_json",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "read_file_tail",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "read_file_head",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "format_mtime",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "get_git_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_json_dict",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_runtime_task_rows",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_runtime_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_memory_payload",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_success_stats_payload",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_success_stats_local",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_goals",
+      "description": "Extract goal items from markdown text by scanning headings and bullet lists.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_goals",
+      "description": "Load goals from workspace documentation files.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_snapshot_paths",
+      "description": "Resolve all artifact paths needed for the snapshot.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_file_entries",
+      "description": "Build the list of (label, path) file entries for the snapshot.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_agents_review",
+      "description": "Build the AGENTS.md review payload, or None if no review is needed.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_iteration",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_map_workflow_runtime_phase",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_director_status_label",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_snapshot",
+      "description": "Build snapshot - now a thin wrapper around RuntimeProjection.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_runtime_snapshot_v2",
+      "description": "构建 V2 运行时快照",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_pm_status",
+      "description": "Build PM status using PMService as the authoritative source.",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_engine_status_v2",
+      "description": "构建引擎状态 V2",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "class",
+      "name": "WriteRuntimeArtifactCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReadRuntimeArtifactQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeV2ExportQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeArtifactWrittenEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeArtifactResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeArtifactStoreError",
+      "description": "Structured contract error for `runtime.artifact_store`.",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRuntimeArtifactStoreService",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py",
+      "methods": [
+        {
+          "name": "write_artifact",
+          "doc": "Write one runtime artifact."
+        },
+        {
+          "name": "read_artifact",
+          "doc": "Read one runtime artifact."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/public/contracts.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

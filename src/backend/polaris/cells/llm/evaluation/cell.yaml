@@ -1,0 +1,77 @@
+id: llm.evaluation
+title: LLM Evaluation
+kind: capability
+visibility: public
+stateful: true
+owner: llm
+purpose: 'Run LLM readiness/evaluation suites and maintain evaluation index artifacts
+  for provider/model/role qualification.
+
+  '
+current_modules:
+- polaris.cells.llm.evaluation.public.service
+- polaris.cells.llm.evaluation.internal.runner
+- polaris.cells.llm.evaluation.internal.agentic_benchmark
+- polaris.cells.llm.evaluation.internal.tool_calling_matrix
+- polaris.cells.llm.evaluation.internal.deterministic_judge
+- polaris.cells.llm.evaluation.internal.readiness_tests
+- polaris.cells.llm.evaluation.internal.index
+- polaris.kernelone.benchmark.unified_models
+- polaris.kernelone.benchmark.unified_judge
+- polaris.kernelone.benchmark.unified_runner
+tags: []
+owned_paths:
+- polaris/cells/llm/evaluation/**
+public_contracts:
+  modules:
+  - polaris.cells.llm.evaluation.public.contracts
+  commands:
+  - RunLlmEvaluationCommandV1
+  queries:
+  - QueryLlmEvaluationIndexV1
+  events:
+  - LlmEvaluationCompletedEventV1
+  results:
+  - LlmEvaluationResultV1
+  errors:
+  - LlmEvaluationErrorV1
+depends_on:
+- llm.provider_runtime
+- llm.provider_config
+- policy.workspace_guard
+- audit.evidence
+- storage.layout
+- kernelone.llm.embedding
+- kernelone.fs
+- kernelone.benchmark
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- workspace/.polaris/llm_test_index.evaluation.json
+- workspace/.polaris/runtime/llm_evaluations/*
+effects_allowed:
+- fs.read:workspace/.polaris/**
+- fs.write:workspace/.polaris/llm_test_index.evaluation.json
+- fs.write:workspace/.polaris/runtime/llm_evaluations/*
+- network.http_outbound:llm/*
+verification:
+  tests:
+  - tests/test_llm_agentic_benchmark.py
+  - tests/test_llm_tool_calling_matrix.py
+  - tests/test_llm_test_index_reconcile.py
+  - tests/test_llm_qualification_validators.py
+  - tests/test_llm_connectivity_suite_ollama.py
+  - polaris/kernelone/benchmark/tests/test_unified_models.py
+  - polaris/kernelone/benchmark/tests/test_unified_judge.py
+  - polaris/kernelone/benchmark/tests/test_unified_runner.py
+  gaps:
+  - Some evaluation callers still bypass contracts and call internal modules directly.
+    → Unified framework provides public entry point.
+  - kernelone.fs does not expose list_dir/list_files; KernelFsReportsPort is a Cell-local
+    stub backed by os.listdir until the KernelOne FS contract is extended.
+  - tests/test_llm_evaluation_abstraction.py covers embedding port and reports port
+    injection.
+  - EvaluationRunner still mirrors legacy readiness reports under runtime/llm_tests/reports
+    for delivery compatibility.
+  smoke_commands: []
+generated_artifacts: []

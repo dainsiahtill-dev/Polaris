@@ -1,0 +1,66 @@
+{
+  "template": true,
+  "id": "archive.task_snapshot_archive",
+  "title": "Task Snapshot Archive",
+  "kind": "capability",
+  "purpose": "Publish terminal task and plan snapshots into immutable workspace history records without allowing archive logic to become a second runtime state owner.",
+  "summary": "Target blueprint for the task snapshot archive cell. It consumes terminal runtime task facts, produces immutable task history manifests, and emits audit evidence while preserving runtime single-writer ownership.",
+  "owned_paths": [
+    "cells/archive/task_snapshot_archive/**"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ArchiveTaskSnapshotCommandV1"
+    ],
+    "queries": [
+      "GetTaskSnapshotManifestQueryV1"
+    ],
+    "events": [
+      "TaskSnapshotArchivedEventV1"
+    ],
+    "results": [
+      "ArchiveManifestV1"
+    ],
+    "errors": [
+      "TaskSnapshotArchiveErrorV1"
+    ]
+  },
+  "neighbors": [
+    "runtime.state_owner",
+    "storage.layout",
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "history_task_snapshot_archive"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/tasks/*",
+    "fs.write:workspace/history/tasks/*"
+  ],
+  "invariants": [
+    "task snapshot archives are derived from terminal runtime facts only",
+    "archive manifests preserve task and plan linkage",
+    "all archive text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "cells/archive/task_snapshot_archive/internal/application/service.py",
+    "polaris/application/app/services/archive_hook.py",
+    "polaris/application/app/services/history_archive_service.py"
+  ],
+  "test_targets": [
+    "cells/archive/task_snapshot_archive/tests/test_contracts.py",
+    "cells/archive/task_snapshot_archive/tests/test_behavior.py",
+    "tests/integration/test_storage_archive_pipeline.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts/*",
+      "current archive hook implementations"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

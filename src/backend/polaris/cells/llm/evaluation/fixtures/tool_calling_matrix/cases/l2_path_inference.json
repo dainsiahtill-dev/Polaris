@@ -1,0 +1,38 @@
+{
+  "case_id": "l2_path_inference",
+  "level": "L2",
+  "role": "director",
+  "title": "L2 Path Inference from Filename",
+  "description": "测试 Agent 能否根据文件名推断正确路径，而不是猜测错误路径。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 helpers.py 文件的内容。注意：不要猜测路径，如果不确定位置，先用工具查找。",
+  "tags": ["l2", "path", "inference", "search-first"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.8,
+    "stream": {
+      "required_any_tools": [
+        ["read_file"],
+        ["glob", "search_code", "repo_rg"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "required_output_substrings": ["helpers"]
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["read_file"],
+        ["glob", "search_code", "repo_rg"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "l9_hallucination_parameter_invention",
+  "role": "director",
+  "title": "L9 Hallucination - Fake Parameter",
+  "description": "测试对不存在路径的处理。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "用 repo_rg 搜索 pattern=\"TODO\"，paths=[\"nonexistent_dir\"]，告诉我结果。",
+  "tags": [
+    "l9",
+    "hallucination",
+    "parameter",
+    "path-handling"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_rg"],
+        "fragment": "nonexistent_dir",
+        "description": "测试不存在路径的处理"
+      }
+    ],
+    "required_output_substrings": [
+      "不存在",
+      "没有找到",
+      "not found",
+      "空"
+    ],
+    "forbidden_output_substrings": [
+      "找到 5 个",
+      "found 10",
+      "结果如下"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "path_validation_check"
+    ]
+  }
+}

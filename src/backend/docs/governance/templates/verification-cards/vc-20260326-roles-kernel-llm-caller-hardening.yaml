@@ -1,0 +1,74 @@
+card_id: "vc-20260326-roles-kernel-llm-caller-hardening"
+bug_summary: >
+  roles.kernel 的 LLMCaller 目前把请求规划、执行、审计、缓存与 structured
+  fallback 混在一个类内，导致多入口路径收口不一致，部分 early-return 缺少
+  CALL_ERROR 事件，且 structured fallback 可绕开统一 request contract。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/llm_caller.py"
+  method: "call / call_structured / call_stream"
+  symptom: "生命周期事件与 fallback 请求构建存在路径分叉，缓存边界未显式收紧。"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设 call/call_structured/call_stream 存在重复但不一致的执行与审计路径。"
+    status: verified_true
+    evidence: >
+      call()/call_structured()/call_stream() 各自构造并处理 request/response，
+      且 early return 分支行为不完全一致。
+  - id: "A2"
+    statement: "我假设 call_stream 的 provider early error 和 native_tools_unavailable 分支未统一发射 CALL_ERROR。"
+    status: verified_true
+    evidence: >
+      call_stream() 在 native_tools_unavailable 分支与 event_type=error 分支直接 yield error 返回，
+      未统一调用 emit_llm_event(CALL_ERROR)。
+  - id: "A3"
+    statement: "我假设 call_structured 的 fallback 手工构建 AIRequest，可能偏离 _prepare_llm_request 契约。"
+    status: verified_true
+    evidence: >
+      call_structured() 在 fallback 路径中直接使用 _messages_to_input + AIRequest(...)，
+      未复用 prepared.request_options/context 基线。
+  - id: "A4"
+    statement: "我假设缓存没有显式限制为 plain-text/no-tools 场景，存在语义漂移风险。"
+    status: verified_true
+    evidence: >
+      call() 的 cache.get/cache.put 只依赖 prompt_fingerprint/context_summary/temperature/model，
+      未显式绑定 native_tool_mode/response_format_mode。
+
+pre_mortem:
+  failure_point: >
+    如果本次修改失败，最可能是把事件补齐、缓存收紧和 fallback 对齐写成了行为变化，
+    导致既有调用方在流式错误处理或 structured 解析上出现回归。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/llm_caller.py"
+    - "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+    - "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "覆盖缓存 eligibility、stream error 分支与 structured fallback 收敛。"
+      expected: "三类路径行为稳定，新增断言通过。"
+      status: update_existing
+  integration_tests:
+    - description: "kernel stream tool loop 回归"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      status: existing
+  manual_check:
+    - "检查 call_stream 的 native_tools_unavailable 与 provider error 分支均发射 CALL_ERROR。"
+    - "检查 structured fallback request 沿用 prepared 的 timeout/max_tokens/context 语义。"
+
+related_adrs:
+  - "ADR-0053"
+  - "ADR-0054"
+  - "ADR-0055"
+  - "ADR-0056"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-03-26"
+  verified_by: "codex"
+  verified_at: "2026-03-26"
+

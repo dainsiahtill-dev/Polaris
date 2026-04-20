@@ -1,0 +1,43 @@
+{
+  "case_id": "l1_chinese_prompt_stability",
+  "role": "director",
+  "title": "L1 Chinese Prompt Stability",
+  "description": "验证中文提示下工具调用参数提取是否准确。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "列出 src 目录下所有 Python 文件的名称和行数。",
+  "tags": [
+    "l1",
+    "basic",
+    "chinese",
+    "repo_rg"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "src",
+        "description": "path 参数必须为 src"
+      }
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

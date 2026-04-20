@@ -1,0 +1,12 @@
+{
+  "cell_id": "runtime.task_runtime",
+  "version": "1.0.0",
+  "read_order": [
+    "cell.yaml",
+    "README.agent.md",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/service.py"
+  ],
+  "notes": "Minimal context pack for runtime task lifecycle orchestration."
+}

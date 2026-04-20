@@ -1,0 +1,252 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.891565Z",
+  "source_hash": "89b2c4f308135b9a",
+  "cell_id": "llm.provider_runtime",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "TaskType",
+      "description": "LLM task type enumeration.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CellAIRequest",
+      "description": "Cell-defined AI request (infrastructure-agnostic).",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CellAIResponse",
+      "description": "Cell-defined AI response.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CellAIExecutor",
+      "description": "Cell-level AI executor using infrastructure adapter.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResponseNormalizer",
+      "description": "Response normalization utilities (from kernelone.llm.engine).",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py",
+      "methods": [
+        {
+          "name": "extract_json_object",
+          "doc": "Extract JSON object from text."
+        },
+        {
+          "name": "looks_truncated_json",
+          "doc": "Check if text looks like truncated JSON."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "normalize_list",
+      "description": "Normalize various input types to a list of strings.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_append",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "truncate_text",
+      "description": "Truncate text to limit characters.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "split_lines",
+      "description": "Split text into lines.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_gpus",
+      "description": "Detect NVIDIA GPUs and RAPIDS stack availability.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/gpu_detector.py"
+    },
+    {
+      "type": "function",
+      "name": "run_provider_action",
+      "description": "通过 kernelone provider manager 执行 provider 操作.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/provider_actions.py"
+    },
+    {
+      "type": "function",
+      "name": "get_provider_manager",
+      "description": "获取 infrastructure ProviderManager 单例。",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "invoke_role_runtime_provider",
+      "description": "Invoke LLM provider with audit tracing.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_invoke.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_and_apply_usage",
+      "description": "Extract token usage from provider result and apply to tracker.",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_invoke.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_complete_sync",
+      "description": "Emit complete event synchronously (for non-async call sites).",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_invoke.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_provider_type",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "is_codex_provider",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_runtime_provider_kind",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "is_role_runtime_supported",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "class",
+      "name": "InvokeProviderActionCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InvokeRoleProviderCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryRoleRuntimeProviderSupportV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderInvocationCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderInvocationResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmProviderRuntimeError",
+      "description": "Structured contract error for `llm.provider_runtime`.",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UnsupportedProviderTypeError",
+      "description": "Raised when a provider type is not recognised by the runtime.",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ILlmProviderRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "LlmProviderRuntimeService",
+      "description": "Contract-first provider runtime facade.",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/service.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_to_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_provider_action",
+      "description": "Execute provider action with contract-level error mapping.",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_role_provider",
+      "description": "Invoke role provider runtime with contract-level error mapping.",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_role_provider_support",
+      "description": "Return support metadata for role/provider combination.",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

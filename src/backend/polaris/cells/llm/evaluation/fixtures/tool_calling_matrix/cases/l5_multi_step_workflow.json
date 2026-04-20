@@ -1,0 +1,46 @@
+{
+  "case_id": "l5_multi_step_workflow",
+  "level": "L5",
+  "role": "director",
+  "title": "L5 Multi-Step Workflow",
+  "description": "测试 Agent 能否执行多步骤工作流：搜索→读取→编辑→验证。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 找到包含 DEBUG 变量的文件 2. 读取该文件 3. 将 DEBUG = True 改为 DEBUG = False 4. 再次读取确认修改",
+  "tags": ["l5", "workflow", "multi-step", "dag", "search-read-edit-verify"],
+  "weight": 1.2,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.7,
+    "stream": {
+      "required_tools": ["read_file"],
+      "required_any_tools": [
+        ["search_code", "repo_rg", "grep", "glob"],
+        ["search_replace", "edit_file", "precision_edit"]
+      ],
+      "ordered_tool_groups": [
+        ["search_code", "repo_rg", "grep", "glob"],
+        ["read_file"],
+        ["search_replace", "edit_file", "precision_edit"],
+        ["read_file"]
+      ],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 6,
+      "required_output_substrings": ["DEBUG = False"]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "required_any_tools": [
+        ["search_code", "repo_rg", "grep", "glob"],
+        ["search_replace", "edit_file", "precision_edit"]
+      ],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 6
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

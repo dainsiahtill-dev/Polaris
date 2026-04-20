@@ -1,0 +1,36 @@
+{
+  "case_id": "director_security_patch",
+  "role": "director",
+  "title": "Director Applies Security Patch",
+  "description": "The Director must identify and fix a security vulnerability in the codebase.",
+  "workspace_fixture": "director_safe_scope_plan",
+  "prompt": "Search for SQL injection vulnerabilities in the codebase. Return JSON: {vulnerabilities: [{file, line, type, severity}], patches: [{file, fix, rationale}], verified: bool}. Only modify identified vulnerable locations.",
+  "tags": [
+    "director",
+    "security",
+    "patch"
+  ],
+  "judge": {
+    "score_threshold": 0.82,
+    "required_tools": [
+      "ripgrep",
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "vulnerabilities",
+      "patches",
+      "severity"
+    ],
+    "forbidden_tools": [
+      "execute_command"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "director_security_fix"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 8
+  }
+}

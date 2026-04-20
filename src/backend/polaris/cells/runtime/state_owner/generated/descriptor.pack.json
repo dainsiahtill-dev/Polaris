@@ -1,0 +1,244 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.327002Z",
+  "source_hash": "cb9f02778a5fd3f2",
+  "cell_id": "runtime.state_owner",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "_candidate_paths_for_rel",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/maintenance.py"
+    },
+    {
+      "type": "function",
+      "name": "_truncate_or_remove_file",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/maintenance.py"
+    },
+    {
+      "type": "function",
+      "name": "_remove_directory",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/maintenance.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_runtime_scope",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/maintenance.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_runtime_records",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/maintenance.py"
+    },
+    {
+      "type": "function",
+      "name": "_clear_rel_paths",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/maintenance.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_fs_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_kernel_fs_for_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "write_json_atomic",
+      "description": "Write JSON data atomically to path.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "read_json_safe",
+      "description": "Read JSON file safely, returning None on failure.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_pm_payload",
+      "description": "Write PM payload to canonical runtime and run-scoped contract paths.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_engine_dispatch_contracts",
+      "description": "Ensure engine dispatch prerequisites are persisted in canonical runtime paths.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_director_result",
+      "description": "Persist director execution result.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "load_director_result",
+      "description": "Load director result from file.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_pm_state",
+      "description": "Persist PM state to file.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "load_pm_state",
+      "description": "Load PM state from file.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_director_result_into_pm_state",
+      "description": "Merge director execution result into PM state.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "build_fallback_director_result_from_summary",
+      "description": "Build a fallback director result from a summary payload.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_non_negative_int",
+      "description": "Coerce value to non-negative integer.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "safe_payload_digest",
+      "description": "Generate a safe digest from payload for caching/logging.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "trim_str_list",
+      "description": "Trim and validate a list of strings.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_file_plan_entry",
+      "description": "Normalize a file plan entry to standard format.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "class",
+      "name": "RuntimeStateRegistry",
+      "description": "Single-writer registry with snapshot reads for concurrent request handlers.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/runtime_state_registry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "create_id",
+          "doc": ""
+        },
+        {
+          "name": "set",
+          "doc": ""
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "pop",
+          "doc": ""
+        },
+        {
+          "name": "contains",
+          "doc": ""
+        },
+        {
+          "name": "size",
+          "doc": ""
+        },
+        {
+          "name": "values_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "items_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "clear",
+          "doc": ""
+        },
+        {
+          "name": "mutate",
+          "doc": ""
+        },
+        {
+          "name": "prune",
+          "doc": ""
+        },
+        {
+          "name": "update_many",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProcessHandle",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/state.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AppState",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/state.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Auth",
+      "description": "Authentication handler with strict security policy.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/state.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "check",
+          "doc": "Validate authentication header against configured token."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ConnectionState",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/state.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

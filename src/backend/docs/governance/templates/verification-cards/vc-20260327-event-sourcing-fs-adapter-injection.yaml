@@ -1,0 +1,60 @@
+card_id: "vc-20260327-event-sourcing-fs-adapter-injection"
+bug_summary: >
+  Event Sourcing 单测在独立执行时失败：JsonlEventStore 依赖默认 FS adapter，
+  但测试未注入 adapter，导致 RuntimeError 阻断 append/query 验证。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/kernelone/events/tests/test_sourcing_store.py"
+  method: "_inject_kernel_fs_adapter fixture（新增）"
+  symptom: "测试构造 JsonlEventStore 时抛出 Default KernelFileSystemAdapter not set"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设失败不是事件模型问题，而是测试缺少 FS adapter 注入。"
+    status: verified_true
+    evidence: >
+      失败栈在 JsonlEventStore.__init__ -> get_default_adapter 抛 RuntimeError；
+      append/query 逻辑尚未执行。见 pytest 输出与
+      polaris/kernelone/events/sourcing/file_store.py:38。
+
+  - id: "A2"
+    statement: "我假设生产路径通过 bootstrap 注入 adapter，修复应落在测试契约而非改写生产依赖方向。"
+    status: verified_true
+    evidence: >
+      现有多处测试通过 set_default_adapter(LocalFileSystemAdapter()) 建立 KernelOne FS 运行前提；
+      此用例缺少同等注入。见 polaris/tests/test_llm_realtime_bridge.py:42 等。
+
+pre_mortem:
+  failure_point: >
+    如果在生产代码中引入隐式 fallback adapter，会弱化 bootstrap 注入约束并可能造成环境差异。
+    因此本次仅补测试注入，避免改变生产边界。
+  risk_zone:
+    - "polaris/kernelone/events/tests/test_sourcing_store.py"
+    - "polaris/kernelone/fs/registry.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/events/tests/test_sourcing_store.py"
+      description: "event store append/query 两个用例在注入 adapter 后应通过"
+      expected: "2 passed"
+      status: existing_fix
+    - file: "polaris/kernelone/runtime/tests/test_instance_state.py"
+      description: "instance-scoped state 回归不受影响"
+      expected: "3 passed"
+      status: existing_pass
+  integration_tests:
+    - description: "OpenCode convergence gate 架构门禁回归"
+      command: "python -m pytest -q tests/architecture/test_opencode_convergence_gate.py"
+      status: existing_pass
+  manual_check:
+    - "确认未修改 JsonlEventStore 生产初始化逻辑，仅测试层注入 set_default_adapter"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-27"
+  verified_by: "codex-gpt-5"
+  verified_at: "2026-03-27"

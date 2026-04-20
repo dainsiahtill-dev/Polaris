@@ -1,0 +1,70 @@
+{
+  "template": true,
+  "id": "archive.run_archive",
+  "title": "Run Archive",
+  "kind": "capability",
+  "purpose": "Publish terminal runtime runs into immutable history manifests and index entries under workspace history while keeping runtime state read-only from the archive path.",
+  "summary": "Target blueprint for the run history archive cell. It consumes terminal runtime run facts via controlled queries, materializes immutable history manifests, and emits audit evidence for traceability.",
+  "owned_paths": [
+    "cells/archive/run_archive/**"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ArchiveRunCommandV1"
+    ],
+    "queries": [
+      "ListHistoryRunsQueryV1",
+      "GetArchiveManifestQueryV1"
+    ],
+    "events": [
+      "RunArchivedEventV1"
+    ],
+    "results": [
+      "ArchiveManifestV1",
+      "HistoryRunsResultV1",
+      "HistoryRunIndexEntryV1"
+    ],
+    "errors": [
+      "RunArchiveErrorV1"
+    ]
+  },
+  "neighbors": [
+    "runtime.state_owner",
+    "storage.layout",
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "history_run_archive"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/runs/*",
+    "fs.write:workspace/history/runs/*",
+    "fs.write:workspace/history/runs.index.jsonl"
+  ],
+  "invariants": [
+    "history run manifests are append-only once published",
+    "history index updates are idempotent",
+    "all archive text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "cells/archive/run_archive/internal/application/service.py",
+    "polaris/application/app/services/history_archive_service.py",
+    "polaris/application/app/services/history_manifest_repository.py"
+  ],
+  "test_targets": [
+    "cells/archive/run_archive/tests/test_contracts.py",
+    "cells/archive/run_archive/tests/test_behavior.py",
+    "tests/integration/test_storage_archive_pipeline.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts/*",
+      "current archive service implementations"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

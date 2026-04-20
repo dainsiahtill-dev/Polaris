@@ -1,0 +1,334 @@
+================================================================================
+CELL SCHEMA ANALYSIS REPORT
+================================================================================
+
+SUMMARY
+----------------------------------------
+Total cells analyzed: 52
+Cells with issues: 0
+Cells with warnings: 46
+Total issues: 0
+Total warnings: 106
+
+ISSUE DISTRIBUTION
+----------------------------------------
+
+WARNING DISTRIBUTION
+----------------------------------------
+  public_contracts.commands: 10 cells
+  public_contracts.errors: 8 cells
+  public_contracts.events: 10 cells
+  public_contracts.queries: 9 cells
+  public_contracts.results: 7 cells
+  subgraphs: 10 cells
+  tags: 45 cells
+  verification.gaps: 1 cells
+  verification.tests: 6 cells
+
+================================================================================
+DETAILED CELL REPORTS
+================================================================================
+
+Cell: architect.design
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\architect\design\cell.yaml
+  WARNINGS:
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: archive.factory_archive
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\archive\factory_archive\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: archive.run_archive
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\archive\run_archive\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: archive.task_snapshot_archive
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\archive\task_snapshot_archive\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: audit.diagnosis
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\audit\diagnosis\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: audit.evidence
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\audit\evidence\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: audit.verdict
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\audit\verdict\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: chief_engineer.blueprint
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\chief_engineer\blueprint\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: context.catalog
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\context\catalog\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'verification.gaps' is empty - no migration plan
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: context.engine
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\context\engine\cell.yaml
+  WARNINGS:
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: delivery.api_gateway
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\delivery\api_gateway\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: delivery.cli
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\delivery\cli\cell.yaml
+  WARNINGS:
+    - 'verification.tests' is empty - no test coverage
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: director.delivery
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\director\delivery\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.results' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'verification.tests' is empty - no test coverage
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: director.planning
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\director\planning\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.results' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'verification.tests' is empty - no test coverage
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: director.runtime
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\director\runtime\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.results' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'verification.tests' is empty - no test coverage
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: director.tasking
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\director\tasking\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.results' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'verification.tests' is empty - no test coverage
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: events.fact_stream
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\events\fact_stream\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: factory.cognitive_runtime
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\factory\cognitive_runtime\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: finops.budget_guard
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\finops\budget_guard\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: llm.control_plane
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\llm\control_plane\cell.yaml
+  WARNINGS:
+    - 'subgraphs' is empty - cell not connected to any pipeline
+
+Cell: llm.dialogue
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\llm\dialogue\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: llm.evaluation
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\llm\evaluation\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: llm.provider_config
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\llm\provider_config\cell.yaml
+  WARNINGS:
+    - 'public_contracts.queries' is empty array []
+    - 'tags' is empty
+
+Cell: llm.provider_runtime
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\llm\provider_runtime\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: llm.tool_runtime
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\llm\tool_runtime\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: orchestration.pm_dispatch
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\orchestration\pm_dispatch\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: orchestration.pm_planning
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\orchestration\pm_planning\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: orchestration.workflow_activity
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\orchestration\workflow_activity\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.results' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'tags' is empty
+
+Cell: orchestration.workflow_engine
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\orchestration\workflow_engine\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.results' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'tags' is empty
+
+Cell: orchestration.workflow_orchestration
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\orchestration\workflow_orchestration\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: orchestration.workflow_runtime
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\orchestration\workflow_runtime\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: policy.permission
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\policy\permission\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: policy.workspace_guard
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\policy\workspace_guard\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'tags' is empty
+
+Cell: qa.audit_verdict
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\qa\audit_verdict\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: resident.autonomy
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\resident\autonomy\cell.yaml
+  WARNINGS:
+    - 'subgraphs' is empty - cell not connected to any pipeline
+    - 'tags' is empty
+
+Cell: roles.host
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\roles\host\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'public_contracts.results' is empty array []
+    - 'public_contracts.errors' is empty array []
+    - 'verification.tests' is empty - no test coverage
+    - 'tags' is empty
+
+Cell: roles.kernel
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\roles\kernel\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: roles.profile
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\roles\profile\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: roles.session
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\roles\session\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: runtime.artifact_store
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\runtime\artifact_store\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: runtime.execution_broker
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\runtime\execution_broker\cell.yaml
+  WARNINGS:
+    - 'public_contracts.events' is empty array []
+    - 'tags' is empty
+
+Cell: runtime.projection
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\runtime\projection\cell.yaml
+  WARNINGS:
+    - 'public_contracts.commands' is empty array []
+    - 'tags' is empty
+
+Cell: runtime.state_owner
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\runtime\state_owner\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: runtime.task_runtime
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\runtime\task_runtime\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: storage.layout
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\storage\layout\cell.yaml
+  WARNINGS:
+    - 'tags' is empty
+
+Cell: workspace.integrity
+Path: C:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\workspace\integrity\cell.yaml
+  WARNINGS:
+    - 'public_contracts.queries' is empty array []
+    - 'public_contracts.events' is empty array []
+    - 'tags' is empty
+
+================================================================================
+PROBLEM CELLS (sorted by issue count)
+================================================================================
+architect.design: 0 issues, 2 warnings
+archive.factory_archive: 0 issues, 1 warnings
+archive.run_archive: 0 issues, 1 warnings
+archive.task_snapshot_archive: 0 issues, 1 warnings
+audit.diagnosis: 0 issues, 1 warnings
+audit.evidence: 0 issues, 1 warnings
+audit.verdict: 0 issues, 1 warnings
+chief_engineer.blueprint: 0 issues, 1 warnings
+context.catalog: 0 issues, 6 warnings
+context.engine: 0 issues, 2 warnings

@@ -1,0 +1,88 @@
+card_id: vc-20260325-unified-debug-stream-framework
+bug_summary: >-
+  Role console runtime lacks a unified debug/observability interposition layer, causing
+  thinking/tool/debug visibility regressions, swallowed real LLM request data, and no stable
+  way to surface strategy/continuity/compaction decisions end-to-end.
+classification: structural
+bug_path:
+  file: polaris/delivery/cli/terminal_console.py
+  method: _stream_turn
+  symptom: >-
+    CLI cannot reliably surface full runtime diagnostics; debug output, tool events, and real
+    LLM request visibility drift across layers and regress under streaming changes.
+assumptions:
+  - id: A1
+    statement: >-
+      I assume the current console pipeline only knows a few hard-coded event types and has no
+      standalone debug event contract, so any new observability signal is either dropped or mixed
+      into normal content.
+    status: verified_true
+    evidence: >-
+      Verified in polaris/delivery/cli/terminal_console.py and
+      polaris/delivery/cli/director/console_host.py: event handling is specialized for content,
+      thinking, tool_call, tool_result, error, complete, fingerprint only.
+  - id: A2
+    statement: >-
+      I assume the only layer that can expose the real LLM request payload is the LLM caller,
+      because it owns messages, request options, native tool mode, and AIRequest construction.
+    status: verified_true
+    evidence: >-
+      Verified in polaris/cells/roles/kernel/internal/llm_caller.py::_prepare_llm_request and
+      call_stream(); this is where the canonical request bundle is assembled.
+  - id: A3
+    statement: >-
+      I assume the current end-to-end console smoke is additionally blocked by a broken
+      StrategyRunContext API mismatch, so debug observability cannot be validated without fixing it.
+    status: verified_true
+    evidence: >-
+      Verified in polaris/cells/roles/runtime/public/service.py::create_strategy_run calling
+      StrategyRunContext.from_resolved(), while polaris/kernelone/context/strategy_run_context.py
+      lacked that API and related immutable helpers.
+pre_mortem:
+  failure_point: >-
+    If this fix is wrong, the likely failure is building yet another ad-hoc print path instead of
+    a context-local debug event bus, causing lower-layer debug to bypass host ordering or leak into
+    user-visible content.
+  risk_zone:
+    - polaris/delivery/cli/terminal_console.py
+    - polaris/delivery/cli/director/console_host.py
+    - polaris/cells/roles/runtime/public/service.py
+    - polaris/cells/roles/kernel/internal/llm_caller.py
+    - polaris/cells/roles/kernel/internal/context_gateway.py
+    - polaris/kernelone/llm/engine/stream_executor.py
+    - polaris/kernelone/context/strategy_run_context.py
+verification_plan:
+  unit_tests:
+    - file: polaris/kernelone/context/tests/test_strategy_run_context.py
+      description: Restore missing StrategyRunContext constructor/helper API expected by runtime and tests.
+      expected: from_resolved/with_tool_call/with_cache_hit/mark_ended/to_dict all pass.
+      status: existing_fix
+    - file: polaris/delivery/cli/tests/test_terminal_console.py
+      description: Verify debug events render in the console and debug flag reaches the host context.
+      expected: debug lines are visible, prefixed, and do not swallow answer/tool/thinking events.
+      status: existing_fix
+    - file: polaris/delivery/cli/tests/test_terminal_console.py
+      description: Verify real tool events remain visible when debug mode is enabled.
+      expected: tool_call/tool_result and debug events coexist in one stream.
+      status: existing_fix
+  integration_tests:
+    - description: Run canonical CLI console with --debug and inspect emitted thinking/tool/debug stream.
+      command: >-
+        @'\n总结这个项目代码\n/exit\n'@ | python -m polaris.delivery.cli console --workspace . --role director --backend plain --prompt-style plain --json-render raw --debug
+      status: new
+    - description: Run focused regression suites for console/kernel/strategy context.
+      command: >-
+        python -m pytest -q polaris/kernelone/context/tests/test_strategy_run_context.py
+        polaris/delivery/cli/tests/test_terminal_console.py
+        polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py
+      status: existing_fix
+  manual_check:
+    - Debug output must be visually distinct from normal content.
+    - Full LLM request payload must appear only when --debug is enabled.
+    - Strategy, continuity, and compression/budget events must be observable in order.
+related_adrs:
+  - ADR-0047
+  - ADR-0048
+sign_off:
+  completed_by: Codex
+  completed_at: 2026-03-25

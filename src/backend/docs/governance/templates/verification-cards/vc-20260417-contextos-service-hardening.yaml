@@ -1,0 +1,118 @@
+card_id: "vc-20260417-contextos-service-hardening"
+bug_summary: >
+  ContextOS 四层服务虽然已经具备文件与基础实现, 但 `StateFirstContextOS` 与 `context_gateway`
+  周边仍残留部分内联逻辑与旁路写入点, 导致 truth log、working state、receipt 外置与 prompt projection
+  还没有完全收敛为单一权威路径。
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/context/context_os/runtime.py"
+  method: "StateFirstContextOS.project / snapshot orchestration"
+  symptom: "ContextOS 已摆脱 dual-track, 但四层服务仍未完全 authoritative, 存在服务与内联逻辑混合态"
+
+assumptions:
+  - id: "A1"
+    statement: "TransactionKernel 主链路已经收口, 本阶段不需要重新打开 turn 执行内核。"
+    status: verified_true
+    evidence: >
+      已核对 ../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_CLOSURE_MATRIX_20260416.md
+      与 polaris/cells/roles/kernel/internal/kernel/core.py;
+      TransactionKernel 为主路径, TurnEngine 已收敛为 facade / shim。
+
+  - id: "A2"
+    statement: "StateFirstContextOS dual-track 已退役, 当前只有 pipeline 路径。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/kernelone/context/context_os/runtime.py;
+      `_legacy_project_impl` 已删除, `enable_pipeline` 已移除, `project()` 直接走 `_project_via_pipeline()`。
+
+  - id: "A3"
+    statement: "TruthLogService、WorkingStateManager、ReceiptStore、ProjectionEngine 四层文件都已存在, 但当前仍只是 Part 而非 Auth。"
+    status: verified_true
+    evidence: >
+      已核对 ../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_CLOSURE_MATRIX_20260416.md
+      与 `polaris/kernelone/context/*.py` 对应文件; Closure Matrix 当前将四层标记为 `Part`。
+
+  - id: "A4"
+    statement: "ContextOSSnapshot.to_dict() 的 transcript nuke 已修复, 所以下一阶段不应再把主要精力放在 snapshot 补丁, 而应聚焦四层 authority 收口。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/kernelone/context/context_os/models.py 与上一轮 Closure Matrix;
+      transcript 超限时已走 `ReceiptStore` 外置并支持 round-trip 恢复。
+
+  - id: "A5"
+    statement: "runtime 与 gateway 仍存在明确的旁路写入点, 若不收口会制造第二套 ContextOS 真相。"
+    status: verified_true
+    evidence: >
+      已盘点 truth append / working state / receipt / projection 路径:
+      - runtime.py L567: _truth_log.append() 仅写入, PipelineInput 的 existing_snapshot_transcript 仍直接来自 snapshot.transcript_log (truth log 未被读取);
+      - runtime.py L571-576: WorkingStateManager 被当作通用 kv store, 直接 update transcript_log / working_state / artifact_store 等;
+      - runtime.py L595-596: receipt ref 内联生成 (f'tool_{event.event_id}') 并 put, 未走统一接口;
+      - models.py L990: to_dict() 中也内联创建 ReceiptStore, 存在分散逻辑;
+      - projection_formatter.py: 仍在内联展开 transcript_log 为 message list, ProjectionEngine 未接管。
+
+  - id: "A6"
+    statement: "ProjectionEngine 纯化后, control-plane 字段可以被稳定隔离在 prompt 之外。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/kernelone/context/projection_engine.py 的
+      `CONTROL_PLANE_KEYS` 与 `_sanitize_turn`；
+      并通过 polaris/cells/roles/kernel/tests/test_projection_purity.py
+      验证 thinking/control-plane 不进入 projection message。
+
+pre_mortem:
+  failure_point: >
+    如果这次硬化只是把四层服务“包一层 API”, 但 runtime、gateway、snapshot/export 仍保留旁路逻辑,
+    那么 ContextOS 会继续维持“有 service 但不 authoritative”的混合态, 文档与代码真相会再次漂移。
+  risk_zone:
+    - "polaris/kernelone/context/context_os/runtime.py"
+    - "polaris/kernelone/context/context_os/models.py"
+    - "polaris/kernelone/context/truth_log_service.py"
+    - "polaris/kernelone/context/working_state_manager.py"
+    - "polaris/kernelone/context/receipt_store.py"
+    - "polaris/kernelone/context/projection_engine.py"
+    - "polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/context/tests/test_context_os_models.py"
+      description: "snapshot / export / restore 只经 canonical service path, 不再保留分散旁路逻辑。"
+      expected: "ReceiptStore 外置与 round-trip 恢复稳定, 无第二套导出路径。"
+      status: existing_fix
+    - file: "polaris/kernelone/context/tests/test_context_os_pipeline.py"
+      description: "StateFirstContextOS 只负责 orchestration, 四层服务承担实际职责。"
+      expected: "pipeline 结果由 authority service 组合, runtime 不再自持核心业务逻辑。"
+      status: passed
+    - file: "polaris/kernelone/context/tests/test_attention_runtime_boundaries.py"
+      description: "projection / state / snapshot 边界在 ContextOS 内保持隔离。"
+      expected: "控制字段不泄漏到 projection, working state 与 truth log 不交叉写入。"
+      status: passed
+    - file: "polaris/cells/roles/kernel/tests/test_context_gateway_integration.py"
+      description: "context_gateway 只编排, 不再承担 prompt 组装职责。"
+      expected: "gateway 委托 ProjectionEngine 生成投影, 本身不内联拼装 prompt。"
+      status: passed
+  integration_tests:
+    - description: "ContextOS 最小联合回归"
+      command: "python -m pytest polaris/kernelone/context/tests/test_context_os_pipeline.py polaris/kernelone/context/tests/test_context_os_models.py polaris/kernelone/context/tests/test_attention_runtime_boundaries.py -q"
+      status: passed
+    - description: "kernel + context 联合回归"
+      command: "python -m pytest polaris/cells/roles/kernel/tests/ polaris/kernelone/context/tests/ -q"
+      status: passed
+    - description: "静态门禁"
+      command: "python -m ruff check <changed-paths> --fix; python -m ruff format <changed-paths>; python -m mypy <changed-source-paths>"
+      status: passed
+  manual_check:
+    - "盘点所有 truth append 点, 确认统一走 TruthLogService"
+    - "盘点所有 working_state mutation 点, 确认统一走 WorkingStateManager"
+    - "盘点所有 <receipt_ref:...> 生成点, 确认统一走 ReceiptStore"
+    - "复查 context_gateway 不再内联拼装 prompt, ProjectionEngine 成为唯一 projection builder"
+
+related_adrs:
+  - "ADR-0071"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-04-17"
+  verified_by: "codex-gpt-5"
+  verified_at: "2026-04-17"

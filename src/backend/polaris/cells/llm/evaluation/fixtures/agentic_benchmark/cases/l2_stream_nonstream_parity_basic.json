@@ -1,0 +1,30 @@
+{
+  "case_id": "l2_stream_nonstream_parity_basic",
+  "role": "director",
+  "title": "L2 Stream vs Non-Stream Parity (Basic)",
+  "description": "验证最基础场景下流式和非流式行为完全一致。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "列出所有 .py 文件。",
+  "tags": [
+    "l2",
+    "parity",
+    "stream",
+    "nonstream"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_tree",
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_output_substrings": [
+      ".py"
+    ],
+    "validators": [
+      "parity_compare_mode_set",
+      "stream_nonstream_parity"
+    ]
+  }
+}

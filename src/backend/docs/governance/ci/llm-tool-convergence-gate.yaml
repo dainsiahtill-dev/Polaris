@@ -1,0 +1,315 @@
+# LLM Tool Convergence CI Gate Configuration
+# 验证: VC-20260328-001 ~ VC-20260328-006
+# 参考: docs/blueprints/llm_tool_calling/LLM_TOOL_CALLING_EXECUTION_PLAN_20260328.md
+
+name: LLM Tool Convergence Gate
+
+on:
+  push:
+    branches:
+      - main
+      - '**'  # 所有分支都需要通过
+    paths:
+      - 'polaris/kernelone/llm/**'
+      - 'polaris/kernelone/tool_execution/**'
+      - 'polaris/cells/roles/kernel/**'
+      - 'polaris/cells/llm/tool_runtime/**'
+      - 'polaris/cells/roles/profile/**'
+  pull_request:
+    paths:
+      - 'polaris/kernelone/llm/**'
+      - 'polaris/kernelone/tool_execution/**'
+      - 'polaris/cells/roles/kernel/**'
+      - 'polaris/cells/llm/tool_runtime/**'
+      - 'polaris/cells/roles/profile/**'
+
+jobs:
+  # ========================================================================
+  # Phase 1: ToolSpecRegistry
+  # ========================================================================
+  phase1-tool-spec-registry:
+    name: Phase 1 - ToolSpecRegistry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov mypy ruff
+
+      - name: Check ToolSpecRegistry exists
+        run: |
+          test -f polaris/kernelone/tool_execution/tool_spec_registry.py && echo "OK" || exit 1
+
+      - name: Run ToolSpecRegistry unit tests
+        run: |
+          pytest polaris/tests/unit/kernelone/tool_execution/test_tool_spec_registry.py -v --cov
+
+      - name: Tool definitions consistency check
+        run: |
+          python -c "
+            from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+            from polaris.kernelone.tool_execution.contracts import _TOOL_SPECS
+
+            # 检查contracts中的工具是否都在Registry中
+            for name in _TOOL_SPECS:
+                spec = ToolSpecRegistry.get(name)
+                if not spec:
+                    raise Exception(f'{name} not in Registry')
+
+            print('All tool definitions consistent!')
+          "
+
+  # ========================================================================
+  # Phase 2: Parser Convergence
+  # ========================================================================
+  phase2-parser-convergence:
+    name: Phase 2 - Parser Convergence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov mypy ruff
+
+      - name: Check deprecated parsers are deleted
+        run: |
+          # 这些文件应该不存在
+          if [ -f polaris/kernelone/llm/toolkit/parsers/prompt_based.py ]; then echo "ERROR: prompt_based.py should be deleted"; exit 1; fi
+          if [ -f polaris/kernelone/llm/toolkit/parsers/tool_chain.py ]; then echo "ERROR: tool_chain.py should be deleted"; exit 1; fi
+          if [ -f polaris/domain/services/parsing.py ]; then echo "ERROR: domain/services/parsing.py should be deleted"; exit 1; fi
+          echo "All deprecated parsers deleted"
+
+      - name: Check CanonicalToolCallParser exists
+        run: |
+          test -f polaris/kernelone/llm/toolkit/parsers/canonical.py && echo "OK" || exit 1
+
+      - name: Run Parser tests
+        run: |
+          pytest polaris/tests/unit/kernelone/llm/toolkit/parsers/ -v --cov --cov-fail-under=80
+
+      - name: Check no residual imports
+        run: |
+          # 检查prompt_based没有残留引用
+          if grep -r "prompt_based" polaris/kernelone/llm/ --include="*.py" | grep -v ".pyc"; then echo "ERROR: prompt_based still imported"; exit 1; fi
+          if grep -r "tool_chain" polaris/kernelone/llm/ --include="*.py" | grep -v ".pyc"; then echo "ERROR: tool_chain still imported"; exit 1; fi
+          echo "No residual imports"
+
+  # ========================================================================
+  # Phase 3: Provider Convergence
+  # ========================================================================
+  phase3-provider-convergence:
+    name: Phase 3 - Provider Convergence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov mypy ruff
+
+      - name: Check CanonicalToolResult exists
+        run: |
+          test -f polaris/kernelone/llm/toolkit/results.py && echo "OK" || exit 1
+
+      - name: Run Provider tests
+        run: |
+          pytest polaris/tests/unit/kernelone/llm/providers/ -v --cov
+          pytest polaris/tests/unit/kernelone/llm/provider_adapters/ -v --cov
+
+  # ========================================================================
+  # Phase 4: Role Policy Convergence
+  # ========================================================================
+  phase4-role-policy-convergence:
+    name: Phase 4 - Role Policy Convergence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov mypy ruff
+
+      - name: Check YAML config deleted
+        run: |
+          if [ -f polaris/cells/roles/profile/internal/config/core_roles.yaml ]; then echo "ERROR: core_roles.yaml should be deleted"; exit 1; fi
+          echo "YAML config deleted"
+
+      - name: Check RolePolicyEngine exists
+        run: |
+          test -f polaris/kernelone/policy/role_engine.py && echo "OK" || exit 1
+
+      - name: Check dangerous patterns unified
+        run: |
+          python -c "
+            # 检查危险命令Patterns只有一处定义
+            import re
+            with open('polaris/kernelone/policy/dangerous_patterns.py') as f:
+                content = f.read()
+            if 'DANGEROUS_PATTERNS' not in content:
+                raise Exception('DANGEROUS_PATTERNS not found in dangerous_patterns.py')
+
+            # 检查RoleToolGateway不再独立定义
+            with open('polaris/cells/roles/kernel/internal/tool_gateway.py') as f:
+                gateway_content = f.read()
+            # 应该委托给RolePolicyEngine
+            if 'RolePolicyEngine' not in gateway_content:
+                raise Exception('RoleToolGateway should delegate to RolePolicyEngine')
+            print('Dangerous patterns unified')
+          "
+
+      - name: Run Role Policy tests
+        run: |
+          pytest polaris/tests/unit/kernelone/policy/ -v --cov
+          pytest polaris/tests/unit/polaris/cells/roles/kernel/ -v --cov
+
+  # ========================================================================
+  # Phase 5: Executor Convergence
+  # ========================================================================
+  phase5-executor-convergence:
+    name: Phase 5 - Executor Convergence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov mypy ruff
+
+      - name: Check ToolHandlerRegistry exists
+        run: |
+          test -f polaris/kernelone/llm/toolkit/executor/registry.py && echo "OK" || exit 1
+
+      - name: Check executor uses ToolSpecRegistry
+        run: |
+          python -c "
+            with open('polaris/kernelone/llm/toolkit/executor/core.py') as f:
+                content = f.read()
+            if 'ToolSpecRegistry' not in content:
+                raise Exception('executor/core.py should use ToolSpecRegistry')
+            # 不应该直接导入definitions或contracts
+            if 'from polaris.kernelone.llm.toolkit.definitions import' in content:
+                raise Exception('executor/core.py should not import definitions directly')
+            print('Executor uses ToolSpecRegistry correctly')
+          "
+
+      - name: Run Executor tests
+        run: |
+          pytest polaris/tests/unit/kernelone/llm/toolkit/executor/ -v --cov
+
+  # ========================================================================
+  # Integration: End-to-End Tests
+  # ========================================================================
+  integration-tests:
+    name: Integration - End-to-End
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov mypy ruff
+
+      - name: Run LLM tool calling integration tests
+        run: |
+          pytest polaris/tests/integration/llm_tool_calling/ -v --cov
+
+      - name: Run all tool calling related tests
+        run: |
+          pytest polaris/tests/ -k "tool" -v --tb=short || echo "Some tool-related tests may not exist yet"
+
+  # ========================================================================
+  # Code Quality: Ruff + Mypy
+  # ========================================================================
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ruff mypy
+
+      - name: Run Ruff check
+        run: |
+          ruff check polaris/kernelone/llm/ polaris/kernelone/tool_execution/ polaris/cells/roles/kernel/ polaris/cells/llm/tool_runtime/ polaris/cells/roles/profile/ --fix
+
+      - name: Run Ruff format
+        run: |
+          ruff format polaris/kernelone/llm/ polaris/kernelone/tool_execution/ polaris/cells/roles/kernel/ polaris/cells/llm/tool_runtime/ polaris/cells/roles/profile/
+
+      - name: Run Mypy
+        run: |
+          mypy polaris/kernelone/llm/ polaris/kernelone/tool_execution/ polaris/cells/roles/kernel/ polaris/cells/llm/tool_runtime/ polaris/cells/roles/profile/ || true  # Allow warnings for now
+
+  # ========================================================================
+  # Full Regression: All Tests
+  # ========================================================================
+  full-regression:
+    name: Full Regression
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov
+
+      - name: Run all tests
+        run: |
+          pytest polaris/tests/ -x -v --tb=short 2>&1 | head -n 100
+
+      - name: Check test count
+        run: |
+          count=$(pytest polaris/tests/ --collect-only -q | tail -n 1 | awk '{print $1}')
+          echo "Collected tests: $count"

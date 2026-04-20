@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "polaris-cli"
+version = "0.1.0"
+description = "Polaris delivery CLI package (includes minimal toad-compatible console)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiosqlite",
+    "click>=8.0",
+    "httpx",
+    "notifypy",
+    "packaging",
+    "pyperclip",
+    "rich",
+    "setproctitle",
+    "textual>=0.50.0",
+    "textual-serve",
+    "tomllib>=0.10",
+    "xdg-base-dirs",
+]
+
+[project.scripts]
+toad = "toad.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["toad"]
+
+[tool.hatch.build.targets.sdist]
+include = ["toad/"]

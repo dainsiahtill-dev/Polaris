@@ -1,0 +1,35 @@
+{
+  "case_id": "l2_subdirectory_read",
+  "level": "L2",
+  "role": "director",
+  "title": "L2 Subdirectory File Read",
+  "description": "测试 Agent 能否正确读取子目录中的文件。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 backend/api.py 文件的内容。",
+  "tags": ["l2", "subdirectory", "path", "read"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "read_file",
+      "first_call_arg_equals": {
+        "file": "backend/api.py"
+      }
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,399 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.498521Z",
+  "source_hash": "0b45630978d80e00",
+  "cell_id": "context.catalog",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "DescriptorPack",
+      "description": "Descriptor pack with versioning and content fingerprint.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py",
+      "methods": [
+        {
+          "name": "_compute_source_hash",
+          "doc": "Compute content fingerprint from source files."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary for JSON serialization."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IndexWriteReceipt",
+      "description": "Receipt for index write operations, used for audit and rollback.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary for JSON serialization."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FunctionalAnalyzer",
+      "description": "AST visitor to extract classes and functions.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "visit_ClassDef",
+          "doc": ""
+        },
+        {
+          "name": "visit_FunctionDef",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "verify_recall_at_10",
+      "description": "Verify retrieval recall.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_schema",
+      "description": "Validate descriptor pack against YAML schema.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_yaml_simple",
+      "description": "Load YAML file with fallback to simple parser.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "analyze_file",
+      "description": "Analyze a single Python file.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_receipt",
+      "description": "Write index write receipt to workspace.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "_compute_verification_hash",
+      "description": "Compute verification hash for written content.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "_verify_recall_if_applicable",
+      "description": "Verify Recall@10 if ground truth data is available.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_kernel_fs",
+      "description": "Build a local KernelFileSystem rooted at repository root.",
+      "defined_in": "polaris/cells/context/catalog/internal/descriptor_pack_generator.py"
+    },
+    {
+      "type": "class",
+      "name": "EvolutionEngine",
+      "description": "Orchestrates LLM roles to generate evolution insights.",
+      "defined_in": "polaris/cells/context/catalog/internal/evolution_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_check_llm_availability",
+          "doc": "Check if LLM infrastructure is configured."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SearchCellsQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CellDescriptorV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SearchCellsResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ContextCatalogService",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "cache_path",
+          "doc": ""
+        },
+        {
+          "name": "index_state_path",
+          "doc": ""
+        },
+        {
+          "name": "sync",
+          "doc": ""
+        },
+        {
+          "name": "_sync_impl",
+          "doc": ""
+        },
+        {
+          "name": "is_index_stale",
+          "doc": ""
+        },
+        {
+          "name": "search",
+          "doc": ""
+        },
+        {
+          "name": "_search_impl",
+          "doc": ""
+        },
+        {
+          "name": "list_cells",
+          "doc": "List all cells from the graph catalog."
+        },
+        {
+          "name": "get_cell",
+          "doc": "Get a specific cell by ID."
+        },
+        {
+          "name": "_load_graph_catalog",
+          "doc": ""
+        },
+        {
+          "name": "_load_cache_payload",
+          "doc": ""
+        },
+        {
+          "name": "_compute_graph_fingerprint",
+          "doc": ""
+        },
+        {
+          "name": "_build_descriptor",
+          "doc": ""
+        },
+        {
+          "name": "_cell_relative_root",
+          "doc": ""
+        },
+        {
+          "name": "_infer_domain",
+          "doc": ""
+        },
+        {
+          "name": "_infer_plane",
+          "doc": ""
+        },
+        {
+          "name": "_string_list",
+          "doc": ""
+        },
+        {
+          "name": "_tokenize",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_sha256_text",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_dumps",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_context_catalog_cache_path",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_context_catalog_index_state_path",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_descriptor_cache_payload",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_to_jsonable",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/service.py"
+    },
+    {
+      "type": "class",
+      "name": "MockEmbeddingPort",
+      "description": "Mock embedding port for testing",
+      "defined_in": "polaris/cells/context/catalog/tests/conftest.py",
+      "methods": [
+        {
+          "name": "get_embedding",
+          "doc": "Return a simple mock embedding vector"
+        },
+        {
+          "name": "get_fingerprint",
+          "doc": "Return a mock fingerprint"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "mock_embedding_port",
+      "description": "自动为所有测试设置mock embedding port",
+      "defined_in": "polaris/cells/context/catalog/tests/conftest.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSearchCellsQueryV1",
+      "description": "Tests for SearchCellsQueryV1 contract.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_catalog_contracts.py",
+      "methods": [
+        {
+          "name": "test_search_cells_query_basic",
+          "doc": "Test basic query construction."
+        },
+        {
+          "name": "test_search_cells_query_with_limit",
+          "doc": "Test query with custom limit."
+        },
+        {
+          "name": "test_search_cells_query_immutable",
+          "doc": "Test that query is immutable (frozen dataclass)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCellDescriptorV1",
+      "description": "Tests for CellDescriptorV1 contract.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_catalog_contracts.py",
+      "methods": [
+        {
+          "name": "test_cell_descriptor_construction",
+          "doc": "Test descriptor construction with all fields."
+        },
+        {
+          "name": "test_cell_descriptor_immutable",
+          "doc": "Test that descriptor is immutable."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSearchCellsResultV1",
+      "description": "Tests for SearchCellsResultV1 contract.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_catalog_contracts.py",
+      "methods": [
+        {
+          "name": "test_search_result_empty",
+          "doc": "Test empty search result."
+        },
+        {
+          "name": "test_search_result_with_descriptors",
+          "doc": "Test search result with descriptors."
+        },
+        {
+          "name": "test_search_result_immutable",
+          "doc": "Test that result is immutable."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDescriptorValidation",
+      "description": "Tests for descriptor validation.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_catalog_contracts.py",
+      "methods": [
+        {
+          "name": "test_descriptor_validation_required_fields",
+          "doc": "Test that all required fields must be provided."
+        },
+        {
+          "name": "test_descriptor_validation_types",
+          "doc": "Test type validation for descriptor fields."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_load_script_module",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/tests/test_descriptor_cache_script.py"
+    },
+    {
+      "type": "function",
+      "name": "test_descriptor_cache_script_returns_success_for_fresh_cache",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/tests/test_descriptor_cache_script.py"
+    },
+    {
+      "type": "function",
+      "name": "test_validate_descriptor_cache_payload_reports_missing_fields",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/tests/test_descriptor_validation.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_catalog",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_sync_builds_descriptor_cache",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_search_uses_descriptor_cache",
+      "description": "",
+      "defined_in": "polaris/cells/context/catalog/tests/test_service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

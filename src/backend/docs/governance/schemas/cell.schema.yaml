@@ -1,0 +1,212 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ACGA Cell Manifest
+type: object
+additionalProperties: false
+required:
+  - kind
+  - owner
+  - purpose
+  - owned_paths
+  - public_contracts
+  - depends_on
+  - subgraphs
+  - state_owners
+  - effects_allowed
+allOf:
+  - anyOf:
+      - required:
+          - id
+      - required:
+          - cell_id
+  - anyOf:
+      - required:
+          - visibility
+      - required:
+          - public
+  - anyOf:
+      - required:
+          - verification
+      - required:
+          - verify_targets
+
+$defs:
+  cell_id:
+    type: string
+    pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+  string_list:
+    type: array
+    items:
+      type: string
+  port:
+    type: object
+    additionalProperties: true
+    required:
+      - name
+      - mode
+      - contract
+    properties:
+      name:
+        type: string
+        minLength: 1
+      mode:
+        type: string
+        minLength: 1
+      contract:
+        type: string
+        minLength: 1
+      result:
+        type: string
+      returns:
+        type: string
+      target:
+        type: string
+      description:
+        type: string
+      optional:
+        type: boolean
+  public_contracts:
+    type: object
+    additionalProperties: false
+    required:
+      - commands
+      - queries
+      - events
+      - results
+      - errors
+    properties:
+      modules:
+        $ref: "#/$defs/string_list"
+      commands:
+        $ref: "#/$defs/string_list"
+      queries:
+        $ref: "#/$defs/string_list"
+      events:
+        $ref: "#/$defs/string_list"
+      results:
+        $ref: "#/$defs/string_list"
+      errors:
+        $ref: "#/$defs/string_list"
+  verify_block:
+    oneOf:
+      - type: array
+        items:
+          type: string
+      - type: object
+        additionalProperties: true
+        properties:
+          tests:
+            $ref: "#/$defs/string_list"
+          smoke_commands:
+            $ref: "#/$defs/string_list"
+          contracts:
+            $ref: "#/$defs/string_list"
+          gaps:
+            $ref: "#/$defs/string_list"
+          notes:
+            $ref: "#/$defs/string_list"
+  migration_block:
+    type: object
+    additionalProperties: true
+
+properties:
+  id:
+    $ref: "#/$defs/cell_id"
+  cell_id:
+    $ref: "#/$defs/cell_id"
+  title:
+    type: string
+    minLength: 1
+  description:
+    type: string
+    minLength: 1
+  kind:
+    type: string
+    enum:
+      - capability
+      - workflow
+      - policy
+      - projection
+      - integration
+      - compatibility
+      - composite
+      - assembly
+      - governance
+      - infrastructure
+  visibility:
+    type: string
+    enum:
+      - public
+      - internal
+      - private
+  public:
+    type: boolean
+  stateful:
+    type: boolean
+  owner:
+    type: string
+    minLength: 2
+  purpose:
+    type: string
+    minLength: 10
+  tags:
+    $ref: "#/$defs/string_list"
+  notes:
+    $ref: "#/$defs/string_list"
+  current_modules:
+    $ref: "#/$defs/string_list"
+  domain_contracts:
+    $ref: "#/$defs/string_list"
+  generated_artifacts:
+    $ref: "#/$defs/string_list"
+  owned_paths:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      minLength: 1
+  public_contracts:
+    $ref: "#/$defs/public_contracts"
+  depends_on:
+    type: array
+    items:
+      type: string
+      pattern: "^[a-z0-9_]+(?:\\.[a-z0-9_]+)+$"
+  subgraphs:
+    type: array
+    items:
+      type: string
+      pattern: "^[a-z0-9_]+$"
+  state_owners:
+    $ref: "#/$defs/string_list"
+  effects_allowed:
+    $ref: "#/$defs/string_list"
+  inbound_ports:
+    type: array
+    items:
+      $ref: "#/$defs/port"
+  outbound_ports:
+    type: array
+    items:
+      $ref: "#/$defs/port"
+  inputs:
+    type: array
+    items:
+      $ref: "#/$defs/port"
+  outputs:
+    type: array
+    items:
+      $ref: "#/$defs/port"
+  does_not:
+    $ref: "#/$defs/string_list"
+  invariants:
+    $ref: "#/$defs/string_list"
+  verification:
+    $ref: "#/$defs/verify_block"
+  verify_targets:
+    $ref: "#/$defs/verify_block"
+  sunset_date:
+    type: string
+  migration_docs:
+    type: string
+  migration:
+    $ref: "#/$defs/migration_block"

@@ -1,0 +1,39 @@
+{
+  "case_id": "chief_engineer_blueprint_review",
+  "role": "chief_engineer",
+  "title": "Chief Engineer Produces Rollback-Aware Blueprint",
+  "description": "The chief engineer role must inspect the local architecture brief and produce phased steps with risks and rollback guidance.",
+  "workspace_fixture": "chief_engineer_blueprint_review",
+  "prompt": "Read the local ARCHITECTURE.md and provide a short technical blueprint with phased steps, key risks, and a rollback note. Keep the answer structured and grounded in the local file.",
+  "tags": [
+    "chief_engineer",
+    "blueprint",
+    "risk"
+  ],
+  "judge": {
+    "score_threshold": 0.78,
+    "required_tools": [
+      "read_file"
+    ],
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "read_file"
+        ],
+        "fragment": "ARCHITECTURE.md",
+        "description": "must inspect architecture brief"
+      }
+    ],
+    "required_output_substrings": [
+      "risks",
+      "rollback",
+      "phase"
+    ],
+    "validators": [
+      "structured_steps",
+      "no_prompt_leakage"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 4
+  }
+}

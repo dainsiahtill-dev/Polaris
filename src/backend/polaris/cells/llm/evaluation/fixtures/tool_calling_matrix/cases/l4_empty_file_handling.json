@@ -1,0 +1,38 @@
+{
+  "case_id": "l4_empty_file_handling",
+  "level": "L4",
+  "role": "director",
+  "title": "L4 Empty File Handling",
+  "description": "测试 Agent 能否正确处理空文件或几乎空的文件。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 utils.py 文件，如果文件内容很少或为空，请说明情况而不是报错。",
+  "tags": ["l4", "empty", "edge-case", "graceful-handling"],
+  "weight": 0.8,
+  "critical": false,
+  "judge": {
+    "score_threshold": 0.7,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "required_output_patterns": [
+        "空文件",
+        "内容很少",
+        "没有内容",
+        "empty",
+        "minimal"
+      ]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

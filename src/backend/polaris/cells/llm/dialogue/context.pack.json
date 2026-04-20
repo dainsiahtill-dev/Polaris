@@ -1,0 +1,15 @@
+{
+  "cell_id": "llm.dialogue",
+  "version": 1,
+  "read_order": [
+    "cell.yaml",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/role_dialogue.py",
+    "internal/docs_dialogue.py",
+    "internal/docs_suggest.py"
+  ],
+  "notes": [
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline."
+  ]
+}

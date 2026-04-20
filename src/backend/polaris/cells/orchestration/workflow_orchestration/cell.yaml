@@ -1,0 +1,58 @@
+id: orchestration.workflow_orchestration
+title: Workflow Orchestration Service
+kind: capability
+visibility: public
+stateful: true
+owner: orchestration
+purpose: 'Owns the OrchestrationService public contract, RuntimeOrchestrator port,
+  ProcessLauncher port, and EventStream port.  Depends on workflow_runtime for the
+  WorkflowEngine instance and workflow_activity for concrete workflow/activity definitions.  Coordinates
+  workflow submission, signals, cancellation, and progress tracking.
+
+  '
+current_modules:
+- polaris.cells.orchestration.workflow_orchestration.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/orchestration/workflow_orchestration/**
+public_contracts:
+  modules:
+  - polaris.cells.orchestration.workflow_orchestration.public.contracts
+  - polaris.cells.orchestration.workflow_runtime.public.contracts
+  commands:
+  - StartWorkflowCommandV1
+  - CancelWorkflowCommandV1
+  queries:
+  - QueryWorkflowStatusV1
+  - QueryWorkflowEventsV1
+  events:
+  - WorkflowExecutionStartedEventV1
+  - WorkflowExecutionCompletedEventV1
+  results:
+  - WorkflowExecutionResultV1
+  errors:
+  - WorkflowRuntimeError
+depends_on:
+- orchestration.workflow_engine
+- orchestration.workflow_runtime
+- orchestration.workflow_activity
+- runtime.execution_broker
+- runtime.state_owner
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/state/orchestration/*
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/state/orchestration/*
+- process.spawn:workflow/*
+verification:
+  tests:
+  - tests/orchestration/test_workflow_runtime.py
+  gaps:
+  - Orchestration service unit tests not yet separated from integration tests.
+  - RuntimeOrchestrator subprocess lifecycle coverage pending.
+  smoke_commands: []
+generated_artifacts: []

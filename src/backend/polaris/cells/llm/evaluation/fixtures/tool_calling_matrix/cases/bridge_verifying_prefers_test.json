@@ -1,0 +1,32 @@
+{
+  "case_id": "bridge_verifying_prefers_test",
+  "level": "L5",
+  "role": "director",
+  "title": "Bridge: Verifying Phase Prefers Test Tool",
+  "description": "当 working memory 显示 task_progress = verifying 时，LLM 应优先调用测试工具验证修复，而非继续搜索。ADR-0080 阶段驱动验证。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "<Goal>\n验证 server.py 修复效果\n</Goal>\n<Progress>\n当前阶段: verifying | 回合: 4 / 10\n</Progress>\n<WorkingMemory>\n已确认:\n  - 错误摘要: server.py 端口硬编码 8080\n  - 已修复文件: server.py（已将 PORT 改为从 config.py 导入）\n  - 验证结果: 尚未验证\n待验证:\n  - 运行测试确认修复无回归\n</WorkingMemory>\n<Instruction>\n现在进入验证阶段。请运行测试确认修复效果，确保无回归。不要重新搜索代码。\n</Instruction>",
+  "tags": ["bridge", "verifying", "test-tool", "adr-0080", "phase-driven"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.8,
+    "stream": {
+      "required_tools": ["execute_command"],
+      "forbidden_tools": ["repo_rg", "repo_tree", "read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "first_tool": "execute_command"
+    },
+    "non_stream": {
+      "required_tools": ["execute_command"],
+      "forbidden_tools": ["repo_rg", "repo_tree", "read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

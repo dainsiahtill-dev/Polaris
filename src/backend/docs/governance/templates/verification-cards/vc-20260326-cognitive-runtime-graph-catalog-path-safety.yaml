@@ -1,0 +1,62 @@
+card_id: "vc-20260326-cognitive-runtime-graph-catalog-path-safety"
+bug_summary: >
+  Cognitive Runtime 的 map_diff_to_cells 接口允许外部传入 graph_catalog_path，
+  但未限制路径必须在 workspace 内，存在读取越界文件的风险。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/application/cognitive_runtime/service.py"
+  method: "_load_graph_cells() -> map_diff_to_cells()"
+  symptom: "传入 ../../ 或绝对路径时可尝试读取 workspace 外文件"
+
+assumptions:
+  - id: "A1"
+    statement: "graph_catalog_path 来自外部 payload 且未做路径边界约束"
+    status: verified_true
+    evidence: >
+      cognitive_runtime router 直接读取 payload.graph_catalog_path 并传入
+      MapDiffToCellsCommandV1；service._load_graph_cells 使用 os.path.join(workspace, path)
+      后直接 open，没有 commonpath 校验。
+
+  - id: "A2"
+    statement: "应在 application 层做 workspace 边界约束，拒绝越界路径"
+    status: verified_true
+    evidence: >
+      该行为属于业务编排层输入验证，infrastructure/sqlite 层不涉及文件读取。
+      在 service 层校验可覆盖 CLI/HTTP 等所有入口。
+
+pre_mortem:
+  failure_point: >
+    如果边界判断仅做字符串 startswith，会在 Windows 驱动器大小写、
+    相对路径归一化或不同盘符情况下误判，导致仍可越界读取。
+  risk_zone:
+    - "polaris/application/cognitive_runtime/service.py"
+    - "polaris/cells/factory/cognitive_runtime/public/service.py"
+    - "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+      description: "新增 map_diff_to_cells 越界 graph_catalog_path 拒绝测试"
+      expected: "返回 map_diff_to_cells_failed，且错误包含 must stay within workspace"
+      status: new
+  integration_tests:
+    - description: "Cognitive Runtime 相关回归集"
+      command: >
+        pytest polaris/cells/factory/cognitive_runtime/tests/test_public_service.py
+        polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py
+        polaris/delivery/http/routers/test_cognitive_runtime_router.py
+        -q
+      status: existing_fix
+  manual_check:
+    - "HTTP /cognitive-runtime/map-diff-to-cells 传 graph_catalog_path=../../x.yaml，确认返回失败"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt5"
+  completed_at: "2026-03-26"
+  verified_by: "self (tests)"
+  verified_at: "2026-03-26"
+

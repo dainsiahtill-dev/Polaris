@@ -1,0 +1,116 @@
+card_id: "vc-20260327-context-os-handoff-sqlite-rollout-gate"
+bug_summary: >
+  Cognitive Runtime 之前只支持 handoff pack 导出，不支持接收侧 typed rehydrate；同时
+  SQLite receipt/handoff 写路径缺少单写治理，Context OS 评测也缺少可执行 rollout gate。
+
+classification: structural
+
+bug_path:
+  file: "polaris/application/cognitive_runtime/service.py / polaris/infrastructure/cognitive_runtime/sqlite_store.py / polaris/kernelone/context/context_os/evaluation.py"
+  method: "export_handoff_pack / rehydrate_handoff_pack / append_* write paths / evaluate_context_os_rollout_gate"
+  symptom: "跨角色交接依赖人工叙述；SQLite 高并发写存在锁竞争风险；metrics 无法直接作为 rollout 门禁"
+
+assumptions:
+  - id: "A1"
+    statement: "handoff 不能只导出 narrative，必须带 typed run_card/decision_log/source_spans 才能稳定重建接收侧 working set"
+    status: verified_true
+    evidence: >
+      H4 已在 ContextHandoffPack 中补齐 run_card、decision_log、context_slice_plan、source_spans，
+      并新增 rehydrate_handoff_pack 将其翻译回 state_first_context_os context override。
+
+  - id: "A2"
+    statement: "roles.runtime 应自动消费 handoff_id，而不是要求上层手工拼装 rehydrated context"
+    status: verified_true
+    evidence: >
+      RoleRuntimeService._augment_context_with_handoff_rehydration 已接入 task/session request
+      builder，并保持显式 context/metadata 覆盖优先级。
+
+  - id: "A3"
+    statement: "SQLite 当前阶段可以继续使用，但必须通过单写队列 + WAL + bounded retry 稳定写路径"
+    status: verified_true
+    evidence: >
+      CognitiveRuntimeSqliteStore 现已改为 writer thread 串行提交，连接启用 WAL、busy_timeout、
+      synchronous=NORMAL，并对 locked 错误执行有界指数退避。
+
+  - id: "A4"
+    statement: "Context OS 现有 metrics 只有 summary，没有真正的 promotion gate"
+    status: verified_true
+    evidence: >
+      evaluation.py 现在新增 ContextOSRolloutGatePolicy / Result，可直接对 metrics 执行阈值判定并返回推荐模式。
+
+pre_mortem:
+  failure_point: >
+    如果 handoff rehydrate 直接覆盖显式 context，会让调用方失去最终控制权；如果 SQLite
+    单写实现只做全局锁不做队列，会把调用线程阻塞在锁竞争上；如果 rollout gate 只给一个布尔值，
+    排障时看不到失败指标。
+  risk_zone:
+    - "polaris/cells/roles/runtime/public/service.py"
+    - "polaris/application/cognitive_runtime/service.py"
+    - "polaris/infrastructure/cognitive_runtime/sqlite_store.py"
+    - "polaris/kernelone/context/context_os/evaluation.py"
+    - "polaris/delivery/http/routers/cognitive_runtime.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+      description: "验证 handoff typed export + rehydrate"
+      expected: "handoff 包含 run_card/decision_log/source_spans；rehydrate 返回 state_first_context_os override"
+      status: updated
+    - file: "polaris/cells/roles/runtime/tests/test_host_session_continuity.py"
+      description: "验证 roles.runtime 自动消费 handoff_id"
+      expected: "request.context_override 注入 rehydrated state_first_context_os，显式 context 覆盖仍生效"
+      status: new
+    - file: "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
+      description: "验证 SQLite 单写队列"
+      expected: "多线程 append_receipt 不报错，close 后拒绝新写入"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_context_os_evaluation.py"
+      description: "验证 rollout gate 阈值判断"
+      expected: "达标返回 passed/recommended_mode；不达标返回 failures"
+      status: updated
+    - file: "polaris/delivery/http/routers/test_cognitive_runtime_router.py"
+      description: "验证 HTTP handoff rehydrate 入口"
+      expected: "POST /cognitive-runtime/handoffs/rehydrate 返回 typed rehydration payload"
+      status: updated
+  integration_tests:
+    - description: "H4-H6 focused regression"
+      command: >
+        pytest
+        polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py
+        polaris/kernelone/context/tests/test_context_os_evaluation.py
+        polaris/cells/factory/cognitive_runtime/tests/test_public_service.py
+        polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py
+        polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+        polaris/delivery/http/routers/test_cognitive_runtime_router.py
+        -q
+      status: passing
+    - description: "Context OS + Cognitive Runtime broader regression"
+      command: >
+        pytest
+        polaris/kernelone/context/tests/test_context_os_invariants.py
+        polaris/kernelone/context/tests/test_continuity.py
+        polaris/kernelone/context/tests/test_context_os.py
+        polaris/kernelone/context/tests/test_context_os_domain_adapters.py
+        polaris/kernelone/context/tests/test_context_os_evaluation.py
+        polaris/cells/roles/session/tests/test_role_session_service.py
+        polaris/cells/roles/session/tests/test_context_memory_service.py
+        polaris/cells/roles/kernel/tests/test_run_stream_parity.py
+        polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+        polaris/cells/factory/cognitive_runtime/tests/test_public_service.py
+        polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py
+        polaris/delivery/http/routers/test_cognitive_runtime_router.py
+        polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py
+        -q
+      status: pending
+  manual_check:
+    - "确认 handoff 接收侧拿到的是结构化 state_first_context_os，而不是 narrative summary"
+    - "确认 SQLite store close 后不会再接受新写入"
+    - "确认 rollout gate 输出失败指标列表，可直接用于 shadow -> mainline promotion"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt5"
+  completed_at: "2026-03-27"
+  verified_by: "self (tests)"
+  verified_at: "2026-03-27"

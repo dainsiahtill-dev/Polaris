@@ -1,0 +1,54 @@
+id: runtime.state_owner
+title: Runtime State Owner
+kind: capability
+visibility: public
+stateful: true
+owner: runtime
+purpose: 'Single-writer capability for runtime source-of-truth state under runtime/contracts,
+  runtime/state, and runtime/runs.
+
+  '
+current_modules:
+- polaris.cells.runtime.state_owner.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/runtime/state_owner/internal/**
+public_contracts:
+  modules:
+  - polaris.cells.runtime.state_owner.public.contracts
+  commands:
+  - PersistRuntimeTaskStateCommandV1
+  - PersistRuntimeContractCommandV1
+  - PersistRuntimeRunCommandV1
+  queries:
+  - GetRuntimeSnapshotQueryV1
+  - GetRuntimeRunQueryV1
+  events:
+  - RuntimeStateChangedEventV1
+  results:
+  - RuntimeStateWriteResultV1
+  errors:
+  - RuntimeStateOwnerErrorV1
+depends_on:
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- runtime/contracts/*
+- runtime/state/*
+- runtime/runs/*
+effects_allowed:
+- fs.read:runtime/*
+- fs.write:runtime/contracts/*
+- fs.write:runtime/state/*
+- fs.write:runtime/runs/*
+verification:
+  tests:
+  - tests/architecture/test_architecture_invariants.py
+  gaps:
+  - Runtime task lifecycle ownership has moved to runtime.task_runtime and still needs
+    broader call-site convergence.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

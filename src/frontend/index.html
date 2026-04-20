@@ -1,0 +1,26 @@
+
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <!--
+        CSP 策略说明:
+        - 'unsafe-inline' 用于 style-src: Vite HMR + React 18 样式注入需要
+          未来可迁移到 nonce 方案 (需要 Vite 插件支持)
+        - https://fonts.googleapis.com: 允许加载 Google Fonts
+        - localhost/127.0.0.1: 开发环境允许本地连接
+      -->
+      <meta
+        http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*; media-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'"
+      />
+      <title>Polaris App Layout</title>
+    </head>
+
+    <body>
+      <div id="root"></div>
+      <script type="module" src="/src/main.tsx"></script>
+    </body>
+  </html>
+  

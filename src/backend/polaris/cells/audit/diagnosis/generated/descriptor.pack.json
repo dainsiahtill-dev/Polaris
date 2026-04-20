@@ -1,0 +1,981 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.597306Z",
+  "source_hash": "050806733e11c104",
+  "cell_id": "audit.diagnosis",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "_now_iso",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/connection_audit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_details",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/connection_audit_service.py"
+    },
+    {
+      "type": "function",
+      "name": "write_ws_connection_event_sync",
+      "description": "Emit WS lifecycle event via KernelAuditRuntime only (no JSONL dual-write).",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/connection_audit_service.py"
+    },
+    {
+      "type": "class",
+      "name": "ScanFinding",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditDiagnosisEngine",
+      "description": "Engine for failure diagnosis and QA/audit scanning.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "analyze_failure",
+          "doc": ""
+        },
+        {
+          "name": "scan_project",
+          "doc": ""
+        },
+        {
+          "name": "check_region",
+          "doc": ""
+        },
+        {
+          "name": "get_trace",
+          "doc": ""
+        },
+        {
+          "name": "_load_events",
+          "doc": ""
+        },
+        {
+          "name": "_pick_failure_event",
+          "doc": ""
+        },
+        {
+          "name": "_build_phase_hop",
+          "doc": ""
+        },
+        {
+          "name": "_collect_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_infer_root_cause",
+          "doc": ""
+        },
+        {
+          "name": "_determine_action",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_scan_files",
+          "doc": ""
+        },
+        {
+          "name": "_git_changed_files",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_workspace_file",
+          "doc": ""
+        },
+        {
+          "name": "_scan_content",
+          "doc": ""
+        },
+        {
+          "name": "_build_scan_summary",
+          "doc": ""
+        },
+        {
+          "name": "_derive_recommendations",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_region_target",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_line_window",
+          "doc": ""
+        },
+        {
+          "name": "_build_timeline",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_clamp",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_iso_timestamp",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_time_range",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_read_text",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_event_error",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_rel_path",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "ToolFingerprint",
+      "description": "Immutable fingerprint for a single tool-call event.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tool_fingerprint.py",
+      "methods": [
+        {
+          "name": "from_tool_call",
+          "doc": "Build a fingerprint from a raw tool call."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Serialise to a plain dict (for JSON / audit events)."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_infer_operation",
+      "description": "Infer file operation (create / modify / delete) from args.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tool_fingerprint.py"
+    },
+    {
+      "type": "function",
+      "name": "_sorted_args_hash",
+      "description": "Return sha256 of sorted JSON-serialised args (stable across calls).",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tool_fingerprint.py"
+    },
+    {
+      "type": "function",
+      "name": "_full_hash",
+      "description": "Return sha256(tool_name + args_hash + file_path).",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tool_fingerprint.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_file_path_from_data",
+      "description": "Extract the first matching file path from data or nested args.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tool_fingerprint.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_tool_fingerprint",
+      "description": "Extract tool-call info from a stream_turn event and return its fingerprint.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tool_fingerprint.py"
+    },
+    {
+      "type": "function",
+      "name": "run_audit_command",
+      "description": "Lazy import to avoid package-level circular dependency.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "to_legacy_result",
+      "description": "Lazy import to avoid package-level circular dependency.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/__init__.py"
+    },
+    {
+      "type": "class",
+      "name": "ErrorChainLink",
+      "description": "A single link in the error chain.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py",
+      "methods": [
+        {
+          "name": "from_event",
+          "doc": "Create ErrorChainLink from event dictionary."
+        },
+        {
+          "name": "_from_runtime_event",
+          "doc": "Create from runtime event format."
+        },
+        {
+          "name": "_from_factory_event",
+          "doc": "Create from factory event format."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ErrorChain",
+      "description": "Complete error chain with context.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary."
+        },
+        {
+          "name": "_link_to_dict",
+          "doc": "Convert link to dictionary, excluding None values."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ErrorMatcher",
+      "description": "Pattern matching strategies for error search.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py",
+      "methods": [
+        {
+          "name": "create_matcher",
+          "doc": "Create a matcher function based on strategy."
+        },
+        {
+          "name": "_fuzzy_match",
+          "doc": "Simple fuzzy matching based on token overlap."
+        },
+        {
+          "name": "match_event",
+          "doc": "Check if event matches the pattern."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EventLoader",
+      "description": "Load and cache event data from various sources.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_from_cache",
+          "doc": "Get item from cache and move to end (most recently used)."
+        },
+        {
+          "name": "_add_to_cache",
+          "doc": "Add item to cache, evicting oldest if at capacity."
+        },
+        {
+          "name": "get_event_files",
+          "doc": "Discover all event files in runtime directory."
+        },
+        {
+          "name": "load_events_from_file",
+          "doc": "Load events from a JSONL file."
+        },
+        {
+          "name": "load_factory_events",
+          "doc": "Load factory run events from workspace."
+        },
+        {
+          "name": "load_all_events",
+          "doc": "Load all events from all sources."
+        },
+        {
+          "name": "_infer_workspace",
+          "doc": "Infer workspace path from runtime root."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ChainBuilder",
+      "description": "Build error chains from events.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "find_related_action",
+          "doc": "Find the corresponding action event for a failed observation."
+        },
+        {
+          "name": "build_error_chain",
+          "doc": "Build a complete error chain for a failed event."
+        },
+        {
+          "name": "_extract_failure_reason",
+          "doc": "Extract human-readable failure reason from event."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ErrorChainSearcher",
+      "description": "Main error chain searcher.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_classify_event_source",
+          "doc": "Classify event source for diagnostics."
+        },
+        {
+          "name": "search",
+          "doc": "Search for errors and build error chains."
+        },
+        {
+          "name": "_filter_by_time",
+          "doc": "Filter events by time range."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_parse_event_datetime",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "search_error_chains",
+      "description": "Convenience function to search for error chains.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/error_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_dict",
+      "description": "Safely get a dict value from a dict, returning default if None or not a dict.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_failed_observation",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_events",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_paths",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_failure_code",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_hop3",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "build_failure_hops",
+      "description": "Build failure hops for a run.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "load_failure_hops",
+      "description": "Load failure hops from file.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "save_failure_hops",
+      "description": "Save failure hops to file.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "analyze_failure_chain",
+      "description": "Analyze failure chain from events.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_parse_timestamp",
+      "description": "安全解析时间戳，处理多种格式和坏值。",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_corruption",
+      "description": "记录查询过程中发现的损坏。",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "query_events",
+      "description": "Query audit events with filters.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_journal_path",
+      "description": "Resolve journal file path for a given run_id.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "_query_journal_events",
+      "description": "直接从 journal 文件读取事件。",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "query_by_run_id",
+      "description": "Query events by run_id.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "query_by_task_id",
+      "description": "Query events by task_id.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "query_by_trace_id",
+      "description": "Query events by trace_id.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "iter_events",
+      "description": "Iterate over audit events in batches.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/query.py"
+    },
+    {
+      "type": "function",
+      "name": "_error_item",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_envelope",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_bool",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_status",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_total_events",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_augment_verify_chain_payload",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_verify_chain_strict_error",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_backend_base_url",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_runtime_root_from_backend",
+      "description": "Try backend runtime layout endpoint as a non-authoritative hint.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_runtime_root",
+      "description": "Resolve runtime root with strict precedence.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_iso8601",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_failure_hops_events_path",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_journal_run_dirs",
+      "description": "Discover all journal run directories under runtime_root.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_journal_events_path",
+      "description": "Resolve the normalized journal events file for a run directory.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "load_journal_events",
+      "description": "Load the most recent *limit* events from a journal file.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "discover_strategy_receipts",
+      "description": "Discover all strategy receipt JSON files under runtime_root.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_hops_payload",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_int",
+      "description": "Coerce *value* to an int clamped within [minimum, maximum].",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_line_range",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_diagnosis_engine",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_audit_facade",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_event_type",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_event_types",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_triage",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_hops",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_diagnose",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_scan",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_check_region",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_trace",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_verify_chain",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_tail",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_export",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_corruption",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_stats",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_triage",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_hops",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_diagnose",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_scan",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_check_region",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_trace",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_verify_chain",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_tail",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_export",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_corruption",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_online_stats",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_api_error_to_item",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_offline_command",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_online_command",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_audit_command",
+      "description": "Run audit command with consistent contract across modes.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "to_legacy_result",
+      "description": "Flatten unified envelope to legacy script-friendly payload.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_triage_bundle",
+      "description": "Build complete triage bundle.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_pm_history",
+      "description": "Extract PM quality history.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_run_id",
+      "description": "Infer run_id from queried events for task_id/trace_id triage.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_leakage_findings",
+      "description": "Extract leakage findings (simplified implementation).",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_audit",
+      "description": "Extract Director tool audit.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_fixed_issues",
+      "description": "Extract fixed issues.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_acceptance",
+      "description": "Extract acceptance results.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_evidence_paths",
+      "description": "Collect evidence paths.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_identify_risks",
+      "description": "Identify next risks (simplified implementation).",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_failure_hops",
+      "description": "Load failure_hops.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/triage.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_chain",
+      "description": "Verify audit chain integrity - 直接复用 AuditStore.verify_chain 语义。",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/verify.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_file_integrity",
+      "description": "Verify file integrity.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/verify.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_hmac_signature",
+      "description": "Verify HMAC signature.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/toolkit/verify.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditUseCaseFacade",
+      "description": "Facade over KernelAuditRuntime for delivery adapters.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/usecases/facade.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "query_logs",
+          "doc": ""
+        },
+        {
+          "name": "export_json",
+          "doc": ""
+        },
+        {
+          "name": "export_csv",
+          "doc": ""
+        },
+        {
+          "name": "verify_chain",
+          "doc": ""
+        },
+        {
+          "name": "get_stats",
+          "doc": ""
+        },
+        {
+          "name": "cleanup_old_logs",
+          "doc": ""
+        },
+        {
+          "name": "get_corruption_log",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RunAuditDiagnosisCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryAuditDiagnosisTrailV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditDiagnosisCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditDiagnosisResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditDiagnosisError",
+      "description": "Structured contract error for `audit.diagnosis`.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IAuditDiagnosisService",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

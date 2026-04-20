@@ -1,0 +1,179 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Verification Card
+description: >
+  Pre-fix thinking protocol for bug analysis and verification planning.
+  Must be completed before delivering any bug fix.
+type: object
+required:
+  - card_id
+  - bug_summary
+  - classification
+  - assumptions
+  - pre_mortem
+  - verification_plan
+  - sign_off
+additionalProperties: false
+
+properties:
+
+  card_id:
+    type: string
+    description: "Format: vc-<number> or vc-<yyyymmdd>-<slug>"
+    pattern: "^vc-[0-9]{8}-[a-z0-9-]+$|^vc-[0-9]+$"
+
+  bug_summary:
+    type: string
+    minLength: 20
+    description: "One-line: surface symptom + occurrence path"
+
+  classification:
+    type: string
+    enum:
+      - one_off
+      - pattern
+      - structural
+    descriptions:
+      one_off: "Code typo, spelling error — fix + test"
+      pattern: "Same class of error repeats — requires ADR or design doc"
+      structural: "Multiple modules share one implicit wrong assumption — requires ADR"
+
+  bug_path:
+    type: object
+    additionalProperties: false
+    required:
+      - file
+      - method
+    properties:
+      file:
+        type: string
+        description: "File path triggering the bug"
+      method:
+        type: string
+        description: "Method name triggering the bug"
+      symptom:
+        type: string
+        description: "User-visible error symptom"
+
+  assumptions:
+    type: array
+    description: "All assumptions about the bug. Must verify each before fix."
+    minItems: 2
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - statement
+        - status
+        - evidence
+      properties:
+        id:
+          type: string
+          description: "A1, A2, ..."
+        statement:
+          type: string
+          description: "Assumption content (first person: I assume...)"
+        status:
+          type: string
+          enum:
+            - unverified
+            - verified_true
+            - verified_false
+            - uncertain
+        evidence:
+          type: string
+          minLength: 5
+          description: "Verification basis: which file, which line, what was read"
+
+  pre_mortem:
+    type: object
+    additionalProperties: false
+    required:
+      - failure_point
+      - risk_zone
+    properties:
+      failure_point:
+        type: string
+        minLength: 10
+        description: "If my fix is wrong, where is it most likely wrong?"
+      risk_zone:
+        type: array
+        description: "Which modules would be affected?"
+        items:
+          type: string
+
+  verification_plan:
+    type: object
+    additionalProperties: false
+    required:
+      - unit_tests
+      - integration_tests
+      - manual_check
+    properties:
+      unit_tests:
+        type: array
+        description: "New or modified unit tests"
+        items:
+          type: object
+          additionalProperties: false
+          required:
+            - file
+            - description
+            - expected
+          properties:
+            file:
+              type: string
+            description:
+              type: string
+            expected:
+              type: string
+            status:
+              type: string
+              enum:
+                - existing_pass
+                - existing_fix
+                - new
+      integration_tests:
+        type: array
+        items:
+          type: object
+          properties:
+            description:
+              type: string
+            command:
+              type: string
+            status:
+              type: string
+              enum:
+                - existing_pass
+                - existing_fix
+                - new
+      manual_check:
+        type: array
+        items:
+          type: string
+
+  related_adrs:
+    type: array
+    description: "Related ADR numbers (e.g. ADR-0042)"
+    items:
+      type: string
+
+  sign_off:
+    type: object
+    additionalProperties: false
+    required:
+      - completed_by
+      - completed_at
+    properties:
+      completed_by:
+        type: string
+      completed_at:
+        type: string
+        format: date
+      verified_by:
+        type: string
+        description: "Who verified the fix is correct"
+      verified_at:
+        type: string
+        format: date

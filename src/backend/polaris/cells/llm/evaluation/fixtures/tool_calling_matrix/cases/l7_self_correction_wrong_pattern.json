@@ -1,0 +1,21 @@
+{
+  "case_id": "l7_self_correction_wrong_pattern",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Self-Correction - Wrong Search Pattern",
+  "description": "测试 Agent 搜索模式错误后能否修正。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 搜索 backend/ 目录下所有包含 'function' 的文件 2. 如果没有结果，换成搜索 'def' 3. 列出找到的内容",
+  "tags": ["l7", "self-correction", "search-error"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": ["repo_rg", "grep"],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "validators": [
+      "self_correction_after_empty_result"
+    ]
+  }
+}

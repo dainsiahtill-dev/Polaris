@@ -1,0 +1,91 @@
+version: 1
+id: director_pipeline
+title: Director Execution Pipeline
+purpose: >
+  Defines the Director-oriented execution path from dispatch command intake to
+  runtime status projection and evidence emission.
+entry_cells:
+  - delivery.api_gateway
+  - orchestration.pm_dispatch
+cells:
+  - director.execution
+  - director.tasking
+  - roles.kernel
+  - runtime.task_runtime
+  - runtime.state_owner
+  - runtime.projection
+  - audit.evidence
+  - llm.control_plane
+  - policy.permission
+  - finops.budget_guard
+exit_cells:
+  - runtime.projection
+  - audit.evidence
+relations:
+  - from: orchestration.pm_dispatch
+    to: director.execution
+    type: commands
+    contract: ExecuteDirectorTaskCommandV1
+  - from: director.execution
+    to: roles.kernel
+    type: calls
+    contract: RoleExecutionKernel.execute
+  - from: director.execution
+    to: runtime.task_runtime
+    type: commands
+    contract: UpdateRuntimeTaskCommandV1
+  - from: runtime.task_runtime
+    to: runtime.state_owner
+    type: commands
+    contract: PersistRuntimeTaskStateCommandV1
+  - from: runtime.state_owner
+    to: runtime.projection
+    type: projects_to
+    contract: RuntimeProjectionQueryV1
+  - from: director.execution
+    to: audit.evidence
+    type: emits
+    contract: DirectorTaskCompletedEventV1
+  - from: finops.budget_guard
+    to: llm.control_plane
+    type: governs
+    contract: ReserveBudgetCommandV1
+  - from: policy.permission
+    to: director.execution
+    type: governs
+    contract: EvaluatePermissionCommandV1
+critical_contracts:
+  - ExecuteDirectorTaskCommandV1
+  - UpdateRuntimeTaskCommandV1
+  - PersistRuntimeTaskStateCommandV1
+  - RuntimeProjectionQueryV1
+  - DirectorTaskCompletedEventV1
+  - ReserveBudgetCommandV1
+  - EvaluatePermissionCommandV1
+state_boundaries:
+  - owner: director.execution
+    state: runtime/state/director/*
+  - owner: director.tasking
+    state: runtime/state/director/tasking/*
+  - owner: runtime.task_runtime
+    state: runtime/tasks/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+  - owner: runtime.projection
+    state: runtime/projections/*
+  - owner: audit.evidence
+    state: runtime/evidence/*
+verify_targets:
+  tests:
+    - tests/test_director_service_convergence.py
+    - tests/test_v2_director_workflow_status.py
+    - tests/test_worker_service_responsiveness.py
+    - tests/test_websocket_director_status.py
+  contracts:
+    - ExecuteDirectorTaskCommandV1
+    - UpdateRuntimeTaskCommandV1
+    - PersistRuntimeTaskStateCommandV1
+    - RuntimeProjectionQueryV1
+    - DirectorTaskCompletedEventV1
+migration_notes:
+  - Director API v2 remains compatibility-first while workflow runtime convergence continues.

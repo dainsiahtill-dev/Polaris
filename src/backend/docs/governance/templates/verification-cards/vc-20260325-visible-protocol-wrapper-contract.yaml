@@ -1,0 +1,82 @@
+card_id: "vc-20260325-visible-protocol-wrapper-contract"
+bug_summary: >
+  角色流式输出仍会泄漏 `<output>` 等协议包裹，导致 plain console / transcript
+  / projection 的用户可见面继续出现协议文本，并进一步干扰 tool_call/tool_result 的可见性判断。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_engine.py"
+  method: "_materialize_stream_visible_turn() / run_stream()"
+  symptom: "终端可见输出出现 <output>...</output> 协议文本，tool 展示与正文边界继续混乱"
+
+assumptions:
+  - id: "A1"
+    statement: "thinking 被修好后，新的可见面问题根因不在 terminal_console，而在 roles.kernel 的 visible protocol materialization 仍不完整"
+    status: verified_true
+    evidence: >
+      真实运行 `python -m polaris.delivery.cli console ...` 后，终端已能看到 <thinking>，
+      但正文仍出现 `<output>...</output>`；terminal_console 只是打印 host 事件，
+      真正生成 visible content 的是 TurnEngine.run_stream()。
+
+  - id: "A2"
+    statement: "StreamThinkingParser 目前只识别 think/answer 与 tool_call 类标签，不识别 <output>，因此流式正文会把 output 包裹直接当普通文本输出"
+    status: verified_true
+    evidence: >
+      读 polaris/kernelone/llm/providers/stream_thinking_parser.py，
+      _OPEN_RE/_CLOSE_RE 只覆盖 think|thinking|thought|answer，
+      未覆盖 output；因此 `<output>` 不会被剥离。
+
+  - id: "A3"
+    statement: "最终 clean_content 也没有剥离 <output>，所以 transcript 与 complete.content 仍会带协议包裹"
+    status: verified_true
+    evidence: >
+      读 polaris/cells/roles/kernel/internal/output_parser.py: parse_thinking()
+      只移除 `<thinking>`，不处理 `<output>`；TurnEngine._materialize_assistant_turn()
+      直接把 thinking_result.clean_content 作为 raw_content，再做 tool wrapper sanitize，
+      所以 `<output>` 会保留到 clean_content。
+
+pre_mortem:
+  failure_point: >
+    如果只在 terminal_console 末端把 `<output>` 做字符串替换，其他 host 仍会继续泄漏，
+    且 transcript/history 里仍会残留协议文本，后续对话还会继续被污染。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    - "polaris/cells/roles/kernel/internal/output_parser.py"
+    - "polaris/kernelone/llm/providers/stream_thinking_parser.py"
+    - "polaris/delivery/cli/terminal_console.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py"
+      description: "新增流式 `<output>` 包裹剥离回归测试"
+      expected: "content_chunk 与 complete.content 不包含 `<output>`，inner content 保留"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
+      description: "新增 clean_content/raw_content 的 output wrapper 清洗回归"
+      expected: "raw_content/clean_content 都不保留 `<output>` 标签，但仍保留可执行 tool wrapper contract"
+      status: new
+    - file: "polaris/delivery/cli/tests/test_terminal_console.py"
+      description: "确保 tool_call/tool_result 在 thinking + content 切换场景下仍可见"
+      expected: "终端输出包含 tool_call/tool_result 事件，thinking block 与 content 不重复"
+      status: new
+  integration_tests:
+    - description: "定向运行 kernel/terminal console 回归"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py polaris/delivery/cli/tests/test_terminal_console.py"
+      status: new
+    - description: "真实 CLI 烟测"
+      command: "@'`n总结这个项目代码`n/exit`n'@ | python -m polaris.delivery.cli console --workspace . --role director --backend plain --prompt-style plain --json-render raw"
+      status: new
+  manual_check:
+    - "确认终端中不再出现 <output> 标签"
+    - "确认 tool_call/tool_result 仍以结构化事件显示，没有被正文吞没"
+
+related_adrs:
+  - "ADR-0044"
+  - "ADR-0047"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-25"
+  verified_by: "self"
+  verified_at: "2026-03-25"

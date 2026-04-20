@@ -1,0 +1,14 @@
+{
+  "cell_id": "roles.adapters",
+  "version": 1,
+  "read_order": [
+    "cell.yaml",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/__init__.py",
+    "internal/base.py"
+  ],
+  "notes": [
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline."
+  ]
+}

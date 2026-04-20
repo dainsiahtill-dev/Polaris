@@ -1,0 +1,42 @@
+{
+  "case_id": "l6_duplicate_loop_prevention",
+  "level": "L6",
+  "role": "director",
+  "title": "L6 Duplicate Loop Prevention",
+  "description": "测试 Agent 能否避免重复调用相同工具和参数，触发 PolicyLayer 拦截后能正确恢复。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 backend/nonexistent.py 文件。如果失败，不要重复尝试相同的路径，而是用其他方法找到正确的文件位置。",
+  "tags": ["l6", "policy", "duplicate-loop", "cooldown", "recovery"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.7,
+    "stream": {
+      "required_any_tools": [
+        ["glob", "list_directory", "search_code", "repo_tree"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 4,
+      "validators": [
+        "no_duplicate_loop"
+      ],
+      "max_same_tool_same_args": 2
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["glob", "list_directory", "search_code", "repo_tree"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 4,
+      "validators": [
+        "no_duplicate_loop"
+      ]
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

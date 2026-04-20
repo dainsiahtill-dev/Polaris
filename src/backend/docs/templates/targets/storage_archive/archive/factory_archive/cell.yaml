@@ -1,0 +1,79 @@
+id: archive.factory_archive
+title: Factory Archive
+kind: capability
+visibility: public
+stateful: true
+owner: governance
+
+purpose: >
+  Publish terminal factory outputs into immutable workspace history artifacts while
+  separating factory history retention from runtime state ownership.
+
+tags:
+  - template
+  - target
+  - storage-archive
+
+owned_paths:
+  - cells/archive/factory_archive/**
+
+inputs:
+  - name: archive_factory_run
+    mode: command
+    contract: ArchiveFactoryRunCommandV1
+    returns: ArchiveManifestV1
+  - name: get_factory_archive_manifest
+    mode: query
+    contract: GetFactoryArchiveManifestQueryV1
+    returns: ArchiveManifestV1
+
+outputs:
+  - name: resolve_storage_layout
+    mode: query
+    target: storage.layout
+    contract: GetStorageLayoutQueryV1
+  - name: enforce_workspace_archive_guard
+    mode: query
+    target: policy.workspace_guard
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - name: emit_factory_archived
+    mode: event
+    target: audit.evidence
+    contract: FactoryArchivedEventV1
+
+depends_on:
+  - storage.layout
+  - policy.workspace_guard
+  - audit.evidence
+
+state_owners:
+  - history_factory_archive
+
+effects_allowed:
+  - fs.read:workspace/factory/*
+  - fs.write:workspace/history/factory/*
+
+does_not:
+  - mutate_factory_source_outputs
+  - write_history_outside_factory_archive_scope
+  - bypass_workspace_guard
+
+invariants:
+  - factory archives are immutable once published
+  - factory archive manifests preserve artifact lineage
+  - all archive text writes use explicit UTF-8
+
+verification:
+  tests:
+    - cells/archive/factory_archive/tests/test_behavior.py
+    - cells/archive/factory_archive/tests/test_contracts.py
+  contracts:
+    - ArchiveFactoryRunCommandV1
+    - GetFactoryArchiveManifestQueryV1
+    - FactoryArchivedEventV1
+    - ArchiveManifestV1
+
+generated_artifacts:
+  - generated/context.pack.json
+
+template: true

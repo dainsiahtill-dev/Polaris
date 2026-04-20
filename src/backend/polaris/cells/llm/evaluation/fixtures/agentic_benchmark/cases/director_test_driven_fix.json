@@ -1,0 +1,32 @@
+{
+  "case_id": "director_test_driven_fix",
+  "role": "director",
+  "title": "Director Implements TDD Fix",
+  "description": "The Director must fix a failing test using Test-Driven Development approach: red, green, refactor.",
+  "workspace_fixture": "director_root_cause_locator",
+  "prompt": "There's a failing test in tests/test_median.py. The test expects median([]) to raise ValueError, but the implementation returns 0. Fix the implementation to make the test pass. Use TDD: write the fix, verify with tests.",
+  "tags": [
+    "director",
+    "tdd",
+    "testing"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "read_file",
+      "edit_file",
+      "execute_command"
+    ],
+    "required_output_substrings": [
+      "ValueError"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "director_test_pass"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 6
+  }
+}

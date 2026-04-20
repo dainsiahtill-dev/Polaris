@@ -1,0 +1,75 @@
+# Output Format: Standard
+# 所有 Profession 默认使用的输出格式
+
+id: standard
+version: "1.0"
+
+description: 默认输出格式，包含六个标准章节
+
+sections:
+  - id: result
+    name: Result
+    emoji: "🎯"
+    required: true
+    description: 核心代码或架构方案的交付
+
+  - id: analysis
+    name: Analysis
+    emoji: "🧠"
+    required: true
+    description: 设计理念、算法复杂度及技术推演
+
+  - id: risks
+    name: Risks & Boundaries
+    emoji: "⚠️"
+    required: true
+    description: 系统的局限性、已知未处理的边界或潜在瓶颈
+
+  - id: testing
+    name: Testing
+    emoji: "🧪"
+    required: true
+    description: 对应的 pytest 策略和关键测试用例
+
+  - id: self_check
+    name: Self-Check
+    emoji: "🔍"
+    required: true
+    description: 对照工程标准红线的自我 Review 结果
+
+  - id: future
+    name: Future Optimization
+    emoji: "🚀"
+    required: false
+    description: 下一步的迭代建议
+
+template: |
+  ## {{emoji}} {{name}}
+  {{content}}
+
+  ---
+
+section_templates:
+  result: |
+    ## 🎯 结果
+    {content}
+
+  analysis: |
+    ## 🧠 分析
+    {content}
+
+  risks: |
+    ## ⚠️ 风险与边界
+    {content}
+
+  testing: |
+    ## 🧪 测试
+    {content}
+
+  self_check: |
+    ## 🔍 自检
+    {content}
+
+  future: |
+    ## 🚀 后续优化
+    {content}

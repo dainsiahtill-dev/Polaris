@@ -1,0 +1,355 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.457686Z",
+  "source_hash": "75a2792f783303c4",
+  "cell_id": "delivery.api_gateway",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "create_app",
+      "description": "Create and configure FastAPI application.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_register_routers",
+      "description": "Register all API routers.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_setup_observability",
+      "description": "Setup observability middleware.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_debug",
+      "description": "Best-effort backend debug event sink for stall diagnosis.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "require_auth",
+      "description": "Require bearer auth when backend token is configured.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "require_permission",
+      "description": "Factory for permission-checking dependency.",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "check_permission",
+      "description": "",
+      "defined_in": "polaris/delivery/http/dependencies.py"
+    },
+    {
+      "type": "function",
+      "name": "setup_exception_handlers",
+      "description": "Register all exception handlers with the FastAPI app.",
+      "defined_in": "polaris/delivery/http/error_handlers.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditContextMiddleware",
+      "description": "Middleware for establishing unified audit context from request headers.",
+      "defined_in": "polaris/delivery/http/middleware/audit_context.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_should_setup_context",
+          "doc": "Check if path should have audit context setup."
+        },
+        {
+          "name": "_extract_or_generate_ids",
+          "doc": "Extract IDs from headers or generate if not present."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_generate_trace_id",
+      "description": "Generate a standardized trace_id (16-char hex).",
+      "defined_in": "polaris/delivery/http/middleware/audit_context.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_run_id",
+      "description": "Generate a run_id (UUID format).",
+      "defined_in": "polaris/delivery/http/middleware/audit_context.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_task_id",
+      "description": "Generate a task_id (UUID format).",
+      "defined_in": "polaris/delivery/http/middleware/audit_context.py"
+    },
+    {
+      "type": "function",
+      "name": "get_audit_context_middleware",
+      "description": "Factory function to create audit context middleware with config from environment.",
+      "defined_in": "polaris/delivery/http/middleware/audit_context.py"
+    },
+    {
+      "type": "class",
+      "name": "RequestLoggingMiddleware",
+      "description": "Middleware for logging HTTP requests and responses.",
+      "defined_in": "polaris/delivery/http/middleware/logging.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_should_log_path",
+          "doc": "Check if path should be logged."
+        },
+        {
+          "name": "_mask_sensitive_headers",
+          "doc": "Mask sensitive header values."
+        },
+        {
+          "name": "_get_client_ip",
+          "doc": "Extract client IP from request."
+        },
+        {
+          "name": "_format_log_entry",
+          "doc": "Format structured log entry."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_logging_middleware",
+      "description": "Factory function to create logging middleware with config from environment.",
+      "defined_in": "polaris/delivery/http/middleware/logging.py"
+    },
+    {
+      "type": "class",
+      "name": "HistogramBucket",
+      "description": "Histogram bucket for latency tracking.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RequestMetrics",
+      "description": "Metrics for a specific route/method combination.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MetricsCollector",
+      "description": "Thread-safe metrics collector.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "record_request",
+          "doc": "Record a completed request."
+        },
+        {
+          "name": "start_request",
+          "doc": "Track in-flight request start."
+        },
+        {
+          "name": "get_prometheus_format",
+          "doc": "Export metrics in Prometheus format."
+        },
+        {
+          "name": "reset",
+          "doc": "Reset all metrics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MetricsMiddleware",
+      "description": "Middleware for collecting Prometheus metrics.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_should_collect",
+          "doc": "Check if path should be tracked."
+        },
+        {
+          "name": "_normalize_path",
+          "doc": "Normalize path for metric labeling (remove IDs)."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_metrics_collector",
+      "description": "Get the global metrics collector.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_metrics_for_testing",
+      "description": "Reset global metrics collector for test isolation.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "get_metrics_middleware",
+      "description": "Factory function to create metrics middleware.",
+      "defined_in": "polaris/delivery/http/middleware/metrics.py"
+    },
+    {
+      "type": "class",
+      "name": "RateLimitEntry",
+      "description": "Rate limit tracking entry for a client.",
+      "defined_in": "polaris/delivery/http/middleware/rate_limit.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RateLimitStore",
+      "description": "Thread-safe store for rate limit tracking.",
+      "defined_in": "polaris/delivery/http/middleware/rate_limit.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_client_key",
+          "doc": "Generate unique key for client identification."
+        },
+        {
+          "name": "_cleanup_old_entries",
+          "doc": "Remove expired entries to prevent memory growth."
+        },
+        {
+          "name": "check_rate_limit",
+          "doc": "Check if request is within rate limit."
+        },
+        {
+          "name": "reset",
+          "doc": "Reset rate limit for a client or all clients."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RateLimitMiddleware",
+      "description": "Rate limiting middleware for FastAPI.",
+      "defined_in": "polaris/delivery/http/middleware/rate_limit.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_rate_limit_middleware",
+      "description": "Factory function to create rate limit middleware with config from environment.",
+      "defined_in": "polaris/delivery/http/middleware/rate_limit.py"
+    },
+    {
+      "type": "class",
+      "name": "StructuredHTTPException",
+      "description": "HTTPException that carries structured {code, message, details} data.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return the ADR-003 structured error dict."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_state",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "require_auth",
+      "description": "Require bearer auth when backend token is configured.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_llm_ready",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "required_ready_roles",
+      "description": "Return the list of roles that must pass LLM-readiness checks.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_required_roles_ready",
+      "description": "Raise 409 if any of the required roles fail the LLM-readiness check.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "structured_error_response",
+      "description": "Return a JSONResponse with unified {code, message, details} format.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "class",
+      "name": "SSEJetStreamConsumer",
+      "description": "SSE consumer that reads from JetStream for remote event streaming.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize SSE JetStream consumer."
+        },
+        {
+          "name": "is_connected",
+          "doc": "Check if consumer is connected."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_sse_response",
+      "description": "Wrap an SSE async generator into a properly-configured ``StreamingResponse``.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "create_sse_jetstream_consumer",
+      "description": "Factory function to create SSE JetStream consumer with proper configuration.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "create_sse_response_from_jetstream",
+      "description": "Create SSE response from JetStream consumer.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

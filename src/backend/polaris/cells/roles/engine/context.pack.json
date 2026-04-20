@@ -1,0 +1,25 @@
+{
+  "cell_id": "roles.engine",
+  "kind": "capability",
+  "purpose": "Provide shared role-engine strategy selection, registry, and hybrid orchestration primitives for role runtime.",
+  "owned_paths": [
+    "polaris/cells/roles/engine/**"
+  ],
+  "public_contracts": [
+    "SelectEngineCommandV1",
+    "RegisterEngineCommandV1",
+    "ClassifyTaskQueryV1",
+    "EngineRegistrySnapshotQueryV1",
+    "EngineSelectedEventV1",
+    "EngineSelectionResultV1",
+    "EngineExecutionResultV1",
+    "EngineRegistrySnapshotResultV1",
+    "RolesEngineErrorV1"
+  ],
+  "verification_targets": [
+    "tests/test_sequential_engine.py",
+    "tests/test_roles_kernel.py",
+    "tests/test_runtime_role_binding.py",
+    "tests/test_role_kernel_write_budget.py"
+  ]
+}

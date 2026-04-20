@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "cell_id": "sample.example",
+  "generated_at": "2026-03-25T00:00:00Z",
+  "status": "guarded",
+  "summary": "Summarize the current verification posture for the Cell.",
+  "verify_targets": {
+    "tests": [
+      {
+        "path": "cells/sample/example/tests/test_behavior.py",
+        "purpose": "Protect the primary runtime contract."
+      }
+    ],
+    "contracts": [
+      "Describe the boundary or invariant protected by the tests."
+    ]
+  },
+  "governance_artifacts": {
+    "adrs": [
+      "docs/governance/decisions/adr-xxxx-sample.md"
+    ],
+    "verification_cards": [
+      "docs/governance/templates/verification-cards/vc-YYYYMMDD-sample.yaml"
+    ],
+    "debt_register": "docs/governance/debt.register.yaml",
+    "schemas": [
+      "docs/governance/schemas/verify-pack.schema.yaml",
+      "docs/governance/schemas/debt-register.schema.yaml"
+    ]
+  },
+  "open_debt_ids": [
+    "DEBT-YYYYMMDD-short-slug"
+  ],
+  "residual_risks": [
+    "Document any remaining risk that is not fully eliminated."
+  ]
+}

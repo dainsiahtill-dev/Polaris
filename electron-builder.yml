@@ -1,0 +1,51 @@
+appId: com.polaris.desktop
+productName: Polaris
+copyright: Copyright © 2025-2026 Polaris Team
+
+directories:
+  output: dist-electron
+
+files:
+  - src/electron/**/*
+  - "!src/electron/**/*.map"
+
+extraResources:
+  - from: src/backend
+    to: backend
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/.mypy_cache/**"
+      - "!**/.pytest_cache/**"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: docs/assets/icon.ico
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: docs/assets/icon.icns
+  category: public.app-category.developer-tools
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: docs/assets/icon.png
+  category: Development
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+afterPack: infrastructure/scripts/electron-afterpack.js

@@ -1,0 +1,547 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.387179Z",
+  "source_hash": "360d2670bd0129bb",
+  "cell_id": "director.planning",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "GatheredContext",
+      "description": "Container for all context collected before the CodeWriter LLM call.",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "as_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "gather",
+      "description": "Collect context appropriate for *mode* without any LLM involvement.",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_log",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_package_meta",
+      "description": "Read the first package/dependency manifest found in the workspace.",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_gather_create",
+      "description": "Context strategy for CREATE mode: find similar existing files as examples.",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_gather_modify",
+      "description": "Context strategy for MODIFY (and MIXED) mode: read the existing targets.",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_file_safe",
+      "description": "Read a file via the repo_read_head tool; return None on any failure.",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_text",
+      "description": "Pull plain text from a tool result dict (handles content list or stdout str).",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_files_with_ext",
+      "description": "Parse a tree text block and return relative file paths matching *ext*.",
+      "defined_in": "polaris/cells/director/planning/internal/context_gatherer.py"
+    },
+    {
+      "type": "class",
+      "name": "ExecutionRecord",
+      "description": "Record of a task execution.",
+      "defined_in": "polaris/cells/director/planning/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        },
+        {
+          "name": "complete",
+          "doc": ""
+        },
+        {
+          "name": "assess_risk",
+          "doc": "Assess risk of the changes."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RiskRegistry",
+      "description": "Registry for tracking identified risks.",
+      "defined_in": "polaris/cells/director/planning/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_dirs",
+          "doc": ""
+        },
+        {
+          "name": "record_risk",
+          "doc": ""
+        },
+        {
+          "name": "get_open_risks",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QualityTracker",
+      "description": "Track quality metrics for executions.",
+      "defined_in": "polaris/cells/director/planning/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_dirs",
+          "doc": ""
+        },
+        {
+          "name": "record_qa_result",
+          "doc": ""
+        },
+        {
+          "name": "get_qa_history",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorAgent",
+      "description": "Autonomous Director Agent.",
+      "defined_in": "polaris/cells/director/planning/internal/director_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "worker_pool",
+          "doc": "Get Worker pool for parallel execution."
+        },
+        {
+          "name": "taskboard",
+          "doc": "Get unified task runtime service for task coordination."
+        },
+        {
+          "name": "risk_registry",
+          "doc": ""
+        },
+        {
+          "name": "quality_tracker",
+          "doc": ""
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": "Setup Director-specific tools."
+        },
+        {
+          "name": "_tool_execute_task",
+          "doc": "Execute a task."
+        },
+        {
+          "name": "_tool_get_execution",
+          "doc": "Get execution by ID."
+        },
+        {
+          "name": "_tool_get_execution_history",
+          "doc": "Get execution history."
+        },
+        {
+          "name": "_tool_assess_risk",
+          "doc": "Assess risk of execution."
+        },
+        {
+          "name": "_tool_get_open_risks",
+          "doc": "Get all open risks."
+        },
+        {
+          "name": "_tool_resolve_risk",
+          "doc": "Mark a risk as resolved."
+        },
+        {
+          "name": "_tool_run_qa",
+          "doc": "Run QA checks on execution."
+        },
+        {
+          "name": "_tool_get_qa_history",
+          "doc": "Get QA history."
+        },
+        {
+          "name": "_tool_apply_patch",
+          "doc": "Apply a code patch with broadcast support."
+        },
+        {
+          "name": "_tool_run_command",
+          "doc": "Run a validated command without shell expansion."
+        },
+        {
+          "name": "_tool_spawn_worker",
+          "doc": "Spawn a new Worker."
+        },
+        {
+          "name": "_tool_list_workers",
+          "doc": "List all workers."
+        },
+        {
+          "name": "_tool_submit_task_to_worker",
+          "doc": "Submit task to worker."
+        },
+        {
+          "name": "handle_message",
+          "doc": "Handle incoming message from PM or other agents."
+        },
+        {
+          "name": "run_cycle",
+          "doc": "Main Director processing cycle."
+        },
+        {
+          "name": "_load_snapshot",
+          "doc": "Load data from snapshot."
+        },
+        {
+          "name": "save_snapshot",
+          "doc": "Save current state as snapshot."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_parse_pass_fail",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_acceptance",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_defect_ticket",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
+    },
+    {
+      "type": "function",
+      "name": "write_gate_check",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_pass_fail",
+      "description": "Return True for PASS, False for FAIL, None otherwise.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_acceptance",
+      "description": "Parse acceptance decision from QA output with strict format.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_ticket_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_defect_ticket",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_defect_ticket",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_truncate_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_str",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_list",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "compact_pm_payload",
+      "description": "Compacts PM payload to fit into context window via progressive reduction.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_fits",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "build",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_files_to_edit",
+      "description": "Ensure files are readable before edits.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "write_gate_check",
+      "description": "Enforce changed files are within planner act scope and PM task scope.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_scope_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_directory_scope",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_matches",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_companion_allowlist",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_companion_file",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_required_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_pass_fail",
+      "description": "Return True for PASS, False for FAIL, None otherwise.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_acceptance",
+      "description": "Parse acceptance decision from QA output with strict format.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_ticket_value",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_defect_ticket",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_defect_ticket",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_truncate_text",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_str",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_list",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "compact_pm_payload",
+      "description": "Compacts PM payload to fit into context window via progressive reduction.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_fits",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "build",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_files_to_edit",
+      "description": "Ensure files are readable before edits.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "write_gate_check",
+      "description": "Enforce changed files are within planner act scope and PM task scope.",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_scope_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_directory_scope",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_matches",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_companion_allowlist",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_companion_file",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_required_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
+    },
+    {
+      "type": "class",
+      "name": "PlanDirectorTaskCommandV1",
+      "description": "Command to invoke Director planning for a task.",
+      "defined_in": "polaris/cells/director/planning/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectorStatusQueryV1",
+      "description": "Query Director planning/status information.",
+      "defined_in": "polaris/cells/director/planning/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorPlanningResultV1",
+      "description": "Result of Director planning operation.",
+      "defined_in": "polaris/cells/director/planning/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorPlanningError",
+      "description": "Raised when director.planning contract processing fails.",
+      "defined_in": "polaris/cells/director/planning/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/public/contracts.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

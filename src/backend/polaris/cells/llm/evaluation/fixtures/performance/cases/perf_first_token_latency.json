@@ -1,0 +1,20 @@
+{
+  "case_id": "perf_first_token_latency",
+  "title": "Performance First Token Latency",
+  "description": "Measures time to first token for streaming responses",
+  "role": "director",
+  "prompt": "请列出项目的所有 Python 文件。",
+  "tags": ["performance", "latency", "streaming"],
+  "weight": 1.0,
+  "critical": false,
+  "metadata": {
+    "metric": "time_to_first_token_ms",
+    "target_ms": 500,
+    "measurement": "streaming"
+  },
+  "judge": {
+    "score_threshold": 0.80,
+    "required_tools": ["repo_tree"],
+    "max_tool_calls": 1
+  }
+}

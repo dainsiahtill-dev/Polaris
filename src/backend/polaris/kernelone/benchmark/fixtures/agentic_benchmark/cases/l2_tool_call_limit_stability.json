@@ -1,0 +1,40 @@
+{
+  "case_id": "l2_tool_call_limit_stability",
+  "role": "director",
+  "title": "L2 Tool Call Limit Stability",
+  "description": "测试 Agent 在 3 个连续简单工具调用下的稳定性。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 config.py，然后读取 server.py，然后读取 utils.py",
+  "tags": [
+    "l2",
+    "multi-call",
+    "stability",
+    "sequence"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head",
+      "repo_read_tail"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 3,
+    "required_output_substrings": [
+      "config.py",
+      "server.py",
+      "utils.py"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

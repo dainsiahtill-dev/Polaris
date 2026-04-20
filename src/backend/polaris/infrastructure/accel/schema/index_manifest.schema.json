@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-accel.local/schema/index_manifest/v1",
+  "title": "AgentAccel Index Manifest",
+  "type": "object",
+  "required": ["version", "schema_version", "indexed_at", "mode", "counts"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "indexed_at": { "type": "string" },
+    "mode": { "type": "string", "enum": ["build", "update"] },
+    "full_rebuild": { "type": "boolean" },
+    "project_dir": { "type": "string" },
+    "indexed_files": { "type": "array", "items": { "type": "string" } },
+    "changed_files": { "type": "array", "items": { "type": "string" } },
+    "removed_files": { "type": "array", "items": { "type": "string" } },
+    "counts": {
+      "type": "object",
+      "required": ["symbols", "references", "dependencies", "test_ownership", "files"],
+      "properties": {
+        "symbols": { "type": "integer", "minimum": 0 },
+        "references": { "type": "integer", "minimum": 0 },
+        "dependencies": { "type": "integer", "minimum": 0 },
+        "test_ownership": { "type": "integer", "minimum": 0 },
+        "files": { "type": "integer", "minimum": 0 },
+        "source_bytes": { "type": "integer", "minimum": 0 },
+        "source_chars_est": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

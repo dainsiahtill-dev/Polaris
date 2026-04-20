@@ -1,0 +1,57 @@
+{
+  "case_id": "l9_classic_refactor_safety",
+  "role": "director",
+  "title": "L9 Classic Safe Refactor",
+  "description": "安全重构测试：加类型提示但不改变逻辑。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "重构 helpers.py，把所有函数都加上类型提示，但不能改变任何函数逻辑。",
+  "tags": [
+    "l9",
+    "classic",
+    "refactor",
+    "type-safety"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg",
+      "repo_read_head",
+      "search_replace"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 12,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "def ",
+        "description": "搜索函数定义"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "->",
+        "description": "添加类型提示"
+      }
+    ],
+    "required_output_substrings": [
+      "def ",
+      "->"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "self_verification_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

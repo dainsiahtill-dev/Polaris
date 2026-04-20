@@ -1,0 +1,60 @@
+version: 1
+mode_promotion:
+  source_mode: shadow
+  target_mode: mainline
+  block_on_missing_report: true
+
+required_pytest_suites:
+  # Context OS tests
+  - polaris/kernelone/context/tests/test_context_os.py
+  - polaris/kernelone/context/tests/test_context_os_evaluation.py
+  - polaris/kernelone/context/tests/test_attention_runtime.py
+  - polaris/kernelone/context/tests/test_continuity.py
+  # Cognitive Runtime tests
+  - polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py
+  - polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py
+  - polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py
+  # Note: test_public_service.py has PermissionError on Windows (known issue)
+
+core_context_os_thresholds:
+  # minimum_cases: 0 for attention-only reports (these use attention_summary instead)
+  minimum_cases: 0
+  exact_fact_recovery: 0.85
+  decision_preservation: 0.85
+  open_loop_continuity: 0.85
+  artifact_restore_precision: 0.80
+  temporal_update_correctness: 0.80
+  abstention: 0.90
+  compaction_regret_max: 0.20
+
+attention_runtime_thresholds:
+  minimum_cases: 20
+  pass_rate: 0.90
+  intent_carryover_accuracy: 0.95
+  latest_turn_retention_rate: 0.98
+  focus_regression_rate_max: 0.05
+  false_clear_rate_max: 0.01
+  pending_followup_resolution_rate: 0.95
+  seal_while_pending_rate_max: 0.00
+  continuity_focus_alignment_rate: 0.90
+  context_redundancy_rate_max: 0.15
+
+# 重复上下文专项门禁（防止"均值过关但局部爆炸"）
+repeat_context_thresholds:
+  max_case_context_redundancy_rate_max: 0.35  # 单 case 最高冗余率
+  duplicate_spike_cases_ratio_max: 0.05       # 冗余率 >25% 的 case 占比
+  duplicate_samples_top1_repeat_count_max: 3  # 最严重重复样本的出现次数
+
+cognitive_runtime_thresholds:
+  # minimum_cases: 0 for attention-only reports (collected separately via --collect-cognitive-metrics)
+  minimum_cases: 0
+  receipt_coverage: 0.99
+  handoff_roundtrip_success_rate: 0.99
+  state_restore_accuracy: 0.98
+  transaction_envelope_coverage: 0.98
+  receipt_write_failure_rate_max: 0.001
+  sqlite_write_p95_ms_max: 40
+
+notes:
+  - Gate is strict: any threshold failure blocks shadow -> mainline promotion.
+  - Runtime mode promotion must be metrics-gated, not confidence-gated.

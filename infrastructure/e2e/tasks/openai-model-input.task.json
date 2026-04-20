@@ -1,0 +1,59 @@
+{
+  "prompt": "打开设置面板的LLM设置里的OpenAI Compatible确保Model ID输入框能正常输入",
+  "gateConfig": {
+    "strictErrors": true,
+    "strictTerminalErrors": true,
+    "startupSettleMs": 1200,
+    "postActionSettleMs": 800
+  },
+  "navigationSteps": [
+    {
+      "name": "open-settings",
+      "selectorCandidates": [
+        "button:has(svg.lucide-settings)",
+        ".btn-icon:has(svg.lucide-settings)",
+        "[data-testid='open-settings']",
+        "button[aria-label='Settings']",
+        "button[title='Settings']"
+      ],
+      "textCandidates": ["设置", "Settings"],
+      "role": "button",
+      "timeoutMs": 3500
+    },
+    {
+      "name": "open-llm-settings",
+      "selectorCandidates": [
+        "[data-testid='settings-tab-llm']",
+        "[role='tab']:has-text(\"LLM 设置\")",
+        "button:has-text(\"LLM 设置\")",
+        "button:has-text(\"LLM设置\")",
+        "[data-testid='llm-settings-tab']"
+      ],
+      "textCandidates": ["LLM设置", "LLM 设置", "模型设置", "LLM"],
+      "role": "button",
+      "timeoutMs": 3500
+    },
+    {
+      "name": "open-provider-openai-compat",
+      "selectorCandidates": [
+        "[data-provider-type='openai_compat'] [data-provider-action='edit']",
+        "[data-provider-type='openai_compat'] button[title='编辑提供商']",
+        "[data-testid^='provider-edit-button-openai']",
+        "[data-provider-name*='openai' i] [data-provider-action='edit']"
+      ],
+      "textCandidates": ["OpenAI", "OpenAI Compatible", "OpenAI Compat"],
+      "role": "button",
+      "timeoutMs": 8000
+    }
+  ],
+  "fieldAction": {
+    "name": "model-id-input",
+    "selectorCandidates": [
+      "[data-testid='openai-model-id-input']"
+    ],
+    "labelCandidates": ["Model ID", "模型", "模型名称", "Model", "model"],
+    "placeholderCandidates": ["model", "model id", "openai-compatible-model"],
+    "inputValue": "third-party-openai-model-demo",
+    "expectContains": "openai-model-demo"
+  }
+}

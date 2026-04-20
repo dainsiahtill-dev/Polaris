@@ -1,0 +1,74 @@
+id: factory.cognitive_runtime
+title: Cognitive Runtime
+kind: capability
+visibility: public
+stateful: true
+owner: factory
+purpose: 'Provide cross-role runtime authority on top of Context OS without replacing
+  raw session truth. This cell owns scope leases, change-set validation, runtime receipt
+  persistence, typed handoff export/rehydration, and rollout gate evaluation.
+
+  '
+current_modules:
+- polaris.cells.factory.cognitive_runtime.public.service
+- polaris.application.cognitive_runtime.service
+- polaris.infrastructure.cognitive_runtime.sqlite_store
+tags: []
+owned_paths:
+- polaris/domain/cognitive_runtime/**
+- polaris/application/cognitive_runtime/**
+- polaris/infrastructure/cognitive_runtime/**
+- polaris/cells/factory/cognitive_runtime/**
+- polaris/bootstrap/cognitive_runtime/**
+- polaris/delivery/http/routers/cognitive_runtime.py
+public_contracts:
+  modules:
+  - polaris.cells.factory.cognitive_runtime.public.contracts
+  commands:
+  - ResolveContextCommandV1
+  - LeaseEditScopeCommandV1
+  - ValidateChangeSetCommandV1
+  - RecordRuntimeReceiptCommandV1
+  - ExportHandoffPackCommandV1
+  - RehydrateHandoffPackCommandV1
+  queries:
+  - GetRuntimeReceiptQueryV1
+  - GetHandoffPackQueryV1
+  events:
+  - RuntimeReceiptIssuedEventV1
+  - HandoffPackExportedEventV1
+  results:
+  - ResolveContextResultV1
+  - LeaseEditScopeResultV1
+  - ValidateChangeSetResultV1
+  - RuntimeReceiptResultV1
+  - HandoffPackResultV1
+  - HandoffRehydrationResultV1
+  errors:
+  - CognitiveRuntimeErrorV1
+depends_on:
+- roles.session
+- context.engine
+- factory.pipeline
+- policy.workspace_guard
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/cognitive_runtime/cognitive_runtime.sqlite
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/cognitive_runtime/*
+- db.read_write:cognitive_runtime
+verification:
+  tests:
+  - polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py
+  - polaris/cells/factory/cognitive_runtime/tests/test_public_service.py
+  - polaris/delivery/http/routers/test_cognitive_runtime_router.py
+  - polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py
+  gaps:
+  - This cell is intentionally not wired into the production orchestration mainline
+    yet.
+  - Runtime authority remains shadow-wired; production orchestration does not yet
+    enforce Cognitive Runtime decisions as hard gates.
+  smoke_commands: []
+generated_artifacts: []

@@ -1,0 +1,600 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.225690Z",
+  "source_hash": "c630df9b463fc4b0",
+  "cell_id": "storage.layout",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "_PolarisStorageRootsImpl",
+      "description": "Polaris-specific storage roots.",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PolarisStorageLayout",
+      "description": "Polaris-aware StorageLayout.",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_compute_workspace_key",
+          "doc": ""
+        },
+        {
+          "name": "config_root",
+          "doc": ""
+        },
+        {
+          "name": "resolve_polaris_roots",
+          "doc": "Return Polaris-specific roots resolved from this layout's workspace."
+        },
+        {
+          "name": "resolve_polaris_roots",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_polaris_metadata_dir_name",
+      "description": "Return Polaris's physical workspace metadata directory name.",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
+    },
+    {
+      "type": "function",
+      "name": "polaris_home",
+      "description": "Return the Polaris home directory (the .polaris directory itself).",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
+    },
+    {
+      "type": "function",
+      "name": "default_polaris_cache_base",
+      "description": "Return the default Polaris system cache base path.",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_polaris_roots",
+      "description": "Resolve storage roots with Polaris-specific config root.",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
+    },
+    {
+      "type": "function",
+      "name": "get_legacy_settings_path",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_polaris_root",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_expand",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workspace_settings_path",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_settings_path",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_json_dict",
+      "description": "Load a JSON object from *path*.",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace_hint",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_json_dict",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_text_atomic",
+      "description": "Delegate to KernelOne atomic write for consistency and durability.",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_abs_path",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "sync_process_settings_environment",
+      "description": "Synchronize process environment with the active settings snapshot.",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_persisted_payload",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "load_persisted_settings",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "save_persisted_settings",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "find_workspace_root",
+      "description": "Traverse upward from ``start`` to find the workspace root.",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_workspace_path",
+      "description": "Resolve and validate a workspace path.",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "workspace_has_docs",
+      "description": "Check whether a workspace contains the sentinel directory.",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_artifact_rel_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_base_dir",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_artifact_root_prefix",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "build_cache_root",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "is_hot_artifact_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_run_dir",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "update_latest_pointer",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_artifact_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/io_paths.py"
+    },
+    {
+      "type": "class",
+      "name": "StorageLayer",
+      "description": "The three canonical storage layers for Polaris artifacts.",
+      "defined_in": "polaris/kernelone/storage/layout.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolvedPath",
+      "description": "A fully resolved path with layer classification.",
+      "defined_in": "polaris/kernelone/storage/layout.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PathResolver",
+      "description": "Unified 3-layer path resolution API.",
+      "defined_in": "polaris/kernelone/storage/layout.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize resolver for a workspace."
+        },
+        {
+          "name": "ramdisk_root",
+          "doc": "Ramdisk layer root: <ramdisk_path>/.polaris/projects/<workspace_key>/runtime"
+        },
+        {
+          "name": "workspace_root",
+          "doc": "Workspace layer root: <workspace>/.polaris"
+        },
+        {
+          "name": "global_root",
+          "doc": "Global layer root: ~/.polaris"
+        },
+        {
+          "name": "resolve",
+          "doc": "Resolve any logical path to a fully classified ResolvedPath."
+        },
+        {
+          "name": "resolve_runtime",
+          "doc": "Resolve a runtime/* path to ramdisk layer."
+        },
+        {
+          "name": "resolve_workspace",
+          "doc": "Resolve a workspace/* path to workspace layer."
+        },
+        {
+          "name": "resolve_config",
+          "doc": "Resolve a config/* path to global layer."
+        },
+        {
+          "name": "get_layer",
+          "doc": "Get the storage layer for a logical path without full resolution."
+        },
+        {
+          "name": "is_volatile",
+          "doc": "Check if path resides in volatile (ramdisk) layer."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StorageRoots",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StorageLayout",
+      "description": "Path resolver for runtime/workspace/config storage domains.",
+      "defined_in": "polaris/kernelone/storage/layout.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "runtime_root",
+          "doc": ""
+        },
+        {
+          "name": "workspace_root",
+          "doc": ""
+        },
+        {
+          "name": "config_root",
+          "doc": ""
+        },
+        {
+          "name": "get_path",
+          "doc": ""
+        },
+        {
+          "name": "ensure_dir",
+          "doc": ""
+        },
+        {
+          "name": "resolve_artifact_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "register_business_roots_resolver",
+      "description": "Register a business-layer storage roots resolver.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_business_roots_resolver",
+      "description": "Unregister any previously registered business roots resolver. Useful for testing.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_storage_roots_cache_key",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_cached_storage_roots",
+      "description": "Get cached storage roots if available and not expired.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_cached_storage_roots",
+      "description": "Cache storage roots with current timestamp.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_evict_expired_or_oldest_storage_roots",
+      "description": "Evict expired entries, or oldest if none expired.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_storage_roots_cache",
+      "description": "Clear the storage roots cache. Useful for testing.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_truthy_env",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "state_to_ramdisk_enabled",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_ramdisk_root",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "default_ramdisk_root",
+      "description": "Get default ramdisk root with caching to avoid repeated thread spawning.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_drive_exists_with_timeout",
+      "description": "Check if a path exists with a timeout to avoid blocking.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "check",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_ramdisk_root",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "kernelone_home",
+      "description": "Return the KernelOne global home directory.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "default_kernelone_cache_base",
+      "description": "Get the default KernelOne system cache base path.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "sys_platform_is_macos",
+      "description": "Check if running on macOS using sys.platform for reliability.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "workspace_key",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_within_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_runtime_base_writable",
+      "description": "Check if a runtime base is writable with caching.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_base_and_mode",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_storage_roots_impl",
+      "description": "Internal resolver — replaceable via DI / patching for testing.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_storage_roots",
+      "description": "Resolve storage roots with caching to avoid repeated filesystem probing.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_logical_rel_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_join_under",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_global_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_workspace_persistent_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_runtime_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_logical_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "class",
+      "name": "Lifecycle",
+      "description": "Storage lifecycle model.",
+      "defined_in": "polaris/kernelone/storage/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StoragePolicy",
+      "description": "Storage policy for a logical path prefix.",
+      "defined_in": "polaris/kernelone/storage/policy.py",
+      "methods": [
+        {
+          "name": "should_archive",
+          "doc": "Check if this policy requires archiving."
+        },
+        {
+          "name": "should_compress",
+          "doc": "Check if compression should be applied."
+        },
+        {
+          "name": "get_retention_days",
+          "doc": "Get retention period in days."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StoragePolicyService",
+      "description": "Service for querying storage policies and resolving paths.",
+      "defined_in": "polaris/kernelone/storage/policy.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the service with a workspace path."
+        },
+        {
+          "name": "get_policy",
+          "doc": "Get storage policy for a logical path."
+        },
+        {
+          "name": "resolve_target_path",
+          "doc": "Resolve a logical path to a physical target path."
+        },
+        {
+          "name": "should_archive",
+          "doc": "Check if a path should be archived given the terminal status."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_policy_for_path",
+      "description": "Get the storage policy for a logical path.",
+      "defined_in": "polaris/kernelone/storage/policy.py"
+    },
+    {
+      "type": "function",
+      "name": "is_archive_eligible",
+      "description": "Check if a path is eligible for archiving given the run status.",
+      "defined_in": "polaris/kernelone/storage/policy.py"
+    },
+    {
+      "type": "function",
+      "name": "get_category_for_path",
+      "description": "Get the storage category for a logical path.",
+      "defined_in": "polaris/kernelone/storage/policy.py"
+    },
+    {
+      "type": "function",
+      "name": "get_lifecycle_for_path",
+      "description": "Get the lifecycle for a logical path.",
+      "defined_in": "polaris/kernelone/storage/policy.py"
+    },
+    {
+      "type": "function",
+      "name": "get_artifact_policy_metadata",
+      "description": "Get policy metadata for an artifact key.",
+      "defined_in": "polaris/kernelone/storage/policy.py"
+    },
+    {
+      "type": "function",
+      "name": "should_compress_artifact",
+      "description": "Check if an artifact should be compressed when archiving.",
+      "defined_in": "polaris/kernelone/storage/policy.py"
+    },
+    {
+      "type": "function",
+      "name": "should_archive_artifact",
+      "description": "Check if an artifact should be archived on terminal state.",
+      "defined_in": "polaris/kernelone/storage/policy.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

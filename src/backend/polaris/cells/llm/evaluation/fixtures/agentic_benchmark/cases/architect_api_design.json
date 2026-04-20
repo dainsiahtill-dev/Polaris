@@ -1,0 +1,33 @@
+{
+  "case_id": "architect_api_design",
+  "role": "architect",
+  "title": "Architect Designs RESTful API Contract",
+  "description": "The Architect must design a clean API contract based on business requirements.",
+  "workspace_fixture": "architect_graph_first_boundary",
+  "prompt": "Design a RESTful API for a task management system. Return JSON: {endpoints: [{method, path, request_schema, response_schema, errors}], resources: [string], auth_model: string}. Follow REST best practices and OpenAPI conventions.",
+  "tags": [
+    "architect",
+    "api",
+    "design"
+  ],
+  "judge": {
+    "score_threshold": 0.82,
+    "required_tools": [
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "endpoints",
+      "method",
+      "path"
+    ],
+    "forbidden_output_substrings": [
+      "<thinking>",
+      "<tool_call>"
+    ],
+    "validators": [
+      "architect_api_contract"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 3
+  }
+}

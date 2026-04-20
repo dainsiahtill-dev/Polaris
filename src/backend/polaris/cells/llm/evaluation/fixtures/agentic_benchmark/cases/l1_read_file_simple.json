@@ -1,0 +1,28 @@
+{
+  "case_id": "l1_read_file_simple",
+  "role": "director",
+  "title": "L1 Read Small File",
+  "description": "测试 repo_read_head / repo_read_tail 对小文件的稳定读取。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请读取 config.py 的全部内容。",
+  "tags": [
+    "l1",
+    "basic",
+    "read",
+    "repo_read_head"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_output_substrings": [
+      "config.py"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

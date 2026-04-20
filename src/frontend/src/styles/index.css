@@ -1,0 +1,80 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&family=Outfit:wght@300;400;500;600;700&family=Work+Sans:wght@300;400;500;600&display=swap');
+@import './tailwind.css';
+@import './theme.css';
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-text-main font-sans overflow-hidden antialiased;
+  /* Cyberpunk radial background */
+  background-image:
+    radial-gradient(circle at 10% 20%, rgba(124, 58, 237, 0.05) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(219, 39, 119, 0.05) 0%, transparent 40%);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-bg-surface/50 rounded-full hover:bg-accent-hover/50 transition-colors;
+}
+
+/* Utilities */
+.glass {
+  @apply bg-bg-panel/40 backdrop-blur-md border border-white/5 shadow-panel;
+}
+
+.text-code {
+  @apply font-mono text-xs text-accent-text;
+}
+
+.panel-header {
+  @apply h-12 px-5 flex items-center justify-between border-b border-border bg-gradient-surface backdrop-blur-sm;
+  -webkit-app-region: drag;
+}
+
+.btn-icon {
+  @apply p-1.5 rounded text-text-muted hover:text-text-main hover:bg-bg-highlight transition-colors;
+  -webkit-app-region: no-drag;
+}
+
+.btn-icon-active {
+  @apply p-1.5 rounded bg-accent-dim text-accent-text transition-colors;
+  -webkit-app-region: no-drag;
+}
+
+/* Electron App Region */
+.app-drag {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Cyberpunk Border Container */
+.cyberpunk-border {
+  @apply absolute inset-0 z-50 pointer-events-none rounded-lg border border-white/10;
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.1);
+}
+
+.cyberpunk-border::before {
+  content: '';
+  @apply absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-accent/50 to-transparent;
+}
+
+.cyberpunk-border::after {
+  content: '';
+  @apply absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-status-secondary/50 to-transparent;
+}

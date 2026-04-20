@@ -1,0 +1,144 @@
+# =============================================================================
+# Ruff Configuration — Polaris
+#
+# This file prevents ruff --fix from silently breaking re-export chains
+# in public contract surfaces (contracts.py, __init__.py).
+#
+# Problem: ruff --fix applies import-modifying rules (UP035, etc.) that
+# replace deprecated imports with modern equivalents, breaking downstream
+# consumers who import from the old path. This caused 111 test collection
+# errors in a previous incident.
+#
+# Solution:
+#   - Disable import-modifying UP rules that are not safe to auto-fix
+#   - Use `ruff check --unsafe-fixes` for safe-only auto-fixes
+#   - Run `ruff check` (no --fix) for full analysis
+# =============================================================================
+
+# Project root for this config
+target-version = "py310"
+line-length = 120
+
+# Only check the Python backend
+include = ["src/backend/**/*.py"]
+
+# Exclude paths that are known to cause issues or are external
+exclude = [
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "node_modules",
+    "src/backend/tests",       # test files use lots of dynamic imports
+    "src/backend/polaris/tests",
+]
+
+[lint]
+# Core rules — keep all production-safety rules
+# Mandatory quality gates (Task #4)
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes (unused imports, undefined names, etc.)
+    "I",   # isort (import sorting)
+    "N",   # pep8-naming
+    "UP",  # pyupgrade (BUT see ignore below)
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "ANN", # flake8-annotations (type hints)
+    "BLE", # flake8-blind-except
+    "LOG", # flake8-logging
+    "RUF", # Ruff-specific rules
+]
+
+ignore = [
+    # Line length handled by formatter
+    "E501",
+
+    # Function calls in argument defaults — common pattern here
+    "B008",
+
+    # ---- IMPORT-MODIFYING RULES (DANGEROUS WITH RE-EXPORT CONTRACTS) ----
+    # UP035: Replaces deprecated imports with modern equivalents.
+    #   Risk: Silently changes import paths (e.g., typing.Text -> str,
+    #   collections.deque -> collections.abc.Deque). Downstream modules
+    #   that re-export these types break with ImportError.
+    #   Status: DISABLED — use manual review before updating deprecated imports.
+    "UP035",
+
+    # UP004: "unnecessary @lru_cache on class method".
+    #   Risk: Removing lru_cache from a public method can change behavior.
+    #   Status: DISABLED — requires manual review of semantic impact.
+    "UP004",
+
+    # UP005: "use deque instead of list for append/pop".
+    #   Risk: Changing list -> deque changes the public API return type,
+    #   which breaks type contracts in contracts.py surfaces.
+    #   Status: DISABLED — requires manual review.
+    "UP005",
+
+    # ---- ANNOTATION RULES (GRADUAL ADOPTION) ----
+    # ANN001-ANN003: Missing type annotations for args/returns/self
+    #   Status: DISABLED temporarily — codebase has too many missing annotations
+    "ANN001", "ANN002", "ANN003", "ANN101", "ANN102",
+    # ANN201-ANN202: Missing return type annotations
+    "ANN201", "ANN202",
+    # ANN401: Dynamically typed expressions (Any) — too many to fix now
+    "ANN401",
+
+    # ---- RUFF-SPECIFIC RULES ----
+    # RUF012: Mutable class defaults — common pattern in dataclasses
+    "RUF012",
+    # RUF002/RUF003: Ambiguous Chinese full-width punctuation in docstrings.
+    #   Project uses Chinese full-width punctuation intentionally in Chinese-language docs.
+    "RUF002",
+    "RUF003",
+    # RUF001: Ambiguous Chinese full-width punctuation in string literals.
+    #   Same intentional usage as above.
+    "RUF001",
+]
+
+[lint.per-file-ignores]
+# Re-export surface suppression:
+# All contracts.py files are public contract surfaces — F401 expected (external re-use).
+# All __init__.py files in polaris/ serve as namespace declarations and/or
+# re-export chains for the ACGA 2.0 Cell architecture. Ruff cannot track
+# cross-module usage, so F401 is suppressed to prevent --fix from silently
+# breaking re-export chains (caused 111 test collection errors in incident).
+"src/backend/polaris/**/__init__.py" = ["F401"]
+"src/backend/polaris/**/public/__init__.py" = ["F401"]
+"src/backend/polaris/**/public/contracts.py" = ["F401"]
+"src/backend/polaris/**/contracts.py" = ["F401"]
+# Cell namespace re-export __init__.py files
+"src/backend/polaris/__init__.py" = ["F401"]
+"src/backend/polaris/domain/__init__.py" = ["F401"]
+"src/backend/polaris/infrastructure/**/__init__.py" = ["F401"]
+"src/backend/polaris/kernelone/**/__init__.py" = ["F401"]
+# Re-export files that ruff cannot detect via __all__:
+#   defaults.py: 23 constants re-exported via __all__ list() (ruff ignores __all__ strings)
+"src/backend/polaris/kernelone/runtime/defaults.py" = ["F401"]
+#   stream/__init__.py: StreamChunk aliased as KStreamChunk in __all__
+"src/backend/polaris/kernelone/stream/__init__.py" = ["F401"]
+#   _executor_base.py: internal re-export for engine package consumers
+#   (executor.py imports classify_error from this module; ruff F401 cannot detect
+#   cross-module usage, so this file needs explicit F401 ignore)
+"src/backend/polaris/kernelone/llm/engine/_executor_base.py" = ["F401"]
+# N818 legitimate exceptions: CommandInjectionBlocked (security semantics), DomainException (base class)
+"src/backend/polaris/cells/roles/adapters/internal/director_adapter.py" = ["N818"]
+"src/backend/polaris/domain/exceptions.py" = ["N818"]
+# RUF006: fire-and-forget asyncio.create_task without stored reference
+# These are intentional fire-and-forget patterns in event publishing paths.
+# Tasks complete before GC as event loop remains running.
+"src/backend/polaris/kernelone/events/io_events.py" = ["RUF006"]
+"src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker.py" = ["RUF006"]
+
+[lint.isort]
+# Ensure safe import sorting
+force-single-line = false
+order-by-type = true
+combine-as-imports = true
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

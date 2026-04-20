@@ -1,0 +1,1264 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.080251Z",
+  "source_hash": "2e621006f01a0913",
+  "cell_id": "factory.cognitive_runtime",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "CognitiveRuntimeService",
+      "description": "Cross-role authority facade on top of Context OS and session truth.",
+      "defined_in": "polaris/application/cognitive_runtime/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_key",
+          "doc": ""
+        },
+        {
+          "name": "session_service",
+          "doc": ""
+        },
+        {
+          "name": "context_memory_service",
+          "doc": ""
+        },
+        {
+          "name": "_store_for",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        },
+        {
+          "name": "resolve_context",
+          "doc": ""
+        },
+        {
+          "name": "lease_edit_scope",
+          "doc": ""
+        },
+        {
+          "name": "validate_change_set",
+          "doc": ""
+        },
+        {
+          "name": "record_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "get_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "export_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "get_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "rehydrate_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "map_diff_to_cells",
+          "doc": ""
+        },
+        {
+          "name": "request_projection_compile",
+          "doc": ""
+        },
+        {
+          "name": "promote_or_reject",
+          "doc": ""
+        },
+        {
+          "name": "record_rollback_ledger",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_iso_now",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_paths",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_rel_path",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_owned_path_matches",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace_bounded_path",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_graph_cells",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_turn_envelope",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_mapping_sequence",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_strings",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "class",
+      "name": "ResolveContextCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LeaseEditScopeCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidateChangeSetCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecordRuntimeReceiptCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExportHandoffPackCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MapDiffToCellsCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RequestProjectionCompileCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PromoteOrRejectCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecordRollbackLedgerCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetRuntimeReceiptQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetHandoffPackQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RehydrateHandoffPackCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeReceiptIssuedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HandoffPackExportedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolveContextResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LeaseEditScopeResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidateChangeSetResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeReceiptResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HandoffPackResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HandoffRehydrationResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DiffCellMappingResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectionCompileResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PromotionDecisionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RollbackLedgerResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CognitiveRuntimeErrorV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ICognitiveRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "resolve_context",
+          "doc": ""
+        },
+        {
+          "name": "lease_edit_scope",
+          "doc": ""
+        },
+        {
+          "name": "validate_change_set",
+          "doc": ""
+        },
+        {
+          "name": "record_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "export_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "map_diff_to_cells",
+          "doc": ""
+        },
+        {
+          "name": "request_projection_compile",
+          "doc": ""
+        },
+        {
+          "name": "promote_or_reject",
+          "doc": ""
+        },
+        {
+          "name": "record_rollback_ledger",
+          "doc": ""
+        },
+        {
+          "name": "get_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "get_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "rehydrate_handoff_pack",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "CognitiveRuntimePublicService",
+      "description": "Public cell facade for cross-role runtime authority operations.",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        },
+        {
+          "name": "_mode",
+          "doc": ""
+        },
+        {
+          "name": "resolve_context",
+          "doc": ""
+        },
+        {
+          "name": "lease_edit_scope",
+          "doc": ""
+        },
+        {
+          "name": "validate_change_set",
+          "doc": ""
+        },
+        {
+          "name": "record_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "export_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "map_diff_to_cells",
+          "doc": ""
+        },
+        {
+          "name": "request_projection_compile",
+          "doc": ""
+        },
+        {
+          "name": "promote_or_reject",
+          "doc": ""
+        },
+        {
+          "name": "record_rollback_ledger",
+          "doc": ""
+        },
+        {
+          "name": "get_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "get_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "rehydrate_handoff_pack",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_cognitive_runtime_public_service",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_resolve_context_contract_validates_required_fields",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_lease_edit_scope_requires_non_empty_scope",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_validate_change_set_requires_allowed_scope",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_export_handoff_requires_positive_limit",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_rehydrate_handoff_requires_target_role",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_map_diff_to_cells_requires_changed_files",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_projection_compile_requires_requested_by",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_promote_or_reject_requires_projection_status",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_record_rollback_requires_reason",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "_FakeRoleSessionService",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py",
+      "methods": [
+        {
+          "name": "get_context_config_dict",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakeContextMemoryService",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py",
+      "methods": [
+        {
+          "name": "get_state_for_session",
+          "doc": ""
+        },
+        {
+          "name": "search_memory_for_session",
+          "doc": ""
+        },
+        {
+          "name": "read_episode_for_session",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Pack",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_build_store",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_resolves_context_scope_and_validation",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_fake_get_context",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_round_trips_receipts_and_handoffs",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_rehydrates_handoff_into_state_first_context",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_isolates_sqlite_state_per_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_store_factory",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_phase2_flow",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_rejects_graph_catalog_path_outside_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_respects_cognitive_runtime_mode_off",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_service_dependency",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_unwrap_result",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_context",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "lease_edit_scope",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_change_set",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "record_runtime_receipt",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "get_runtime_receipt",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "export_handoff_pack",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "rehydrate_handoff_pack",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "map_diff_to_cells",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "request_projection_compile",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "promote_or_reject",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "record_rollback_ledger",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "get_handoff_pack",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "class",
+      "name": "ContextSnapshot",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TurnEnvelope",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "with_receipt_ids",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EditScopeLease",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ChangeSetValidationResult",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "ok",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RuntimeReceipt",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ContextHandoffPack",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HandoffRehydration",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DiffCellMapping",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectionCompileRequest",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PromotionDecisionRecord",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RollbackLedgerEntry",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Proposal",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReconcileResult",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FitnessSpec",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PromotionDecision",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_copy_mapping",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_mapping_tuple",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_tuple",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_optional_str",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_optional_int",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py"
+    },
+    {
+      "type": "function",
+      "name": "test_context_handoff_pack_roundtrip_with_new_fields",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/tests/test_models.py"
+    },
+    {
+      "type": "function",
+      "name": "test_context_handoff_pack_backward_compat_without_new_fields",
+      "description": "Old payloads without the new fields should deserialize with defaults.",
+      "defined_in": "polaris/domain/cognitive_runtime/tests/test_models.py"
+    },
+    {
+      "type": "class",
+      "name": "CognitiveRuntimeMetrics",
+      "description": "Frozen metrics result from Cognitive Runtime evaluation.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/metrics_collector.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CognitiveRuntimeMetricsCollector",
+      "description": "Collects Cognitive Runtime metrics from SQLite store.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/metrics_collector.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_connection",
+          "doc": "Establish database connection with proper error handling."
+        },
+        {
+          "name": "_close_connection",
+          "doc": "Safely close database connection."
+        },
+        {
+          "name": "_count_sessions",
+          "doc": "Count distinct sessions with receipts."
+        },
+        {
+          "name": "_count_receipts",
+          "doc": "Count total receipts for workspace."
+        },
+        {
+          "name": "_calculate_receipt_coverage",
+          "doc": "Calculate receipt_coverage: sessions with receipts / total sessions."
+        },
+        {
+          "name": "_calculate_handoff_roundtrip_success_rate",
+          "doc": "Calculate handoff_roundtrip_success_rate."
+        },
+        {
+          "name": "_calculate_state_restore_accuracy",
+          "doc": "Calculate state_restore_accuracy."
+        },
+        {
+          "name": "_calculate_transaction_envelope_coverage",
+          "doc": "Calculate transaction_envelope_coverage."
+        },
+        {
+          "name": "_calculate_receipt_write_failure_rate",
+          "doc": "Calculate receipt_write_failure_rate."
+        },
+        {
+          "name": "_calculate_sqlite_write_p95_ms",
+          "doc": "Calculate sqlite_write_p95_ms from write timing metadata."
+        },
+        {
+          "name": "_count_cases",
+          "doc": "Count minimum of sessions and 100 (for minimum_cases threshold)."
+        },
+        {
+          "name": "collect_metrics",
+          "doc": "Collect all Cognitive Runtime metrics from SQLite store."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_p95",
+      "description": "Calculate 95th percentile of values.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/metrics_collector.py"
+    },
+    {
+      "type": "class",
+      "name": "_WriteTask",
+      "description": "",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/sqlite_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CognitiveRuntimeSqliteStore",
+      "description": "SQLite-backed receipt and handoff persistence for Cognitive Runtime.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/sqlite_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_connect",
+          "doc": ""
+        },
+        {
+          "name": "_init_schema",
+          "doc": ""
+        },
+        {
+          "name": "_writer_loop",
+          "doc": ""
+        },
+        {
+          "name": "_run_write_task",
+          "doc": ""
+        },
+        {
+          "name": "_submit_write",
+          "doc": ""
+        },
+        {
+          "name": "append_receipt",
+          "doc": ""
+        },
+        {
+          "name": "get_receipt",
+          "doc": ""
+        },
+        {
+          "name": "list_receipts",
+          "doc": ""
+        },
+        {
+          "name": "save_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "get_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "append_diff_mapping",
+          "doc": ""
+        },
+        {
+          "name": "get_diff_mapping",
+          "doc": ""
+        },
+        {
+          "name": "append_projection_request",
+          "doc": ""
+        },
+        {
+          "name": "get_projection_request",
+          "doc": ""
+        },
+        {
+          "name": "append_promotion_decision",
+          "doc": ""
+        },
+        {
+          "name": "get_promotion_decision",
+          "doc": ""
+        },
+        {
+          "name": "append_rollback_ledger_entry",
+          "doc": ""
+        },
+        {
+          "name": "get_rollback_ledger_entry",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCognitiveRuntimeMetrics",
+      "description": "Tests for CognitiveRuntimeMetrics frozen dataclass.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py",
+      "methods": [
+        {
+          "name": "test_metrics_to_dict",
+          "doc": "Verify to_dict produces correct structure and rounding."
+        },
+        {
+          "name": "test_metrics_default_values",
+          "doc": "Verify default metrics have expected zero values."
+        },
+        {
+          "name": "test_metrics_are_frozen",
+          "doc": "Verify metrics dataclass is frozen."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCognitiveRuntimeMetricsCollector",
+      "description": "Tests for CognitiveRuntimeMetricsCollector.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py",
+      "methods": [
+        {
+          "name": "test_collect_metrics_returns_dict",
+          "doc": "Verify collect_metrics returns a dict."
+        },
+        {
+          "name": "test_collect_metrics_empty_workspace",
+          "doc": "Verify metrics with no data returns zeros."
+        },
+        {
+          "name": "test_collect_metrics_with_receipts",
+          "doc": "Verify receipt_coverage is 1.0 when receipts exist."
+        },
+        {
+          "name": "test_collect_metrics_handoff_roundtrip",
+          "doc": "Verify handoff_roundtrip_success_rate calculation."
+        },
+        {
+          "name": "test_collect_metrics_handoff_no_receipt",
+          "doc": "Verify handoff_roundtrip_success_rate is 0 when no receipt after handoff."
+        },
+        {
+          "name": "test_collect_metrics_failure_rate",
+          "doc": "Verify receipt_write_failure_rate calculation."
+        },
+        {
+          "name": "test_collect_metrics_connection_error",
+          "doc": "Verify graceful handling of connection errors."
+        },
+        {
+          "name": "test_collect_metrics_multiple_sessions",
+          "doc": "Verify total_cases counts distinct sessions."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMetricsCollectorEdgeCases",
+      "description": "Edge case tests for CognitiveRuntimeMetricsCollector.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py",
+      "methods": [
+        {
+          "name": "test_workspace_override",
+          "doc": "Verify workspace parameter is properly used."
+        },
+        {
+          "name": "test_empty_session_id_handling",
+          "doc": "Verify handling of receipts without session_id."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_build_store",
+      "description": "Create a temporary workspace and database path.",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_metrics_collector.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_store",
+      "description": "",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
+    },
+    {
+      "type": "function",
+      "name": "test_sqlite_store_serializes_receipt_writes_across_threads",
+      "description": "",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker",
+      "description": "",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
+    },
+    {
+      "type": "function",
+      "name": "test_sqlite_store_close_rejects_new_writes",
+      "description": "",
+      "defined_in": "polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

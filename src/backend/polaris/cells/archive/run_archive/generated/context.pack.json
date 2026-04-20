@@ -1,0 +1,68 @@
+{
+  "id": "archive.run_archive",
+  "title": "Run Archive",
+  "kind": "capability",
+  "purpose": "Archive terminal runtime run artifacts into immutable workspace history run records and index entries.",
+  "summary": "Owns publication of archived run history while leaving runtime source-of-truth state untouched.",
+  "owned_paths": [
+    "polaris/application/services/history_archive_service.py",
+    "polaris/application/services/archive_hook.py",
+    "polaris/application/services/history_manifest_repository.py",
+    "polaris/delivery/http/routers/history.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ArchiveRunCommandV1"
+    ],
+    "queries": [
+      "ListHistoryRunsQueryV1",
+      "GetArchiveManifestQueryV1"
+    ],
+    "events": [
+      "RunArchivedEventV1"
+    ],
+    "results": [
+      "ArchiveManifestV1",
+      "HistoryRunsResultV1"
+    ],
+    "errors": [
+      "RunArchiveErrorV1"
+    ]
+  },
+  "neighbors": [
+    "runtime.state_owner",
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "workspace/history/runs/*",
+    "workspace/history/index/runs.index.jsonl"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/runs/*",
+    "fs.write:workspace/history/runs/*",
+    "fs.write:workspace/history/index/runs.index.jsonl"
+  ],
+  "invariants": [
+    "runtime source-of-truth remains unchanged after archiving",
+    "archive publication is append-only",
+    "all text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "polaris/application/services/history_archive_service.py",
+    "polaris/application/services/archive_hook.py"
+  ],
+  "test_targets": [
+    "tests/archive/test_run_archive_contracts.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
+

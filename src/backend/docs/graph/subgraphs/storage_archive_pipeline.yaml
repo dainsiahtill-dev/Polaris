@@ -1,0 +1,128 @@
+version: 1
+id: storage_archive_pipeline
+title: Storage Archive Pipeline
+purpose: >
+  Governs the delivery-to-runtime-to-archive handoff for runtime state,
+  read-only projection, archive persistence, and append-only audit evidence.
+
+entry_cells:
+  - delivery.api_gateway
+
+cells:
+  - delivery.api_gateway
+  - policy.workspace_guard
+  - runtime.state_owner
+  - runtime.projection
+  - audit.evidence
+  - archive.run_archive
+  - archive.task_snapshot_archive
+  - archive.factory_archive
+
+exit_cells:
+  - runtime.projection
+  - audit.evidence
+  - archive.run_archive
+  - archive.task_snapshot_archive
+  - archive.factory_archive
+
+relations:
+  - from: delivery.api_gateway
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: delivery.api_gateway
+    to: runtime.projection
+    type: queries
+    contract: RuntimeProjectionQueryV1
+  - from: runtime.projection
+    to: runtime.state_owner
+    type: queries
+    contract: GetRuntimeSnapshotQueryV1
+  - from: runtime.projection
+    to: audit.evidence
+    type: queries
+    contract: QueryEvidenceEventsV1
+  - from: archive.run_archive
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - from: archive.run_archive
+    to: runtime.state_owner
+    type: queries
+    contract: GetRuntimeRunQueryV1
+  - from: archive.run_archive
+    to: audit.evidence
+    type: commands
+    contract: AppendEvidenceEventCommandV1
+  - from: archive.task_snapshot_archive
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - from: archive.task_snapshot_archive
+    to: runtime.state_owner
+    type: queries
+    contract: GetRuntimeSnapshotQueryV1
+  - from: archive.task_snapshot_archive
+    to: audit.evidence
+    type: commands
+    contract: AppendEvidenceEventCommandV1
+  - from: archive.factory_archive
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - from: archive.factory_archive
+    to: audit.evidence
+    type: commands
+    contract: AppendEvidenceEventCommandV1
+
+critical_contracts:
+  - RuntimeProjectionQueryV1
+  - WorkspaceWriteGuardQueryV1
+  - WorkspaceArchiveWriteGuardQueryV1
+  - PersistRuntimeTaskStateCommandV1
+  - PersistRuntimeRunCommandV1
+  - AppendEvidenceEventCommandV1
+  - ArchiveRunCommandV1
+  - ArchiveTaskSnapshotCommandV1
+  - ArchiveFactoryRunCommandV1
+
+state_boundaries:
+  - owner: runtime.state_owner
+    state: runtime/tasks/*
+  - owner: runtime.state_owner
+    state: runtime/contracts/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+  - owner: runtime.state_owner
+    state: runtime/runs/*
+  - owner: audit.evidence
+    state: runtime/events/*
+  - owner: archive.run_archive
+    state: workspace/history/runs/*
+  - owner: archive.task_snapshot_archive
+    state: workspace/history/tasks/*
+  - owner: archive.factory_archive
+    state: workspace/history/factory/*
+
+verify_targets:
+  tests:
+    - tests/architecture/test_graph_reality.py
+    - tests/architecture/test_polaris_layout.py
+    - tests/architecture/test_polaris_kernel_fs_guard.py
+    - tests/architecture/test_architecture_invariants.py
+    - tests/test_log_pipeline_storage_layout.py
+    - tests/test_websocket_signal_hub.py
+  contracts:
+    - RuntimeProjectionQueryV1
+    - WorkspaceWriteGuardQueryV1
+    - WorkspaceArchiveWriteGuardQueryV1
+    - PersistRuntimeTaskStateCommandV1
+    - PersistRuntimeRunCommandV1
+    - AppendEvidenceEventCommandV1
+    - ArchiveRunCommandV1
+    - ArchiveTaskSnapshotCommandV1
+    - ArchiveFactoryRunCommandV1
+
+migration_notes:
+  - First restored subgraph after the catalog reset_seed phase.
+  - Archive implementations still share history_archive_service.py and remain declaration-first at the graph layer.

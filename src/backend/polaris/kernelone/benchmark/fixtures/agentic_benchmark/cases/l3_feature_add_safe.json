@@ -1,0 +1,58 @@
+{
+  "case_id": "l3_feature_add_safe",
+  "role": "director",
+  "title": "L3 Safe Feature Addition",
+  "description": "在 backend/api.py 新增一个函数 get_todo_list()，要求复用 helpers.py 中的 collect_todo_lines。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在 backend/api.py 新增一个函数 get_todo_list()，要求复用 helpers.py 中的 collect_todo_lines。",
+  "tags": [
+    "l3",
+    "feature",
+    "safe-edit",
+    "function-add"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head",
+      "search_replace"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "backend/api.py",
+        "description": "读取目标文件"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "get_todo_list",
+        "description": "插入新函数"
+      }
+    ],
+    "forbidden_tools": [
+      "append_to_file"
+    ],
+    "required_output_substrings": [
+      "get_todo_list",
+      "collect_todo_lines"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

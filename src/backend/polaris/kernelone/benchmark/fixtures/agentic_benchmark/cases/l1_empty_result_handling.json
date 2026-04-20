@@ -1,0 +1,41 @@
+{
+  "case_id": "l1_empty_result_handling",
+  "role": "director",
+  "title": "L1 Empty Result Graceful Handling",
+  "description": "测试 Agent 对空搜索结果的稳定性（不应崩溃）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "搜索项目中不存在的字符串 \"xyz_nonexistent_123456\"。",
+  "tags": [
+    "l1",
+    "basic",
+    "search",
+    "error-handling"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_output_substrings": [
+      "未找到",
+      "没有找到",
+      "no match",
+      "not found"
+    ],
+    "validators": [
+      "require_no_error",
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

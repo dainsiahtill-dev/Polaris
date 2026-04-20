@@ -1,0 +1,34 @@
+{
+  "case_id": "l4_thinking_before_tool",
+  "level": "L4",
+  "role": "director",
+  "title": "L4 Thinking Before Tool Call",
+  "description": "验证模型在工具调用前输出 <thinking> 标签，遵循输出契约。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 src/utils/helpers.py 的前 20 行，告诉我里面有几个函数。",
+  "tags": ["l4", "thinking", "output_contract", "scratchpad"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.80,
+    "stream": {
+      "required_tools": ["repo_read_head"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "first_tool": "repo_read_head",
+      "first_call_arg_equals": {
+        "file": "src/utils/helpers.py"
+      },
+      "require_thinking_before_tool": true
+    },
+    "non_stream": {
+      "required_tools": ["repo_read_head"],
+      "min_tool_calls": 1,
+      "require_thinking_before_tool": true
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,2132 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.362463Z",
+  "source_hash": "2f63e4cbbbea5df4",
+  "cell_id": "roles.session",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "Artifact",
+      "description": "An artifact in a role session.",
+      "defined_in": "polaris/cells/roles/session/internal/artifact_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionArtifactService",
+      "description": "Service for managing role session artifacts.",
+      "defined_in": "polaris/cells/roles/session/internal/artifact_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_artifact_rel_path",
+          "doc": ""
+        },
+        {
+          "name": "_artifacts_dir_path",
+          "doc": ""
+        },
+        {
+          "name": "get_session_dir",
+          "doc": "Get directory for a session."
+        },
+        {
+          "name": "write_artifact",
+          "doc": "Write an artifact to a session."
+        },
+        {
+          "name": "read_artifact",
+          "doc": "Read a specific artifact."
+        },
+        {
+          "name": "list_artifacts",
+          "doc": "List artifacts in a session."
+        },
+        {
+          "name": "delete_artifact",
+          "doc": "Delete an artifact."
+        },
+        {
+          "name": "export_artifacts",
+          "doc": "Export artifacts to a workspace-relative directory."
+        },
+        {
+          "name": "_get_file_extension",
+          "doc": "Get file extension for artifact type."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionContextMemoryService",
+      "description": "Read Context OS state from the `roles.session` source-of-truth.",
+      "defined_in": "polaris/cells/roles/session/internal/context_memory_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "session_service",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        },
+        {
+          "name": "_load_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "search_memory",
+          "doc": ""
+        },
+        {
+          "name": "read_artifact",
+          "doc": ""
+        },
+        {
+          "name": "read_episode",
+          "doc": ""
+        },
+        {
+          "name": "get_state",
+          "doc": ""
+        },
+        {
+          "name": "search_memory_for_session",
+          "doc": ""
+        },
+        {
+          "name": "read_artifact_for_session",
+          "doc": ""
+        },
+        {
+          "name": "read_episode_for_session",
+          "doc": ""
+        },
+        {
+          "name": "get_state_for_session",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Conversation",
+      "description": "对话会话表",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "转换为字典"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ConversationMessage",
+      "description": "对话消息表",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "转换为字典"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_safe_json_loads",
+      "description": "安全地解析 JSON 字符串",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_database_url",
+      "description": "构建默认会话数据库 URL。",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_database_url",
+      "description": "Normalize SQLite URLs through KernelOne path policy.",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_kernel_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_kernel_db",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "get_engine",
+      "description": "获取或创建数据库引擎（线程安全）",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "get_session_local",
+      "description": "获取会话工厂（线程安全）",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "init_db",
+      "description": "初始化数据库（创建表）",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "function",
+      "name": "get_db",
+      "description": "获取数据库会话（用于依赖注入）",
+      "defined_in": "polaris/cells/roles/session/internal/conversation.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleDataStoreError",
+      "description": "数据存储错误",
+      "defined_in": "polaris/cells/roles/session/internal/data_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PathSecurityError",
+      "description": "路径安全错误",
+      "defined_in": "polaris/cells/roles/session/internal/data_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleDataStore",
+      "description": "角色数据存储",
+      "defined_in": "polaris/cells/roles/session/internal/data_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化数据存储"
+        },
+        {
+          "name": "_to_logical_path",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_directories",
+          "doc": "确保子目录存在"
+        },
+        {
+          "name": "data_dir",
+          "doc": "数据目录"
+        },
+        {
+          "name": "logs_dir",
+          "doc": "日志目录"
+        },
+        {
+          "name": "outputs_dir",
+          "doc": "输出目录"
+        },
+        {
+          "name": "backups_dir",
+          "doc": "备份目录"
+        },
+        {
+          "name": "_validate_path",
+          "doc": "验证路径安全性"
+        },
+        {
+          "name": "_atomic_write",
+          "doc": "原子写入文件"
+        },
+        {
+          "name": "write_text",
+          "doc": "写入文本文件"
+        },
+        {
+          "name": "write_json",
+          "doc": "写入JSON文件"
+        },
+        {
+          "name": "write_yaml",
+          "doc": "写入YAML文件"
+        },
+        {
+          "name": "read_text",
+          "doc": "读取文本文件"
+        },
+        {
+          "name": "read_json",
+          "doc": "读取JSON文件"
+        },
+        {
+          "name": "read_yaml",
+          "doc": "读取YAML文件"
+        },
+        {
+          "name": "append_log",
+          "doc": "追加日志"
+        },
+        {
+          "name": "append_event",
+          "doc": "追加事件到事件日志"
+        },
+        {
+          "name": "save_output",
+          "doc": "保存输出产物"
+        },
+        {
+          "name": "list_files",
+          "doc": "列出文件"
+        },
+        {
+          "name": "cleanup_old_data",
+          "doc": "清理过期数据"
+        },
+        {
+          "name": "get_storage_stats",
+          "doc": "获取存储统计信息"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionService",
+      "description": "统一角色会话服务",
+      "defined_in": "polaris/cells/roles/session/internal/role_session_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化服务"
+        },
+        {
+          "name": "workspace",
+          "doc": "获取工作区路径"
+        },
+        {
+          "name": "db",
+          "doc": "获取数据库会话"
+        },
+        {
+          "name": "persistence",
+          "doc": "获取持久化服务"
+        },
+        {
+          "name": "event_publisher",
+          "doc": "获取事件发布器"
+        },
+        {
+          "name": "close",
+          "doc": "关闭数据库会话"
+        },
+        {
+          "name": "_persist_session",
+          "doc": "持久化会话到文件系统"
+        },
+        {
+          "name": "_publish_session_created",
+          "doc": "发布会话创建事件"
+        },
+        {
+          "name": "_publish_session_updated",
+          "doc": "发布会话更新事件"
+        },
+        {
+          "name": "_publish_session_ended",
+          "doc": "发布会话结束事件"
+        },
+        {
+          "name": "_publish_message_added",
+          "doc": "发布消息添加事件"
+        },
+        {
+          "name": "_sanitize_context_config",
+          "doc": "Validate `state_first_context_os` boundary before persistence."
+        },
+        {
+          "name": "create_session",
+          "doc": "创建新会话"
+        },
+        {
+          "name": "get_session",
+          "doc": "获取会话"
+        },
+        {
+          "name": "get_sessions",
+          "doc": "列出会话"
+        },
+        {
+          "name": "update_session",
+          "doc": "更新会话"
+        },
+        {
+          "name": "get_context_config_dict",
+          "doc": "Read one session's context_config as a dictionary."
+        },
+        {
+          "name": "get_context_os_snapshot",
+          "doc": "Read the persisted State-First Context OS snapshot for one session."
+        },
+        {
+          "name": "update_context_os_snapshot",
+          "doc": "Persist the State-First Context OS snapshot back into context_config."
+        },
+        {
+          "name": "delete_session",
+          "doc": "删除会话"
+        },
+        {
+          "name": "attach_session",
+          "doc": "将会话附着到工作流"
+        },
+        {
+          "name": "detach_session",
+          "doc": "解除会话的工作流附着"
+        },
+        {
+          "name": "_deactivate_attachments",
+          "doc": "将所有活跃附着设为非活跃"
+        },
+        {
+          "name": "get_active_attachment",
+          "doc": "获取会话的当前活跃附着"
+        },
+        {
+          "name": "get_session_attachments",
+          "doc": "获取会话的所有附着历史"
+        },
+        {
+          "name": "get_capabilities",
+          "doc": "获取会话的能力配置"
+        },
+        {
+          "name": "set_capabilities",
+          "doc": "设置会话的能力配置"
+        },
+        {
+          "name": "get_strategy_override",
+          "doc": "从 session context_config 读取 session 级策略覆盖。"
+        },
+        {
+          "name": "set_strategy_override",
+          "doc": "持久化 session 级策略覆盖到 context_config。"
+        },
+        {
+          "name": "add_message",
+          "doc": "添加消息到会话"
+        },
+        {
+          "name": "get_messages",
+          "doc": "获取会话的消息"
+        },
+        {
+          "name": "export_session",
+          "doc": "导出会话数据"
+        },
+        {
+          "name": "cleanup_expired_sessions",
+          "doc": "清理所有过期的会话快照"
+        },
+        {
+          "name": "create_workbench_session",
+          "doc": "创建 Workbench 会话的便捷方法"
+        },
+        {
+          "name": "create_workflow_session",
+          "doc": "创建 Workflow 会话的便捷方法"
+        },
+        {
+          "name": "find_or_create_ad_hoc",
+          "doc": "查找或创建临时会话（用于旧 API 兼容）"
+        },
+        {
+          "name": "create_ad_hoc_session",
+          "doc": "Create a fresh standalone ad-hoc session without reusing prior active sessions."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_persistence_service",
+      "description": "获取或创建全局持久化服务实例",
+      "defined_in": "polaris/cells/roles/session/internal/role_session_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_ttl_cleanup_service",
+      "description": "获取或创建全局 TTL 清理服务实例",
+      "defined_in": "polaris/cells/roles/session/internal/role_session_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_event_publisher",
+      "description": "获取或创建全局事件发布器实例",
+      "defined_in": "polaris/cells/roles/session/internal/role_session_service.py"
+    },
+    {
+      "type": "class",
+      "name": "SessionAttachment",
+      "description": "会话附着关系表",
+      "defined_in": "polaris/cells/roles/session/internal/session_attachment.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "转换为字典"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SessionPersistenceService",
+      "description": "会话持久化服务",
+      "defined_in": "polaris/cells/roles/session/internal/session_persistence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化会话持久化服务"
+        },
+        {
+          "name": "workspace",
+          "doc": "获取工作区路径"
+        },
+        {
+          "name": "fs",
+          "doc": "获取 KernelFileSystem 实例（延迟初始化）"
+        },
+        {
+          "name": "_get_snapshot_path",
+          "doc": "获取会话快照路径"
+        },
+        {
+          "name": "_get_manifest_path",
+          "doc": "获取会话清单路径"
+        },
+        {
+          "name": "persist_session",
+          "doc": "将会话状态持久化到文件系统"
+        },
+        {
+          "name": "_serialize_session",
+          "doc": "将会话对象序列化为字典"
+        },
+        {
+          "name": "load_session_snapshot",
+          "doc": "从文件系统加载会话快照"
+        },
+        {
+          "name": "delete_session_snapshot",
+          "doc": "删除会话快照"
+        },
+        {
+          "name": "list_session_snapshots",
+          "doc": "列出所有会话快照"
+        },
+        {
+          "name": "update_manifest",
+          "doc": "更新会话清单 (线程安全)"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SessionTTLCleanupService",
+      "description": "会话 TTL 清理服务",
+      "defined_in": "polaris/cells/roles/session/internal/session_persistence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化 TTL 清理服务"
+        },
+        {
+          "name": "ttl_days",
+          "doc": "获取 TTL 天数"
+        },
+        {
+          "name": "cleanup_expired",
+          "doc": "清理所有过期的会话快照"
+        },
+        {
+          "name": "cleanup_session",
+          "doc": "清理单个会话快照"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SessionEventPublisher",
+      "description": "会话生命周期事件发布器",
+      "defined_in": "polaris/cells/roles/session/internal/session_persistence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化事件发布器"
+        },
+        {
+          "name": "_utc_now",
+          "doc": "返回当前 UTC 时间 ISO 格式字符串"
+        },
+        {
+          "name": "publish_session_created",
+          "doc": "发布会话创建事件"
+        },
+        {
+          "name": "publish_session_updated",
+          "doc": "发布会话更新事件"
+        },
+        {
+          "name": "publish_session_ended",
+          "doc": "发布会话结束事件"
+        },
+        {
+          "name": "publish_session_expired",
+          "doc": "发布会话过期事件"
+        },
+        {
+          "name": "publish_session_message_added",
+          "doc": "发布消息添加事件"
+        },
+        {
+          "name": "_emit_event",
+          "doc": "发布事件到文件系统"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SessionSnapshot",
+      "description": "Turn-level snapshot of a role session.",
+      "defined_in": "polaris/cells/roles/session/internal/snapshot_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SnapshotService",
+      "description": "Persist session snapshots as newline-delimited JSONL.",
+      "defined_in": "polaris/cells/roles/session/internal/snapshot_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_snapshots_rel",
+          "doc": ""
+        },
+        {
+          "name": "_snapshots_path",
+          "doc": ""
+        },
+        {
+          "name": "snapshot",
+          "doc": "Capture a point-in-time snapshot of a session and persist it."
+        },
+        {
+          "name": "list_snapshots",
+          "doc": "Return the most recent snapshots for a session."
+        },
+        {
+          "name": "get_snapshot",
+          "doc": "Retrieve a specific snapshot by its snapshot_id."
+        },
+        {
+          "name": "_append_snapshot",
+          "doc": "Append one snapshot record as a JSONL line."
+        },
+        {
+          "name": "_trim_snapshots",
+          "doc": "Keep only the most recent _MAX_SNAPSHOTS_PER_SESSION entries."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_compute_fingerprint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/internal/snapshot_service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_preferred_logical_prefix",
+      "description": "Resolve a writable logical prefix without direct filesystem paths.",
+      "defined_in": "polaris/cells/roles/session/internal/storage_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_preferred_sqlite_path",
+      "description": "Resolve SQLite path through KernelOne DB policy with runtime->workspace fallback.",
+      "defined_in": "polaris/cells/roles/session/internal/storage_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "init_db",
+      "description": "Initialize the session database.",
+      "defined_in": "polaris/cells/roles/session/public/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "get_db",
+      "description": "Get a database session (for dependency injection).",
+      "defined_in": "polaris/cells/roles/session/public/__init__.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleHostKind",
+      "description": "Role host type enum.",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SessionType",
+      "description": "Session type enum.",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AttachmentMode",
+      "description": "Attachment mode enum.",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SessionState",
+      "description": "Session state enum.",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CreateRoleSessionCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateRoleSessionCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AttachRoleSessionCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SearchRoleSessionMemoryQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReadRoleSessionArtifactQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReadRoleSessionEpisodeQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetRoleSessionStateQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionLifecycleEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionContextQueryResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionError",
+      "description": "Structured contract error for `roles.session`.",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRoleSessionService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": [
+        {
+          "name": "create_session",
+          "doc": "Create one session."
+        },
+        {
+          "name": "update_session",
+          "doc": "Update one session."
+        },
+        {
+          "name": "attach_session",
+          "doc": "Attach one session."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRoleSessionContextMemoryService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py",
+      "methods": [
+        {
+          "name": "search_memory",
+          "doc": "Search memory objects for one role session."
+        },
+        {
+          "name": "read_artifact",
+          "doc": "Read one persisted Context OS artifact for one role session."
+        },
+        {
+          "name": "read_episode",
+          "doc": "Read one persisted Context OS episode for one role session."
+        },
+        {
+          "name": "get_state",
+          "doc": "Read one persisted Context OS state entry for one role session."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "db_session",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "function",
+      "name": "role_session_service",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "function",
+      "name": "memory_service",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_seed_context_os_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_search_memory_reads_persisted_context_os",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_read_artifact_returns_content_slice",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_state_reads_current_goal",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_state_can_rebuild_run_card",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_context_memory_service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestCreateRoleSessionCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_minimal_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_full_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateRoleSessionCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_role_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_role_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_host_kind_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_session_type_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_attachment_mode_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_title_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_title_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_context_config_is_copied",
+          "doc": ""
+        },
+        {
+          "name": "test_capability_profile_is_copied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUpdateRoleSessionCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_minimal_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_full_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUpdateRoleSessionCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_session_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_title_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_state_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAttachRoleSessionCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_minimal_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_full_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAttachRoleSessionCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_session_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_run_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_mode_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionContextQueries",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_search_memory_query_happy_path",
+          "doc": ""
+        },
+        {
+          "name": "test_search_memory_query_rejects_empty_query",
+          "doc": ""
+        },
+        {
+          "name": "test_read_artifact_query_rejects_invalid_range",
+          "doc": ""
+        },
+        {
+          "name": "test_read_episode_query_requires_episode_id",
+          "doc": ""
+        },
+        {
+          "name": "test_get_state_query_requires_path",
+          "doc": ""
+        },
+        {
+          "name": "test_context_query_result_requires_error_payload_on_failure",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionLifecycleEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_minimal_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_full_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionLifecycleEventV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_event_id_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionResultV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_success_result",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_result",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionResultV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_failed_result_requires_error_code_or_message",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_with_code_only_is_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_with_message_only_is_valid",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionError",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_default_code",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_code_and_details",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_code_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakePolicy",
+      "description": "Minimal data-policy stub needed by RoleDataStore.__init__.",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakeProfile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectoryStructure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_subdirectories_created",
+          "doc": ""
+        },
+        {
+          "name": "test_subdirs_under_base_dir",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEncodingEnforcement",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_rejects_non_utf8_encoding",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPathSecurityTraversal",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_absolute_path_outside_base_dir_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_deep_parent_traversal_rejected",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPathSecurityExtension",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_disallowed_extension_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_allowed_extension_accepted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWriteReadText",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_write_and_read_text",
+          "doc": ""
+        },
+        {
+          "name": "test_read_nonexistent_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWriteReadJson",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_write_and_read_json",
+          "doc": ""
+        },
+        {
+          "name": "test_write_json_adds_extension",
+          "doc": ""
+        },
+        {
+          "name": "test_write_json_with_unicode",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWriteReadYaml",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_write_and_read_yaml",
+          "doc": ""
+        },
+        {
+          "name": "test_write_yaml_adds_extension",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAppendLog",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_append_log_creates_file",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAppendEvent",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_append_event_writes_jsonl",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStorageStats",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_stats_include_all_subdirs",
+          "doc": ""
+        },
+        {
+          "name": "test_stats_count_files",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAtomicWriteWithBackup",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_backup_created_before_write",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCleanupOldData",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_cleanup_respects_retention_policy_disabled",
+          "doc": ""
+        },
+        {
+          "name": "test_cleanup_deletes_files_older_than_retention",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestErrorTypesExported",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py",
+      "methods": [
+        {
+          "name": "test_path_security_error_is_raiseable",
+          "doc": ""
+        },
+        {
+          "name": "test_role_data_store_error_is_raiseable",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "store",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_data_store.py"
+    },
+    {
+      "type": "class",
+      "name": "TestCreateSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_create_minimal_session",
+          "doc": ""
+        },
+        {
+          "name": "test_create_full_session",
+          "doc": ""
+        },
+        {
+          "name": "test_create_session_persists",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_get_existing_session",
+          "doc": ""
+        },
+        {
+          "name": "test_get_nonexistent_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestListSessions",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_list_all_sessions",
+          "doc": ""
+        },
+        {
+          "name": "test_filter_by_role",
+          "doc": ""
+        },
+        {
+          "name": "test_filter_by_host_kind",
+          "doc": ""
+        },
+        {
+          "name": "test_filter_by_state",
+          "doc": ""
+        },
+        {
+          "name": "test_limit_and_offset",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUpdateSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_update_title",
+          "doc": ""
+        },
+        {
+          "name": "test_update_state",
+          "doc": ""
+        },
+        {
+          "name": "test_update_nonexistent_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeleteSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_soft_delete",
+          "doc": ""
+        },
+        {
+          "name": "test_hard_delete",
+          "doc": ""
+        },
+        {
+          "name": "test_delete_nonexistent_returns_false",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAttachSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_attach_session",
+          "doc": ""
+        },
+        {
+          "name": "test_attach_nonexistent_session_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_attach_deactivates_previous",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDetachSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_detach_session",
+          "doc": ""
+        },
+        {
+          "name": "test_detach_nonexistent_returns_false",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetSessionAttachments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_get_attachments_returns_list",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAddMessage",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_add_message",
+          "doc": ""
+        },
+        {
+          "name": "test_add_message_increments_sequence",
+          "doc": ""
+        },
+        {
+          "name": "test_add_message_to_nonexistent_session_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetMessages",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_get_messages_respects_limit_and_offset",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContextOsSnapshotHelpers",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_get_context_config_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_get_context_os_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "test_get_context_os_snapshot_rehydrates_legacy_transcript_index",
+          "doc": ""
+        },
+        {
+          "name": "test_update_context_os_snapshot_merges_into_context_config",
+          "doc": ""
+        },
+        {
+          "name": "test_update_context_os_snapshot_rejects_truth_payload",
+          "doc": ""
+        },
+        {
+          "name": "test_get_context_os_snapshot_returns_none_for_invalid_persisted_payload",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCapabilities",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_get_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "test_get_capabilities_none_for_missing_session",
+          "doc": ""
+        },
+        {
+          "name": "test_get_capabilities_none_when_not_set",
+          "doc": ""
+        },
+        {
+          "name": "test_set_capabilities",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExportSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_export_without_messages",
+          "doc": ""
+        },
+        {
+          "name": "test_export_with_messages",
+          "doc": ""
+        },
+        {
+          "name": "test_export_with_attachments",
+          "doc": ""
+        },
+        {
+          "name": "test_export_nonexistent_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateWorkbenchSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_create_workbench_session",
+          "doc": ""
+        },
+        {
+          "name": "test_create_workbench_session_uses_context",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateWorkflowSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_create_workflow_session",
+          "doc": "create_workflow_session is a @classmethod that uses `with cls() as svc:`"
+        },
+        {
+          "name": "_capturing_cws_inner",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFindOrCreateAdHoc",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_find_existing_active_session",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateAdHocSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_always_creates_fresh_session",
+          "doc": ""
+        },
+        {
+          "name": "test_create_new_when_none_active",
+          "doc": ""
+        },
+        {
+          "name": "test_find_or_create_isolated_to_role_and_host",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestServiceContextManager",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py",
+      "methods": [
+        {
+          "name": "test_context_manager_closes_db",
+          "doc": ""
+        },
+        {
+          "name": "test_context_manager_commits",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_install_conversation_singleton",
+      "description": "Install an isolated in-memory conversation singleton for classmethod tests.",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_legacy_context_os_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py"
+    },
+    {
+      "type": "function",
+      "name": "db_session",
+      "description": "Create an in-memory SQLite database with all tables created.",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py"
+    },
+    {
+      "type": "function",
+      "name": "service",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_reset_conversation_singleton",
+      "description": "Reset the module-level engine/session singleton before each test.",
+      "defined_in": "polaris/cells/roles/session/tests/test_role_session_service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSessionPersistenceService",
+      "description": "Tests for SessionPersistenceService.",
+      "defined_in": "polaris/cells/roles/session/tests/test_session_persistence.py",
+      "methods": [
+        {
+          "name": "temp_workspace",
+          "doc": "Create a temporary workspace directory."
+        },
+        {
+          "name": "mock_session",
+          "doc": "Create a mock session object."
+        },
+        {
+          "name": "test_init_default_values",
+          "doc": "Test service initialization with default values."
+        },
+        {
+          "name": "test_init_custom_values",
+          "doc": "Test service initialization with custom values."
+        },
+        {
+          "name": "test_get_snapshot_path",
+          "doc": "Test snapshot path generation."
+        },
+        {
+          "name": "test_persist_session_success",
+          "doc": "Test successful session persistence."
+        },
+        {
+          "name": "test_persist_session_failure",
+          "doc": "Test session persistence failure handling."
+        },
+        {
+          "name": "test_load_session_snapshot_success",
+          "doc": "Test successful session snapshot loading."
+        },
+        {
+          "name": "test_load_session_snapshot_not_found",
+          "doc": "Test loading non-existent snapshot."
+        },
+        {
+          "name": "test_delete_session_snapshot_success",
+          "doc": "Test successful snapshot deletion."
+        },
+        {
+          "name": "test_delete_session_snapshot_not_found",
+          "doc": "Test deleting non-existent snapshot returns True (idempotent)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSessionTTLCleanupService",
+      "description": "Tests for SessionTTLCleanupService.",
+      "defined_in": "polaris/cells/roles/session/tests/test_session_persistence.py",
+      "methods": [
+        {
+          "name": "temp_workspace",
+          "doc": "Create a temporary workspace directory."
+        },
+        {
+          "name": "mock_persistence",
+          "doc": "Create a mock persistence service."
+        },
+        {
+          "name": "test_init_default_ttl",
+          "doc": "Test initialization with default TTL."
+        },
+        {
+          "name": "test_init_custom_ttl",
+          "doc": "Test initialization with custom TTL."
+        },
+        {
+          "name": "test_cleanup_expired_removes_old_sessions",
+          "doc": "Test that expired sessions are cleaned up."
+        },
+        {
+          "name": "test_cleanup_expired_handles_invalid_timestamps",
+          "doc": "Test that invalid timestamps are handled gracefully."
+        },
+        {
+          "name": "test_cleanup_session",
+          "doc": "Test cleaning up a single session."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSessionEventPublisher",
+      "description": "Tests for SessionEventPublisher.",
+      "defined_in": "polaris/cells/roles/session/tests/test_session_persistence.py",
+      "methods": [
+        {
+          "name": "publisher",
+          "doc": "Create an event publisher instance."
+        },
+        {
+          "name": "test_init_default_values",
+          "doc": "Test initialization with default values."
+        },
+        {
+          "name": "test_init_custom_values",
+          "doc": "Test initialization with custom values."
+        },
+        {
+          "name": "test_publish_session_created",
+          "doc": "Test publishing session created event."
+        },
+        {
+          "name": "test_publish_session_updated",
+          "doc": "Test publishing session updated event."
+        },
+        {
+          "name": "test_publish_session_ended",
+          "doc": "Test publishing session ended event."
+        },
+        {
+          "name": "test_publish_session_expired",
+          "doc": "Test publishing session expired event."
+        },
+        {
+          "name": "test_publish_message_added",
+          "doc": "Test publishing message added event."
+        },
+        {
+          "name": "test_event_publish_failure_is_non_blocking",
+          "doc": "Test that event publish failures don't raise exceptions."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionServiceIntegration",
+      "description": "Integration tests for RoleSessionService with persistence and events.",
+      "defined_in": "polaris/cells/roles/session/tests/test_session_persistence.py",
+      "methods": [
+        {
+          "name": "temp_workspace",
+          "doc": "Create a temporary workspace directory."
+        },
+        {
+          "name": "test_create_session_persists_and_publishes_event",
+          "doc": "Test that creating a session triggers persistence and event publishing."
+        },
+        {
+          "name": "test_update_session_persists_and_publishes_event",
+          "doc": "Test that updating a session triggers persistence and event publishing."
+        },
+        {
+          "name": "test_delete_session_publishes_ended_event",
+          "doc": "Test that deleting a session publishes the ended event."
+        },
+        {
+          "name": "test_add_message_publishes_message_added_event",
+          "doc": "Test that adding a message publishes the message added event."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPersistenceServiceWithRealStorage",
+      "description": "Integration tests using real file system storage.",
+      "defined_in": "polaris/cells/roles/session/tests/test_session_persistence.py",
+      "methods": [
+        {
+          "name": "temp_workspace",
+          "doc": "Create a temporary workspace directory."
+        },
+        {
+          "name": "test_persistence_roundtrip",
+          "doc": "Test writing and reading a session snapshot."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSessionSnapshotDataclass",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_to_dict_roundtrip",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSnapshotServicePaths",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_snapshots_rel",
+          "doc": ""
+        },
+        {
+          "name": "test_snapshots_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSnapshotServiceSnapshot",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_snapshot_empty_session_returns_snapshot_with_empty_messages",
+          "doc": "snapshot() must not raise even when no DB session exists."
+        },
+        {
+          "name": "test_snapshot_writes_jsonl_file",
+          "doc": ""
+        },
+        {
+          "name": "test_snapshot_generates_unique_id",
+          "doc": ""
+        },
+        {
+          "name": "test_snapshot_empty_session_id_returns_empty_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "test_snapshot_whitespace_session_id_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_snapshot_idempotent_append",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSnapshotServiceList",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_list_empty_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_list_returns_newest_last",
+          "doc": ""
+        },
+        {
+          "name": "test_list_respects_limit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSnapshotServiceGet",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_get_snapshot_found",
+          "doc": ""
+        },
+        {
+          "name": "test_get_snapshot_not_found",
+          "doc": ""
+        },
+        {
+          "name": "test_get_snapshot_empty_id_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSnapshotServiceTrim",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_trim_keeps_50",
+          "doc": ""
+        },
+        {
+          "name": "test_trim_no_op_under_50",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSnapshotServiceCrossSession",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_get_snapshot_searches_all_session_dirs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestComputeFingerprint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py",
+      "methods": [
+        {
+          "name": "test_deterministic",
+          "doc": ""
+        },
+        {
+          "name": "test_different_content_different_hash",
+          "doc": ""
+        },
+        {
+          "name": "test_length_16",
+          "doc": ""
+        },
+        {
+          "name": "test_utc_now_returns_aware_datetime",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "svc",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py"
+    },
+    {
+      "type": "function",
+      "name": "workspace_with_session",
+      "description": "Return (tmp_path, session_id) with the snapshot dir already created.",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_snapshots_jsonl",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_jsonl",
+      "description": "",
+      "defined_in": "polaris/cells/roles/session/tests/test_snapshot_service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

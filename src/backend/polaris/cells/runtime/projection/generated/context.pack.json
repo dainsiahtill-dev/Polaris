@@ -1,0 +1,59 @@
+{
+  "id": "runtime.projection",
+  "title": "Runtime Projection",
+  "kind": "projection",
+  "purpose": "Build read-only runtime status projections and transport payloads without hidden writes.",
+  "summary": "Owns projection-only runtime reads and outbound runtime status payloads for HTTP and WebSocket consumers.",
+  "owned_paths": [
+    "polaris/application/projection/**",
+    "polaris/delivery/http/routers/runtime.py",
+    "polaris/delivery/ws/runtime_endpoint.py",
+    "polaris/delivery/ws/runtime_event_query.py"
+  ],
+  "public_contracts": {
+    "commands": [],
+    "queries": [
+      "RuntimeProjectionQueryV1"
+    ],
+    "events": [
+      "RuntimeProjectedEventV1"
+    ],
+    "results": [
+      "RuntimeProjectionResultV1"
+    ],
+    "errors": [
+      "RuntimeProjectionErrorV1"
+    ]
+  },
+  "neighbors": [
+    "runtime.state_owner",
+    "audit.evidence"
+  ],
+  "state_owners": [],
+  "effects_allowed": [
+    "fs.read:runtime/*",
+    "fs.read:workspace/history/*",
+    "ws.outbound:runtime/*"
+  ],
+  "invariants": [
+    "query paths remain read-only",
+    "projection may not create source-of-truth writes",
+    "all text reads use explicit UTF-8"
+  ],
+  "hotspots": [
+    "polaris/application/projection/runtime_projection_service.py",
+    "polaris/delivery/http/routers/runtime.py"
+  ],
+  "test_targets": [
+    "tests/test_websocket_signal_hub.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

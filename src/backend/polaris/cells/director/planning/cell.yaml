@@ -1,0 +1,59 @@
+id: director.planning
+title: Director Planning
+kind: workflow
+visibility: public
+stateful: true
+owner: engineering
+purpose: 'Director task planning, main execution loop, risk/quality tracking, and
+  context gathering. Owns DirectorAgent, execution rules, and logic utilities (parse_acceptance,
+  extract_defect_ticket, write_gate_check).
+
+  '
+current_modules:
+- polaris.cells.director.planning.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/director/planning/**
+public_contracts:
+  modules:
+  - polaris.cells.director.planning.public.contracts
+  commands:
+  - PlanDirectorTaskCommandV1
+  queries:
+  - GetDirectorStatusQueryV1
+  events: []
+  results:
+  - DirectorPlanningResultV1
+  errors:
+  - DirectorPlanningError
+depends_on:
+- chief_engineer.blueprint
+- factory.pipeline
+- policy.permission
+- runtime.execution_broker
+- runtime.state_owner
+- runtime.task_runtime
+- audit.evidence
+- audit.verdict
+- llm.control_plane
+- llm.provider_runtime
+- roles.runtime
+- workspace.integrity
+subgraphs: []
+state_owners:
+- runtime/state/director/planning/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:runtime/tasks/*
+- fs.write:runtime/state/director/planning/*
+- process.spawn:director/planning/*
+- llm.invoke:director/planning/*
+verification:
+  gaps:
+  - 'Phase 2 complete: implementation migrated to director.planning/internal. Remaining:
+    (a) add director.planning tests, (b) cutover Facade to import from director.planning.public
+    instead of director.execution.internal, (c) update director.execution/internal
+    star re-exports once Facade is cut over.'
+  smoke_commands: []
+  tests: []
+generated_artifacts: []

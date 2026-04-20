@@ -1,0 +1,35 @@
+{
+  "case_id": "l2_unknown_arg_rejection",
+  "role": "director",
+  "title": "L2 Unknown Argument Rejection",
+  "description": "测试对未知参数的稳定性（不应崩溃）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "用 repo_tree 查看目录，参数 path=., extra=123",
+  "tags": [
+    "l2",
+    "argument",
+    "validation",
+    "unknown-arg"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": ".",
+        "description": "path 参数为 ."
+      }
+    ],
+    "validators": [
+      "first_call_reject_unknown_args",
+      "stream_nonstream_parity"
+    ]
+  }
+}

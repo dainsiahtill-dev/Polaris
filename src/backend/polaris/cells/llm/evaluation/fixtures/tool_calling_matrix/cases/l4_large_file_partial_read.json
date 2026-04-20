@@ -1,0 +1,38 @@
+{
+  "case_id": "l4_large_file_partial_read",
+  "level": "L4",
+  "role": "director",
+  "title": "L4 Large File — Partial Read with Offset",
+  "description": "验证模型在大文件场景下能正确使用 offset/limit 参数分段读取，而非一次性加载全文。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "src/utils/helpers.py 文件比较大，只读取第 40-60 行之间的内容。",
+  "tags": ["l4", "large_file", "partial_read", "offset", "slice"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_any_tools": [
+        ["repo_read_slice", "repo_read_head", "read_file"]
+      ],
+      "forbidden_tools": ["execute_command", "write_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "require_offset_or_limit": true,
+      "required_output_substrings": ["chunk_list", "clamp"]
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["repo_read_slice", "repo_read_head", "read_file"]
+      ],
+      "forbidden_tools": ["execute_command", "write_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "require_offset_or_limit": true
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

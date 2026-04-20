@@ -1,0 +1,576 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.475671Z",
+  "source_hash": "1d14d116597f3848",
+  "cell_id": "delivery.cli",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "CliCommandType",
+      "description": "Top-level CLI command categories.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionMode",
+      "description": "CLI execution mode — determines routing strategy within CliExecutionService.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExitCode",
+      "description": "Standard CLI exit codes.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecuteCliCommandV1",
+      "description": "Execute a single CLI command.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": [
+        {
+          "name": "command_type",
+          "doc": "Return the classified command type, or CliCommandType.GENERIC."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QueryCliStatusV1",
+      "description": "Query the status of the CLI subsystem for a workspace.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CliCommandStartedEventV1",
+      "description": "Event emitted when CliExecutionService starts a command.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CliCommandCompletedEventV1",
+      "description": "Event emitted when CliExecutionService completes a command.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CommandResultV1",
+      "description": "Unified result returned by CliExecutionService for all CLI commands.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize to dict for JSON serialization."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CommandErrorV1",
+      "description": "Structured error raised by CliExecutionService.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceNotFoundError",
+      "description": "Raised when the workspace path does not exist.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CommandNotFoundError",
+      "description": "Raised when the command string does not match any known handler.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CommandTimeoutError",
+      "description": "Raised when command execution exceeds the configured timeout.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceNotInitializedError",
+      "description": "Raised when a PM command is run before ``pm init``.",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "CliExecutionService",
+      "description": "Canonical CLI execution service.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_build_role_message",
+          "doc": "Build a role-session user message from CLI arguments."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakeArgs",
+      "description": "Fake Namespace that exposes arguments as attributes for pm_cli commands.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_role_runtime_service",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_management_handler",
+      "description": "Register a handler for a management command.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_management_handler",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_workspace_exists",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_role_output",
+      "description": "Extract plain text output from a RoleRuntimeService result.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_handler_adapter",
+      "description": "Bridge a PM CLI sync command function to the management handler contract.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_pm_management_handlers",
+      "description": "Register all PM CLI management handlers with the Cell's handler registry.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "make_adapter",
+      "description": "Create a handler adapter that is non-capturing for each loop iteration.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "adapter",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_cli_service",
+      "description": "Return the module-level CliExecutionService singleton.",
+      "defined_in": "polaris/cells/delivery/cli/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestCliCommandType",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_pm_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_director_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_architect_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_chief_engineer_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_generic_unknown_command_type",
+          "doc": ""
+        },
+        {
+          "name": "test_is_string_enum",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecutionMode",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        },
+        {
+          "name": "test_is_string_enum",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExitCode",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteCliCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_management_command_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_role_execution_full",
+          "doc": ""
+        },
+        {
+          "name": "test_arguments_are_copied",
+          "doc": ""
+        },
+        {
+          "name": "test_metadata_are_copied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteCliCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_command_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_command_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_role_execution_without_role_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_zero_timeout_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_negative_timeout_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteCliCommandV1CommandType",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_exact_pm_init",
+          "doc": ""
+        },
+        {
+          "name": "test_exact_director_run",
+          "doc": ""
+        },
+        {
+          "name": "test_prefix_match_pm_requirement",
+          "doc": ""
+        },
+        {
+          "name": "test_prefix_match_director_task",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_command_returns_generic",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQueryCliStatusV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQueryCliStatusV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCliCommandStartedEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCliCommandStartedEventV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_event_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_command_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCliCommandCompletedEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_with_duration",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCliCommandCompletedEventV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_status_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCommandResultV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_success",
+          "doc": ""
+        },
+        {
+          "name": "test_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCommandResultV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_command_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_output_coerced_to_str",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCommandErrorV1",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_code_and_details",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_code_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCommandNotFoundError",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_properties",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCommandTimeoutError",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_properties",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceNotFoundError",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_properties",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceNotInitializedError",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/cli/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_properties",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

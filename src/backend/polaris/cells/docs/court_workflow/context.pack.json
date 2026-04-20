@@ -1,0 +1,9 @@
+{
+  "cell_id": "docs.court_workflow",
+  "version": "1.0",
+  "summary": "Documentation review court workflow",
+  "depends_on": ["llm.control_plane", "roles.runtime"],
+  "owned_paths": [
+    "polaris/application/workflows/court"
+  ]
+}

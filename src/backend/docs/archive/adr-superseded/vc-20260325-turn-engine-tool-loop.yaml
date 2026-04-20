@@ -1,0 +1,84 @@
+card_id: "vc-20260325-turn-engine-tool-loop"
+bug_summary: >
+  CLI 调用时出现两个并发 bug：
+  (1) NameError: StreamEventType 未导入，CLI 启动即崩溃
+  (2) LLM 输出 [TOOL_CALL] wrapper 进入 session history，导致无限循环
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_engine.py"
+  method: "run() 和 run_stream()"
+  symptom: "(1) 每次 CLI 启动抛出 NameError (2) LLM 反复调用 read_file，无法终止"
+
+assumptions:
+  - id: "A1"
+    statement: "[TOOL_CALL] wrapper 被 clean_content 传给 _parse_content_and_thinking_tool_calls"
+    status: verified_false
+    evidence: >
+      读 turn_engine.py:465-476，clean_content 来自 parse_thinking().clean_content，
+      未调用 _sanitize_assistant_transcript_message（sanitize 只在 append_tool_cycle 时调用）。
+      所以 clean_content 仍包含 wrapper。传给 parser 时 wrapper 未被剥离。
+      → 验证方法：读代码 line 465-476
+
+  - id: "A2"
+    statement: "run() 和 run_stream() 使用相同的处理逻辑"
+    status: verified_false
+    evidence: >
+      run() 是非流式，native_tool_calls=None，工具调用全靠文本解析。
+      run_stream() 是流式，native_tool_calls 来自事件流，文本解析是 fallback。
+      两者处理 raw_clean/clean_content 的逻辑不同，但都没有显式分离。
+      → 验证方法：对比两个方法的代码结构
+
+  - id: "A3"
+    statement: "[TOOL_CALL] wrapper 进入 session history 导致 LLM 再次输出相同内容"
+    status: verified_true
+    evidence: >
+      RoleConsoleHost._persist_message() 将 assistant message 写入 transcript。
+      turn_engine 的 final_content 未 sanitize，直接写入。
+      下一轮 LLM 看到自己输出的 [TOOL_CALL] wrapper → 再次输出 → 无限循环。
+      → 验证方法：读 terminal_console.py 和 console_host.py 的 _persist_message
+
+  - id: "A4"
+    statement: "StreamEventType 已在 contracts.py 中定义，只是 executor.py 漏了导入"
+    status: verified_true
+    evidence: >
+      shared_contracts.py: StreamEventType 定义
+      contracts.py: from ..shared_contracts import StreamEventType（re-export）
+      executor.py: from .contracts import [...]（漏了 StreamEventType）
+      → 验证方法：读 contracts.py line 1-30 和 executor.py line 1-40
+
+pre_mortem:
+  failure_point: >
+    如果我传入 clean_content（已 sanitize）给 _parse_content_and_thinking_tool_calls，
+    而 native_tool_calls 为空（run() 中恒为空），工具调用解析会丢失所有 [TOOL_CALL] 块，
+    导致没有任何工具被执行。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    - "polaris/cells/roles/kernel/internal/kernel.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py"
+      description: "test_run_stream_stops_after_second_identical_failed_cycle"
+      expected: "run_stream 解析文本中的 [TOOL_CALL]，当 native_tool_calls 为空时"
+      status: existing_pass
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "所有 27 个测试"
+      expected: "全部通过"
+      status: existing_pass
+  integration_tests:
+    - description: "import AIExecutor 不抛 NameError"
+      command: "python -c \"from polaris.kernelone.llm.engine.executor import AIExecutor; print('ok')\""
+      status: existing_pass
+  manual_check:
+    - "端到端：polaris/delivery/cli/toad 在实际 repo 运行，验证无无限循环"
+
+related_adrs:
+  - "ADR-0042"
+
+sign_off:
+  completed_by: "claude-sonnet-4-6"
+  completed_at: "2026-03-25"
+  verified_by: "self (test suite pass)"
+  verified_at: "2026-03-25"

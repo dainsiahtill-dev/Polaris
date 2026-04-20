@@ -1,0 +1,35 @@
+{
+  "case_id": "l7_self_correction_recovery",
+  "level": "L7",
+  "role": "director",
+  "title": "Self-Correction Recovery",
+  "prompt": "先用 execute_command 运行 python -m pytest test_api.py；如果失败，请自己定位真实测试文件并重试。",
+  "description": "验证模型在初次失败后是否会继续调用定位类工具并进行恢复。",
+  "workspace_fixture": "base_tooling_workspace",
+  "tags": ["recovery", "self_healing"],
+  "weight": 0.7,
+  "critical": false,
+  "judge": {
+    "score_threshold": 0.55,
+    "stream": {
+      "required_tools": ["execute_command"],
+      "required_any_tools": [
+        ["glob", "list_directory", "repo_tree", "search_code"]
+      ],
+      "ordered_tool_groups": [
+        ["execute_command"],
+        ["glob", "list_directory", "repo_tree", "search_code"],
+        ["execute_command"]
+      ],
+      "min_tool_calls": 2
+    },
+    "non_stream": {
+      "required_tools": ["execute_command"],
+      "min_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

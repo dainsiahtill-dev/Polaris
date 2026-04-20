@@ -1,0 +1,30 @@
+{
+  "case_id": "l3_file_edit_sequence",
+  "level": "L3",
+  "role": "director",
+  "title": "L3 File Edit Sequence",
+  "description": "验证模型能按正确顺序编辑多个文件。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先读取 utils.py，然后在末尾添加一行注释 '# Added by test'，最后再读取一次确认。",
+  "tags": ["l3", "sequence", "edit"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.80,
+    "stream": {
+      "required_tools": ["repo_read_head", "append_to_file"],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 3,
+      "ordered_tool_groups": [["repo_read_head"], ["append_to_file"]]
+    },
+    "non_stream": {
+      "required_tools": ["repo_read_head", "append_to_file"],
+      "min_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "ordered"
+    }
+  }
+}

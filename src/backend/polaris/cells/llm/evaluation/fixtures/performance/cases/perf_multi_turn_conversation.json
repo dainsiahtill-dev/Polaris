@@ -1,0 +1,21 @@
+{
+  "case_id": "perf_multi_turn_conversation",
+  "title": "Performance Multi-Turn Conversation",
+  "description": "Tests performance over extended conversation",
+  "role": "director",
+  "prompt": "我将发送一系列关于代码库的问题，请逐一回答。",
+  "tags": ["performance", "multi_turn", "conversation"],
+  "weight": 1.0,
+  "critical": false,
+  "metadata": {
+    "metric": "cumulative_latency_ms",
+    "target_ms": 5000,
+    "measurement": "5_turns",
+    "turns": 5
+  },
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": ["read_file", "ripgrep"],
+    "min_tool_calls": 3
+  }
+}

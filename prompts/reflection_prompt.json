@@ -1,0 +1,8 @@
+{
+    "id": "reflection_prompt",
+    "name": "Reflection Generation Prompt",
+    "description": "Prompt for generating high-level insights (reflections) from recent memories.",
+    "templates": {
+        "reflection_generator": "You are the Reflection Module of an autonomous agent.\nYour goal is to analyze the following recent memories and generate high-level INSIGHTS (Reflections).\n\nINPUT MEMORIES:\n{{memories_text}}\n\nINSTRUCTIONS:\n1. Identify patterns, recurring errors, or successful strategies.\n2. Abstract away specific file paths or line numbers unless critical.\n3. Create generalized rules or observations that will help in future tasks.\n4. Output MUST be a JSON array of objects with these fields:\n   - \"text\": The insight string (concise, high-level).\n   - \"scope\": Array of strings (e.g., [\"planning\", \"coding\", \"testing\"]).\n   - \"confidence\": float (0.0 to 1.0).\n   - \"expiry_steps\": int (how long this insight remains valid, default 100).\n\nEXAMPLE OUTPUT:\n[\n  {\"text\": \"Always check for encoding when reading files in PowerShell.\", \"scope\": [\"coding\", \"powershell\"], \"confidence\": 0.9, \"expiry_steps\": 200},\n  {\"text\": \"The Director module tends to fail when diffs are too large.\", \"scope\": [\"planning\"], \"confidence\": 0.8, \"expiry_steps\": 100}\n]\n\nOUTPUT (JSON ONLY):\n"
+    }
+}

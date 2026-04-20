@@ -1,0 +1,396 @@
+{
+  "report_metadata": {
+    "generated_at": "2026-03-07T00:00:00Z",
+    "reviewer": "Principal Engineer Review",
+    "project": "Polaris",
+    "scope": "API Design, Testing, Configuration, Logging, Dependencies"
+  },
+  "executive_summary": {
+    "total_issues_found": 47,
+    "critical_issues": 3,
+    "high_issues": 12,
+    "medium_issues": 18,
+    "low_issues": 14,
+    "overall_health_score": 72
+  },
+  "api_design_review": {
+    "score": 68,
+    "restful_compliance": {
+      "status": "partial",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "inconsistent_naming",
+          "description": "API 路由命名不一致：部分使用 /v2/ 前缀，部分没有版本前缀",
+          "locations": [
+            "src/backend/app/routers/role_chat.py - 使用 /v2/role/{role}/chat",
+            "src/backend/app/routers/pm_chat.py - 使用 /pm/chat (无版本)",
+            "src/backend/app/routers/runtime.py - 使用 /runtime/* (无版本)"
+          ],
+          "recommendation": "统一使用 /v2/ 前缀或采用其他版本策略"
+        },
+        {
+          "severity": "medium",
+          "category": "http_method",
+          "description": "部分端点使用了 POST 但语义应为 GET",
+          "locations": [
+            "src/backend/app/routers/role_chat.py:407 - POST /v2/role/cache-clear 应为 DELETE"
+          ]
+        }
+      ]
+    },
+    "error_handling": {
+      "status": "inconsistent",
+      "issues": [
+        {
+          "severity": "high",
+          "category": "error_response_inconsistency",
+          "description": "错误响应格式不一致：v2 API 使用 HTTPException 返回结构化错误，旧路由返回普通 dict",
+          "locations": [
+            "src/backend/api/v2/pm.py - 使用 HTTPException",
+            "src/backend/app/routers/role_chat.py - 返回 {'ok': False, 'error': ...}",
+            "src/backend/app/routers/llm.py - 混合使用两种方式"
+          ],
+          "recommendation": "统一错误响应格式，使用 error_handlers.py 中的 DomainException 模式"
+        },
+        {
+          "severity": "high",
+          "category": "missing_error_docs",
+          "description": "部分端点未定义 error responses",
+          "locations": [
+            "src/backend/app/routers/role_chat.py - 大部分端点缺少 responses={}"
+          ]
+        }
+      ]
+    },
+    "versioning": {
+      "status": "partial",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "versioning_gaps",
+          "description": "API 版本管理不完整：部分路由有 v2 前缀，部分使用旧版",
+          "locations": [
+            "/v2/pm/* - 新版",
+            "/v2/director/* - 新版",
+            "/pm/*, /director/* - 旧版仍存在",
+            "/runtime/* - 无版本"
+          ],
+          "recommendation": "实施渐进式版本淘汰策略"
+        }
+      ]
+    },
+    "authentication": {
+      "status": "good",
+      "issues": [
+        {
+          "severity": "low",
+          "category": "missing_auth",
+          "description": "部分端点缺少认证依赖",
+          "locations": [
+            "src/backend/app/routers/role_chat.py:351 - GET /v2/role/{role}/llm-events 无认证",
+            "src/backend/app/routers/role_chat.py:388 - GET /v2/role/llm-events 无认证",
+            "src/backend/app/routers/role_chat.py:407 - GET /v2/role/cache-stats 无认证",
+            "src/backend/app/routers/role_chat.py:416 - POST /v2/role/cache-clear 无认证"
+          ]
+        }
+      ]
+    },
+    "sensitive_endpoints": {
+      "status": "good",
+      "issues": [
+        {
+          "severity": "low",
+          "category": "sensitive_data_exposure",
+          "description": "部分敏感端点缺少权限检查",
+          "locations": [
+            "src/backend/app/routers/system.py:206 - POST /app/shutdown 需要更严格权限"
+          ]
+        }
+      ]
+    }
+  },
+  "testing_coverage_review": {
+    "score": 75,
+    "unit_tests": {
+      "status": "good",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "test_quality",
+          "description": "部分测试断言较弱",
+          "locations": [
+            "src/backend/tests/test_truncation_handling.py:132 - 断言 'integrity is not None' 过于宽松"
+          ],
+          "recommendation": "增加具体的断言条件"
+        }
+      ]
+    },
+    "mock_usage": {
+      "status": "acceptable",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "over_mocking",
+          "description": "部分测试过度使用 monkeypatch",
+          "locations": [
+            "src/backend/tests/test_role_chat_status.py - 大量 monkeypatch",
+            "src/backend/tests/test_conversation_model.py:15 - monkeypatch _default_database_url"
+          ],
+          "recommendation": "考虑使用 testcontainers 或真实数据库进行集成测试"
+        }
+      ]
+    },
+    "test_isolation": {
+      "status": "good",
+      "issues": []
+    },
+    "e2e_coverage": {
+      "status": "limited",
+      "issues": [
+        {
+          "severity": "high",
+          "category": "limited_e2e",
+          "description": "E2E 测试覆盖有限",
+          "locations": [
+            "tests/ - 主要为单元测试",
+            "tests/e2e/ - 仅 1 个测试文件",
+            "tests/electron/ - 缺失"
+          ],
+          "recommendation": "增加关键用户旅程的 E2E 测试"
+        }
+      ]
+    },
+    "test_organization": {
+      "status": "good",
+      "issues": []
+    }
+  },
+  "configuration_review": {
+    "score": 78,
+    "environment_variables": {
+      "status": "good",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "inconsistent_naming",
+          "description": "环境变量命名不一致",
+          "locations": [
+            "POLARIS_* 前缀 (主要)",
+            "CODEX_* 前缀 (部分)",
+            "OLLAMA_* 前缀 (部分)"
+          ],
+          "recommendation": "统一使用 POLARIS_ 前缀"
+        }
+      ]
+    },
+    "hardcoded_values": {
+      "status": "good",
+      "issues": []
+    },
+    "security": {
+      "status": "good",
+      "issues": [
+        {
+          "severity": "high",
+          "category": "token_in_env",
+          "description": "认证 token 通过环境变量传递，存在泄露风险",
+          "locations": [
+            "src/backend/config.py - POLARIS_TOKEN",
+            "src/backend/server.py:226"
+          ],
+          "recommendation": "使用更安全的 token 存储方案（如密钥管理服务）"
+        }
+      ]
+    },
+    "defaults": {
+      "status": "good",
+      "issues": []
+    }
+  },
+  "logging_review": {
+    "score": 70,
+    "log_levels": {
+      "status": "acceptable",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "inconsistent_levels",
+          "description": "日志级别使用不一致",
+          "locations": [
+            "多处使用 print() 而非 logging",
+            "src/backend/app/routers/llm.py:35 - logger = logging.getLogger(__name__)",
+            "src/backend/core/llm_toolkit/executor.py:14 - logger"
+          ]
+        }
+      ]
+    },
+    "sensitive_data": {
+      "status": "good",
+      "issues": []
+    },
+    "format_standardization": {
+      "status": "medium",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "no_structured_logging",
+          "description": "缺少统一的结构化日志配置",
+          "locations": [
+            "src/backend - 未发现 logging.config.dictConfig 使用",
+            "src/backend/tools/policy_mcp_server.py:49 - 局部 basicConfig"
+          ],
+          "recommendation": "使用 JSON 格式的结构化日志"
+        }
+      ]
+    }
+  },
+  "dependency_review": {
+    "score": 74,
+    "vulnerabilities": {
+      "status": "unknown",
+      "issues": [
+        {
+          "severity": "critical",
+          "category": "security_audit_required",
+          "description": "需要运行实际的安全扫描（如 pip-audit, safety）来检测已知漏洞",
+          "recommendation": "在 CI/CD 中集成安全扫描工具"
+        }
+      ],
+      "note": "未运行实际扫描，基于静态分析无法检测已知 CVEs"
+    },
+    "version_conflicts": {
+      "status": "acceptable",
+      "issues": [
+        {
+          "severity": "medium",
+          "category": "loose_versions",
+          "description": "依赖版本约束较宽松（使用 >=）",
+          "locations": [
+            "pyproject.toml:29-63 - fastapi>=0.109.0, pydantic>=2.5.0 等"
+          ]
+        }
+      ]
+    },
+    "unused_dependencies": {
+      "status": "unknown",
+      "issues": [
+        {
+          "severity": "low",
+          "category": "potential_unused",
+          "description": "可能存在未使用依赖，需要通过工具检测",
+          "locations": [
+            "pyproject.toml - 部分可选依赖"
+          ]
+        }
+      ]
+    },
+    "transitive_deps": {
+      "status": "acceptable",
+      "issues": []
+    }
+  },
+  "critical_findings": [
+    {
+      "id": "CRIT-001",
+      "category": "API - Error Handling",
+      "severity": "critical",
+      "title": "API 错误响应格式不一致",
+      "description": "v2 API 和旧路由使用不同的错误响应格式，可能导致客户端处理困难",
+      "evidence": "src/backend/api/v2/pm.py 使用 HTTPException vs src/backend/app/routers/role_chat.py 返回 dict",
+      "impact": "客户端需要处理多种错误格式，增加开发和维护成本",
+      "recommendation": "统一所有端点的错误响应格式，建议使用 error_handlers.py 中的 DomainException 模式"
+    },
+    {
+      "id": "CRIT-002",
+      "category": "Testing - E2E Coverage",
+      "severity": "critical",
+      "title": "E2E 测试覆盖严重不足",
+      "description": "仅有 1 个 E2E 测试文件，关键用户旅程缺乏端到端验证",
+      "locations": [
+        "tests/e2e/tests/test_dashboard.py",
+        "tests/electron/ - 不存在"
+      ],
+      "impact": "无法确保完整功能正常工作",
+      "recommendation": "增加关键用户旅程的 E2E 测试：政事堂→PM→Director→QA 完整流程"
+    },
+    {
+      "id": "CRIT-003",
+      "category": "Security - Dependencies",
+      "severity": "critical",
+      "title": "依赖安全漏洞需检测",
+      "description": "需要运行安全扫描工具检测已知漏洞",
+      "recommendation": "在 CI/CD 中集成 pip-audit 或 safety 工具"
+    }
+  ],
+  "high_priority_findings": [
+    {
+      "id": "HIGH-001",
+      "category": "API - Versioning",
+      "severity": "high",
+      "title": "API 版本管理不完整",
+      "description": "部分路由有 v2 前缀，部分使用无版本旧版路由"
+    },
+    {
+      "id": "HIGH-002",
+      "category": "API - Authentication",
+      "severity": "high",
+      "title": "部分敏感端点缺少认证",
+      "description": "LLM events 和 cache 相关端点缺少 require_auth 依赖"
+    },
+    {
+      "id": "HIGH-003",
+      "category": "Config - Security",
+      "severity": "high",
+      "title": "Token 通过环境变量传递",
+      "description": "认证 token 存储在环境变量中存在泄露风险"
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": "immediate",
+      "category": "API",
+      "recommendation": "统一所有 API 端点的错误响应格式"
+    },
+    {
+      "priority": "immediate",
+      "category": "Testing",
+      "recommendation": "增加 E2E 测试覆盖关键用户旅程"
+    },
+    {
+      "priority": "immediate",
+      "category": "Security",
+      "recommendation": "集成依赖安全扫描到 CI/CD"
+    },
+    {
+      "priority": "short_term",
+      "category": "API",
+      "recommendation": "完成 API 版本管理迁移"
+    },
+    {
+      "priority": "short_term",
+      "category": "Logging",
+      "recommendation": "实现结构化 JSON 日志"
+    },
+    {
+      "priority": "medium_term",
+      "category": "Testing",
+      "recommendation": "减少 monkeypatch 使用，增加真实集成测试"
+    }
+  ],
+  "positive_findings": [
+    "API 认证机制实现良好 (require_auth 依赖)",
+    "错误处理器架构设计合理 (error_handlers.py)",
+    "配置管理使用 Pydantic Settings 模式",
+    "测试使用了质量门禁 (task_quality_gate)",
+    "提示词泄露检测已实现",
+    "日志中未发现敏感信息泄露"
+  ],
+  "test_commands": {
+    "run_backend_tests": "pytest src/backend/tests -v",
+    "run_all_tests": "pytest -v",
+    "run_lint": "npm run lint",
+    "run_typecheck": "npm run typecheck",
+    "security_audit": "pip-audit || safety check"
+  }
+}

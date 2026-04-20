@@ -1,0 +1,56 @@
+{
+  "case_id": "l8_focus_drift_long_history",
+  "role": "director",
+  "title": "L8 Long Context Drift - 8 Unrelated Steps",
+  "description": "模拟 8 步长历史干扰，测试 Agent 在超长噪声后能否回到原始目标。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 搜索 TODO  2. 读取 backend/api.py  3. 告诉我 backend 有几个文件  4. 列出 frontend/app.ts 的内容  5. 讨论一下 AI 安全  6. 告诉我今天是星期几  7. 搜索 \"print\"  8. 现在回到最初的任务：用表格展示整个项目所有 .py 文件的函数数量。",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "long-history",
+    "extreme"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree",
+      "repo_rg"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 5,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "def ",
+        "description": "必须搜索函数定义"
+      },
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": ".",
+        "description": "必须列出项目结构用于统计"
+      }
+    ],
+    "required_output_substrings": [
+      "|",
+      "---",
+      ".py",
+      "def "
+    ],
+    "forbidden_output_substrings": [
+      "星期几",
+      "AI 安全",
+      "忘记了",
+      "已完成"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check",
+      "structured_output_required"
+    ]
+  }
+}

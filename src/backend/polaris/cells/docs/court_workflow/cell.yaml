@@ -1,0 +1,58 @@
+id: docs.court_workflow
+title: Docs Court Workflow
+kind: workflow
+visibility: public
+stateful: true
+owner: product
+purpose: 'Composite onboarding/court-doc workflow capability for dialogue, preview,
+  apply, and plan synchronization.
+
+  '
+current_modules:
+- polaris.cells.docs.court_workflow.public.contracts
+tags:
+- composite
+owned_paths:
+- polaris/cells/docs/court_workflow/internal/**
+- polaris/delivery/http/routers/docs.py
+- polaris/delivery/http/routers/court.py
+public_contracts:
+  modules:
+  - polaris.cells.docs.court_workflow.public.contracts
+  commands:
+  - GenerateCourtDocsCommandV1
+  - ApplyCourtDocsCommandV1
+  queries:
+  - PreviewCourtDocsQueryV1
+  - QueryCourtProjectionV1
+  events:
+  - CourtDocsGeneratedEventV1
+  results:
+  - CourtDocsResultV1
+  errors:
+  - CourtWorkflowErrorV1
+depends_on:
+- llm.control_plane
+- runtime.state_owner
+- runtime.projection
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- workspace/docs/*
+- runtime/contracts/plan.md
+effects_allowed:
+- fs.read:workspace/docs/*
+- fs.write:workspace/docs/*
+- fs.write:runtime/contracts/plan.md
+- fs.write:runtime/events/runtime.events.jsonl
+- ws.outbound:court/*
+verification:
+  tests:
+  - tests/test_plan_sync.py
+  - tests/test_court_mapping.py
+  gaps:
+  - Workflow extraction to dedicated application workflow module is pending.
+  smoke_commands: []
+generated_artifacts: []

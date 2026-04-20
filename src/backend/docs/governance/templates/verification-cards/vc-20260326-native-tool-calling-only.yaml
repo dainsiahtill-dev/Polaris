@@ -1,0 +1,108 @@
+card_id: "vc-20260326-native-tool-calling-only"
+bug_summary: >
+  TurnEngine、kernel tool parser、LLM toolkit parser 和 provider adapter 仍然接受
+  文本 wrapper / XML / prompt-based 工具调用，导致系统宣称采用 native tool_calls，
+  实际执行链仍是双协议混跑。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_engine.py"
+  method: "_parse_tool_calls_from_turn() / run() / run_stream()"
+  symptom: >
+    即使上游已收敛到 provider-native tool_calls，执行层仍可能从 assistant content、
+    wrapper 文本或示例片段中解析并执行工具调用，造成协议漂移、循环风险和审计失真。
+
+assumptions:
+  - id: "A1"
+    statement: "TurnEngine 仍把文本内容当作可执行工具调用来源，而不是只消费 native_tool_calls。"
+    status: verified_true
+    evidence: >
+      读 turn_engine.py 与 kernel.py：TurnEngine._parse_tool_calls_from_turn()
+      调用 kernel._parse_content_and_thinking_tool_calls()，后者再调用
+      OutputParser.parse_execution_tool_calls(content, native_tool_calls=...)。
+      OutputParser.parse_execution_tool_calls() 当前仍调用 CanonicalToolCallParser.parse_text_calls(content)。
+
+  - id: "A2"
+    statement: "kernelone.llm.toolkit.parsers.parse_tool_calls() 当前仍是多协议入口，不只是 native function calling。"
+    status: verified_true
+    evidence: >
+      读 polaris/kernelone/llm/toolkit/parsers.py: parse_tool_calls() 依次调用
+      NativeFunctionCallingParser、PromptBasedToolParser、ToolChainParser、XMLToolParser，
+      明确仍支持 prompt/xml/tool_chain。
+
+  - id: "A3"
+    statement: "provider adapter 仍会把 ToolCall transcript item 序列化成 [TOOL_CALL] 文本，可能把非 canonical 协议重新喂回模型。"
+    status: verified_true
+    evidence: >
+      读 openai_responses_adapter.py 和 anthropic_messages_adapter.py：
+      _serialize_transcript_for_prompt() 仍输出
+      [TOOL_CALL]{...}[/TOOL_CALL] 文本。
+
+  - id: "A4"
+    statement: "kernelone/editing 不应该与工具调用协议一起被回退；它应继续作为编辑 IR 的 canonical 栈。"
+    status: verified_true
+    evidence: >
+      读 polaris/kernelone/editing/LEGACY_DOWNGRADE_MATRIX.md 与
+      BLUEPRINT_NATIVE_REBUILD.md：editing/* + protocol_kernel 被定义为 canonical
+      editing stack，处理 apply_patch / editblock / udiff / whole-file 等编辑协议，
+      不等于 LLM native tool calling 协议。
+
+pre_mortem:
+  failure_point: >
+    如果我只在 TurnEngine 去掉文本执行，而没有同步更新 parser adapter、provider
+    adapter 和辅助 decoder，系统会出现“主链 native-only，但兼容路径和测试仍偷偷承认 wrapper”的半收口状态。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    - "polaris/cells/roles/kernel/internal/kernel.py"
+    - "polaris/cells/roles/kernel/internal/output_parser.py"
+    - "polaris/cells/roles/kernel/internal/turn_decision_decoder.py"
+    - "polaris/cells/roles/kernel/internal/tool_call_protocol.py"
+    - "polaris/kernelone/llm/toolkit/parsers.py"
+    - "polaris/infrastructure/llm/tools/parser_adapter.py"
+    - "polaris/kernelone/llm/provider_adapters/openai_responses_adapter.py"
+    - "polaris/kernelone/llm/provider_adapters/anthropic_messages_adapter.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
+      description: "TurnEngine 在 native_tool_calls 为空时不得从 raw_content/clean_content 执行 wrapper。"
+      expected: "text wrapper 只被清洗，不产生 executable tool_calls"
+      status: existing_fix
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "stream path 仍可执行 provider-native tool_call 事件，但不再依赖 wrapper fallback。"
+      expected: "native tool call 正常执行；text wrapper 不执行"
+      status: existing_fix
+    - file: "polaris/cells/roles/kernel/tests/test_decision_decoder.py"
+      description: "TurnDecisionDecoder 只以 native_tool_calls 作为工具来源。"
+      expected: "textual fallback 关闭后，wrapper 不再产出 ToolBatch"
+      status: existing_fix
+    - file: "polaris/kernelone/llm/toolkit/tests/test_parsers.py"
+      description: "统一 parser 只解析 native tool_calls / provider response，不再解析 wrapper/xml/tool_chain。"
+      expected: "text-only case 返回空；native case 仍通过"
+      status: existing_fix
+    - file: "polaris/kernelone/llm/provider_adapters/tests/test_openai_responses_adapter.py"
+      description: "provider transcript prompt serialization 不再输出 [TOOL_CALL] wrapper。"
+      expected: "ToolCall 转换为非可执行审计文本或完全依赖 structured messages"
+      status: new
+  integration_tests:
+    - description: "TurnEngine + toolkit + decision decoder 定向回归"
+      command: ".\\.venv\\Scripts\\python.exe -B -m pytest polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py polaris/cells/roles/kernel/tests/test_decision_decoder.py polaris/kernelone/llm/toolkit/tests/test_parsers.py -q"
+      status: new
+    - description: "provider adapter 与 transcript leak guard 回归"
+      command: ".\\.venv\\Scripts\\python.exe -B -m pytest polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py polaris/cells/roles/kernel/tests/test_turn_engine_compat_methods.py -q"
+      status: new
+  manual_check:
+    - "确认 assistant content 中出现 [TOOL_CALL] 只会被清洗/记违规，不会触发实际执行。"
+    - "确认 native tool_calls 仍能走完整 run() / run_stream() 工具链。"
+    - "确认 kernelone/editing 相关 apply path 未被错误改成文本工具调用协议。"
+
+related_adrs:
+  - "ADR-0042"
+  - "ADR-0053"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-26"
+  verified_by: "self"
+  verified_at: "2026-03-26"

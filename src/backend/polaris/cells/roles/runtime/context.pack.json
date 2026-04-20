@@ -1,0 +1,10 @@
+{
+  "cell_id": "roles.runtime",
+  "version": "1.0",
+  "summary": "Dynamic AI role execution runtime",
+  "depends_on": ["llm.control_plane", "kernelone.llm"],
+  "owned_paths": [
+    "polaris/application/roles/runtime",
+    "polaris/application/roles/compat.py"
+  ]
+}

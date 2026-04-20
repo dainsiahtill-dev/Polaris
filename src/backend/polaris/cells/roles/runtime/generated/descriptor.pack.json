@@ -1,0 +1,1919 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.314563Z",
+  "source_hash": "717f17becca177d7",
+  "cell_id": "roles.runtime",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "AgentStatus",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MessageType",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AgentMessage",
+      "description": "Message passed between agents.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AgentState",
+      "description": "Persistent state for an agent.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AgentBusProxy",
+      "description": "Proxy that bridges AgentMessage ↔ InMemoryAgentBusPort.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "send",
+          "doc": "Publish message to receiver's inbox via bus port."
+        },
+        {
+          "name": "receive",
+          "doc": "Poll next message for this agent from bus port."
+        },
+        {
+          "name": "ack",
+          "doc": "Acknowledge message — removed from inflight."
+        },
+        {
+          "name": "nack",
+          "doc": "Negative-acknowledge — requeue or dead-letter via bus port."
+        },
+        {
+          "name": "peek",
+          "doc": "Peek at inbox — returns a shallow copy without consuming messages."
+        },
+        {
+          "name": "pending_count",
+          "doc": "Return count of pending messages in inbox."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AgentMemory",
+      "description": "Persistent memory for an agent.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_dirs",
+          "doc": ""
+        },
+        {
+          "name": "append_history",
+          "doc": "Append an entry to task history."
+        },
+        {
+          "name": "get_history",
+          "doc": "Get task history, optionally filtered by task_id."
+        },
+        {
+          "name": "get_task_summaries",
+          "doc": "Get summaries of all processed tasks."
+        },
+        {
+          "name": "save_state",
+          "doc": "Save agent state."
+        },
+        {
+          "name": "load_state",
+          "doc": "Load agent state from disk."
+        },
+        {
+          "name": "load_snapshot",
+          "doc": "Load memory snapshot."
+        },
+        {
+          "name": "save_snapshot",
+          "doc": "Save memory snapshot (complement of load_snapshot)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolSpec",
+      "description": "Runtime validation schema for tool registration and invocation.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Toolbox",
+      "description": "Role-specific tool registry with validation-enforced call contracts.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "Register a tool with validation schema."
+        },
+        {
+          "name": "call",
+          "doc": "Call a registered tool after schema validation."
+        },
+        {
+          "name": "list_tools",
+          "doc": "List all registered tools."
+        },
+        {
+          "name": "has_tool",
+          "doc": "Check if a tool is registered."
+        },
+        {
+          "name": "_build_spec_from_registration",
+          "doc": ""
+        },
+        {
+          "name": "_validate_tool_call",
+          "doc": ""
+        },
+        {
+          "name": "_annotation_to_type",
+          "doc": ""
+        },
+        {
+          "name": "_validate_field_type",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleAgent",
+      "description": "Abstract base class for Role Agents.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "storage",
+          "doc": "Get storage roots (lazy init)."
+        },
+        {
+          "name": "memory",
+          "doc": "Get agent memory (lazy init)."
+        },
+        {
+          "name": "toolbox",
+          "doc": "Get agent toolbox (lazy init)."
+        },
+        {
+          "name": "message_queue",
+          "doc": "Get message bus proxy (lazy init)."
+        },
+        {
+          "name": "context_compressor",
+          "doc": "Get context compressor (lazy init)."
+        },
+        {
+          "name": "compact_context",
+          "doc": "Compact conversation context using the role's compressor."
+        },
+        {
+          "name": "create_context_identity",
+          "doc": "Create a role context identity for context compression."
+        },
+        {
+          "name": "register_callback",
+          "doc": "Register a callback for events."
+        },
+        {
+          "name": "_get_backend_tool_runtime",
+          "doc": "Get shared backend tool runtime (lazy init)."
+        },
+        {
+          "name": "_register_backend_tools",
+          "doc": "Register shared backend tools for all role agents."
+        },
+        {
+          "name": "_tool_wrapper",
+          "doc": ""
+        },
+        {
+          "name": "_emit",
+          "doc": "Emit an event to callbacks."
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": "Register role-specific tools. Override in subclass."
+        },
+        {
+          "name": "setup_toolbox_into",
+          "doc": "Internal dispatch called by the toolbox property initialiser."
+        },
+        {
+          "name": "handle_message",
+          "doc": "Handle incoming message. Override in subclass."
+        },
+        {
+          "name": "run_cycle",
+          "doc": "Main processing cycle. Override in subclass."
+        },
+        {
+          "name": "initialize",
+          "doc": "Initialize agent: load state, setup toolbox."
+        },
+        {
+          "name": "_load_snapshot",
+          "doc": "Load data from snapshot. Override in subclass."
+        },
+        {
+          "name": "_set_status",
+          "doc": "Set agent status."
+        },
+        {
+          "name": "start",
+          "doc": "Start agent processing loop."
+        },
+        {
+          "name": "_run_loop",
+          "doc": "Main run loop with exponential backoff on consecutive errors."
+        },
+        {
+          "name": "_heartbeat",
+          "doc": "Send heartbeat message."
+        },
+        {
+          "name": "pause",
+          "doc": "Pause agent processing."
+        },
+        {
+          "name": "resume",
+          "doc": "Resume agent processing."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop agent gracefully."
+        },
+        {
+          "name": "get_state",
+          "doc": "Get current agent state."
+        },
+        {
+          "name": "get_status",
+          "doc": "Get agent status summary."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_safe_parse_agent_status",
+      "description": "Parse persisted status defensively and degrade unknown values to idle.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py"
+    },
+    {
+      "type": "function",
+      "name": "create_agent_service",
+      "description": "Factory function to create and initialize an agent service.",
+      "defined_in": "polaris/cells/roles/runtime/internal/agent_runtime_base.py"
+    },
+    {
+      "type": "class",
+      "name": "InMemoryAgentBusPort",
+      "description": "In-memory Bus Port backed by threading.Event + dict-of-lists.",
+      "defined_in": "polaris/cells/roles/runtime/internal/bus_port.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "publish",
+          "doc": "Deliver envelope to receiver's inbox. Thread-safe."
+        },
+        {
+          "name": "poll",
+          "doc": "Poll next message for receiver. Thread-safe."
+        },
+        {
+          "name": "ack",
+          "doc": "Acknowledge message — remove from inflight."
+        },
+        {
+          "name": "nack",
+          "doc": "Nack message — requeue or dead-letter."
+        },
+        {
+          "name": "pending_count",
+          "doc": "Return inbox size for receiver."
+        },
+        {
+          "name": "requeue_all_inflight",
+          "doc": "Requeue ALL inflight messages for a receiver back to inbox."
+        },
+        {
+          "name": "dead_letters",
+          "doc": "Snapshot of all dead-letter records."
+        },
+        {
+          "name": "_pop_inbox",
+          "doc": ""
+        },
+        {
+          "name": "_mark_inflight",
+          "doc": ""
+        },
+        {
+          "name": "_add_dead_letter",
+          "doc": ""
+        },
+        {
+          "name": "get_stats",
+          "doc": "Return a diagnostic snapshot. Safe to call at any time."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SessionPatch",
+      "description": "语义补丁类型，定义 session_patch 中各字段的操作语义。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py",
+      "methods": [
+        {
+          "name": "get_task_progress",
+          "doc": ""
+        },
+        {
+          "name": "get_suspected_files",
+          "doc": ""
+        },
+        {
+          "name": "get_patched_files",
+          "doc": ""
+        },
+        {
+          "name": "get_verified_results",
+          "doc": ""
+        },
+        {
+          "name": "get_pending_files",
+          "doc": ""
+        },
+        {
+          "name": "get_remove_keys",
+          "doc": ""
+        },
+        {
+          "name": "get_error_summary",
+          "doc": ""
+        },
+        {
+          "name": "get_action_taken",
+          "doc": ""
+        },
+        {
+          "name": "get_key_file_snapshots",
+          "doc": ""
+        },
+        {
+          "name": "get_confidence",
+          "doc": "返回置信度：confirmed / likely / hypothesis（默认 hypothesis）。"
+        },
+        {
+          "name": "get_superseded",
+          "doc": "返回 superseded 标记（默认 False）。被标记的发现物不进入续写 prompt。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "OrchestratorSessionState",
+      "description": "Orchestrator 层会话状态，避免与 roles.session 的 SessionState 命名冲突。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ContinuationPolicy",
+      "description": "负责仲裁是否允许自动连续执行下一回合。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": "返回 (是否允许继续, 阻止原因)。"
+        },
+        {
+          "name": "_detect_repetitive_failure",
+          "doc": "检测最近 3 个 turn 是否连续发生相同的工具失败。"
+        },
+        {
+          "name": "_detect_stagnation_v2",
+          "doc": "检测 stagnation（语义级 + 哈希级双重检测）。"
+        },
+        {
+          "name": "_detect_speculative_worthwhile",
+          "doc": "判断 ShadowEngine 预热是否值得继续。"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "apply_session_patch",
+      "description": "将 session_patch 的结论增量注入 structured_findings（上下文降维 ADR-0071）。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "get_active_findings",
+      "description": "从 structured_findings 中过滤掉 superseded 发现物，返回活跃子集。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_session_patch_block_re",
+      "description": "Lazy-compile regex for <SESSION_PATCH> block extraction.",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_session_patch_from_text",
+      "description": "从 LLM 输出文本中提取 <SESSION_PATCH> 块并解析为 SessionPatch。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "strip_session_patch_block",
+      "description": "从 LLM 输出文本中移除 <SESSION_PATCH> 块，保留纯 visible content。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py"
+    },
+    {
+      "type": "class",
+      "name": "NATSConnectionConfig",
+      "description": "NATS connection configuration derived from environment.",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "NATSClientWrapper",
+      "description": "Async NATS client wrapper with lazy initialization and graceful fallback.",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "is_connected",
+          "doc": "Return True if NATS connection is established."
+        },
+        {
+          "name": "connection_error",
+          "doc": "Return the last connection error message, if any."
+        },
+        {
+          "name": "_ensure_loop",
+          "doc": "Ensure the async event loop is running in its own thread."
+        },
+        {
+          "name": "_run_loop",
+          "doc": ""
+        },
+        {
+          "name": "connect",
+          "doc": "Connect to NATS synchronously."
+        },
+        {
+          "name": "publish",
+          "doc": "Publish payload to NATS subject synchronously."
+        },
+        {
+          "name": "subscribe",
+          "doc": "Subscribe to NATS subject synchronously."
+        },
+        {
+          "name": "close",
+          "doc": "Close NATS connection and stop event loop."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "KernelOneMessageBusPort",
+      "description": "NATS-backed message bus implementing `AgentBusPort`.",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "publish",
+          "doc": "Deliver envelope to receiver via NATS or in-memory fallback."
+        },
+        {
+          "name": "poll",
+          "doc": "Poll next message for receiver."
+        },
+        {
+          "name": "ack",
+          "doc": "Acknowledge successful processing of a message."
+        },
+        {
+          "name": "nack",
+          "doc": "Negative-acknowledge a message."
+        },
+        {
+          "name": "pending_count",
+          "doc": "Return number of pending messages for receiver."
+        },
+        {
+          "name": "requeue_all_inflight",
+          "doc": "Requeue ALL inflight messages for a receiver back to inbox."
+        },
+        {
+          "name": "dead_letters",
+          "doc": "Snapshot of all dead-letter records."
+        },
+        {
+          "name": "ensure_nats_connected",
+          "doc": "Ensure NATS connection is established."
+        },
+        {
+          "name": "subscribe",
+          "doc": "Subscribe to a NATS subject for pub/sub-based consumption."
+        },
+        {
+          "name": "disconnect_nats",
+          "doc": "Disconnect from NATS (for graceful shutdown)."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Return diagnostic snapshot."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_nats_url_from_env",
+      "description": "Resolve NATS URL from environment variables.",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_nats_enabled",
+      "description": "Check if NATS transport is enabled via environment.",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_envelope_to_json_bytes",
+      "description": "Serialize AgentEnvelope to JSON bytes (UTF-8).",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_bytes_to_envelope",
+      "description": "Deserialize AgentEnvelope from JSON bytes (UTF-8).",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py"
+    },
+    {
+      "type": "function",
+      "name": "create_bus_port",
+      "description": "Create a KernelOneMessageBusPort with optional NATS configuration.",
+      "defined_in": "polaris/cells/roles/runtime/internal/kernel_one_bus_port.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_command",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "director_command",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_invariant_mode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_invariants_env",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_start_broker_loop",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_broker_loop",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_coroutine_sync",
+      "description": "Run async broker call from sync context safely.",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "spawn_process",
+      "description": "Spawn a subprocess and return a handle.",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_register_process_exit_notification",
+      "description": "Emit a realtime signal when a spawned subprocess exits.",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_watch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_register_execution_exit_notification",
+      "description": "Fallback notifier when raw subprocess handle is unavailable.",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_watch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "terminate_process",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "terminate_pid",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_external_loop_pm_pids",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "terminate_external_loop_pm_processes",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_stop_flag",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "director_stop_flag_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_director_stop_flag",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/process_service.py"
+    },
+    {
+      "type": "class",
+      "name": "ProtocolType",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/protocol_fsm.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RequestStatus",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/protocol_fsm.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProtocolRequest",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/protocol_fsm.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProtocolFSM",
+      "description": "统一协议状态机",
+      "defined_in": "polaris/cells/roles/runtime/internal/protocol_fsm.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "create_request",
+          "doc": "创建新请求，返回 request_id"
+        },
+        {
+          "name": "_cleanup_completed_requests_locked",
+          "doc": "清理已完成的请求，只保留最近的（调用方必须持有锁）."
+        },
+        {
+          "name": "_cleanup_completed_requests",
+          "doc": "清理已完成的请求，只保留最近的."
+        },
+        {
+          "name": "approve",
+          "doc": "批准请求"
+        },
+        {
+          "name": "reject",
+          "doc": "拒绝请求"
+        },
+        {
+          "name": "get_status",
+          "doc": "获取请求状态"
+        },
+        {
+          "name": "get_request",
+          "doc": "获取完整请求"
+        },
+        {
+          "name": "list_pending",
+          "doc": "列出待处理请求"
+        },
+        {
+          "name": "_persist_request",
+          "doc": "持久化请求到磁盘"
+        },
+        {
+          "name": "load_persistent",
+          "doc": "从磁盘加载历史请求"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProtocolBus",
+      "description": "协议消息总线",
+      "defined_in": "polaris/cells/roles/runtime/internal/protocol_fsm.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "send",
+          "doc": "发送消息"
+        },
+        {
+          "name": "broadcast",
+          "doc": "广播消息到所有角色"
+        },
+        {
+          "name": "read_inbox",
+          "doc": "读取收件箱"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_protocol_fsm",
+      "description": "创建协议 FSM 实例",
+      "defined_in": "polaris/cells/roles/runtime/internal/protocol_fsm.py"
+    },
+    {
+      "type": "function",
+      "name": "create_protocol_bus",
+      "description": "创建协议总线实例",
+      "defined_in": "polaris/cells/roles/runtime/internal/protocol_fsm.py"
+    },
+    {
+      "type": "class",
+      "name": "ExecutionDomainResolution",
+      "description": "Resolved execution domain with explicitness marker.",
+      "defined_in": "polaris/cells/roles/runtime/internal/role_domain_policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleDomainPolicy",
+      "description": "Canonical role/domain routing policy for runtime execution.",
+      "defined_in": "polaris/cells/roles/runtime/internal/role_domain_policy.py",
+      "methods": [
+        {
+          "name": "normalize_domain",
+          "doc": ""
+        },
+        {
+          "name": "normalize_role",
+          "doc": ""
+        },
+        {
+          "name": "resolve",
+          "doc": "Resolve execution domain with explicit-domain precedence."
+        },
+        {
+          "name": "strategy_domain_from_execution",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TerminationReason",
+      "description": "终止原因枚举",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FailureClass",
+      "description": "失败类别（用于路由决策）",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RetryHint",
+      "description": "重试提示（指导外层决策）",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StepStatus",
+      "description": "单步执行状态",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SequentialBudget",
+      "description": "Sequential 预算配置",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SequentialStats",
+      "description": "Sequential 执行统计结果",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StepDecision",
+      "description": "单步决策",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StepResult",
+      "description": "单步执行结果",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SeqState",
+      "description": "Sequential 运行时状态（存储在 metadata.seq.* 中）",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "转换为字典"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SeqEventType",
+      "description": "Sequential 事件类型",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SeqEvent",
+      "description": "Sequential 事件",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SeqEventEmitter",
+      "description": "Sequential 事件发射器 with bounded history (O(1) eviction).",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "add_listener",
+          "doc": ""
+        },
+        {
+          "name": "remove_listener",
+          "doc": ""
+        },
+        {
+          "name": "emit",
+          "doc": ""
+        },
+        {
+          "name": "_emit_to_kernelone",
+          "doc": "Emit seq event to kernelone event system for audit trail."
+        },
+        {
+          "name": "get_events",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReservedKeyViolationError",
+      "description": "保留字违规异常",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SequentialStateProxy",
+      "description": "Sequential 状态写代理",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Args:"
+        },
+        {
+          "name": "set_context",
+          "doc": "设置上下文信息用于事件发射"
+        },
+        {
+          "name": "write",
+          "doc": "写入状态字段（经过保留字检查）"
+        },
+        {
+          "name": "_handle_violation",
+          "doc": "处理保留字违规"
+        },
+        {
+          "name": "get_state",
+          "doc": "获取底层状态"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SeqProgressDetector",
+      "description": "Sequential 进展检测器",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "detect_progress",
+          "doc": "检测是否有进展"
+        },
+        {
+          "name": "_check_artifact_progress",
+          "doc": "Type-A: 检查是否有文件变更"
+        },
+        {
+          "name": "_check_validation_progress",
+          "doc": "Type-B: 检查验证是否改善"
+        },
+        {
+          "name": "_check_blocker_clarification",
+          "doc": "Type-C: 检查 blocker 是否明确化"
+        },
+        {
+          "name": "_check_info_incremental",
+          "doc": "Type-D: 检查是否有信息增量"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SequentialEngine",
+      "description": "Sequential 执行引擎",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Args:"
+        },
+        {
+          "name": "set_context",
+          "doc": "设置执行上下文"
+        },
+        {
+          "name": "set_dependencies",
+          "doc": "设置依赖组件（延迟初始化）"
+        },
+        {
+          "name": "_build_step_prompt",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_llm_payload",
+          "doc": ""
+        },
+        {
+          "name": "_record_llm_progress",
+          "doc": ""
+        },
+        {
+          "name": "_check_pending_tools",
+          "doc": "检查是否有待执行的工具"
+        },
+        {
+          "name": "_track_error_fingerprint",
+          "doc": "跟踪错误指纹"
+        },
+        {
+          "name": "_compute_error_fingerprint",
+          "doc": "计算错误指纹"
+        },
+        {
+          "name": "_record_step",
+          "doc": "记录步骤到状态"
+        },
+        {
+          "name": "_build_stats",
+          "doc": "构建统计结果"
+        },
+        {
+          "name": "_map_termination_to_action",
+          "doc": "终止原因映射到外层动作"
+        },
+        {
+          "name": "get_state",
+          "doc": "获取当前状态（用于持久化）"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_seq_emitter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "emit_seq_event",
+      "description": "发射 Sequential 事件",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "create_sequential_budget",
+      "description": "创建预算配置的便捷函数",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "should_enable_sequential",
+      "description": "判断是否应该为角色启用 Sequential 模式",
+      "defined_in": "polaris/cells/roles/runtime/internal/sequential_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "SessionArtifactStore",
+      "description": "会话级 Artifact 存储，支持增量 Patch 和 ContextOS 去重压缩。",
+      "defined_in": "polaris/cells/roles/runtime/internal/session_artifact_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_artifact_map",
+          "doc": "返回当前已聚合的 artifact 元数据映射。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionOrchestrator",
+      "description": "服务端会话编排器。对外是统一入口，对内负责状态机轮转。",
+      "defined_in": "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_role_and_tools",
+          "doc": "Get the role definition and tool definitions for the orchestrator's role (cached per role)."
+        },
+        {
+          "name": "_build_continuation_prompt",
+          "doc": "基于降维后的 structured_findings 构建下一 Turn 的 continuation prompt。"
+        },
+        {
+          "name": "_is_progression_shortcut",
+          "doc": "检测用户输入是否为\"推进类短句\"（如\"开始落地啊\"）。"
+        },
+        {
+          "name": "_build_empty_envelope",
+          "doc": "创建空 envelope（用于首次非 first_turn 的类型安全降级）。"
+        },
+        {
+          "name": "_build_envelope_from_completion",
+          "doc": "从 CompletionEvent 构建 TurnOutcomeEnvelope（ADR-0080 工作记忆管线集成）。"
+        },
+        {
+          "name": "_update_artifact_hashes",
+          "doc": "计算当前 artifacts 的指纹并追加到 recent_artifact_hashes。"
+        },
+        {
+          "name": "_try_load_checkpoint",
+          "doc": "尝试从 checkpoint 文件恢复会话状态。"
+        },
+        {
+          "name": "_load_checkpoint",
+          "doc": "从 checkpoint JSON 文件恢复 OrchestratorSessionState。"
+        },
+        {
+          "name": "_predict_next_tools",
+          "doc": "基于当前 Envelope 预测下一 Turn 可能的工具调用。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Skill",
+      "description": "技能数据模型",
+      "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SkillLoader",
+      "description": "两层技能加载器",
+      "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "resolve_default_skills_dir",
+          "doc": ""
+        },
+        {
+          "name": "_parse_frontmatter",
+          "doc": "Parse markdown frontmatter."
+        },
+        {
+          "name": "_parse_tags",
+          "doc": ""
+        },
+        {
+          "name": "_load_all",
+          "doc": "加载所有技能"
+        },
+        {
+          "name": "_load_skill_file",
+          "doc": "加载单个技能文件"
+        },
+        {
+          "name": "get_manifest",
+          "doc": "Layer 1: 获取技能清单 (元数据)"
+        },
+        {
+          "name": "get_manifest_text",
+          "doc": "Layer 1: 获取技能清单文本 (用于 System Prompt)"
+        },
+        {
+          "name": "get_content",
+          "doc": "Layer 2: 获取完整技能内容"
+        },
+        {
+          "name": "has_skill",
+          "doc": "检查技能是否存在"
+        },
+        {
+          "name": "list_skills",
+          "doc": "列出技能名称"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleSkillManager",
+      "description": "角色技能管理器",
+      "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register_role_skills",
+          "doc": "为角色注册技能"
+        },
+        {
+          "name": "get_role_manifest",
+          "doc": "获取角色的技能清单 (Layer 1)"
+        },
+        {
+          "name": "load_role_skill",
+          "doc": "加载角色的技能内容 (Layer 2)"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_skill_loader",
+      "description": "创建技能加载器",
+      "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py"
+    },
+    {
+      "type": "function",
+      "name": "create_role_skill_manager",
+      "description": "创建角色技能管理器",
+      "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py"
+    },
+    {
+      "type": "class",
+      "name": "TestContinuationPolicyCanContinue",
+      "description": "测试 ContinuationPolicy.can_continue 的各种场景。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py",
+      "methods": [
+        {
+          "name": "policy",
+          "doc": ""
+        },
+        {
+          "name": "base_state",
+          "doc": ""
+        },
+        {
+          "name": "_make_envelope",
+          "doc": ""
+        },
+        {
+          "name": "test_auto_continue_allowed",
+          "doc": ""
+        },
+        {
+          "name": "test_end_session_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_waiting_human_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_development_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_exploration_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_max_turns_exceeded",
+          "doc": ""
+        },
+        {
+          "name": "test_repetitive_failure_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_stagnation_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_stagnation_with_speculative_hints_allowed",
+          "doc": ""
+        },
+        {
+          "name": "test_speculative_continue_worthwhile",
+          "doc": ""
+        },
+        {
+          "name": "test_speculative_continue_not_worthwhile_low_hit_rate",
+          "doc": ""
+        },
+        {
+          "name": "test_speculative_continue_not_worthwhile_no_artifact_change",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContinuationPolicyDetectRepetitiveFailure",
+      "description": "测试 _detect_repetitive_failure 静态方法。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py",
+      "methods": [
+        {
+          "name": "test_not_enough_history",
+          "doc": ""
+        },
+        {
+          "name": "test_all_same_error",
+          "doc": ""
+        },
+        {
+          "name": "test_different_errors",
+          "doc": ""
+        },
+        {
+          "name": "test_all_none_errors_not_failure",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContinuationPolicyDetectStagnation",
+      "description": "测试 _detect_stagnation_v2 静态方法。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py",
+      "methods": [
+        {
+          "name": "test_not_enough_hashes",
+          "doc": ""
+        },
+        {
+          "name": "test_hashes_differ",
+          "doc": ""
+        },
+        {
+          "name": "test_same_hashes_with_hints",
+          "doc": ""
+        },
+        {
+          "name": "test_same_hashes_no_hints",
+          "doc": ""
+        },
+        {
+          "name": "test_semantic_stagnation_detected",
+          "doc": "连续 4 个 turn 的 task_progress 未推进，应判定为语义停滞。"
+        },
+        {
+          "name": "test_semantic_stagnation_progress_changes",
+          "doc": "task_progress 有变化时不应判定为语义停滞。"
+        },
+        {
+          "name": "test_semantic_stagnation_not_enough_trajectory",
+          "doc": "轨迹不足 4 条时不应触发语义停滞检测。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSessionPatchConfidenceAndSuperseded",
+      "description": "测试 SessionPatch confidence/superseded 字段（Step 9）。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py",
+      "methods": [
+        {
+          "name": "test_get_confidence_defaults_to_hypothesis",
+          "doc": ""
+        },
+        {
+          "name": "test_get_confidence_returns_actual_value",
+          "doc": ""
+        },
+        {
+          "name": "test_get_superseded_defaults_to_false",
+          "doc": ""
+        },
+        {
+          "name": "test_get_superseded_returns_true_when_set",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplySessionPatchConfidenceAware",
+      "description": "测试 apply_session_patch 置信度感知合并（Step 9）。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py",
+      "methods": [
+        {
+          "name": "test_superseded_marks_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_confidence_hypothesis_does_not_override_confirmed",
+          "doc": ""
+        },
+        {
+          "name": "test_confidence_likely_overrides_hypothesis",
+          "doc": ""
+        },
+        {
+          "name": "test_confidence_confirmed_overrides_likely",
+          "doc": ""
+        },
+        {
+          "name": "test_first_patch_sets_confidence",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStagnationIntegration",
+      "description": "Stagnation detection integration tests generated by Director CLI live-fire.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py",
+      "methods": [
+        {
+          "name": "policy",
+          "doc": ""
+        },
+        {
+          "name": "base_state",
+          "doc": ""
+        },
+        {
+          "name": "_make_envelope",
+          "doc": ""
+        },
+        {
+          "name": "test_semantic_stagnation_three_same_progress",
+          "doc": "连续 4 次 task_progress 不变触发语义停滞（max_trajectory_size=10）。"
+        },
+        {
+          "name": "test_hash_stagnation_repeated_hashes",
+          "doc": "recent_artifact_hashes 连续两次相同触发哈希停滞。"
+        },
+        {
+          "name": "test_speculative_hints_prevent_hash_stagnation",
+          "doc": "speculative_hints 非空时豁免哈希停滞。"
+        },
+        {
+          "name": "test_progress_changes_no_semantic_stagnation",
+          "doc": "task_progress 有变化时不触发语义停滞。"
+        },
+        {
+          "name": "test_combined_stagnation_progress_and_hash",
+          "doc": "语义停滞 + 哈希停滞同时满足时仍然返回 True。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetActiveFindings",
+      "description": "测试 get_active_findings 过滤 superseded 发现物（Step 9）。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py",
+      "methods": [
+        {
+          "name": "test_returns_all_when_no_superseded",
+          "doc": ""
+        },
+        {
+          "name": "test_filters_superseded_keys",
+          "doc": ""
+        },
+        {
+          "name": "test_filters_confidence_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_preserves_findings_trajectory",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSessionArtifactStore",
+      "description": "测试 SessionArtifactStore 的增量持久化和 diff 行为。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_artifact_store.py",
+      "methods": [
+        {
+          "name": "tmp_workspace",
+          "doc": ""
+        },
+        {
+          "name": "store",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MockKernel",
+      "description": "Minimal mock kernel that yields a sequence of events.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSessionOrchestrator",
+      "description": "测试 RoleSessionOrchestrator 的多 Turn 编排循环。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py",
+      "methods": [
+        {
+          "name": "tmp_workspace",
+          "doc": ""
+        },
+        {
+          "name": "_build_envelope",
+          "doc": ""
+        },
+        {
+          "name": "_build_envelope",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCheckpointResume",
+      "description": "测试 Checkpoint Resume 加载（Step 10）。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py",
+      "methods": [
+        {
+          "name": "tmp_workspace",
+          "doc": ""
+        },
+        {
+          "name": "checkpoint_dir",
+          "doc": ""
+        },
+        {
+          "name": "test_load_checkpoint_restores_full_state",
+          "doc": "验证 _load_checkpoint 完整恢复降维工作记忆。"
+        },
+        {
+          "name": "test_load_checkpoint_raises_on_version_mismatch",
+          "doc": "验证不支持的 schema_version 抛出 ValueError。"
+        },
+        {
+          "name": "test_try_load_checkpoint_silent_on_missing_file",
+          "doc": "验证 checkpoint 文件不存在时不崩溃。"
+        },
+        {
+          "name": "test_continuation_prompt_excludes_superseded_findings",
+          "doc": "验证 4-zone prompt 不包含 superseded 的发现物（Step 9）。"
+        },
+        {
+          "name": "test_resume_uses_continuation_prompt_not_original",
+          "doc": "验证 checkpoint resume 后使用 continuation prompt 而非原始 prompt（Bug 修复）。"
+        },
+        {
+          "name": "test_try_load_checkpoint_corrupted_json_silent_fallback",
+          "doc": "验证 checkpoint 文件是非法 JSON 时静默回退到初始状态（防御性设计）。"
+        },
+        {
+          "name": "test_try_load_checkpoint_schema_v1_silent_fallback",
+          "doc": "验证旧 schema_version=1 的 checkpoint 被静默回退（schema 不兼容防御）。"
+        },
+        {
+          "name": "test_try_load_checkpoint_forward_compatible_with_unknown_fields",
+          "doc": "验证 checkpoint 包含未来未知字段时仍能正常加载（前向兼容）。"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_completion_event",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py"
+    },
+    {
+      "type": "class",
+      "name": "ReadyTaskLike",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBoardPort",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": [
+        {
+          "name": "complete",
+          "doc": ""
+        },
+        {
+          "name": "fail",
+          "doc": ""
+        },
+        {
+          "name": "list_ready",
+          "doc": ""
+        },
+        {
+          "name": "claim",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkerState",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkerConfig",
+      "description": "Worker configuration",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkerTask",
+      "description": "Task executed by Worker",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkerResult",
+      "description": "Task execution result",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Worker",
+      "description": "Sync Worker - Process isolation execution unit",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": "Start Worker"
+        },
+        {
+          "name": "stop",
+          "doc": "Stop Worker"
+        },
+        {
+          "name": "_wait_for_current_task",
+          "doc": "Wait for current task to complete."
+        },
+        {
+          "name": "submit_task",
+          "doc": "Submit task to Worker"
+        },
+        {
+          "name": "_run_loop",
+          "doc": "Main loop: WORK -> IDLE -> WORK"
+        },
+        {
+          "name": "_work_phase",
+          "doc": "Working phase"
+        },
+        {
+          "name": "_idle_phase",
+          "doc": "Idle phase: poll taskboard, auto-claim tasks"
+        },
+        {
+          "name": "_execute_task",
+          "doc": "Execute task (sync version using CommandExecutionService)"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AsyncWorkerConfig",
+      "description": "Async Worker configuration",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AsyncWorker",
+      "description": "Async Worker - Uses execution_broker for process execution.",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_read_log",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkerPool",
+      "description": "Worker Pool Manager (sync version)",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "spawn_worker",
+          "doc": "Create a new Worker"
+        },
+        {
+          "name": "shutdown_worker",
+          "doc": "Shutdown Worker"
+        },
+        {
+          "name": "submit_task",
+          "doc": "Submit task to Worker"
+        },
+        {
+          "name": "get_status",
+          "doc": "Get Worker pool status"
+        },
+        {
+          "name": "shutdown_all",
+          "doc": "Shutdown all Workers"
+        },
+        {
+          "name": "_on_worker_message",
+          "doc": "Handle Worker message"
+        },
+        {
+          "name": "_emit_event",
+          "doc": "Record event (UTF-8 safe)"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AsyncWorkerPool",
+      "description": "Async Worker Pool Manager using execution_broker.",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_on_worker_message",
+          "doc": "Handle AsyncWorker message"
+        },
+        {
+          "name": "_emit_event",
+          "doc": "Record event (UTF-8 safe)"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_strip_wrapping_quotes",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_worker_command",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_worker_runtime_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "create_worker_pool",
+      "description": "Create sync Worker pool (backward compatible)",
+      "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "class",
+      "name": "CreateSessionRequest",
+      "description": "创建会话请求",
+      "defined_in": "polaris/delivery/http/routers/role_session.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateSessionRequest",
+      "description": "更新会话请求",
+      "defined_in": "polaris/delivery/http/routers/role_session.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AttachRequest",
+      "description": "附着请求",
+      "defined_in": "polaris/delivery/http/routers/role_session.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SendMessageRequest",
+      "description": "发送消息请求",
+      "defined_in": "polaris/delivery/http/routers/role_session.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExportRequest",
+      "description": "导出请求",
+      "defined_in": "polaris/delivery/http/routers/role_session.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExportToWorkflowRequest",
+      "description": "Request to export session to workflow",
+      "defined_in": "polaris/delivery/http/routers/role_session.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_build_directive_from_artifacts",
+      "description": "Build a directive string from session artifacts.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_task_filter_from_artifacts",
+      "description": "Build a task filter from session artifacts.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

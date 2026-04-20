@@ -1,0 +1,42 @@
+{
+  "case_id": "l8_classic_goal_decomposition",
+  "role": "director",
+  "title": "L8 Classic Goal Decomposition",
+  "description": "测试分步骤规划能力，不允许跳步。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "实现一个新功能：让 frontend/app.ts 调用 backend 的新 API。要求分步骤完成，不要一次性做完。",
+  "tags": [
+    "l8",
+    "classic",
+    "planning",
+    "decomposition"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head",
+      "search_replace"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 6,
+    "required_output_substrings": [
+      "步骤",
+      "step",
+      "frontend/app.ts",
+      "backend"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "stepwise_planning"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

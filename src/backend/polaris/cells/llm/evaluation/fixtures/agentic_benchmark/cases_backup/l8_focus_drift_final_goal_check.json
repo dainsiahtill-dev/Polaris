@@ -1,0 +1,59 @@
+{
+  "case_id": "l8_focus_drift_final_goal_check",
+  "role": "director",
+  "title": "L8 Final Goal Persistence Check",
+  "description": "明确测试'是否记得最初目标'，不允许模糊回答。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "经过刚才的一系列操作后，你还记得我们最初的目标是什么吗？如果记得，请现在立即完成它：给出 src/utils/helpers.py 中所有函数的完整签名列表。",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "goal-persistence",
+    "final-check"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_rg",
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 4,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg",
+          "repo_read_head"
+        ],
+        "fragment": "src/utils/helpers.py",
+        "description": "必须在 src/utils/helpers.py 中搜索"
+      },
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "def ",
+        "description": "搜索函数定义"
+      }
+    ],
+    "required_output_substrings": [
+      "def ",
+      "(",
+      ")",
+      "->",
+      "src/utils/helpers.py"
+    ],
+    "forbidden_output_substrings": [
+      "不记得",
+      "忘记了",
+      "不知道最初",
+      "I don't remember",
+      "无法完成"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check",
+      "goal_persistence_check"
+    ]
+  }
+}

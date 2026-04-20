@@ -1,0 +1,756 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.495398Z",
+  "source_hash": "1232f385e66197b8",
+  "cell_id": "orchestration.pm_dispatch",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "DispatchCallbacks",
+      "description": "Cell-layer abstraction for host-layer callbacks used during dispatch.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_nop_update_role_status",
+      "description": "No-op fallback when no callback is provided.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_chief_engineer_service",
+      "description": "Lazy import for chief_engineer.blueprint to avoid module-level cross-Cell coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_workflow_runtime",
+      "description": "Lazy import for workflow_runtime to avoid module-level cross-Cell coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_services",
+      "description": "Lazy import for runtime.task_market to avoid module-level cross-Cell coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_revision_services",
+      "description": "Lazy import for task_market revision/change-order contracts.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_consumers",
+      "description": "Lazy import for CE/Director/QA task-market consumers.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_shared_quality",
+      "description": "Lazy import for shared_quality to avoid circular imports.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_io_utils",
+      "description": "Lazy import for io_utils to avoid circular imports.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_tasks_utils",
+      "description": "Return task utility functions from the Cell's own port module.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_shangshuling_port",
+      "description": "Return the cell-local Shangshuling port.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_traceability_safety",
+      "description": "Lazy import for traceability safety helpers.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_task_market_mode",
+      "description": "Resolve task-market mode to a stable internal value.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_task_market_rollout_mode",
+      "description": "Resolve task-market rollout phase from environment.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_revision_context",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_task_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_sync_revision_and_change_order",
+      "description": "Best-effort revision registration and change-order submission.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_positive_int_env",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_bool_env",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_inline_task_market_consumers",
+      "description": "Run one bounded PM->CE->Director->QA cycle for mainline-full mode.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_start_durable_consumer_loops",
+      "description": "Start durable consumer daemon threads for mainline-durable mode.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_mainline_publish_dispatch_tasks_to_task_market",
+      "description": "Publish dispatch tasks to task market in mainline mode.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_shadow_publish_dispatch_tasks_to_task_market",
+      "description": "Best-effort task market publication for dispatch tasks.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_director_dispatch_tasks",
+      "description": "Resolve tasks ready for Director dispatch.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "record_dispatch_status_to_shangshuling",
+      "description": "Record task dispatch status to shangshuling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "run_dispatch_pipeline",
+      "description": "Execute the full dispatch pipeline.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "run_chief_engineer_preflight",
+      "description": "Run Chief Engineer preflight checks.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workflow_submit_fn",
+      "description": "Resolve the workflow submit function without import-time side effects.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_workflow_input",
+      "description": "Build the workflow submission input object.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_workflow_result",
+      "description": "Normalize workflow submission outcome into Director result payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_engine_dispatch_status",
+      "description": "Emit a structured engine dispatch status event.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "run_engine_dispatch",
+      "description": "Run engine dispatch for tasks.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "run_integration_qa",
+      "description": "Run integration QA after dispatch.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_tasks_touch_docs_only",
+      "description": "Check if all tasks only touch docs.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_post_dispatch_integration_qa_result",
+      "description": "Create the baseline integration QA result payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_post_dispatch_skip_reason",
+      "description": "Set a deterministic skip reason. Returns True when execution should stop.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_verify_runner",
+      "description": "Resolve the verify runner used by integration QA.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_post_dispatch_integration_qa",
+      "description": "Execute integration QA and mutate the result payload in place.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_persist_post_dispatch_integration_qa_result",
+      "description": "Persist the integration QA result payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_post_dispatch_integration_qa_result",
+      "description": "Emit integration QA completion events after the result is persisted.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "run_post_dispatch_integration_qa",
+      "description": "Run project-level integration QA after task dispatch when all director tasks are done.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_submit_pm_workflow_sync_resolve",
+      "description": "Lazily resolve submit_pm_workflow_sync and cache at module level.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "class",
+      "name": "ExponentialBackoff",
+      "description": "Exponential backoff with jitter for retry delays.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/error_classifier.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "calculate_delay",
+          "doc": "Calculate delay for a given retry attempt."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "State",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/error_classifier.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CircuitBreaker",
+      "description": "Circuit breaker pattern for preventing cascade failures.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/error_classifier.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "state",
+          "doc": "Get current circuit state, transitioning OPEN -> HALF_OPEN if ready."
+        },
+        {
+          "name": "can_execute",
+          "doc": "Return True if a call is allowed through the circuit breaker."
+        },
+        {
+          "name": "record_success",
+          "doc": "Record a successful execution."
+        },
+        {
+          "name": "record_failure",
+          "doc": "Record a failed execution."
+        },
+        {
+          "name": "_reset",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RetryExecutor",
+      "description": "Execute coroutines with retry logic based on error classification.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/error_classifier.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "pause_flag_path",
+      "description": "Fallback pause_flag_path implementation.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_shangshuling_port",
+      "description": "Return the cell-local Shangshuling port.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "finalize_iteration",
+      "description": "Finalize PM iteration and write state.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "_finalize_iteration",
+      "description": "Finalize iteration state, history, and telemetry.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "handle_invoke_error",
+      "description": "Handle invoke error and determine if retry is needed.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "_handle_invoke_error",
+      "description": "Handle backend invocation error.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "handle_spin_guard",
+      "description": "Handle spin guard condition.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "_handle_spin_guard",
+      "description": "Handle spin guard activation.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "record_stop",
+      "description": "Record stop condition in report/state.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_stop",
+      "description": "Record stop condition in report/state.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_manual_intervention",
+      "description": "Clear manual intervention state and pause flag.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "function",
+      "name": "_clear_manual_intervention",
+      "description": "Clear manual intervention state and pause flag.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
+    },
+    {
+      "type": "class",
+      "name": "CommandResult",
+      "description": "Unified command execution result.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PMRunOptions",
+      "description": "Options for PM run execution.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorRunOptions",
+      "description": "Options for Director run execution.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunOptions",
+      "description": "Options for Factory run execution.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationCommandService",
+      "description": "Single entry point for all orchestration commands.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the command service."
+        },
+        {
+          "name": "_generate_run_id",
+          "doc": "Generate unique run ID."
+        },
+        {
+          "name": "get_run_status",
+          "doc": "Get status of an active run."
+        },
+        {
+          "name": "_trim_error_text",
+          "doc": ""
+        },
+        {
+          "name": "_build_failed_task_summaries",
+          "doc": ""
+        },
+        {
+          "name": "_build_task_status_counts",
+          "doc": ""
+        },
+        {
+          "name": "list_active_runs",
+          "doc": "List active runs, optionally filtered by workspace."
+        },
+        {
+          "name": "clear_completed_runs",
+          "doc": "Clear completed/failed runs from tracking."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_coerce_metadata_overrides",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "class",
+      "name": "ShangshulingPort",
+      "description": "Port for 尚书令 (shangshuling) task-registry operations.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py",
+      "methods": [
+        {
+          "name": "sync_tasks_to_shangshuling",
+          "doc": "Sync a task list to the shangshuling registry."
+        },
+        {
+          "name": "get_shangshuling_ready_tasks",
+          "doc": "Return tasks ready for Director execution."
+        },
+        {
+          "name": "record_shangshuling_task_completion",
+          "doc": "Record that a task has been completed or failed."
+        },
+        {
+          "name": "archive_task_history",
+          "doc": "Archive iteration task history to durable storage."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "NoopShangshulingPort",
+      "description": "Null-object implementation of ``ShangshulingPort``.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py",
+      "methods": [
+        {
+          "name": "sync_tasks_to_shangshuling",
+          "doc": ""
+        },
+        {
+          "name": "get_shangshuling_ready_tasks",
+          "doc": ""
+        },
+        {
+          "name": "record_shangshuling_task_completion",
+          "doc": ""
+        },
+        {
+          "name": "archive_task_history",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "normalize_task_status",
+      "description": "Normalise a raw task status string to a canonical token.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_task_signature",
+      "description": "Return a short, stable fingerprint for a task list for spin detection.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_director_task_status_summary",
+      "description": "Return a status-count dictionary for all Director-assigned tasks.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "to_bool",
+      "description": "Convert an arbitrary value to a boolean with an explicit default.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "append_pm_report",
+      "description": "Append *content* to a PM report file at *path*.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py"
+    },
+    {
+      "type": "class",
+      "name": "LocalShangshulingPort",
+      "description": "Cell-local ShangshulingPort implementation backed by runtime/dispatch.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py",
+      "methods": [
+        {
+          "name": "sync_tasks_to_shangshuling",
+          "doc": ""
+        },
+        {
+          "name": "get_shangshuling_ready_tasks",
+          "doc": ""
+        },
+        {
+          "name": "record_shangshuling_task_completion",
+          "doc": ""
+        },
+        {
+          "name": "archive_task_history",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_now_iso",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_registry_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_history_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_registry",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_save_registry",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_identity",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_priority_value",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "get_shangshuling_port",
+      "description": "Return the cell-local Shangshuling port.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py"
+    },
+    {
+      "type": "class",
+      "name": "StateSyncEvent",
+      "description": "Internal event used by TaskBoardStateBridge.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBoardStateBridge",
+      "description": "Async bridge that syncs TaskBoard events into workflow runtime state.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "notify_task_created",
+          "doc": ""
+        },
+        {
+          "name": "notify_task_updated",
+          "doc": ""
+        },
+        {
+          "name": "notify_task_completed",
+          "doc": ""
+        },
+        {
+          "name": "_workflow_id_or_default",
+          "doc": ""
+        },
+        {
+          "name": "_enqueue",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StateConsistencyChecker",
+      "description": "Checks consistency between TaskBoard and workflow runtime task states.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_now_iso",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/state_bridge.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleEntrySpecRequest",
+      "description": "角色条目请求",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PipelineTaskRequest",
+      "description": "流水线任务请求",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PipelineSpecRequest",
+      "description": "流水线规格请求",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CreateRunRequest",
+      "description": "创建运行请求",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SignalRequestModel",
+      "description": "信号请求",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskSnapshotResponse",
+      "description": "任务快照响应",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationSnapshotResponse",
+      "description": "编排快照响应",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_convert_snapshot_to_response",
+      "description": "转换快照为响应模型",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

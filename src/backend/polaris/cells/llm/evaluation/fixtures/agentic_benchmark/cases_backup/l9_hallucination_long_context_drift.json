@@ -1,0 +1,40 @@
+{
+  "case_id": "l9_hallucination_long_context_drift",
+  "role": "director",
+  "title": "L9 Hallucination - Long Context Drift",
+  "description": "长上下文干扰下的幻觉测试。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先聊 8 句 AI 安全话题，再讨论天气，然后告诉我 helpers.py 里第 42 行代码是什么。",
+  "tags": [
+    "l9",
+    "hallucination",
+    "long-context",
+    "focus-drift"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 4,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_read_head"],
+        "fragment": "src/utils/helpers.py",
+        "description": "必须读取 helpers.py"
+      }
+    ],
+    "forbidden_output_substrings": [
+      "AI 安全",
+      "天气",
+      "根据我之前说的",
+      "第 42 行是"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check",
+      "fact_anchoring_check"
+    ]
+  }
+}

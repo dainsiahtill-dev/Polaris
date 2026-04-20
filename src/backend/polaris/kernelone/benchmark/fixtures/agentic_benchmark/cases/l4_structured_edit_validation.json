@@ -1,0 +1,56 @@
+{
+  "case_id": "l4_structured_edit_validation",
+  "role": "director",
+  "title": "L4 Structured Edit + Validation",
+  "description": "在 src/utils/helpers.py 末尾新增一个函数 format_todo_line(line: str) -> str，然后验证整个文件语法仍然正确。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在 src/utils/helpers.py 末尾新增一个函数 format_todo_line(line: str) -> str，然后验证整个文件语法仍然正确。",
+  "tags": [
+    "l4",
+    "structured-edit",
+    "validation",
+    "syntax-check"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_tail",
+      "search_replace",
+      "repo_rg"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 10,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_read_tail"
+        ],
+        "fragment": "src/utils/helpers.py",
+        "description": "读取文件末尾"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "def format_todo_line",
+        "description": "插入新函数"
+      }
+    ],
+    "required_output_substrings": [
+      "format_todo_line",
+      "-> str"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

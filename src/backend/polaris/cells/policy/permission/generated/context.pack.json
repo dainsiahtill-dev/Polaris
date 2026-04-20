@@ -1,0 +1,74 @@
+{
+  "id": "policy.permission",
+  "title": "Permission Policy",
+  "kind": "policy",
+  "purpose": "Own role capability matrix evaluation and permission decisions for tool, command, write, and execution actions.",
+  "summary": "Business capability boundary for policy.permission.",
+  "owned_paths": [
+    "polaris/application/services/permission_service.py",
+    "polaris/application/services/permission/**",
+    "polaris/domain/entities/capability.py",
+    "polaris/domain/entities/policy.py",
+    "polaris/kernelone/policy/decision_engine.py",
+    "polaris/kernelone/policy/contracts.py",
+    "polaris/kernelone/policy/non_llm_gates.py",
+    "polaris/kernelone/policy/constitution_rules.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "EvaluatePermissionCommandV1"
+    ],
+    "queries": [
+      "QueryPermissionMatrixV1"
+    ],
+    "events": [
+      "PermissionDeniedEventV1"
+    ],
+    "results": [
+      "PermissionDecisionResultV1"
+    ],
+    "errors": [
+      "PermissionPolicyErrorV1"
+    ]
+  },
+  "neighbors": [
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "workspace/policy/permission/*"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "fs.write:workspace/policy/permission/*"
+  ],
+  "invariants": [
+    "All state writes must remain single-owner and contract-driven.",
+    "Append-only evidence and event semantics must be preserved.",
+    "All text file reads and writes must use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/application/services/permission_service.py",
+    "polaris/application/services/permission/**",
+    "polaris/domain/entities/capability.py",
+    "polaris/domain/entities/policy.py",
+    "polaris/kernelone/policy/decision_engine.py",
+    "polaris/kernelone/policy/contracts.py",
+    "polaris/kernelone/policy/non_llm_gates.py",
+    "polaris/kernelone/policy/constitution_rules.py"
+  ],
+  "test_targets": [
+    "tests/test_permission_service.py",
+    "tests/test_permission_role_inheritance.py",
+    "tests/test_permission_conditions.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

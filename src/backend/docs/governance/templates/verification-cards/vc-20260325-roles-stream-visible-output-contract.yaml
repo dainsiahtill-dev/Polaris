@@ -1,0 +1,84 @@
+card_id: "vc-20260325-roles-stream-visible-output-contract"
+bug_summary: >
+  `polaris.delivery.cli console` 的角色对话会把 provider 原始 `<thinking>`、
+  `[TOOL_CALL]...[/TOOL_CALL]` 和净化后的最终答案一起打印，导致流式输出泄漏且重复。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_engine.py"
+  method: "run_stream()"
+  symptom: "CLI 角色对话出现原始思维/工具协议文本泄漏，且最终答案被重复展示"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设根因不在 console renderer，而在 roles.kernel.run_stream 过早下发 provider 原始 chunk。"
+    status: verified_true
+    evidence: >
+      读 `polaris/cells/roles/kernel/internal/turn_engine.py` 的 `run_stream()`：
+      旧实现对 `reasoning_chunk`/`chunk` 直接 yield，再在同一轮结束后 materialize
+      clean_content 并通过 `complete` 再下发一次净化结果。
+
+  - id: "A2"
+    statement: "我假设 console 侧重复打印是因为内容 chunk 已经打印过，而 complete 仍携带同一答案。"
+    status: verified_true
+    evidence: >
+      读 `polaris/delivery/cli/terminal_console.py::_stream_turn()`：
+      只要 stream 中已有 `content_chunk`，console 不会再打印 `complete.content`。
+      因此重复的真正来源是内核先下发脏 chunk、再下发干净 complete。
+
+  - id: "A3"
+    statement: "我假设 Codex provider 会把 reasoning 包装成 `<thinking>...</thinking>` 文本塞进内容流。"
+    status: verified_true
+    evidence: >
+      读 `polaris/kernelone/process/codex_adapter.py::_extract_codex_json_output()`：
+      reasoning_parts 会被拼成 `<thinking>...</thinking>` 文本，再和 message 内容合并输出。
+
+  - id: "A4"
+    statement: "我假设仅在 console 层过滤文本属于表层补丁，roles.runtime/host/http 仍会继续消费脏流。"
+    status: verified_true
+    evidence: >
+      图谱与实现显示 `roles.kernel -> roles.runtime -> delivery.cli/http` 共用同一
+      `run_stream()` 结果；若只改 console，HTTP/SSE/host 观察面仍会接收泄漏事件。
+
+pre_mortem:
+  failure_point: >
+    如果我在 stream 中继续逐 token 净化，而 parser 对未闭合的 `[TOOL_CALL]` wrapper
+    处理不稳定，就可能重新把半截协议文本泄漏出去，或错误删掉用户可见内容。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    - "polaris/delivery/cli/terminal_console.py"
+    - "polaris/delivery/cli/director/console_host.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py"
+      description: "验证 stream 只下发净化后的 content_chunk/thinking_chunk，不泄漏 `<thinking>` 与 `[TOOL_CALL]`。"
+      expected: "所有 user-visible content chunk 都是 sanitized text，最终 complete 不再承担去重职责。"
+      status: new
+    - file: "polaris/delivery/cli/tests/test_terminal_console.py"
+      description: "验证 console 在已有 content_chunk 时不会再把 complete.content 打印第二次。"
+      expected: "同一答案在终端只出现一次。"
+      status: existing_fix
+  integration_tests:
+    - description: "roles.kernel 流式回归"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py"
+      status: existing_fix
+    - description: "CLI console host 回归"
+      command: "python -m pytest -q polaris/delivery/cli/tests/test_terminal_console.py tests/test_director_console_host.py"
+      status: existing_fix
+    - description: "结构性治理资产回归"
+      command: "python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py"
+      status: existing_fix
+  manual_check:
+    - "运行 `python -m polaris.delivery.cli console --workspace <repo> --role director --backend plain --prompt-style omp --json-render pretty-color`，确认不再出现 `<thinking>` 与 `[TOOL_CALL]` 泄漏。"
+    - "确认同一轮最终答案在终端只打印一次。"
+
+related_adrs:
+  - "ADR-0044"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-25"
+  verified_by: "self (targeted pytest + manual reasoning)"
+  verified_at: "2026-03-25"

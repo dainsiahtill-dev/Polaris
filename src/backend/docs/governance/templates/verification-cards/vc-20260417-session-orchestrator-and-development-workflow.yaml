@@ -1,0 +1,165 @@
+card_id: "vc-20260417-session-orchestrator-and-development-workflow"
+bug_summary: >
+  缺失会话编排层导致 TurnTransactionController 只能执行单回合，无法自动串联多回合;
+  缺少面向 read→write→test 闭环的专有运行时; ContextOS 因缺少 hash 去重缓存而反复压缩相同上下文。
+  这造成 CLI 侧只能是 naive for-loop、开发任务无法自动 patch→test→retry、以及运行产物中大量重复噪音。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/runtime/internal/session_orchestrator.py"
+  method: "RoleSessionOrchestrator.execute_stream"
+  symptom: "多回合会话没有自动链接、ContinuationPolicy 仲裁、以及 ShadowEngine 跨 Turn 预热机制"
+
+assumptions:
+  - id: "A1"
+    statement: "TurnTransactionController 已实现严格的单决策约束，每个 turn 只产生一个 TurnResult。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/turn_transaction_controller.py：
+      execute()/execute_stream() 均通过 TurnStateMachine 驱动，禁止 TOOL_BATCH_EXECUTED -> DECISION_REQUESTED 回跳。
+
+  - id: "A2"
+    statement: "TurnDecisionKind.HANDOFF_DEVELOPMENT 与 TurnContinuationMode 枚举已在 turn_contracts.py 中扩展。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/public/turn_contracts.py：
+      TurnDecisionKind 新增 HANDOFF_DEVELOPMENT；TurnContinuationMode 包含 AUTO_CONTINUE / END_SESSION / WAITING_HUMAN / HANDOFF_DEVELOPMENT / SPECULATIVE_CONTINUE。
+      TurnOutcomeEnvelope 包装 TurnResult 并附加 continuation_mode / next_intent / session_patch / artifacts_to_persist / speculative_hints。
+
+  - id: "A3"
+    statement: "RoleSessionOrchestrator 实现了完整的 while-True 多 Turn 循环，包含 checkpoint、ShadowEngine 预热复用、artifact 持久化、路由分支、ContinuationPolicy 仲裁。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/runtime/internal/session_orchestrator.py：
+      execute_stream() 产出 SessionStartedEvent -> checkpoint -> consume_speculation -> kernel.execute_stream -> artifact persist ->
+      HANDOFF_DEVELOPMENT / WAITING_HUMAN / END_SESSION 路由 -> ContinuationPolicy.can_continue() -> start_cross_turn_speculation -> SessionCompletedEvent。
+
+  - id: "A4"
+    statement: "ContinuationPolicy 具备 max_auto_turns、repetitive_failure、stagnation_detected、speculative_not_worthwhile 四类熔断条件。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/runtime/internal/continuation_policy.py：
+      can_continue() 检查 mode 有效性、turn_count 硬限制、_detect_repetitive_failure()、_detect_stagnation_v2()、
+      _detect_speculative_worthwhile()（shadow_engine_hit_rate >= 0.7 且 artifact_changed）。
+
+  - id: "A5"
+    statement: "DevelopmentWorkflowRuntime 实现了 patch → test → analyze → retry 的 TDD 闭环，并支持消费 ShadowEngine 的推测补丁。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/development_workflow_runtime.py：
+      execute_stream() 产出 RuntimeStartedEvent -> TurnPhaseEvent("patching_code") -> ToolBatchEvent("apply_patch") ->
+      TurnPhaseEvent("running_tests") -> ToolBatchEvent("run_tests") -> ContentChunkEvent -> RuntimeCompletedEvent。
+      优先检查 shadow_engine.has_speculated_patch() 并调用 consume_speculated_patch()；失败时通过 synthesis_llm 或默认模板生成 repair intent。
+
+  - id: "A6"
+    statement: "SessionArtifactStore 通过 original_hash 映射实现去重，只在 hash 变化或 needs_recompress=True 时触发压缩，并在重复时写入 unified_diff delta。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/runtime/internal/session_artifact_store.py：
+      persist() 维护 _hash_to_content 字典；orig_hash 已存在时写入 _delta.patch；不存在时写入 _full.json；
+      needs_recompress 或 is_new_hash 为真时调用 compress_if_changed。
+
+  - id: "A7"
+    statement: "TurnTransactionController 已正确路由 HANDOFF_DEVELOPMENT 到 development_runtime，状态机允许 DECISION_DECODED -> HANDOFF_DEVELOPMENT -> COMPLETED。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/turn_transaction_controller.py：
+      新增 _handle_development_handoff() 与 _handle_development_handoff_stream()，使用 SimpleNamespace 构造 session_state 并透传事件流。
+      turn_state_machine.py 的 _VALID_TRANSITIONS 已加入 HANDOFF_DEVELOPMENT 的合法入边与出边。
+
+  - id: "A8"
+    statement: "StreamShadowEngine 已扩展跨 Turn 推测缓存：_cross_turn_cache 与 _speculated_patch_cache。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/stream_shadow_engine.py：
+      新增 has_valid_speculation() / consume_speculation() / start_cross_turn_speculation() / has_speculated_patch() / consume_speculated_patch() / cache_speculated_patch()。
+
+pre_mortem:
+  failure_point: >
+    最可能在 RoleSessionOrchestrator 与 RoleConsoleHost 的 Feature Flag 集成阶段出现事件类型兼容性问题，
+    或 SessionArtifactStore 的 delta 文件在高频写入时产生竞态。
+  risk_zone:
+    - "polaris/delivery/cli/director/console_host.py"
+    - "polaris/cells/roles/runtime/internal/session_orchestrator.py"
+    - "polaris/cells/roles/runtime/internal/session_artifact_store.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py"
+      description: "ContinuationPolicy 全部场景：AUTO_CONTINUE / END_SESSION / WAITING_HUMAN / HANDOFF_DEVELOPMENT / max_turns / repetitive_failure / stagnation / speculative_worthwhile"
+      expected: "19/19 PASS"
+      status: existing
+
+    - file: "polaris/cells/roles/runtime/internal/tests/test_session_artifact_store.py"
+      description: "SessionArtifactStore 增量持久化、去重压缩、delta 生成"
+      expected: "6/6 PASS"
+      status: existing
+
+    - file: "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py"
+      description: "RoleSessionOrchestrator 单轮结束、多轮 AUTO_CONTINUE、WAITING_HUMAN 中断、max_turns 熔断、ShadowEngine 预热消费、checkpoint 写入"
+      expected: "7/7 PASS"
+      status: existing
+
+    - file: "polaris/cells/roles/kernel/internal/tests/test_development_workflow_runtime.py"
+      description: "DevelopmentWorkflowRuntime TDD 闭环：首次通过、重试后放弃、ShadowEngine 补丁消费、synthesis_llm 修复意图"
+      expected: "11/11 PASS"
+      status: existing
+
+    - file: "polaris/cells/roles/kernel/tests/test_transaction_controller_development_handoff.py"
+      description: "TurnTransactionController HANDOFF_DEVELOPMENT 路由：非流式 handoff、流式 handoff、无 runtime fallback、runtime error 容错"
+      expected: "5/5 PASS"
+      status: existing
+
+    - file: "polaris/cells/roles/kernel/internal/tests/test_stream_shadow_engine.py"
+      description: "StreamShadowEngine 跨 Turn 缓存：has_valid_speculation、consume_speculation、speculated_patch 生命周期"
+      expected: "16/16 PASS"
+      status: existing
+
+    - file: "polaris/delivery/cli/director/tests/test_console_host_orchestrator.py"
+      description: "RoleConsoleHost Phase 4 集成：Feature Flag 路由、TurnEvent 归一化、session-isolated 事件日志、端到端 orchestrator 路径"
+      expected: "25/25 PASS"
+      status: existing
+
+  integration_tests:
+    - description: "3-turn AUTO_CONTINUE 链式会话"
+      command: "python -m pytest -q polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py -k test_multi_turn"
+      expected: "turn_count == 2，artifacts 已聚合"
+      status: completed
+
+    - description: "DevelopmentWorkflowRuntime 端到端 patch→test 闭环"
+      command: "python -m pytest -q polaris/cells/roles/kernel/internal/tests/test_development_workflow_runtime.py -k test_execute_stream"
+      expected: "事件序列完整，测试通过消息存在"
+      status: completed
+
+    - description: "TurnTransactionController development handoff 流式透传"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_transaction_controller_development_handoff.py -k test_handle_development_handoff_stream"
+      expected: "事件流包含 TurnPhaseEvent -> ContentChunkEvent -> CompletionEvent"
+      status: completed
+
+    - description: "RoleConsoleHost orchestrator 端到端集成（Feature Flag + 事件日志隔离）"
+      command: "python -m pytest -q polaris/delivery/cli/director/tests/test_console_host_orchestrator.py"
+      expected: "25/25 PASS"
+      status: completed
+
+    - description: "全目录回归测试（kernel + runtime）"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests polaris/cells/roles/runtime/tests"
+      expected: "1164 passed, 1 skipped, 0 failed"
+      status: completed
+
+  manual_check:
+    - "在真实工作区下运行 RoleSessionOrchestrator.execute_stream，验证 checkpoint 文件生成路径 .polaris/checkpoints/{session_id}.json"
+    - "验证 SessionArtifactStore 对相同 original_hash 的 artifact 只生成一次 _full.json，后续生成 _delta.patch"
+    - "开启 ENABLE_SPECULATIVE_EXECUTION=1 后，检查 ShadowEngine 的 cross-turn speculation 是否被正确消费"
+
+related_adrs:
+  - "ADR-0071"
+  - "ADR-0077"
+  - "ADR-0078"
+
+sign_off:
+  completed_by: "Claude Code"
+  completed_at: "2026-04-17"
+  verified_by: "Claude Code"
+  verified_at: "2026-04-17"
+  regression_result: "1164 passed, 1 skipped, 0 failed"

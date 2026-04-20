@@ -1,0 +1,73 @@
+card_id: "vc-20260326-llm-maximum-convergence"
+bug_summary: >
+  LLM 模块存在双实现、多路径引用、Cell 边界模糊问题，导致：
+  1) ProviderManager 在 kernelone 与 infrastructure 双份存在
+  2) KernelOne 持有 Polaris 角色业务语义
+  3) Cells/llm/* 直连 kernelone.llm.* 旁路调用未清除
+  4) Domain 层存在 LLM 重复定义
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/llm/providers/registry.py + polaris/infrastructure/llm/providers/"
+  method: "ProviderManager 双份实现"
+  symptom: >
+    同一类型定义多份存在；Cell 边界违反 KernelFirst + Contract First 原则
+
+assumptions:
+  - id: "A1"
+    statement: "ProviderManager 确实在 kernelone 和 infrastructure 两处实现"
+    status: verified_true
+    evidence: >
+      polaris/kernelone/llm/providers/registry.py:21 定义 ProviderManager 类
+      polaris/infrastructure/llm/providers/provider_registry.py:35 定义另一个 ProviderManager 类
+  - id: "A2"
+    statement: "kernelone.llm.toolkit 包含 Polaris 角色业务语义"
+    status: verified_true
+    evidence: >
+      polaris/kernelone/llm/toolkit/integrations.py 包含 PMToolIntegration, ArchitectToolIntegration,
+      ChiefEngineerToolIntegration, DirectorToolIntegration, QAToolIntegration, ScoutToolIntegration
+      这些是 Polaris 特有的角色语义类
+  - id: "A3"
+    statement: "cells/llm/* 存在直连 kernelone.llm.* 的旁路"
+    status: verified_true
+    evidence: >
+      polaris/cells/llm/control_plane/internal/tui_llm_client.py 直接导入
+      polaris.kernelone.llm.toolkit.contracts (ServiceLocator, AIRequest) 和
+      polaris.kernelone.llm.runtime_config (get_role_model)
+  - id: "A4"
+    statement: "domain 层存在 LLM 重复定义"
+    status: verified_true
+    evidence: >
+      polaris/domain/services/llm_provider.py 定义了 LLMResponse, ProviderConfig,
+      ProviderRegistry 等类型，与 kernelone/llm 中的类型重复
+
+pre_mortem:
+  failure_point: >
+    如果只删除表面文件而不断开引用链，会导致运行时 ImportError 或 AttributeError
+  risk_zone:
+    - "polaris/kernelone/llm/providers/"
+    - "polaris/infrastructure/llm/providers/"
+    - "polaris/kernelone/llm/toolkit/"
+    - "polaris/cells/llm/*/internal/"
+    - "polaris/domain/services/"
+
+verification_plan:
+  unit_tests: []
+  integration_tests:
+    - description: "Phase 0 基线测试快照"
+      command: "python -m pytest --collect-only -q"
+      status: existing_pass
+  manual_check:
+    - "验证 Verification Card 符合 schema"
+    - "验证 ADR 包含完整导入矩阵"
+    - "验证 pytest 收集无新增错误"
+
+related_adrs:
+  - "ADR-0054"
+  - "ADR-0053"
+  - "ADR-0042"
+
+sign_off:
+  completed_by: "ARCH-GOV"
+  completed_at: "2026-03-26"

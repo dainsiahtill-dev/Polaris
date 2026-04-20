@@ -1,0 +1,14 @@
+{
+  "cell_id": "audit.verdict",
+  "version": 1,
+  "read_order": [
+    "cell.yaml",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/review_gate.py",
+    "internal/artifact_service.py"
+  ],
+  "notes": [
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline."
+  ]
+}

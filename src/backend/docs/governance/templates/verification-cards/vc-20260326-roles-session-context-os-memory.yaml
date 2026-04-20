@@ -1,0 +1,95 @@
+card_id: "vc-20260326-roles-session-context-os-memory"
+bug_summary: >
+  State-First Context OS had internal restore/search primitives, but the real
+  role session chain neither exposed them through the canonical tool path nor
+  consistently persisted updated session continuity and Context OS state back
+  into `roles.session`.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/runtime/public/service.py"
+  method: "execute_role_session() / stream_chat_turn()"
+  symptom: >
+    Role sessions could not reliably recall persisted artifacts/episodes/state,
+    and post-turn session continuity could drift because updated Context OS
+    state was not guaranteed to be written back to the session source-of-truth.
+
+assumptions:
+  - id: "A1"
+    statement: "I assume the Context OS already provides the missing memory primitives internally."
+    status: verified_true
+    evidence: >
+      Read `polaris/kernelone/context/context_os/runtime.py`; it already defines
+      `search_memory`, `read_artifact`, `read_episode`, and `get_state`.
+
+  - id: "A2"
+    statement: "I assume the missing capability is the runtime/session wiring, not a missing KernelOne feature."
+    status: verified_true
+    evidence: >
+      Read `polaris/kernelone/llm/toolkit/definitions.py`,
+      `polaris/kernelone/llm/toolkit/executor.py`, and
+      `polaris/cells/roles/kernel/internal/tool_gateway.py`; before this fix the
+      canonical tool path did not carry session-aware memory provider context.
+
+  - id: "A3"
+    statement: "I assume `roles.session` must remain the only persisted session truth owner."
+    status: verified_true
+    evidence: >
+      Read `docs/graph/catalog/cells.yaml` and
+      `polaris/cells/roles/session/cell.yaml`; `roles.session` owns
+      `runtime/role_sessions/*` and `runtime/conversations/*`, while
+      `kernelone.context` remains a generic runtime capability.
+
+  - id: "A4"
+    statement: "I assume caching one mutable RoleToolGateway per role is structurally unsafe for session-scoped tools."
+    status: verified_true
+    evidence: >
+      Read `polaris/cells/roles/kernel/internal/kernel.py` and
+      `polaris/cells/roles/kernel/internal/tool_gateway.py`; the gateway carried
+      mutable execution/session state, so per-role caching could leak request
+      context across turns.
+
+pre_mortem:
+  failure_point: >
+    If the fix only adds tool definitions without making `roles.session` the
+    persisted restore authority, memory recall will appear to work in isolated
+    tests but drift in real sessions because prompt-side continuity and stored
+    session state will diverge again.
+  risk_zone:
+    - "polaris/cells/roles/runtime/public/service.py"
+    - "polaris/cells/roles/kernel/internal/kernel.py"
+    - "polaris/kernelone/llm/toolkit/executor.py"
+    - "polaris/cells/roles/session/internal/context_memory_service.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/session/tests/test_context_memory_service.py"
+      description: "Verify persisted session snapshots can search memory and restore artifacts/state."
+      expected: "search_memory/read_artifact/get_state return persisted Context OS data."
+      status: new
+    - file: "polaris/kernelone/llm/toolkit/tests/test_session_memory_tools.py"
+      description: "Verify toolkit handlers require session context and delegate to the session memory provider."
+      expected: "memory tools succeed with session binding and fail clearly without it."
+      status: new
+    - file: "polaris/cells/roles/runtime/tests/test_host_session_continuity.py"
+      description: "Verify execute_role_session persists raw transcript plus continuity/context-os state."
+      expected: "roles.session stores user/assistant messages and updated context_config."
+      status: existing_fix
+  integration_tests:
+    - description: "Run targeted session/runtime/kernel/toolkit tests together."
+      command: ".\\.venv\\Scripts\\python.exe -B -m pytest polaris/cells/roles/session/tests/test_context_memory_service.py polaris/cells/roles/session/tests/test_contracts.py polaris/cells/roles/session/tests/test_role_session_service.py polaris/kernelone/llm/toolkit/tests/test_session_memory_tools.py polaris/cells/roles/runtime/tests/test_host_session_continuity.py polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py -q"
+      status: new
+  manual_check:
+    - "真实 role session 连续对话后，验证 search_memory/read_artifact/read_episode/get_state 可恢复当前 session 的 persisted Context OS 视图。"
+    - "验证 session context_config 中仅持久化派生 working-state snapshot，不把完整 transcript log 重新伪装成第二份 truth。"
+
+related_adrs:
+  - "ADR-0045"
+  - "ADR-0046"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-26"
+  verified_by: "self (targeted pytest + py_compile)"
+  verified_at: "2026-03-26"

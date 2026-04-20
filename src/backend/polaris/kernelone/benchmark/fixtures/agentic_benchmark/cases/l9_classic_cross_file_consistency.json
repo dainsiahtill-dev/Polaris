@@ -1,0 +1,56 @@
+{
+  "case_id": "l9_classic_cross_file_consistency",
+  "role": "director",
+  "title": "L9 Classic Cross-File Consistency",
+  "description": "跨文件一致性检查。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "确保 frontend/app.ts 和 backend/api.py 中所有 API 路径完全一致。",
+  "tags": [
+    "l9",
+    "classic",
+    "cross-file",
+    "consistency"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 8,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "frontend/app.ts",
+        "description": "读取前端文件"
+      },
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "backend/api.py",
+        "description": "读取后端文件"
+      }
+    ],
+    "required_output_substrings": [
+      "frontend/app.ts",
+      "backend/api.py",
+      "API"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "fact_anchoring_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

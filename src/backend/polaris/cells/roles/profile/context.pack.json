@@ -1,0 +1,12 @@
+{
+  "cell_id": "roles.profile",
+  "version": "1.0.0",
+  "read_order": [
+    "cell.yaml",
+    "README.agent.md",
+    "public/contracts.py",
+    "internal/registry.py",
+    "internal/schema.py"
+  ],
+  "notes": "Minimal context pack for canonical role profile registry and schema."
+}

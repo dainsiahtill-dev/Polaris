@@ -1,0 +1,84 @@
+id: archive.task_snapshot_archive
+title: Task Snapshot Archive
+kind: capability
+visibility: public
+stateful: true
+owner: governance
+
+purpose: >
+  Publish terminal task and plan snapshots into immutable workspace history records
+  without allowing archive logic to become a second runtime state owner.
+
+tags:
+  - template
+  - target
+  - storage-archive
+
+owned_paths:
+  - cells/archive/task_snapshot_archive/**
+
+inputs:
+  - name: archive_task_snapshot
+    mode: command
+    contract: ArchiveTaskSnapshotCommandV1
+    returns: ArchiveManifestV1
+  - name: get_task_snapshot_manifest
+    mode: query
+    contract: GetTaskSnapshotManifestQueryV1
+    returns: ArchiveManifestV1
+
+outputs:
+  - name: read_runtime_snapshot
+    mode: query
+    target: runtime.state_owner
+    contract: GetRuntimeSnapshotQueryV1
+  - name: resolve_storage_layout
+    mode: query
+    target: storage.layout
+    contract: GetStorageLayoutQueryV1
+  - name: enforce_workspace_archive_guard
+    mode: query
+    target: policy.workspace_guard
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - name: emit_task_snapshot_archived
+    mode: event
+    target: audit.evidence
+    contract: TaskSnapshotArchivedEventV1
+
+depends_on:
+  - runtime.state_owner
+  - storage.layout
+  - policy.workspace_guard
+  - audit.evidence
+
+state_owners:
+  - history_task_snapshot_archive
+
+effects_allowed:
+  - fs.read:runtime/tasks/*
+  - fs.write:workspace/history/tasks/*
+
+does_not:
+  - mutate_runtime_plan_files
+  - write_history_outside_task_archive_scope
+  - bypass_workspace_guard
+
+invariants:
+  - task snapshot archives are derived from terminal runtime facts only
+  - archive manifests preserve task and plan linkage
+  - all archive text writes use explicit UTF-8
+
+verification:
+  tests:
+    - cells/archive/task_snapshot_archive/tests/test_behavior.py
+    - cells/archive/task_snapshot_archive/tests/test_contracts.py
+  contracts:
+    - ArchiveTaskSnapshotCommandV1
+    - GetTaskSnapshotManifestQueryV1
+    - TaskSnapshotArchivedEventV1
+    - ArchiveManifestV1
+
+generated_artifacts:
+  - generated/context.pack.json
+
+template: true

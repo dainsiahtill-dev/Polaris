@@ -1,0 +1,127 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Task Market Envelope
+description: >
+  Canonical envelope for task_market stage transitions and broadcast facts.
+type: object
+additionalProperties: false
+required:
+  - version
+  - envelope_id
+  - workspace
+  - trace_id
+  - run_id
+  - task_id
+  - stage
+  - status
+  - event_type
+  - source_role
+  - emitted_at
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  envelope_id:
+    type: string
+    minLength: 1
+  workspace:
+    type: string
+    minLength: 1
+  trace_id:
+    type: string
+    minLength: 1
+  run_id:
+    type: string
+    minLength: 1
+  task_id:
+    type: string
+    minLength: 1
+  plan_id:
+    type: string
+  plan_revision_id:
+    type: string
+  root_task_id:
+    type: string
+  parent_task_id:
+    type: string
+  stage:
+    type: string
+    enum:
+      - pending_design
+      - pending_exec
+      - pending_qa
+      - waiting_human
+  status:
+    type: string
+    enum:
+      - pending
+      - in_design
+      - in_execution
+      - in_qa
+      - waiting_human
+      - resolved
+      - rejected
+      - dead_letter
+  event_type:
+    type: string
+    enum:
+      - work_item_published
+      - lease_granted
+      - lease_renewed
+      - stage_advanced
+      - stage_failed
+      - stage_requeued
+      - moved_to_dead_letter
+      - human_review_requested
+      - human_review_resolved
+      - plan_revision_registered
+      - change_order_submitted
+  source_role:
+    type: string
+    minLength: 1
+  worker_id:
+    type: string
+  worker_role:
+    type: string
+  lease_token:
+    type: string
+  attempt:
+    type: integer
+    minimum: 0
+  max_attempts:
+    type: integer
+    minimum: 1
+  priority:
+    type: string
+    enum:
+      - low
+      - medium
+      - high
+      - critical
+  reason:
+    type: string
+  payload:
+    type: object
+    additionalProperties: true
+  metadata:
+    type: object
+    additionalProperties: true
+  artifact_refs:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  outbox_id:
+    type: string
+  saga_step_id:
+    type: string
+  compensation_group_id:
+    type: string
+  cost_tokens:
+    type: integer
+    minimum: 0
+  llm_provider:
+    type: string
+  emitted_at:
+    type: string
+    format: date-time

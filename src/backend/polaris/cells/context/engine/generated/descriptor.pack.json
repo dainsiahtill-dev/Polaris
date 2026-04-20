@@ -1,0 +1,140 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.512470Z",
+  "source_hash": "569aff4d6e8aaf16",
+  "cell_id": "context.engine",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "CostStrategy",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/precision_mode.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "normalize_cost_class",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/precision_mode.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_cost_class",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/precision_mode.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_policy",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/precision_mode.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_sources",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/precision_mode.py"
+    },
+    {
+      "type": "function",
+      "name": "route_by_cost_model",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/precision_mode.py"
+    },
+    {
+      "type": "function",
+      "name": "_unique_preserve",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/precision_mode.py"
+    },
+    {
+      "type": "class",
+      "name": "_CacheEntry",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/search_gateway.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_TTLCache",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/search_gateway.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_or_compute",
+          "doc": ""
+        },
+        {
+          "name": "clear",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SearchService",
+      "description": "Catalog-backed cell search (graph-constrained).",
+      "defined_in": "polaris/cells/context/engine/internal/search_gateway.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "available",
+          "doc": "True when the derived descriptor cache exists (``context.catalog`` output)."
+        },
+        {
+          "name": "add_documents",
+          "doc": "Deprecated: graph-constrained search does not ingest arbitrary documents."
+        },
+        {
+          "name": "_generate_query_hash",
+          "doc": "Generate a unique hash for the query and limit."
+        },
+        {
+          "name": "_cached_catalog_search",
+          "doc": "Execute catalog search with TTL caching (5 min TTL)."
+        },
+        {
+          "name": "_compute",
+          "doc": ""
+        },
+        {
+          "name": "search",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_default_backend_root",
+      "description": "Resolve ``src/backend`` (contains ``docs/graph`` and ``polaris/cells``).",
+      "defined_in": "polaris/cells/context/engine/internal/search_gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/internal/search_gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "get_search_service",
+      "description": "Return a process-local catalog-backed search service.",
+      "defined_in": "polaris/cells/context/engine/internal/search_gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_search_service_for_tests",
+      "description": "Test hook: clear singleton.",
+      "defined_in": "polaris/cells/context/engine/internal/search_gateway.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

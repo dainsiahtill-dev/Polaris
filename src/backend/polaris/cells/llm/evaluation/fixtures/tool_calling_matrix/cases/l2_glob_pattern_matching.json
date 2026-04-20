@@ -1,0 +1,36 @@
+{
+  "case_id": "l2_glob_pattern_matching",
+  "level": "L2",
+  "role": "director",
+  "title": "L2 Glob Pattern Matching",
+  "description": "测试 Agent 能否使用正确的 glob 模式查找文件。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "找出所有 tests 目录下的 .py 文件。",
+  "tags": ["l2", "glob", "pattern", "matching"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["glob"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "glob",
+      "first_call_arg_contains": {
+        "pattern": "tests/**/*.py"
+      },
+      "required_output_substrings": ["test_api"]
+    },
+    "non_stream": {
+      "required_tools": ["glob"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,632 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.448749Z",
+  "source_hash": "598e4681974d69ff",
+  "cell_id": "policy.permission",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ConditionType",
+      "description": "条件类型枚举",
+      "defined_in": "polaris/cells/policy/permission/internal/condition_evaluator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PermissionCondition",
+      "description": "权限条件定义",
+      "defined_in": "polaris/cells/policy/permission/internal/condition_evaluator.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "转换为字典表示"
+        },
+        {
+          "name": "from_dict",
+          "doc": "从字典创建条件"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EvaluationContext",
+      "description": "条件评估上下文",
+      "defined_in": "polaris/cells/policy/permission/internal/condition_evaluator.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "转换为字典表示"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ConditionResult",
+      "description": "条件评估结果",
+      "defined_in": "polaris/cells/policy/permission/internal/condition_evaluator.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "转换为字典表示"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PermissionConditionEvaluator",
+      "description": "权限条件评估器",
+      "defined_in": "polaris/cells/policy/permission/internal/condition_evaluator.py",
+      "methods": [
+        {
+          "name": "evaluate",
+          "doc": "评估单个条件"
+        },
+        {
+          "name": "_evaluate_path_condition",
+          "doc": "评估文件路径条件"
+        },
+        {
+          "name": "_evaluate_time_condition",
+          "doc": "评估时间范围条件"
+        },
+        {
+          "name": "_evaluate_resource_condition",
+          "doc": "评估资源限制条件"
+        },
+        {
+          "name": "_evaluate_custom_condition",
+          "doc": "评估自定义条件"
+        },
+        {
+          "name": "register_custom_evaluator",
+          "doc": "Register a custom condition evaluator."
+        },
+        {
+          "name": "evaluate_all",
+          "doc": "评估多个条件"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "evaluate_policy_gate",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/internal/non_llm_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_finops_gate",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/internal/non_llm_gates.py"
+    },
+    {
+      "type": "class",
+      "name": "PermissionAuditPort",
+      "description": "Port for recording permission decisions to the audit evidence store.",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py",
+      "methods": [
+        {
+          "name": "record_decision",
+          "doc": "Record one ALLOW/DENY decision."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PermissionServiceError",
+      "description": "权限服务异常",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DecisionContext",
+      "description": "权限决策上下文",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PermissionService",
+      "description": "统一权限决策服务",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化权限服务"
+        },
+        {
+          "name": "_load_builtin_policies",
+          "doc": "加载内置 RBAC 策略"
+        },
+        {
+          "name": "_emit_audit_decision",
+          "doc": "Write one ALLOW/DENY decision to the audit evidence store."
+        },
+        {
+          "name": "_matches_subject_with_inheritance",
+          "doc": "检查主体是否匹配策略（考虑角色继承）"
+        },
+        {
+          "name": "_evaluate_policy_conditions",
+          "doc": "评估策略条件"
+        },
+        {
+          "name": "_convert_policy_conditions",
+          "doc": "将策略条件字典转换为 PermissionCondition 列表"
+        },
+        {
+          "name": "get_policy",
+          "doc": "获取策略详情"
+        },
+        {
+          "name": "list_policies",
+          "doc": "列出所有策略"
+        },
+        {
+          "name": "evaluate_condition",
+          "doc": "评估单个条件"
+        },
+        {
+          "name": "evaluate_conditions",
+          "doc": "评估多个条件"
+        },
+        {
+          "name": "expand_roles",
+          "doc": "展开角色继承"
+        },
+        {
+          "name": "get_role_hierarchy",
+          "doc": "获取角色层次结构"
+        },
+        {
+          "name": "check_role_cycle",
+          "doc": "检查角色图中是否存在循环"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_permission_service",
+      "description": "工厂函数：创建一个新的 PermissionService 实例。",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_permission_service_sync",
+      "description": "同步获取按 workspace 复用的共享权限服务实例。",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_permission_service",
+      "description": "清空共享权限服务缓存。",
+      "defined_in": "polaris/cells/policy/permission/internal/permission_service.py"
+    },
+    {
+      "type": "class",
+      "name": "PermissionRoleGraph",
+      "description": "权限角色图",
+      "defined_in": "polaris/cells/policy/permission/internal/role_graph.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化角色图"
+        },
+        {
+          "name": "_build_reverse_edges",
+          "doc": "构建反向边映射（child -> parents）"
+        },
+        {
+          "name": "expand_roles",
+          "doc": "展开角色继承"
+        },
+        {
+          "name": "get_immediate_parents",
+          "doc": "获取直接父角色"
+        },
+        {
+          "name": "get_immediate_children",
+          "doc": "获取直接子角色"
+        },
+        {
+          "name": "has_cycle",
+          "doc": "检测角色图中是否存在循环"
+        },
+        {
+          "name": "dfs",
+          "doc": ""
+        },
+        {
+          "name": "get_all_roles",
+          "doc": "获取图中的所有角色"
+        },
+        {
+          "name": "add_role",
+          "doc": "添加新角色"
+        },
+        {
+          "name": "remove_role",
+          "doc": "移除角色"
+        },
+        {
+          "name": "get_role_hierarchy",
+          "doc": "获取角色的完整层次结构"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PolicyContractError",
+      "description": "Raised on HP Protocol contract violations (phase order, missing prerequisites).",
+      "defined_in": "polaris/cells/policy/protocol/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PolicyRunState",
+      "description": "",
+      "defined_in": "polaris/cells/policy/protocol/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PolicyRuntime",
+      "description": "Stateful executor for HP Protocol phases.",
+      "defined_in": "polaris/cells/policy/protocol/public/contracts.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": ""
+        },
+        {
+          "name": "_next_expected_phase",
+          "doc": ""
+        },
+        {
+          "name": "_current_mode",
+          "doc": ""
+        },
+        {
+          "name": "_snapshot_required_for_mode",
+          "doc": ""
+        },
+        {
+          "name": "_append_jsonl",
+          "doc": ""
+        },
+        {
+          "name": "_append_hp_sentinel",
+          "doc": ""
+        },
+        {
+          "name": "_advance_phase",
+          "doc": ""
+        },
+        {
+          "name": "_persist_state",
+          "doc": ""
+        },
+        {
+          "name": "hp_start_run",
+          "doc": ""
+        },
+        {
+          "name": "hp_set_contract",
+          "doc": ""
+        },
+        {
+          "name": "hp_create_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "hp_record_approval",
+          "doc": ""
+        },
+        {
+          "name": "hp_phase_transition",
+          "doc": ""
+        },
+        {
+          "name": "hp_create_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "hp_allow_implementation",
+          "doc": ""
+        },
+        {
+          "name": "hp_append_evidence",
+          "doc": ""
+        },
+        {
+          "name": "hp_run_verify",
+          "doc": ""
+        },
+        {
+          "name": "hp_finalize_run",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HPProtocolPublicError",
+      "description": "Public error raised by the HP Protocol service layer.",
+      "defined_in": "polaris/cells/policy/protocol/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HPProtocolService",
+      "description": "Public facade for HP Protocol state machine access.",
+      "defined_in": "polaris/cells/policy/protocol/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_runtime",
+          "doc": ""
+        },
+        {
+          "name": "start_run",
+          "doc": ""
+        },
+        {
+          "name": "set_contract",
+          "doc": ""
+        },
+        {
+          "name": "create_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "record_approval",
+          "doc": ""
+        },
+        {
+          "name": "create_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "allow_implementation",
+          "doc": ""
+        },
+        {
+          "name": "run_verify",
+          "doc": ""
+        },
+        {
+          "name": "finalize_run",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_write_json",
+      "description": "",
+      "defined_in": "polaris/cells/policy/protocol/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "Role",
+      "description": "Available roles in the Director system.",
+      "defined_in": "polaris/domain/entities/capability.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Capability",
+      "description": "Available capabilities for role-based access control.",
+      "defined_in": "polaris/domain/entities/capability.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleConfig",
+      "description": "Runtime configuration for a role.",
+      "defined_in": "polaris/domain/entities/capability.py",
+      "methods": [
+        {
+          "name": "has_capability",
+          "doc": "Check if this role has a capability."
+        },
+        {
+          "name": "can_use_tool",
+          "doc": "Check if this role can use a specific tool."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CapabilityResult",
+      "description": "Result of a capability check.",
+      "defined_in": "polaris/domain/entities/capability.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Skill",
+      "description": "A registered skill that can be loaded for specific tasks.",
+      "defined_in": "polaris/domain/entities/capability.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CapabilityChecker",
+      "description": "Checks if actions are allowed based on role capabilities.",
+      "defined_in": "polaris/domain/entities/capability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "check_read",
+          "doc": "Check if reading files is allowed."
+        },
+        {
+          "name": "check_write",
+          "doc": "Check if writing files is allowed."
+        },
+        {
+          "name": "check_delete",
+          "doc": "Check if deleting files is allowed."
+        },
+        {
+          "name": "check_create",
+          "doc": "Check if creating files is allowed."
+        },
+        {
+          "name": "check_tool",
+          "doc": "Check if using a tool is allowed."
+        },
+        {
+          "name": "check_command",
+          "doc": "Check if executing a command is allowed."
+        },
+        {
+          "name": "check_test",
+          "doc": "Check if executing a test is allowed."
+        },
+        {
+          "name": "check_patch",
+          "doc": "Check if applying patches is allowed."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_role_config",
+      "description": "Get role configuration with optional policy overrides.",
+      "defined_in": "polaris/domain/entities/capability.py"
+    },
+    {
+      "type": "function",
+      "name": "check_action_allowed",
+      "description": "Check if an action is allowed for a role.",
+      "defined_in": "polaris/domain/entities/capability.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_action",
+      "description": "Convenience function to validate a Director action against the capability matrix.",
+      "defined_in": "polaris/domain/entities/capability.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_capabilities",
+      "description": "获取角色在不同宿主下的能力配置",
+      "defined_in": "polaris/domain/entities/capability.py"
+    },
+    {
+      "type": "class",
+      "name": "RepairPolicy",
+      "description": "Policy for auto-repair behavior.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RiskPolicy",
+      "description": "Policy for risk management.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvidencePolicy",
+      "description": "Policy for evidence collection.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RagPolicy",
+      "description": "Policy for RAG (Retrieval Augmented Generation).",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MemoryPolicy",
+      "description": "Policy for memory management.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BudgetPolicy",
+      "description": "Policy for resource budgets.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QaPolicy",
+      "description": "Policy for QA/verification.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ContextPolicy",
+      "description": "Policy for context management.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BuildLoopPolicy",
+      "description": "Policy for build loop behavior.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IoPolicy",
+      "description": "Policy for I/O behavior.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPolicy",
+      "description": "Policy for factory-mode (v3 schema).",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Policy",
+      "description": "Complete policy configuration for Director.",
+      "defined_in": "polaris/domain/entities/policy.py",
+      "methods": [
+        {
+          "name": "from_dict",
+          "doc": "Create Policy from dictionary."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Convert Policy to dictionary."
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

@@ -1,0 +1,39 @@
+{
+  "case_id": "l5_sequential_dag",
+  "level": "L5",
+  "role": "director",
+  "title": "Sequential DAG Reasoning",
+  "prompt": "把 workspace 根目录下的 config.py 里的 DEBUG = True 改成 False，并说明修改了哪一行。",
+  "description": "验证模型是否遵循先读后写的顺序并完成最小改动。",
+  "workspace_fixture": "base_tooling_workspace",
+  "tags": ["dag", "read_then_write"],
+  "weight": 1.2,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_any_tools": [
+        ["read_file", "repo_read_head", "repo_read_slice"],
+        ["search_replace", "edit_file", "precision_edit", "repo_apply_diff", "append_to_file"]
+      ],
+      "ordered_tool_groups": [
+        ["read_file", "repo_read_head", "repo_read_slice"],
+        ["search_replace", "edit_file", "precision_edit", "repo_apply_diff", "append_to_file"]
+      ],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 2
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["read_file", "repo_read_head", "repo_read_slice"],
+        ["search_replace", "edit_file", "precision_edit", "repo_apply_diff", "append_to_file"]
+      ],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

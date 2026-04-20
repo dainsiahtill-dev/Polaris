@@ -1,0 +1,29 @@
+{
+  "case_id": "l4_zero_tool_irrelevance",
+  "level": "L4",
+  "role": "director",
+  "title": "Zero Tool Handling",
+  "prompt": "你好，我是新来的开发人员，请给我讲讲 Python 异步编程的基本原理。",
+  "description": "验证模型在无工具需求场景下不会过度触发工具。",
+  "workspace_fixture": "base_tooling_workspace",
+  "tags": ["zero_tool", "stability"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "require_no_tool_calls": true,
+      "forbidden_tools": ["search_code", "repo_rg", "execute_command", "read_file"],
+      "required_output_substrings": ["异步"]
+    },
+    "non_stream": {
+      "require_no_tool_calls": true,
+      "forbidden_tools": ["search_code", "repo_rg", "execute_command", "read_file"],
+      "required_output_substrings": ["异步"]
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

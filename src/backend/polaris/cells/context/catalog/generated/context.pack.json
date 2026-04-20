@@ -1,0 +1,31 @@
+{
+  "cell_id": "context.catalog",
+  "purpose": "Build descriptor cache cards from graph assets and expose graph-constrained lookup.",
+  "read_order": [
+    "cell.yaml",
+    "generated/context.pack.json",
+    "public/contracts.py",
+    "service.py"
+  ],
+  "public_contracts": {
+    "queries": [
+      "SearchCellsQueryV1"
+    ],
+    "results": [
+      "SearchCellsResultV1",
+      "CellDescriptorV1"
+    ]
+  },
+  "depends_on": [
+  ],
+  "state_owners": [
+    "workspace/meta/context_catalog/*"
+  ],
+  "effects_allowed": [
+    "fs.read:docs/graph/**",
+    "fs.write:workspace/meta/context_catalog/*"
+  ],
+  "owned_paths": [
+    "polaris/cells/context/catalog/**"
+  ]
+}

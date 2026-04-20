@@ -1,0 +1,195 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.041055Z",
+  "source_hash": "f605f37dfb780014",
+  "cell_id": "finops.budget_guard",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "TokenEstimate",
+      "description": "Token estimate result.",
+      "defined_in": "polaris/domain/services/token_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BudgetStatus",
+      "description": "Current budget status.",
+      "defined_in": "polaris/domain/services/token_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TokenService",
+      "description": "Service for token estimation and budget management.",
+      "defined_in": "polaris/domain/services/token_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize token service."
+        },
+        {
+          "name": "estimate_tokens",
+          "doc": "Estimate token count for text."
+        },
+        {
+          "name": "estimate_message_tokens",
+          "doc": "Estimate tokens for a message."
+        },
+        {
+          "name": "should_truncate_output",
+          "doc": "Determine if output should be truncated."
+        },
+        {
+          "name": "truncate_output",
+          "doc": "Truncate output to maximum size."
+        },
+        {
+          "name": "create_preview",
+          "doc": "Create a preview of output."
+        },
+        {
+          "name": "record_usage",
+          "doc": "Record token usage."
+        },
+        {
+          "name": "get_budget_status",
+          "doc": "Get current budget status."
+        },
+        {
+          "name": "check_budget",
+          "doc": "Check if estimated tokens fit within budget."
+        },
+        {
+          "name": "_persist_state",
+          "doc": "Persist token usage state via KernelOne FS."
+        },
+        {
+          "name": "_load_state",
+          "doc": "Load persisted state via KernelOne FS."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_default_adapter",
+      "description": "Lazily resolve the default KFS adapter at call time, not import time.",
+      "defined_in": "polaris/domain/services/token_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_token_service",
+      "description": "Get or create global token service.",
+      "defined_in": "polaris/domain/services/token_service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_token_service",
+      "description": "Reset global token service (for testing).",
+      "defined_in": "polaris/domain/services/token_service.py"
+    },
+    {
+      "type": "function",
+      "name": "estimate_tokens",
+      "description": "Quick token estimation (global function).",
+      "defined_in": "polaris/domain/services/token_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_float",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_clamp",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_task_intent",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_complexity_factor",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_adaptive_budget",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_float",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_backend",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "function",
+      "name": "estimate_tokens_for_text",
+      "description": "Estimate tokens with detailed metadata.",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "function",
+      "name": "estimate_tokens_from_chars",
+      "description": "Estimate tokens from character count with calibration.",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "class",
+      "name": "UsageContext",
+      "description": "",
+      "defined_in": "polaris/kernelone/runtime/usage_metrics.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TokenUsage",
+      "description": "",
+      "defined_in": "polaris/kernelone/runtime/usage_metrics.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "track_usage",
+      "description": "",
+      "defined_in": "polaris/kernelone/runtime/usage_metrics.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

@@ -1,0 +1,16 @@
+{
+  "cell_id": "runtime.execution_broker",
+  "version": 1,
+  "summary": "Cell-layer broker for unified process/thread/runtime execution on top of KernelOne ExecutionFacade.",
+  "owned_paths": [
+    "polaris/cells/runtime/execution_broker/**"
+  ],
+  "public_contract_modules": [
+    "polaris.cells.runtime.execution_broker.public.contracts"
+  ],
+  "dependencies": [
+    "runtime.state_owner",
+    "policy.workspace_guard",
+    "audit.evidence"
+  ]
+}

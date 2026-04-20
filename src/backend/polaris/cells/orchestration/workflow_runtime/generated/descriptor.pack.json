@@ -1,0 +1,2121 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.676505Z",
+  "source_hash": "9c8df841f4face1a",
+  "cell_id": "orchestration.workflow_runtime",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "WorkflowConfig",
+      "description": "Runtime configuration for self-hosted workflow runtime.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/config.py",
+      "methods": [
+        {
+          "name": "from_env",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_parse_bool",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/config.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/config.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_float",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/config.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_orchestration_runtime",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/config.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkflowAPI",
+      "description": "Workflow API 适配器 - 兼容 Workflow 装饰器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py",
+      "methods": [
+        {
+          "name": "defn",
+          "doc": "@workflow.defn 装饰器 - 定义工作流类"
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "run",
+          "doc": "@workflow.run 装饰器 - 定义工作流入口"
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "query",
+          "doc": "@workflow.query 装饰器 - 定义查询方法"
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "signal",
+          "doc": "@workflow.signal 装饰器 - 定义信号处理方法"
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ActivityAPI",
+      "description": "Activity API 适配器 - 兼容 Workflow 装饰器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py",
+      "methods": [
+        {
+          "name": "defn",
+          "doc": "@activity.defn 装饰器 - 定义 Activity"
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_api",
+      "description": "获取 Workflow API（兼容 Workflow）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py"
+    },
+    {
+      "type": "function",
+      "name": "get_activity_api",
+      "description": "获取 Activity API（兼容 Workflow）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py"
+    },
+    {
+      "type": "function",
+      "name": "is_workflow_run_method",
+      "description": "检查函数是否为工作流入口方法",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py"
+    },
+    {
+      "type": "function",
+      "name": "is_workflow_query_method",
+      "description": "检查函数是否为查询方法",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py"
+    },
+    {
+      "type": "function",
+      "name": "is_workflow_signal_method",
+      "description": "检查函数是否为信号处理方法",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_method_metadata",
+      "description": "获取工作流方法元数据",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkflowContext",
+      "description": "Workflow execution context bound to one coroutine.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py",
+      "methods": [
+        {
+          "name": "set_query",
+          "doc": ""
+        },
+        {
+          "name": "set_signal",
+          "doc": ""
+        },
+        {
+          "name": "record_signal",
+          "doc": ""
+        },
+        {
+          "name": "info",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EmbeddedWorkflowAPI",
+      "description": "Embedded Workflow API - 兼容 Workflow workflow 模块。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py",
+      "methods": [
+        {
+          "name": "defn",
+          "doc": "`@workflow.defn` 装饰器。"
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "run",
+          "doc": "`@workflow.run` decorator."
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "query",
+          "doc": "`@workflow.query` decorator."
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "signal",
+          "doc": "`@workflow.signal` decorator."
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "now",
+          "doc": "返回当前 UTC 时间。"
+        },
+        {
+          "name": "sleep",
+          "doc": "异步 sleep。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EmbeddedActivityAPI",
+      "description": "Embedded Activity API - 兼容 Workflow activity 模块。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py",
+      "methods": [
+        {
+          "name": "defn",
+          "doc": "`@activity.defn` 装饰器。"
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_context",
+      "description": "Return the current workflow execution context.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "set_workflow_context",
+      "description": "Bind context to current coroutine and return reset token.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_workflow_context",
+      "description": "Reset workflow context to previous value.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_snake_case",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_from_value",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_convert_for_annotation",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_forward_annotation",
+      "description": "Resolve a forward-reference annotation string without eval().",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_run_args",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_marker_map",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_pick_run_method_name",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_callable_param_names",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_accepts_var_kwargs",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_activity_name",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_child_workflow_name",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_activity_input",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_lookup_activity_handler",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "_unwrap_workflow_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "get_embedded_workflow_api",
+      "description": "获取 Embedded Workflow API。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "get_embedded_activity_api",
+      "description": "获取 Embedded Activity API。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_api",
+      "description": "获取自研 Workflow API。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "function",
+      "name": "get_activity_api",
+      "description": "获取自研 Workflow Activity API。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    },
+    {
+      "type": "class",
+      "name": "EventLevel",
+      "description": "Event severity levels.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EventType",
+      "description": "Orchestration event types.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationEvent",
+      "description": "Structured orchestration event.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary."
+        },
+        {
+          "name": "to_json",
+          "doc": "Convert to JSON string."
+        },
+        {
+          "name": "spawned",
+          "doc": "Create a spawned event."
+        },
+        {
+          "name": "completed",
+          "doc": "Create a completed event."
+        },
+        {
+          "name": "failed",
+          "doc": "Create a failed event."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EventStream",
+      "description": "Event stream for orchestration events.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize event stream."
+        },
+        {
+          "name": "subscribe",
+          "doc": "Subscribe to events."
+        },
+        {
+          "name": "unsubscribe",
+          "doc": "Unsubscribe from events."
+        },
+        {
+          "name": "publish",
+          "doc": "Publish an event."
+        },
+        {
+          "name": "get_events",
+          "doc": "Get filtered events from buffer."
+        },
+        {
+          "name": "_persist_event",
+          "doc": "Persist event to log file."
+        },
+        {
+          "name": "create_span",
+          "doc": "Create a new event span."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EventSpan",
+      "description": "Event span for grouping related events.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/event_stream.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize event span."
+        },
+        {
+          "name": "_generate_trace_id",
+          "doc": "Generate a trace ID."
+        },
+        {
+          "name": "_generate_span_id",
+          "doc": "Generate a span ID."
+        },
+        {
+          "name": "emit",
+          "doc": "Emit an event within this span."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ExecutionEvent",
+      "description": "Structured execution event stored in workflow query history.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskExecutionStatus",
+      "description": "Serializable task status used by Workflow workflow queries.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskContract",
+      "description": "Task contract passed into Workflow child workflows.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMWorkflowInput",
+      "description": "Input payload for the top-level PM Workflow workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "workflow_id",
+          "doc": ""
+        },
+        {
+          "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "payload_tasks",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMWorkflowResult",
+      "description": "Result produced by the top-level PM workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorWorkflowInput",
+      "description": "Input payload for the Director workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorWorkflowResult",
+      "description": "Aggregated Director workflow result.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorTaskInput",
+      "description": "Input payload for one Director child workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorTaskResult",
+      "description": "Result from one Director child workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QAWorkflowInput",
+      "description": "Input payload for the QA workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QAWorkflowResult",
+      "description": "QA verdict emitted by the QA workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskFailureRecord",
+      "description": "Record of a task failure with classification for recovery decisions.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "utc_now_iso",
+      "description": "Return an explicit UTC timestamp for workflow history records.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_token",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_workflow_id",
+      "description": "Return the canonical Workflow workflow id for the PM parent workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "director_workflow_id",
+      "description": "Return the canonical Workflow workflow id for the Director child workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "qa_workflow_id",
+      "description": "Return the canonical Workflow workflow id for the QA child workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_execution_mode",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
+    },
+    {
+      "type": "class",
+      "name": "UIEventType",
+      "description": "UI-facing event types for real-time status panels.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ServiceMetrics",
+      "description": "Metrics for a single service.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py",
+      "methods": [
+        {
+          "name": "avg_runtime_ms",
+          "doc": "Calculate average runtime."
+        },
+        {
+          "name": "success_rate",
+          "doc": "Calculate success rate."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UIEventBridge",
+      "description": "Bridge orchestration events to UI/WebSocket consumers.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize UI event bridge."
+        },
+        {
+          "name": "add_ui_handler",
+          "doc": "Add a UI event handler."
+        },
+        {
+          "name": "remove_ui_handler",
+          "doc": "Remove a UI event handler."
+        },
+        {
+          "name": "_on_event",
+          "doc": "Process orchestration event and emit UI events."
+        },
+        {
+          "name": "_transform_event",
+          "doc": "Transform orchestration event to UI event."
+        },
+        {
+          "name": "_emit_to_ui",
+          "doc": "Emit event to all UI handlers."
+        },
+        {
+          "name": "emit_backend_started",
+          "doc": "Emit backend_started event for Electron integration."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MetricsCollector",
+      "description": "Collect and aggregate runtime metrics from EventStream.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize metrics collector."
+        },
+        {
+          "name": "_on_event",
+          "doc": "Process event for metrics."
+        },
+        {
+          "name": "get_metrics",
+          "doc": "Get metrics for a service."
+        },
+        {
+          "name": "get_all_metrics",
+          "doc": "Get all collected metrics."
+        },
+        {
+          "name": "get_summary",
+          "doc": "Get summary statistics."
+        },
+        {
+          "name": "export_json",
+          "doc": "Export metrics to JSON file."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HealthMonitor",
+      "description": "Monitor health of services and backend.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize health monitor."
+        },
+        {
+          "name": "_on_event",
+          "doc": "Process event for health status."
+        },
+        {
+          "name": "get_health_status",
+          "doc": "Get current health status."
+        },
+        {
+          "name": "is_backend_ready",
+          "doc": "Check if backend is ready."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StructuredLogger",
+      "description": "Structured JSON logger for orchestration events.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize structured logger."
+        },
+        {
+          "name": "_on_event",
+          "doc": "Process event for logging."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_observability_stack",
+      "description": "Create complete observability stack.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/observability.py"
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationService",
+      "description": "统一编排服务接口",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationEventPublisher",
+      "description": "编排事件发布端口",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationRepository",
+      "description": "编排存储库端口",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleOrchestrationAdapter",
+      "description": "角色编排适配器端口",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": "角色标识"
+        },
+        {
+          "name": "get_capabilities",
+          "doc": "获取角色能力列表"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleAdapterFactoryPort",
+      "description": "Port for registering role adapters with the workflow runtime.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ports.py",
+      "methods": [
+        {
+          "name": "register",
+          "doc": "Register a role adapter for the given role_id."
+        },
+        {
+          "name": "get",
+          "doc": "Retrieve the registered adapter for a role_id."
+        },
+        {
+          "name": "list_registered",
+          "doc": "List all registered role IDs."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LauncherError",
+      "description": "Exception raised when process launch fails.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProcessLauncher",
+      "description": "Unified process launcher for PM and Director.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the process launcher."
+        },
+        {
+          "name": "_require_broker",
+          "doc": ""
+        },
+        {
+          "name": "_build_utf8_env",
+          "doc": "Build environment dict with UTF-8 enforcement."
+        },
+        {
+          "name": "launch_pm",
+          "doc": "Build a PM launch request."
+        },
+        {
+          "name": "launch_director",
+          "doc": "Build a Director launch request."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProcessStatus",
+      "description": "Status of a managed process.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_runner_port.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProcessHandle",
+      "description": "Handle to a managed process.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_runner_port.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProcessRunnerPort",
+      "description": "Port for running subprocesses.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_runner_port.py",
+      "methods": [
+        {
+          "name": "list_active",
+          "doc": "List all active processes managed by this runner."
+        },
+        {
+          "name": "get_logs",
+          "doc": "Get recent log lines for a process."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProcessRunnerError",
+      "description": "Exception raised when process operations fail.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/process_runner_port.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowResult",
+      "description": "工作流执行结果。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeBackendAdapter",
+      "description": "运行时后端适配器。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_runtime_db_path",
+          "doc": ""
+        },
+        {
+          "name": "_require_runtime",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_run_sync",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "submit_pm_workflow_sync",
+      "description": "提交 PM 工作流（同步接口）。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "describe_workflow_sync",
+      "description": "查询工作流（同步接口）。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "query_workflow_sync",
+      "description": "Query 工作流（同步接口）。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationMode",
+      "description": "编排执行模式",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunStatus",
+      "description": "统一运行状态枚举 - 消除 PM/Director 状态漂移",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "is_terminal",
+          "doc": "是否为终态"
+        },
+        {
+          "name": "can_retry",
+          "doc": "是否允许重试"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskPhase",
+      "description": "任务执行阶段（UI 进度追踪用）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleEntrySpec",
+      "description": "角色条目规格",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "零信任校验"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PipelineTask",
+      "description": "流水线任务定义",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "零信任校验"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PipelineSpec",
+      "description": "流水线规格",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "零信任校验 + 依赖图验证"
+        },
+        {
+          "name": "_has_cycle",
+          "doc": "检测依赖图中是否存在环"
+        },
+        {
+          "name": "dfs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationRunRequest",
+      "description": "统一编排运行请求",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "零信任校验"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FileChangeStats",
+      "description": "文件变更统计（UI 展示用）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskSnapshot",
+      "description": "任务状态快照（统一字段，消除漂移）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationSnapshot",
+      "description": "统一编排运行快照",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationSignal",
+      "description": "编排控制信号",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SignalRequest",
+      "description": "信号请求",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CompatibilityMapper",
+      "description": "兼容层映射器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+      "methods": [
+        {
+          "name": "pm_mode_to_orchestration",
+          "doc": "PM 模式映射"
+        },
+        {
+          "name": "director_mode_to_orchestration",
+          "doc": "Director 模式映射"
+        },
+        {
+          "name": "legacy_status_to_unified",
+          "doc": "旧状态映射到统一状态"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ActivityExecutionContext",
+      "description": "Minimal execution context passed into activity adapters.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ActivityExecutionResult",
+      "description": "Serializable activity result payload.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/base.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "register_activity",
+      "description": "Register an activity implementation for future worker bootstrap.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/base.py"
+    },
+    {
+      "type": "function",
+      "name": "_decorator",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/base.py"
+    },
+    {
+      "type": "function",
+      "name": "get_registered_activity",
+      "description": "Return a registered activity implementation by its public name.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/base.py"
+    },
+    {
+      "type": "function",
+      "name": "list_registered_activities",
+      "description": "Return a copy of all registered activity handlers.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/base.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_dict",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_phase_from_name",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_context",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_context",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_director_execution",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_no_director_mode",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_runtime_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_command",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_unit_command",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "class",
+      "name": "ActivityDefinition",
+      "description": "Activity 定义",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/activity_registry.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ActivityRegistry",
+      "description": "Activity 注册表",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/activity_registry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "注册 Activity"
+        },
+        {
+          "name": "get",
+          "doc": "获取 Activity 定义"
+        },
+        {
+          "name": "list_activities",
+          "doc": "列出所有 Activity"
+        },
+        {
+          "name": "has_activity",
+          "doc": "检查 Activity 是否存在"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_activity_registry",
+      "description": "获取全局 Activity 注册表",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/activity_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "register_activity",
+      "description": "Activity 注册装饰器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/activity_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "decorator",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/activity_registry.py"
+    },
+    {
+      "type": "class",
+      "name": "RuntimeFactory",
+      "description": "运行时工厂 - 仅支持自研 workflow 内核。",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py",
+      "methods": [
+        {
+          "name": "get_runtime_type",
+          "doc": "Get runtime type."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowDefinition",
+      "description": "Workflow 定义",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/workflow_registry.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRegistry",
+      "description": "Workflow 注册表",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/workflow_registry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "注册 Workflow"
+        },
+        {
+          "name": "get",
+          "doc": "获取 Workflow 定义"
+        },
+        {
+          "name": "list_workflows",
+          "doc": "列出所有 Workflow"
+        },
+        {
+          "name": "has_workflow",
+          "doc": "检查 Workflow 是否存在"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_registry",
+      "description": "获取全局 Workflow 注册表",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/workflow_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "register_workflow",
+      "description": "Workflow 注册装饰器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/workflow_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "decorator",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/workflow_registry.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorTaskWorkflow",
+      "description": "Drive the 4-phase Director execution contract for one task.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_activity_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_config",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_file_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_progress_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorWorkflow",
+      "description": "Execute Director tasks as Workflow child workflows.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_extract_ready_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_task_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_mode",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_resident_decision_safe",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
+    },
+    {
+      "type": "class",
+      "name": "PipelineTaskState",
+      "description": "流水线任务状态",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PipelineWorkflowInput",
+      "description": "通用流水线工作流输入",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PipelineWorkflowResult",
+      "description": "通用流水线工作流结果",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "GenericPipelineWorkflowBase",
+      "description": "通用流水线工作流基类",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_init_task_states",
+          "doc": "初始化任务状态"
+        },
+        {
+          "name": "_find_ready_tasks",
+          "doc": "找到依赖已满足的就绪任务"
+        },
+        {
+          "name": "_build_result",
+          "doc": "构建结果"
+        },
+        {
+          "name": "_record_event",
+          "doc": "记录事件（基础实现，可由子类覆盖）"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "GenericPipelineWorkflow",
+      "description": "使用 workflow API 装饰的通用流水线工作流",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PMWorkflow",
+      "description": "PM Workflow 兼容包装器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorWorkflow",
+      "description": "Director Workflow 兼容包装器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QAWorkflow",
+      "description": "QA Workflow 兼容包装器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_api",
+      "description": "获取工作流 API 实例.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/generic_pipeline_workflow.py"
+    },
+    {
+      "type": "class",
+      "name": "PMWorkflow",
+      "description": "Coordinate the PM, Director, and QA Workflow workflows.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_extract_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_validation_ok",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_outcome",
+      "description": "Extract QA outcome from QAWorkflowResult.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_execution_mode",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_resident_decision_safe",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "class",
+      "name": "QAWorkflow",
+      "description": "Run unit and integration QA checks after Director completes.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/qa_workflow.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_result_success",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/qa_workflow.py"
+    },
+    {
+      "type": "class",
+      "name": "ServiceState",
+      "description": "Service lifecycle states.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ServiceDefinition",
+      "description": "Service specification for orchestration.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
+      "methods": [
+        {
+          "name": "to_launch_request",
+          "doc": "Convert to ProcessLaunchRequest."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ServiceHandle",
+      "description": "Handle to a managed service.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
+      "methods": [
+        {
+          "name": "is_running",
+          "doc": "Check if service is running."
+        },
+        {
+          "name": "is_completed",
+          "doc": "Check if service has completed."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RuntimeOrchestrator",
+      "description": "Unified runtime orchestrator for PM and Director.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_orchestrator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize runtime orchestrator."
+        },
+        {
+          "name": "list_active",
+          "doc": "List all active services."
+        },
+        {
+          "name": "list_all",
+          "doc": "List all services."
+        },
+        {
+          "name": "_emit_event",
+          "doc": "Emit an orchestration event."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowQueryState",
+      "description": "Reusable query/state helpers shared by Workflow workflows.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_queries.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_record_event",
+          "doc": ""
+        },
+        {
+          "name": "_set_task_status",
+          "doc": ""
+        },
+        {
+          "name": "get_task_status",
+          "doc": ""
+        },
+        {
+          "name": "get_execution_history",
+          "doc": ""
+        },
+        {
+          "name": "get_runtime_snapshot",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskTraceEvent",
+      "description": "任务追踪事件.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/task_trace.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskTraceBuilder",
+      "description": "任务追踪事件构建器.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/task_trace.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "build",
+          "doc": "构建任务追踪事件."
+        },
+        {
+          "name": "to_ws_payload",
+          "doc": "转换为 WebSocket payload 格式."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "sanitize_step_detail",
+      "description": "清理步骤详情，处理 UTF-8 并截断.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/task_trace.py"
+    },
+    {
+      "type": "class",
+      "name": "UIPhase",
+      "description": "UI 展示阶段",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ui_state_contract.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UITaskStatus",
+      "description": "UI 任务状态",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ui_state_contract.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UIFileChangeMetrics",
+      "description": "UI 文件变更指标",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ui_state_contract.py",
+      "methods": [
+        {
+          "name": "to_display_string",
+          "doc": "转换为展示字符串"
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UITaskItem",
+      "description": "UI 任务项",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ui_state_contract.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UIOrchestrationState",
+      "description": "UI 编排状态",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ui_state_contract.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UIEvent",
+      "description": "UI 事件",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ui_state_contract.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UIStateConverter",
+      "description": "UI 状态转换器",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/ui_state_contract.py",
+      "methods": [
+        {
+          "name": "from_orchestration_snapshot",
+          "doc": "从编排快照转换"
+        },
+        {
+          "name": "calculate_latency",
+          "doc": "计算状态延迟（毫秒）"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "InMemoryOrchestrationRepository",
+      "description": "内存存储实现（用于开发和测试）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LoggingEventPublisher",
+      "description": "日志事件发布实现",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UnifiedOrchestrationService",
+      "description": "统一编排服务实现",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register_role_adapter",
+          "doc": "注册角色适配器"
+        },
+        {
+          "name": "set_role_adapter_factory",
+          "doc": "Set the application-owned role adapter factory."
+        },
+        {
+          "name": "_coerce_positive_int",
+          "doc": "将输入转换为正整数，失败时返回默认值"
+        },
+        {
+          "name": "_canonicalize_workflow_request",
+          "doc": "将 role_entries 规范化为 pipeline_spec（Workflow 模式）"
+        },
+        {
+          "name": "_ensure_role_adapters",
+          "doc": "确保请求涉及的角色都有适配器"
+        },
+        {
+          "name": "_create_initial_snapshot",
+          "doc": "创建初始快照"
+        },
+        {
+          "name": "_run_role_adapter_in_worker",
+          "doc": "Run adapter execution in an isolated event loop on a worker thread."
+        },
+        {
+          "name": "_find_ready_tasks",
+          "doc": "找到依赖已满足的就绪任务"
+        },
+        {
+          "name": "_categorize_error",
+          "doc": "错误分类"
+        },
+        {
+          "name": "_trigger_run_archive",
+          "doc": "Trigger async archiving of a runtime run on terminal state."
+        },
+        {
+          "name": "_cleanup_run",
+          "doc": "清理运行资源"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationError",
+      "description": "编排错误基类",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidationError",
+      "description": "校验错误",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "NotFoundError",
+      "description": "未找到错误",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InvalidStateError",
+      "description": "无效状态错误",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InvalidSignalError",
+      "description": "无效信号错误",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "configure_orchestration_role_adapter_factory",
+      "description": "Configure the application-owned role adapter factory for the singleton.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_orchestration_service",
+      "description": "重置服务（测试用）",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkflowUnavailableError",
+      "description": "Raised when runtime APIs are not available in the current environment.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowSubmissionResult",
+      "description": "Result for scheduling a workflow.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_run_sync",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_workflow_input",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_api",
+      "description": "Return workflow API.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "get_activity_api",
+      "description": "Return activity API.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "submit_pm_workflow_sync",
+      "description": "Submit PM workflow through self-hosted runtime with Workflow-compatible result.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "wait_for_workflow_completion_sync",
+      "description": "Wait for workflow to reach a terminal status.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "describe_workflow_sync",
+      "description": "Describe workflow with compatibility payload.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "query_workflow_sync",
+      "description": "Query workflow with compatibility payload.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "cancel_workflow_sync",
+      "description": "Cancel a workflow with a compatibility payload.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "start_adapter",
+      "description": "Start global adapter for compatibility workflows.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "function",
+      "name": "stop_adapter",
+      "description": "Stop global adapter for compatibility workflows.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/workflow_client.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkflowEvent",
+      "description": "Immutable workflow event record.",
+      "defined_in": "polaris/infrastructure/db/repositories/workflow_runtime_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowTaskState",
+      "description": "Task-level execution snapshot.",
+      "defined_in": "polaris/infrastructure/db/repositories/workflow_runtime_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowExecution",
+      "description": "Workflow execution snapshot.",
+      "defined_in": "polaris/infrastructure/db/repositories/workflow_runtime_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SqliteRuntimeStore",
+      "description": "SQLite event-sourced runtime persistence.",
+      "defined_in": "polaris/infrastructure/db/repositories/workflow_runtime_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_write_lock",
+          "doc": "获取 workflow_id 对应的写入锁。"
+        },
+        {
+          "name": "_get_conn",
+          "doc": ""
+        },
+        {
+          "name": "_now",
+          "doc": ""
+        },
+        {
+          "name": "_loads_json",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_column",
+          "doc": ""
+        },
+        {
+          "name": "_init_schema",
+          "doc": ""
+        },
+        {
+          "name": "init_schema",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_validate_sql_identifier",
+      "description": "验证 SQL 标识符（表名、列名）以防止注入攻击.",
+      "defined_in": "polaris/infrastructure/db/repositories/workflow_runtime_store.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

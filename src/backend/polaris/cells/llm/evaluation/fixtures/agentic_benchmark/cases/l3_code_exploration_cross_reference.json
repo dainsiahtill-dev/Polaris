@@ -1,0 +1,38 @@
+{
+  "case_id": "l3_code_exploration_cross_reference",
+  "role": "director",
+  "title": "L3 Cross-Reference Exploration",
+  "description": "在整个项目中找出所有调用 normalize_name 函数的地方，并列出每个调用所在的文件名和行号。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在整个项目中找出所有调用 normalize_name 函数的地方，并列出每个调用所在的文件名和行号。",
+  "tags": [
+    "l3",
+    "exploration",
+    "cross-reference",
+    "search"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "normalize_name",
+        "description": "搜索 normalize_name 函数调用"
+      }
+    ],
+    "required_output_substrings": [
+      ":",
+      "normalize_name"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

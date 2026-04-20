@@ -1,0 +1,64 @@
+card_id: "vc-20260326-roles-kernel-stream-resilience-closure"
+bug_summary: >
+  roles.kernel 的流式调用在断流恢复、事件闭环审计、取消传播和观测指标上存在组合风险：
+  断流后可能重复输出，lifecycle 可能漏闭环，且缺少可量化的 SLO 字段。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/llm_caller.py + events.py"
+  method: "call_stream + LLMEventEmitter.emit"
+  symptom: "流式长链路在抖动/取消场景下不够稳态，审计与观测难以对账。"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设 call_stream 需要重连策略与幂等去重，否则断流重试会重复输出。"
+    status: verified_true
+    evidence: >
+      原流式实现遇到 error 会直接返回，未进行 reconnect，也未处理 replay chunk/tool_call 幂等。
+  - id: "A2"
+    statement: "我假设 run_id 级 lifecycle 闭环需在事件层统一追踪。"
+    status: verified_true
+    evidence: >
+      原 events emitter 仅存储历史，不维护 CALL_START 与 CALL_END/CALL_ERROR 配对状态。
+  - id: "A3"
+    statement: "我假设取消与背压需要显式指标以支撑生产观测。"
+    status: verified_true
+    evidence: >
+      原流式路径未统计 backpressure wait，CALL_END/ERROR 缺少流式 SLO 关键字段。
+
+pre_mortem:
+  failure_point: >
+    若重连去重算法过于激进，可能误删新内容；若过于保守，可能仍出现重复输出。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/llm_caller.py"
+    - "polaris/cells/roles/kernel/internal/events.py"
+    - "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+    - "polaris/cells/roles/kernel/tests/test_llm_events_lifecycle.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "重连 + replay 去重 + cancel + event limit + slo 字段"
+      expected: "68 passed，新增场景均通过。"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_llm_events_lifecycle.py"
+      description: "lifecycle start/end/close-without-start/reopen-without-close"
+      expected: "4 passed，异常计数与 open run 快照正确。"
+      status: new
+  integration_tests:
+    - description: "stream tool loop 回归"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      status: existing_pass
+  manual_check:
+    - "确认 CALL_RETRY 事件存在并包含 reconnect 决策信息。"
+    - "确认 CALL_END/CALL_ERROR metadata 含 stream SLO 字段。"
+    - "确认 lifecycle 快照可列出未闭环 run。"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-03-26"
+  verified_by: "codex"
+  verified_at: "2026-03-26"

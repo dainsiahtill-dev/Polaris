@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-accel.local/schema/mcp_context_response/v1",
+  "title": "AgentAccel MCP Context Response",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "out",
+    "top_files",
+    "snippets",
+    "verify_plan",
+    "estimated_tokens",
+    "estimated_source_tokens",
+    "compression_ratio",
+    "token_reduction_ratio",
+    "warnings",
+    "constraint_mode"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "minLength": 1 },
+    "out": { "type": "string", "minLength": 1 },
+    "out_meta": { "type": "string" },
+    "top_files": { "type": "integer", "minimum": 0 },
+    "snippets": { "type": "integer", "minimum": 0 },
+    "verify_plan": {
+      "type": "object",
+      "required": ["target_tests", "target_checks"],
+      "properties": {
+        "target_tests": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "target_checks": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "selected_tests_count": { "type": "integer", "minimum": 0 },
+    "selected_checks_count": { "type": "integer", "minimum": 0 },
+    "context_chars": { "type": "integer", "minimum": 0 },
+    "source_chars": { "type": "integer", "minimum": 0 },
+    "estimated_tokens": { "type": "integer", "minimum": 0 },
+    "estimated_source_tokens": { "type": "integer", "minimum": 0 },
+    "estimated_changed_files_tokens": { "type": "integer", "minimum": 0 },
+    "estimated_snippets_only_tokens": { "type": "integer", "minimum": 0 },
+    "compression_ratio": { "type": "number", "minimum": 0 },
+    "token_reduction_ratio": { "type": "number", "minimum": 0 },
+    "token_reduction": {
+      "type": "object",
+      "properties": {
+        "vs_full_index": { "type": "object" },
+        "vs_changed_files": { "type": "object" },
+        "vs_snippets_only": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "token_estimator": { "type": "object" },
+    "budget_effective": { "type": "object" },
+    "budget_source": { "type": "string" },
+    "budget_preset": { "type": "string" },
+    "budget_reason": { "type": "string" },
+    "changed_files_used": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "changed_files_source": { "type": "string" },
+    "changed_files_count": { "type": "integer", "minimum": 0 },
+    "changed_files_detection": { "type": "object" },
+    "fallback_confidence": { "type": "number", "minimum": 0 },
+    "strict_changed_files": { "type": "boolean" },
+    "strict_scope_filtered_top_files": { "type": "integer", "minimum": 0 },
+    "strict_scope_filtered_snippets": { "type": "integer", "minimum": 0 },
+    "strict_scope_injected_top_files": { "type": "integer", "minimum": 0 },
+    "strict_scope_injected_snippets": { "type": "integer", "minimum": 0 },
+    "semantic_cache_enabled": { "type": "boolean" },
+    "semantic_cache_hit": { "type": "boolean" },
+    "semantic_cache_mode_used": { "type": "string" },
+    "semantic_cache_similarity": { "type": "number", "minimum": 0 },
+    "semantic_cache_reason": { "type": "string" },
+    "semantic_cache_invalidation_reason": { "type": "string" },
+    "semantic_cache_safety": { "type": "object" },
+    "compression_rules_applied": { "type": "object" },
+    "compression_saved_chars": { "type": "integer", "minimum": 0 },
+    "constraint_mode": { "type": "string", "enum": ["off", "warn", "strict"] },
+    "constraint_repair_count": { "type": "integer", "minimum": 0 },
+    "constraint_warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "pack": { "type": "object" }
+  },
+  "additionalProperties": true
+}

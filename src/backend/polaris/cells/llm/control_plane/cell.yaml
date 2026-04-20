@@ -1,0 +1,63 @@
+id: llm.control_plane
+title: LLM Control Plane
+kind: capability
+visibility: public
+stateful: true
+owner: llm
+purpose: 'Composite LLM capability boundary covering configuration, provider runtime,
+  evaluation, and tool invocation orchestration.
+
+  '
+current_modules:
+- polaris.cells.llm.control_plane.public.contracts
+tags:
+- composite
+owned_paths:
+- polaris/cells/llm/control_plane/internal/**
+- polaris/delivery/http/routers/llm.py
+- polaris/delivery/http/routers/providers.py
+- polaris/delivery/http/routers/interview.py
+- polaris/delivery/http/routers/tests.py
+- polaris/delivery/http/routers/llm_models.py
+public_contracts:
+  modules:
+  - polaris.cells.llm.control_plane.public.contracts
+  commands:
+  - SaveLlmConfigCommandV1
+  - InvokeLlmRoleCommandV1
+  queries:
+  - GetLlmConfigQueryV1
+  - GetLlmRuntimeStatusQueryV1
+  events:
+  - LlmConfigChangedEventV1
+  - LlmInvocationCompletedEventV1
+  results:
+  - LlmConfigResultV1
+  - LlmInvocationResultV1
+  errors:
+  - LlmControlPlaneErrorV1
+depends_on:
+- policy.workspace_guard
+- audit.evidence
+- runtime.state_owner
+- runtime.execution_broker
+- context.engine
+- roles.runtime
+subgraphs: []
+state_owners:
+- config/llm/*
+effects_allowed:
+- fs.read:config/llm/*
+- fs.write:config/llm/*
+- fs.read:workspace/.polaris/**
+- network.http_outbound:llm/*
+- process.spawn:llm/*
+verification:
+  tests:
+  - tests/test_llm_phase0_regression.py
+  - polaris/kernelone/llm/toolkit/tests/test_integration.py
+  - polaris/kernelone/llm/toolkit/tests/test_parsers.py
+  gaps:
+  - Child-cell split for config/evaluation/provider_runtime is not completed.
+  smoke_commands: []
+generated_artifacts: []

@@ -1,0 +1,57 @@
+id: archive.run_archive
+title: Run Archive
+kind: capability
+visibility: public
+stateful: true
+owner: archive
+purpose: 'Archive terminal runtime run artifacts into workspace history run records
+  and run index entries.
+
+  '
+current_modules:
+- polaris.cells.archive.run_archive.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/archive/run_archive/internal/archive_hook.py
+- polaris/cells/archive/run_archive/internal/history_archive_service.py
+- polaris/cells/archive/run_archive/internal/history_manifest_repository.py
+public_contracts:
+  modules:
+  - polaris.cells.archive.run_archive.public.contracts
+  commands:
+  - ArchiveRunCommandV1
+  queries:
+  - ListHistoryRunsQueryV1
+  - GetArchiveManifestQueryV1
+  events:
+  - RunArchivedEventV1
+  results:
+  - ArchiveManifestV1
+  - HistoryRunsResultV1
+  errors:
+  - RunArchiveErrorV1
+depends_on:
+- runtime.state_owner
+- policy.workspace_guard
+- audit.evidence
+- storage.layout
+- archive.factory_archive
+- archive.task_snapshot_archive
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- workspace/history/runs/*
+- workspace/history/index/runs.index.jsonl
+effects_allowed:
+- fs.read:runtime/runs/*
+- fs.write:workspace/history/runs/*
+- fs.write:workspace/history/index/runs.index.jsonl
+verification:
+  tests:
+  - tests/architecture/test_graph_reality.py
+  gaps:
+  - Task and factory archive flows have been moved to sibling archive cells; remaining
+    call sites are being converged.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

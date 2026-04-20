@@ -1,0 +1,605 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.743205Z",
+  "source_hash": "b12e1387c7dcc84c",
+  "cell_id": "audit.verdict",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "_ControlFlag",
+      "description": "Encapsulates file-presence-based boolean flag semantics.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "resolve",
+          "doc": "Return the absolute path for this flag given a service instance."
+        },
+        {
+          "name": "set",
+          "doc": "Create the flag file. Returns the absolute path written."
+        },
+        {
+          "name": "clear",
+          "doc": "Remove the flag file. Returns True if removed, False if absent."
+        },
+        {
+          "name": "is_set",
+          "doc": "Return True if the flag file exists."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArtifactService",
+      "description": "Unified service for runtime artifact I/O.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize ArtifactService."
+        },
+        {
+          "name": "_resolve",
+          "doc": "Resolve artifact key to absolute path."
+        },
+        {
+          "name": "_resolve_for_write",
+          "doc": "Resolve artifact key to absolute path for writing."
+        },
+        {
+          "name": "_write_text",
+          "doc": ""
+        },
+        {
+          "name": "_write_json",
+          "doc": ""
+        },
+        {
+          "name": "_read_text",
+          "doc": ""
+        },
+        {
+          "name": "_read_json",
+          "doc": ""
+        },
+        {
+          "name": "write_plan",
+          "doc": "Write plan.md artifact."
+        },
+        {
+          "name": "read_plan",
+          "doc": "Read plan.md artifact."
+        },
+        {
+          "name": "write_gap_report",
+          "doc": "Write gap_report.md artifact."
+        },
+        {
+          "name": "read_gap_report",
+          "doc": "Read gap_report.md artifact."
+        },
+        {
+          "name": "write_task_contract",
+          "doc": "Write PM tasks contract (pm_tasks.contract.json)."
+        },
+        {
+          "name": "read_task_contract",
+          "doc": "Read PM tasks contract."
+        },
+        {
+          "name": "write_pm_report",
+          "doc": "Write PM report (pm.report.md)."
+        },
+        {
+          "name": "read_pm_report",
+          "doc": "Read PM report."
+        },
+        {
+          "name": "write_pm_state",
+          "doc": "Write PM state (pm.state.json)."
+        },
+        {
+          "name": "read_pm_state",
+          "doc": "Read PM state."
+        },
+        {
+          "name": "write_director_result",
+          "doc": "Write Director result (director.result.json)."
+        },
+        {
+          "name": "read_director_result",
+          "doc": "Read Director result."
+        },
+        {
+          "name": "write_director_status",
+          "doc": "Write Director status (director.status.json)."
+        },
+        {
+          "name": "read_director_status",
+          "doc": "Read Director status."
+        },
+        {
+          "name": "write_director_runlog",
+          "doc": "Write Director runlog (director.runlog.md)."
+        },
+        {
+          "name": "read_director_runlog",
+          "doc": "Read Director runlog."
+        },
+        {
+          "name": "get_runtime_events_path",
+          "doc": "Get path for runtime events (for appending)."
+        },
+        {
+          "name": "read_runtime_events",
+          "doc": "Read recent runtime events."
+        },
+        {
+          "name": "write_runtime_events",
+          "doc": "Write runtime events (overwrites)."
+        },
+        {
+          "name": "get_pm_events_path",
+          "doc": "Get path for PM events (for appending)."
+        },
+        {
+          "name": "get_dialogue_transcript_path",
+          "doc": "Get path for dialogue transcript (for appending)."
+        },
+        {
+          "name": "get_pm_llm_events_path",
+          "doc": "Get path for PM LLM events (for appending)."
+        },
+        {
+          "name": "get_director_llm_events_path",
+          "doc": "Get path for Director LLM events (for appending)."
+        },
+        {
+          "name": "write_qa_review",
+          "doc": "Write QA review (qa.review.md)."
+        },
+        {
+          "name": "read_qa_review",
+          "doc": "Read QA review."
+        },
+        {
+          "name": "write_last_state",
+          "doc": "Write last state snapshot."
+        },
+        {
+          "name": "read_last_state",
+          "doc": "Read last state snapshot."
+        },
+        {
+          "name": "write_engine_status",
+          "doc": "Write engine status."
+        },
+        {
+          "name": "read_engine_status",
+          "doc": "Read engine status."
+        },
+        {
+          "name": "write_pm_stop_flag",
+          "doc": "Create PM stop flag."
+        },
+        {
+          "name": "clear_pm_stop_flag",
+          "doc": "Clear PM stop flag. Returns True if flag was cleared."
+        },
+        {
+          "name": "is_pm_stop_requested",
+          "doc": "Check if PM stop is requested."
+        },
+        {
+          "name": "write_director_stop_flag",
+          "doc": "Create Director stop flag."
+        },
+        {
+          "name": "clear_director_stop_flag",
+          "doc": "Clear Director stop flag. Returns True if flag was cleared."
+        },
+        {
+          "name": "is_director_stop_requested",
+          "doc": "Check if Director stop is requested."
+        },
+        {
+          "name": "write_pause_flag",
+          "doc": "Create pause flag."
+        },
+        {
+          "name": "clear_pause_flag",
+          "doc": "Clear pause flag. Returns True if flag was cleared."
+        },
+        {
+          "name": "is_paused",
+          "doc": "Check if paused."
+        },
+        {
+          "name": "write_agents_draft",
+          "doc": "Write agents draft (agents.generated.md)."
+        },
+        {
+          "name": "read_agents_draft",
+          "doc": "Read agents draft."
+        },
+        {
+          "name": "write_agents_feedback",
+          "doc": "Write agents feedback (agents.feedback.md)."
+        },
+        {
+          "name": "read_agents_feedback",
+          "doc": "Read agents feedback."
+        },
+        {
+          "name": "get_path",
+          "doc": "Get absolute path for artifact key."
+        },
+        {
+          "name": "exists",
+          "doc": "Check if artifact exists."
+        },
+        {
+          "name": "write_text",
+          "doc": "Generic text write for artifact."
+        },
+        {
+          "name": "write_json",
+          "doc": "Generic JSON write for artifact."
+        },
+        {
+          "name": "read_text",
+          "doc": "Generic text read for artifact."
+        },
+        {
+          "name": "read_json",
+          "doc": "Generic JSON read for artifact."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "resolve_artifact_path",
+      "description": "Fallback path resolver that preserves logical storage prefixes.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_fs",
+      "description": "Get KernelFileSystem instance for the given workspace.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_text_atomic",
+      "description": "Write text file atomically using KernelFileSystem.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_json_atomic",
+      "description": "Write JSON file atomically.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_file_safe",
+      "description": "Read file safely with UTF-8-first fallback handling.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_json_file_strict",
+      "description": "Read and validate a JSON artifact as a dict.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_jsonl_safe",
+      "description": "Read the last *limit* lines from a JSONL file as a list of dicts.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "enforce_utf8",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_artifact_key",
+      "description": "Resolve a key to its canonical technical key, supporting legacy aliases.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_artifact_policy_metadata",
+      "description": "Get lifecycle policy metadata for a Polaris artifact key.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "should_compress_artifact",
+      "description": "Check if a Polaris artifact should be compressed when archived.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "should_archive_artifact",
+      "description": "Check if a Polaris artifact should be archived on terminal state.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_key",
+      "description": "Resolve a key to its canonical technical key.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_artifact_path",
+      "description": "Get canonical path for artifact key.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_artifact_key",
+      "description": "Get artifact key from path.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_artifact_keys",
+      "description": "List all available artifact keys.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_artifact_service",
+      "description": "Create ArtifactService instance.",
+      "defined_in": "polaris/cells/audit/verdict/internal/artifact_service.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditVerdict",
+      "description": "Structured verdict from the Chancellery.",
+      "defined_in": "polaris/cells/audit/verdict/internal/independent_audit_service.py",
+      "methods": [
+        {
+          "name": "is_pass",
+          "doc": "Whether the audit passed."
+        },
+        {
+          "name": "is_fail",
+          "doc": "Whether the audit failed."
+        },
+        {
+          "name": "is_inconclusive",
+          "doc": "Whether the audit is inconclusive."
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditContext",
+      "description": "Context for running an audit.",
+      "defined_in": "polaris/cells/audit/verdict/internal/independent_audit_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IndependentAuditService",
+      "description": "Independent audit service providing Chancellery (门下省) review.",
+      "defined_in": "polaris/cells/audit/verdict/internal/independent_audit_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the audit service."
+        },
+        {
+          "name": "_build_audit_prompt",
+          "doc": "Build the audit prompt."
+        },
+        {
+          "name": "_build_finalize_prompt",
+          "doc": "Build prompt to finalize inconclusive verdict."
+        },
+        {
+          "name": "_build_consistency_prompt",
+          "doc": "Build prompt for evidence consistency check."
+        },
+        {
+          "name": "_parse_verdict",
+          "doc": "Parse audit output into structured verdict."
+        },
+        {
+          "name": "_mentions_missing_evidence",
+          "doc": "Check if verdict claims missing evidence when evidence exists."
+        },
+        {
+          "name": "get_audit_history",
+          "doc": "Get history of all audits run by this service."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get audit statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReviewEventType",
+      "description": "评审事件类型",
+      "defined_in": "polaris/cells/audit/verdict/internal/review_gate.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CodeChange",
+      "description": "代码变更",
+      "defined_in": "polaris/cells/audit/verdict/internal/review_gate.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Review",
+      "description": "评审记录",
+      "defined_in": "polaris/cells/audit/verdict/internal/review_gate.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReviewGate",
+      "description": "评审门禁管理器",
+      "defined_in": "polaris/cells/audit/verdict/internal/review_gate.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "create_code_change",
+          "doc": "创建代码变更记录"
+        },
+        {
+          "name": "request_review",
+          "doc": "请求评审"
+        },
+        {
+          "name": "approve_review",
+          "doc": "通过评审"
+        },
+        {
+          "name": "reject_review",
+          "doc": "拒绝评审"
+        },
+        {
+          "name": "add_comments",
+          "doc": "添加评审评论"
+        },
+        {
+          "name": "can_complete_task",
+          "doc": "检查任务是否可以通过（评审必须通过）"
+        },
+        {
+          "name": "get_task_review_status",
+          "doc": "获取任务的评审状态"
+        },
+        {
+          "name": "get_code_change",
+          "doc": "获取代码变更"
+        },
+        {
+          "name": "get_review",
+          "doc": "获取评审记录"
+        },
+        {
+          "name": "get_reviews_by_status",
+          "doc": "按状态获取评审列表"
+        },
+        {
+          "name": "get_pending_reviews",
+          "doc": "获取待评审列表"
+        },
+        {
+          "name": "get_all_changes",
+          "doc": "获取所有代码变更"
+        },
+        {
+          "name": "get_all_reviews",
+          "doc": "获取所有评审"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_review_gate",
+      "description": "工厂函数：创建一个新的 ReviewGate 实例。",
+      "defined_in": "polaris/cells/audit/verdict/internal/review_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "get_review_gate",
+      "description": "返回全局单例 ReviewGate 实例。",
+      "defined_in": "polaris/cells/audit/verdict/internal/review_gate.py"
+    },
+    {
+      "type": "class",
+      "name": "RunAuditVerdictCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryAuditVerdictV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditVerdictIssuedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditVerdictResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditVerdictError",
+      "description": "Structured contract error for `audit.verdict`.",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IAuditVerdictService",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/audit/verdict/public/contracts.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

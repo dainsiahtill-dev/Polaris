@@ -1,0 +1,63 @@
+id: runtime.task_market
+title: Runtime Task Market
+kind: capability
+visibility: public
+stateful: true
+owner: runtime
+purpose: >
+  Provide asynchronous task-market orchestration primitives for PM/ChiefEngineer/Director/QA
+  collaboration, including publish/claim/lease/requeue/dead-letter lifecycle management.
+current_modules:
+  - polaris.cells.runtime.task_market.public.service
+  - polaris.cells.runtime.task_market.internal.service
+tags: []
+owned_paths:
+  - polaris/cells/runtime/task_market/**
+public_contracts:
+  modules:
+    - polaris.cells.runtime.task_market.public.contracts
+  commands:
+    - PublishTaskWorkItemCommandV1
+    - ClaimTaskWorkItemCommandV1
+    - RenewTaskLeaseCommandV1
+    - AcknowledgeTaskStageCommandV1
+    - FailTaskStageCommandV1
+    - RequeueTaskCommandV1
+    - MoveTaskToDeadLetterCommandV1
+  queries:
+    - QueryTaskMarketStatusV1
+  events:
+    - TaskWorkItemPublishedEventV1
+    - TaskLeaseGrantedEventV1
+    - TaskStageAdvancedEventV1
+    - TaskDeadLetteredEventV1
+  results:
+    - TaskWorkItemResultV1
+    - TaskLeaseRenewResultV1
+    - TaskMarketStatusResultV1
+  errors:
+    - TaskMarketErrorV1
+depends_on:
+  - runtime.task_runtime
+  - runtime.state_owner
+  - runtime.projection
+  - events.fact_stream
+  - policy.workspace_guard
+  - audit.evidence
+subgraphs:
+  - execution_governance_pipeline
+state_owners:
+  - runtime/task_market/*
+effects_allowed:
+  - fs.read:runtime/task_market/*
+  - fs.write:runtime/task_market/*
+  - fs.write:runtime/events/*
+  - ws.outbound:runtime/*
+verification:
+  tests:
+    - polaris/cells/runtime/task_market/tests/test_contracts.py
+    - polaris/cells/runtime/task_market/tests/test_service.py
+  gaps:
+    - PM/ChiefEngineer/Director/QA mainline migration to task_market claim/ack is staged.
+  smoke_commands: []
+generated_artifacts: []

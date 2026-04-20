@@ -1,0 +1,43 @@
+{
+  "case_id": "architect_migration_plan",
+  "role": "architect",
+  "title": "Architect Plans System Migration",
+  "description": "The Architect must create a migration plan for transitioning between system versions.",
+  "workspace_fixture": "architect_graph_first_boundary",
+  "prompt": "Create a migration plan from monolith to microservices. Return JSON: {phases: [{name, duration, tasks: [string], rollback_plan: string}], risks: [{description, mitigation}], dependencies: [string], success_criteria: [string]}. Ensure zero-downtime capability.",
+  "tags": [
+    "architect",
+    "migration",
+    "microservices"
+  ],
+  "judge": {
+    "score_threshold": 0.78,
+    "required_tools": [
+      "read_file",
+      "repo_tree"
+    ],
+    "required_output_substrings": [
+      "phases",
+      "risks",
+      "rollback"
+    ],
+    "forbidden_output_substrings": [
+      "<thinking>",
+      "<tool_call>"
+    ],
+    "validators": [
+      "architect_migration_plan"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

@@ -1,0 +1,98 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: QA Verdict
+description: >
+  QA acceptance verdict model for task_market resolution or requeue decisions.
+type: object
+additionalProperties: false
+required:
+  - version
+  - workspace
+  - trace_id
+  - task_id
+  - verdict
+  - reviewer_role
+  - reviewed_at
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  workspace:
+    type: string
+    minLength: 1
+  trace_id:
+    type: string
+    minLength: 1
+  run_id:
+    type: string
+  task_id:
+    type: string
+    minLength: 1
+  plan_id:
+    type: string
+  plan_revision_id:
+    type: string
+  blueprint_id:
+    type: string
+  verdict:
+    type: string
+    enum:
+      - resolved
+      - rejected
+      - requeue_exec
+      - requeue_design
+      - waiting_human
+      - dead_letter
+  next_stage:
+    type: string
+    enum:
+      - pending_design
+      - pending_exec
+      - pending_qa
+      - waiting_human
+  reason:
+    type: string
+  score:
+    type: number
+    minimum: 0
+    maximum: 100
+  critical_issues:
+    type: integer
+    minimum: 0
+  findings:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - severity
+        - message
+      properties:
+        severity:
+          type: string
+          enum:
+            - info
+            - warning
+            - high
+            - critical
+        code:
+          type: string
+        message:
+          type: string
+          minLength: 1
+        evidence_refs:
+          type: array
+          items:
+            type: string
+            minLength: 1
+  reviewer_role:
+    type: string
+    minLength: 1
+  reviewer_id:
+    type: string
+  metadata:
+    type: object
+    additionalProperties: true
+  reviewed_at:
+    type: string
+    format: date-time

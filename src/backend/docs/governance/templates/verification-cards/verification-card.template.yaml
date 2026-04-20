@@ -1,0 +1,44 @@
+card_id: "vc-YYYYMMDD-short-slug"
+bug_summary: >
+  One-line symptom + path + impact.
+
+classification: structural
+
+bug_path:
+  file: "path/to/file.py"
+  method: "method_or_boundary"
+  symptom: "User-visible symptom"
+
+assumptions:
+  - id: "A1"
+    statement: "Assumption to verify before the fix"
+    status: unverified
+    evidence: "Which file/test/trace will verify it"
+
+pre_mortem:
+  failure_point: >
+    If the fix is wrong, where will it most likely break?
+  risk_zone:
+    - "path/or/boundary"
+
+verification_plan:
+  unit_tests:
+    - file: "tests/test_example.py"
+      description: "What the test protects"
+      expected: "Expected behavior"
+      status: new
+  integration_tests:
+    - description: "Import or end-to-end smoke check"
+      command: "python -m pytest -q tests/test_example.py"
+      status: new
+  manual_check:
+    - "Optional manual validation path"
+
+related_adrs:
+  - "ADR-XXXX"
+
+sign_off:
+  completed_by: "agent-name"
+  completed_at: "YYYY-MM-DD"
+  verified_by: "agent-name"
+  verified_at: "YYYY-MM-DD"

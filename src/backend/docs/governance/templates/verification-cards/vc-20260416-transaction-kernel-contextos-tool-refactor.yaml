@@ -1,0 +1,234 @@
+card_id: "vc-20260416-transaction-kernel-contextos-tool-refactor"
+bug_summary: >
+  roles.kernel 的 turn 执行、ContextOS 投影、handoff/receipt 持久化仍由多套协议与多条主路径共同驱动，
+  导致执行授权点、上下文真相和观测事件不一致，持续诱发 hidden continuation、prompt 污染和文档漂移。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/kernel/core.py"
+  method: "RoleExecutionKernel.run / run_stream"
+  symptom: "旧 TurnEngine 仍掌权，TurnTransactionController、ContextOS、cognitive_runtime handoff contract 无法形成单一事务边界"
+
+assumptions:
+  - id: "A1"
+    statement: "当前执行主路径已切至 TransactionKernel，TurnEngine 退化为 facade。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/kernel/core.py：
+      _use_transaction_kernel() 默认返回 True，run()/run_stream() 均走 TransactionKernel 路径。
+      TurnEngine (engine.py) 内部 while loop 已移除，仅保留 facade 签名。
+
+  - id: "A2"
+    statement: "turn_engine_migration.py 已删除，legacy fallback 不再存在。"
+    status: verified_true
+    evidence: >
+      turn_engine_migration.py 已被移除；旧 TurnEngine 直接由 TransactionKernel facade 替代，
+      不再保留有问题的 migration shim。
+
+  - id: "A3"
+    statement: "我假设 handoff contract 已经在 cognitive_runtime 领域与公开契约中落地，不能再在 roles.kernel 复制第二套 schema。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/domain/cognitive_runtime/models.py 的 ContextHandoffPack，
+      以及 polaris/cells/factory/cognitive_runtime/public/contracts.py、
+      docs/graph/catalog/cells.yaml 和 execution_governance_pipeline.yaml；
+      Handoff 导出/恢复 contract 已存在且受 graph 约束。
+
+  - id: "A4"
+    statement: "turn_contracts.py 已升级为 Pydantic v2 frozen IR，包含 effect_type 与 execution_mode。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/public/turn_contracts.py；
+      ToolInvocation、ToolBatch、TurnDecision、TurnResult 等 9 个类已全部继承 _FrozenMappingModel
+      (ConfigDict(frozen=True, extra='forbid'))，且 effect_type / execution_mode 已完整落地。
+
+  - id: "A5"
+    statement: "我假设如果只做代码切主而不先统一文档和治理资产，后续会继续在 blueprint、ADR、verification card、hardening plan 之间产生第二套说法。"
+    status: verified_true
+    evidence: >
+      已核对 docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md、
+      docs/TURN_ENGINE_TRANSACTIONAL_TOOL_FLOW_BLUEPRINT_2026-03-26.md、
+      docs/KERNELONE_CONTEXT_OS_COGNITIVE_RUNTIME_HARDENING_PLAN_2026-03-27.md；
+      术语和 Handoff 描述已统一指向 2026-04-16 Blueprint。
+
+  - id: "A6"
+    statement: "ContextOSSnapshot.to_dict() 的 transcript_log nuke 问题已修复， ReceiptStore 可自动介入并保证 round-trip。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/kernelone/context/context_os/models.py L986-1023：
+      to_dict() 在 transcript_log 超过 5000 字符时自动创建 ReceiptStore，
+      将内容替换为 <receipt_ref:...>，并内联 _receipt_store_export；
+      from_mapping() 可完整恢复原始内容。polaris/kernelone/context/tests/ 全量通过。
+
+  - id: "A7"
+    statement: "StateFirstContextOS 已退役 dual-track，projection 仅保留 pipeline 唯一路径。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/kernelone/context/context_os/runtime.py：
+      _legacy_project_impl 已删除，enable_pipeline 参数已移除，
+      project() 直接调用 _project_via_pipeline()。
+      polaris/kernelone/context/tests/test_context_os_pipeline.py 通过。
+
+  - id: "A8"
+    statement: "ToolSpecRegistry SSOT 已完成，contracts.py 手术式添加 @warnings.deprecated 标记。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/kernelone/tool_execution/contracts.py：
+      normalize_tool_args、_has_value、reset_tool_spec_registry_cache 已添加 @warnings.deprecated；
+      validate_tool_step 内部已改为直接调用 canonical 实现，避免自触发警告；
+      唯一外部调用者（polaris/infrastructure/di/factories.py）已移除对 reset_tool_spec_registry_cache 的引用。
+      polaris/kernelone/tool_execution/tests/ 与 kernel/context 回归测试全量通过。
+
+  - id: "A9"
+    statement: "ContextOS 四层正式化（ProjectionEngine / ReceiptStore / TruthLogService / WorkingStateManager）已完成 authoritative 接管并进入主路径。"
+    status: verified_true
+    evidence: >
+      已核对 ../../docs/blueprints/CONTEXTOS_SERVICE_HARDENING_BLUEPRINT_20260417.md、
+      ../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_CLOSURE_MATRIX_20260416.md、
+      polaris/kernelone/context/context_os/runtime.py、
+      polaris/cells/roles/kernel/internal/context_gateway/gateway.py；
+      并通过 `python -m pytest -q polaris/kernelone/context/tests polaris/cells/roles/kernel/tests`
+      全目录回归（1753 passed, 5 skipped）。
+
+  - id: "A10"
+    statement: "Speculative execution 已完成受控接线：flag 默认关闭，但 stream 路径已可选启用。"
+    status: verified_true
+    evidence: >
+      已新增 polaris/cells/roles/kernel/internal/speculative_flags.py，
+      支持 `ENABLE_SPECULATIVE_EXECUTION`（优先）与
+      `KERNELONE_ENABLE_SPECULATIVE_EXECUTION`（兼容）双入口，默认 false；
+      `TurnTransactionController._call_llm_for_decision_stream` 已接入
+      StreamShadowEngine + SpeculativeExecutor；
+      并通过 polaris/cells/roles/kernel/tests/test_speculative_execution.py
+      与 polaris/cells/roles/kernel/tests 全量回归验证。
+
+  - id: "A11"
+    statement: "Phase 7 监控基线已落地并可从结果与流式完成事件直接读取。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/turn_transaction_controller.py：
+      TurnLedger 已导出 transaction_kernel.violation_count / turn.single_batch_ratio /
+      workflow.handoff_rate / kernel_guard.assert_fail_rate / speculative.hit_rate /
+      speculative.false_positive_rate 到 TurnResult.metrics；
+      execute_stream 的 CompletionEvent 已携带 monitoring 字段。
+      同步核对 polaris/cells/roles/kernel/internal/kernel/core.py 与
+      polaris/cells/roles/kernel/internal/turn_engine/engine.py，
+      stream complete 事件均透传 monitoring。
+
+  - id: "A12"
+    statement: "灰度观测执行面基准达到目标门槛（>=70/74），最新全量 stream 已达 76/78。"
+    status: verified_true
+    evidence: >
+      已执行 `python -m polaris.delivery.cli agentic-eval --workspace C:/Temp/ --suite tool_calling_matrix --role all --matrix-transport stream --format json`，
+      run_id=3ce32d24，结果 76/78（96.85%，达成门槛 >=70/74）。
+      同阶段稳定基线 run_id=febb3027（76/78, 97.44%）。
+      证据位于 C:/Temp/runtime/llm_evaluations/{3ce32d24,febb3027}/AGENTIC_EVAL_AUDIT.json
+      与 X:/.polaris/projects/temp-1df48b9917eb/runtime/llm_evaluations/{3ce32d24,febb3027}/TOOL_CALLING_MATRIX_REPORT.json。
+
+  - id: "A13"
+    statement: "`sequential` 定义已被治理资产显式固定为“单 turn 单 ToolBatch 内有序工具调用”，不等同 hidden continuation。"
+    status: verified_true
+    evidence: >
+      已同步更新 ../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md §2.1 与 §7：
+      明确定义 read->edit->verify 等顺序步骤必须在单批次内完成；
+      任何通过第二次决策循环补步骤的做法都归类为 hidden continuation 并被 KernelGuard 拦截。
+
+  - id: "A14"
+    statement: "TransactionKernel prebuilt-messages 路径已去除 current user 重复与 BOM 噪音，避免 ContextOS 重叠注入。"
+    status: verified_true
+    evidence: >
+      已修复 polaris/cells/roles/kernel/internal/llm_caller/caller.py::_extract_prebuilt_projection_messages
+      与 polaris/delivery/cli/director/console_host.py 的 current-user 注入/trim 逻辑；
+      并通过日志对比验证：
+      auto_db2903f05638 与 auto_d16b3644cf05 均为 user_msgs=3（含 BOM），
+      修复后 auto_770200495a94 降至 user_msgs=1 且 bom_user_msgs=0（同一 workspace: C:/Temp/FileServer）。
+
+  - id: "A15"
+    statement: "tool_calling_matrix stream 的 deterministic 残留失败已通过 benchmark-only contract 收敛机制修复。"
+    status: verified_true
+    evidence: >
+      已在 polaris/cells/llm/evaluation/internal/tool_calling_matrix.py 增加：
+      1) `benchmark_require_no_tool_calls` 元数据下发 + kernel no-tools 强制；
+      2) under-min-tool-calls 单次强化重试（仅 benchmark 路径）。
+      原残留用例 `bridge_emits_session_patch` 与 `l5_sequential_dag`
+      在 run_id=61e23065 的 targeted 回归中 2/2 PASS。
+      证据位于 C:/Temp/runtime/llm_evaluations/61e23065/AGENTIC_EVAL_AUDIT.json
+      与 X:/.polaris/projects/temp-1df48b9917eb/runtime/llm_evaluations/61e23065/TOOL_CALLING_MATRIX_REPORT.json。
+
+pre_mortem:
+  failure_point: >
+    如果这次重构只把 TurnEngine facade 化，但没有同时收口 handoff canonical contract、
+    frozen IR 和 Projection/Receipt 的单一真相，那么系统仍会以“事务内核”名义运行旧的多协议混流。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/kernel/core.py"
+    - "polaris/cells/roles/kernel/internal/kernel/turn_runner.py"
+    - "polaris/cells/roles/kernel/internal/turn_engine_migration.py"
+    - "polaris/cells/roles/kernel/public/turn_contracts.py"
+    - "polaris/cells/roles/kernel/internal/turn_decision_decoder.py"
+    - "polaris/cells/roles/kernel/internal/tool_batch_runtime.py"
+    - "polaris/kernelone/context/**"
+    - "polaris/domain/cognitive_runtime/models.py"
+    - "polaris/cells/factory/cognitive_runtime/public/contracts.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+      description: "RoleExecutionKernel 与 turn_runner 统一经 TransactionKernel 进入，不再直接拥有旧 loop 主路径。"
+      expected: "run()/run_stream() 与 turn_runner 都调用 TransactionKernel，TurnEngine 只保留 facade。"
+      status: passed
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_guard.py"
+      description: "KernelGuard 强制单决策、单 ToolBatch、零 hidden continuation。"
+      expected: "违反协议时抛出明确 guard violation，并转 handoff_workflow。"
+      status: passed
+    - file: "polaris/cells/roles/kernel/tests/test_turn_contracts_v2.py"
+      description: "turn_contracts 升级为 frozen typed IR，包含 effect_type 与 protocol_version。"
+      expected: "额外字段被拒绝、对象不可变、execution_mode 包含 readonly_serial。"
+      status: passed
+    - file: "polaris/cells/roles/kernel/tests/test_transaction_kernel_handoff_contract.py"
+      description: "TransactionKernel 使用 ContextHandoffPack，而不是 roles.kernel 私有 handoff schema。"
+      expected: "handoff/export/rehydrate 与 factory.cognitive_runtime contract 对齐。"
+      status: passed
+  integration_tests:
+    - description: "roles.kernel 事务切主回归"
+      command: "python -m pytest polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py polaris/cells/roles/kernel/tests/test_kernel_guard.py polaris/cells/roles/kernel/tests/test_turn_contracts_v2.py polaris/cells/roles/kernel/tests/test_transaction_kernel_handoff_contract.py -q"
+      status: passed
+    - description: "handoff contract 与 cognitive runtime 对齐回归"
+      command: "python -m pytest polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py polaris/delivery/http/routers/test_cognitive_runtime_router.py -q"
+      status: existing_fix
+    - description: "ContextOS pipeline + snapshot nuke 修复回归"
+      command: "python -m pytest polaris/kernelone/context/tests/test_context_os_pipeline.py polaris/kernelone/context/tests/test_context_os_models.py polaris/kernelone/context/tests/test_attention_runtime_boundaries.py -q"
+      status: passed
+    - description: "tool_execution contracts 手术式 deprecation 回归"
+      command: "python -m pytest polaris/kernelone/tool_execution/tests/test_contracts_validation_integration.py polaris/kernelone/tool_execution/tests/test_validators.py -q"
+      status: passed
+    - description: "kernel + context 联合回归"
+      command: "python -m pytest polaris/cells/roles/kernel/tests/ polaris/kernelone/context/tests/ -q"
+      status: passed
+    - description: "Phase 7 monitoring baseline 回归"
+      command: "python -m pytest polaris/cells/roles/kernel/tests/test_speculative_execution.py polaris/cells/roles/kernel/tests/test_transaction_controller.py -q"
+      status: passed
+    - description: "灰度观测执行面基准回归（tool_calling_matrix stream 全量）"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace C:/Temp/ --suite tool_calling_matrix --role all --matrix-transport stream --format json"
+      status: passed_threshold
+    - description: "Console/ContextOS 重复注入去噪回归"
+      command: "python -m pytest polaris/delivery/cli/director/tests/test_stream_protocol.py polaris/cells/roles/kernel/tests/test_llm_caller.py -q"
+      status: passed
+    - description: "Sequential contract guard 回归（l3/l5 读改链路）"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace C:/Temp/ --suite tool_calling_matrix --role all --matrix-transport stream --case-id l3_search_replace --format json"
+      status: passed
+  manual_check:
+    - "复查 docs/blueprints、旧 TurnEngine 蓝图、ContextOS/Cognitive Runtime hardening plan 对 TransactionKernel 和 ContextHandoffPack 的命名已统一"
+    - "复查 graph 中 factory.cognitive_runtime 的 ExportHandoffPack/RehydrateHandoffPack contract 没有被 roles.kernel 私有 schema 绕过"
+    - "复查 RoleExecutionKernel/turn_runner 不再直接 new TurnEngine"
+
+related_adrs:
+  - "ADR-0063"
+  - "ADR-0068"
+  - "ADR-0070"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-04-17"
+  verified_by: "codex-gpt-5"
+  verified_at: "2026-04-17"

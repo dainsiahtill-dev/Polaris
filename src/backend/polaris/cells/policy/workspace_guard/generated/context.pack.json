@@ -1,0 +1,60 @@
+{
+  "id": "policy.workspace_guard",
+  "title": "Workspace Guard",
+  "kind": "policy",
+  "purpose": "Enforce workspace path legality, scope constraints, and write-guard checks for runtime and archive operations.",
+  "summary": "Owns workspace-scoped guard decisions so stateful cells cannot perform unsafe path access or out-of-bound writes.",
+  "owned_paths": [
+    "polaris/application/policy/**",
+    "polaris/application/services/permission_service.py",
+    "polaris/kernelone/storage/policy.py"
+  ],
+  "public_contracts": {
+    "commands": [],
+    "queries": [
+      "WorkspaceWriteGuardQueryV1",
+      "WorkspaceArchiveWriteGuardQueryV1"
+    ],
+    "events": [
+      "WorkspaceGuardViolationEventV1"
+    ],
+    "results": [
+      "WorkspaceGuardDecisionV1"
+    ],
+    "errors": [
+      "WorkspaceGuardErrorV1"
+    ]
+  },
+  "neighbors": [
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "workspace/policy/*"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "fs.read:runtime/**"
+  ],
+  "invariants": [
+    "guard evaluation remains read-only",
+    "unsafe paths are rejected before writes occur",
+    "all path decisions are workspace scoped"
+  ],
+  "hotspots": [
+    "polaris/application/policy/workspace_policy.py",
+    "polaris/application/services/permission_service.py"
+  ],
+  "test_targets": [
+    "tests/architecture/test_polaris_kernel_fs_guard.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
+

@@ -1,0 +1,12 @@
+{
+  "cell_id": "runtime.artifact_store",
+  "version": "1.0.0",
+  "read_order": [
+    "cell.yaml",
+    "README.agent.md",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/arrow_service.py"
+  ],
+  "notes": "Minimal context pack for runtime artifact naming and storage helpers."
+}

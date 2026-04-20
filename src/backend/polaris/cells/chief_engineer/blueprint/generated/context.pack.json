@@ -1,0 +1,70 @@
+{
+  "id": "chief_engineer.blueprint",
+  "title": "Chief Engineer Blueprint",
+  "kind": "capability",
+  "purpose": "Generate task-level implementation blueprints and dependency analysis for Director execution without performing code write operations.",
+  "summary": "Business capability boundary for chief_engineer.blueprint.",
+  "owned_paths": [
+    "polaris/application/orchestration/usecases/chief_engineer_preflight.py",
+    "polaris/application/role_agent/chief_engineer_agent.py",
+    "polaris/application/role_agent/chief_engineer_cli.py",
+    "polaris/infrastructure/legacy_core/code_intelligence.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "GenerateTaskBlueprintCommandV1"
+    ],
+    "queries": [
+      "GetBlueprintStatusQueryV1"
+    ],
+    "events": [
+      "TaskBlueprintGeneratedEventV1"
+    ],
+    "results": [
+      "TaskBlueprintResultV1"
+    ],
+    "errors": [
+      "ChiefEngineerBlueprintErrorV1"
+    ]
+  },
+  "neighbors": [
+    "context.engine",
+    "llm.control_plane",
+    "policy.permission",
+    "policy.workspace_guard",
+    "finops.budget_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "runtime/state/blueprints/*"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "fs.write:runtime/state/blueprints/*",
+    "fs.write:runtime/events/runtime.events.jsonl",
+    "llm.invoke:chief_engineer/*"
+  ],
+  "invariants": [
+    "All state writes must remain single-owner and contract-driven.",
+    "Append-only evidence and event semantics must be preserved.",
+    "All text file reads and writes must use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/application/orchestration/usecases/chief_engineer_preflight.py",
+    "polaris/application/role_agent/chief_engineer_agent.py",
+    "polaris/application/role_agent/chief_engineer_cli.py",
+    "polaris/infrastructure/legacy_core/code_intelligence.py"
+  ],
+  "test_targets": [
+    "tests/test_chief_engineer_preflight.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

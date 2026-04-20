@@ -1,0 +1,78 @@
+card_id: "vc-20260416-traceability-governance-lock"
+bug_summary: >
+  Traceability + Hybrid Dispatch 蓝图落地后，新增代码引入了跨 Cell internal 导入违规、
+  未声明的 process.spawn effect，以及未在 cells.yaml 中登记的新 Cell 和模块。
+  若不及时治理锁定，后续 CI 的 catalog governance gate 会在 fail-on-new 模式下直接阻断构建。
+
+classification: pattern
+
+bug_path:
+  file: "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+  method: "_submit_director_task_workflow"
+  symptom: "director_pool 直接从 workflow_runtime.internal 导入 get_adapter，违反 Public/Internal Fence"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设 catalog governance gate 在 audit-only 模式下报告的 issue_count/blocker_count 可以作为基线。"
+    status: verified_true
+    evidence: >
+      修复前 audit-only 结果：83 issues / 55 blockers / 28 high。
+      修复后 audit-only 结果：78 issues / 53 blockers / 25 high。
+      new_issue_count 始终为 0，说明没有引入新问题。
+
+  - id: "A2"
+    statement: "我假设将 internal 实现通过 public/service.py 重新导出，是治理规则允许的合法公开化手段。"
+    status: verified_true
+    evidence: >
+      workflow_runtime/public/service.py 已存在从 internal.runtime_backend_adapter 导入并公开导出的先例
+      （describe_workflow_sync, query_workflow_sync）。
+      按相同模式新增 get_adapter 公开导出，符合既有惯例。
+
+  - id: "A3"
+    statement: "我假设 rollback_guard.py 中的 subprocess 调用属于受控 effect，只需在 cells.yaml 中声明即可通过门禁。"
+    status: verified_true
+    evidence: >
+      在 chief_engineer.blueprint 的 effects_allowed 中新增 process.spawn:git/* 后，
+      undeclared_effects_forbidden 门禁不再报红。
+
+pre_mortem:
+  failure_point: >
+    如果 public/service.py 的重新导出没有同步更新所有引用点（director_pool.py、director_task_workflow.py），
+    或者 cells.yaml 的 depends_on 声明有拼写错误，catalog gate 会继续报 blocker。
+  risk_zone: "orchestration.workflow_activity 与 chief_engineer.blueprint 的双向依赖声明"
+  mitigation: "运行 gate --mode audit-only 两次确认基线稳定，且 issue_count 下降。"
+
+verification_plan:
+  - step: 1
+    action: "运行 descriptor_pack_generator 重新生成所有 descriptor.pack.json"
+    command: "python -m polaris.cells.context.catalog.internal.descriptor_pack_generator"
+    expected: "所有 Cell 的 descriptor.pack.json 成功写入，无异常中断"
+    status: passed
+
+  - step: 2
+    action: "运行 catalog governance gate audit-only 模式确认无新增问题"
+    command: "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
+    expected: "new_issue_count == 0，且 chief_engineer.blueprint 相关的 blocker/high 已消失"
+    status: passed
+
+  - step: 3
+    action: "验证 AGENTS.md / CLAUDE.md / GEMINI.md 的架构快照一致性"
+    command: "手动 diff 三文件 §15/§6 的测试数、Descriptor 覆盖率、未登记 Cell 列表"
+    expected: "三文件的关键数字一致，storage.layout 从未登记列表中移除"
+    status: passed
+
+  - step: 4
+    action: "全量 pytest 回归"
+    command: "python -m pytest polaris/kernelone/traceability/tests/ polaris/cells/chief_engineer/blueprint/tests/ polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py docs/governance/ci/scripts/tests/test_traceability_gate.py polaris/tests/orchestration/test_workflow_engine.py polaris/cells/orchestration/pm_dispatch/tests/ polaris/cells/orchestration/pm_planning/tests/ -q"
+    expected: "所有测试通过"
+    status: passed
+
+result:
+  status: "governance_locked"
+  locked_baseline:
+    issues: 78
+    blockers: 53
+    high: 25
+    new_issues: 0
+  follow_up:
+    - "进入 Phase B：为 DirectorPool 注入 Prometheus 指标并启动全链路冒烟测试。"

@@ -1,0 +1,35 @@
+{
+  "case_id": "l3_glob_then_read",
+  "level": "L3",
+  "role": "director",
+  "title": "L3 Glob Then Read Pattern",
+  "description": "测试 Agent 能否先用 glob 查找文件模式，再读取匹配的文件。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "找出所有 .py 文件，然后读取其中位于根目录的那个（不是子目录里的）。",
+  "tags": ["l3", "glob", "read", "tool-chain", "filtering"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.7,
+    "stream": {
+      "required_tools": ["glob", "read_file"],
+      "ordered_tool_groups": [
+        ["glob"],
+        ["read_file"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 5
+    },
+    "non_stream": {
+      "required_tools": ["glob", "read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 5
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

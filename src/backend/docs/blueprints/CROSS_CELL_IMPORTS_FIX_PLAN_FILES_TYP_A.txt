@@ -1,0 +1,348 @@
+polaris/cells/architect/design/internal/architect_service.py:            from polaris.kernelone.process.ollama_utils import invoke_ollama
+polaris/cells/architect/design/internal/architect_service.py:from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
+polaris/cells/architect/design/internal/architect_service.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/archive/factory_archive/internal/factory_archive_service.py:        from polaris.kernelone.storage import resolve_storage_roots
+polaris/cells/archive/factory_archive/internal/factory_archive_service.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/archive/run_archive/internal/archive_sink.py:from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
+polaris/cells/archive/run_archive/internal/archive_sink.py:from polaris.kernelone.events.topics import TOPIC_RUNTIME_STREAM
+polaris/cells/archive/run_archive/internal/history_archive_service.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/archive/run_archive/internal/history_manifest_repository.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/archive/run_archive/internal/history_manifest_repository.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py:        from polaris.kernelone.storage import resolve_storage_roots
+polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/audit/diagnosis/internal/connection_audit_service.py:from polaris.kernelone.audit import (
+polaris/cells/audit/diagnosis/internal/connection_audit_service.py:from polaris.kernelone.audit.validators import SYSTEM_ROLE
+polaris/cells/audit/diagnosis/internal/diagnosis_engine.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/audit/diagnosis/internal/toolkit/hops.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/audit/diagnosis/internal/toolkit/query.py:from polaris.kernelone.audit import KernelAuditEventType
+polaris/cells/audit/diagnosis/internal/toolkit/query.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/audit/diagnosis/internal/toolkit/query.py:from polaris.kernelone.fs.text_ops import open_text_log_append
+polaris/cells/audit/diagnosis/internal/toolkit/service.py:from polaris.kernelone.audit import KernelAuditEventType, validate_run_id
+polaris/cells/audit/diagnosis/internal/toolkit/service.py:from polaris.kernelone.storage import resolve_storage_roots
+polaris/cells/audit/diagnosis/internal/usecases/facade.py:from polaris.kernelone.audit import (
+polaris/cells/audit/evidence/internal/role_session_audit_service.py:from polaris.kernelone.audit import (
+polaris/cells/audit/evidence/internal/role_session_audit_service.py:from polaris.kernelone.audit.validators import SYSTEM_ROLE
+polaris/cells/audit/evidence/internal/role_session_audit_service.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/audit/evidence/internal/role_session_audit_service.py:from polaris.kernelone.storage import resolve_storage_roots
+polaris/cells/audit/evidence/internal/task_audit_llm_binding.py:        from polaris.kernelone.llm.config_store import load_llm_config
+polaris/cells/audit/evidence/internal/task_audit_llm_binding.py:        from polaris.kernelone.storage.io_paths import build_cache_root
+polaris/cells/audit/verdict/internal/artifact_service.py:    from polaris.kernelone.fs.encoding import enforce_utf8
+polaris/cells/audit/verdict/internal/artifact_service.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/context/catalog/internal/descriptor_pack_generator.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/context/engine/internal/precision_mode.py:    from polaris.kernelone.runtime.shared_types import unique_preserve as _impl
+polaris/cells/director/execution/internal/director_agent.py:            from polaris.kernelone.process.command_executor import CommandRequest
+polaris/cells/director/execution/internal/director_agent.py:        from polaris.kernelone.events.file_event_broadcaster import apply_patch_with_broadcast
+polaris/cells/director/execution/internal/director_agent.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/director/execution/internal/director_agent.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/director/execution/internal/director_agent.py:from polaris.kernelone.process.command_executor import CommandExecutionService
+polaris/cells/director/execution/internal/director_agent.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/director/execution/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import compact_str as _impl
+polaris/cells/director/execution/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import compact_str as _impl
+polaris/cells/director/execution/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import truncate_text as _impl
+polaris/cells/director/execution/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import truncate_text as _impl
+polaris/cells/director/execution/internal/director_logic_rules.py:from polaris.kernelone.utils.json_utils import parse_json_payload
+polaris/cells/director/execution/internal/file_apply_service.py:        from polaris.kernelone.events.file_event_broadcaster import broadcast_file_written
+polaris/cells/director/execution/internal/file_apply_service.py:        from polaris.kernelone.events.file_event_broadcaster import calculate_patch
+polaris/cells/director/execution/internal/file_apply_service.py:        from polaris.kernelone.events.file_event_broadcaster import write_file_with_broadcast
+polaris/cells/director/execution/internal/file_apply_service.py:        from polaris.kernelone.llm.toolkit import apply_protocol_output
+polaris/cells/director/execution/internal/patch_apply_engine.py:    from polaris.kernelone.llm.toolkit import StrictOperationApplier
+polaris/cells/director/execution/internal/patch_apply_engine.py:- 新代码应直接使用: from polaris.kernelone.llm.toolkit import apply_protocol_output
+polaris/cells/director/execution/internal/patch_apply_engine.py:from polaris.kernelone.llm.toolkit import (
+polaris/cells/director/planning/internal/director_agent.py:            from polaris.kernelone.process.command_executor import CommandRequest
+polaris/cells/director/planning/internal/director_agent.py:        from polaris.kernelone.events.file_event_broadcaster import apply_patch_with_broadcast
+polaris/cells/director/planning/internal/director_agent.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/director/planning/internal/director_agent.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/director/planning/internal/director_agent.py:from polaris.kernelone.process.command_executor import CommandExecutionService
+polaris/cells/director/planning/internal/director_agent.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/director/planning/internal/director_logic.py:from polaris.kernelone.utils.json_utils import parse_json_payload
+polaris/cells/director/planning/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import compact_str as _impl
+polaris/cells/director/planning/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import compact_str as _impl
+polaris/cells/director/planning/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import truncate_text as _impl
+polaris/cells/director/planning/internal/director_logic_rules.py:        from polaris.kernelone.runtime.shared_types import truncate_text as _impl
+polaris/cells/director/planning/internal/director_logic_rules.py:from polaris.kernelone.utils.json_utils import parse_json_payload
+polaris/cells/director/tasking/internal/task_lifecycle_service.py:        from polaris.kernelone.storage import resolve_storage_roots
+polaris/cells/director/tasking/internal/task_lifecycle_service.py:from polaris.kernelone.storage import StorageLayout
+polaris/cells/director/tasking/internal/worker_executor.py:    from polaris.kernelone.events.message_bus import MessageBus
+polaris/cells/docs/court_workflow/internal/plan_template.py:        from polaris.kernelone.prompts.loader import get_template
+polaris/cells/docs/court_workflow/internal/plan_template.py:        from polaris.kernelone.prompts.loader import render_template
+polaris/cells/docs/court_workflow/internal/plan_template.py:    from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/docs/court_workflow/internal/plan_template.py:    from polaris.kernelone.fs import KernelFileSystem  # type: ignore
+polaris/cells/factory/pipeline/internal/back_mapping.py:    from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/factory/pipeline/internal/factory_run_service.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/factory/pipeline/internal/factory_run_service.py:from polaris.kernelone.storage import resolve_logical_path
+polaris/cells/factory/pipeline/internal/factory_store.py:from polaris.kernelone.fs.text_ops import open_text_log_append, write_text_atomic
+polaris/cells/factory/pipeline/internal/factory_store.py:from polaris.kernelone.runtime import BoundedCache
+polaris/cells/factory/pipeline/internal/projection_change_analysis.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/factory/pipeline/internal/projection_lab.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/factory/pipeline/internal/projection_lab.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/finops/budget_guard/internal/budget_agent.py:    from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/finops/budget_guard/internal/budget_store.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/finops/budget_guard/internal/budget_store.py:from polaris.kernelone.fs.registry import get_default_adapter
+polaris/cells/llm/control_plane/internal/llm_config_agent.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/llm/control_plane/internal/llm_config_agent.py:from polaris.kernelone.storage.layout import resolve_storage_roots
+polaris/cells/llm/control_plane/internal/providers/ollama.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/llm/control_plane/internal/tui_llm_client.py:            from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
+polaris/cells/llm/evaluation/internal/deterministic_judge.py:from polaris.kernelone.tools.contracts import canonicalize_tool_name
+polaris/cells/llm/evaluation/internal/tool_calling_matrix.py:from polaris.kernelone.tools import contracts as tool_contracts
+polaris/cells/llm/evaluation/internal/tool_calling_matrix.py:from polaris.kernelone.tools.contracts import canonicalize_tool_name
+polaris/cells/llm/evaluation/internal/utils.py:    from polaris.kernelone.llm.embedding import get_default_embedding_port
+polaris/cells/llm/evaluation/internal/utils.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/llm/provider_runtime/internal/cell_executor.py:            from polaris.kernelone.llm import KernelLLM
+polaris/cells/llm/provider_runtime/internal/cell_executor.py:            from polaris.kernelone.llm import KernelLLM
+polaris/cells/llm/provider_runtime/internal/gpu_detector.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/llm/provider_runtime/internal/runtime_invoke.py:from polaris.kernelone.audit.omniscient.interceptors.llm_interceptor import (
+polaris/cells/llm/provider_runtime/internal/runtime_invoke.py:from polaris.kernelone.llm import (
+polaris/cells/llm/tool_runtime/internal/orchestrator.py:from polaris.kernelone.llm.contracts import ToolCall, ToolPolicy, ToolRoundRequest
+polaris/cells/llm/tool_runtime/internal/role_integrations.py:from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+polaris/cells/llm/tool_runtime/internal/role_integrations.py:from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
+polaris/cells/llm/tool_runtime/internal/role_integrations.py:from polaris.kernelone.llm.toolkit.parsers import format_tool_result
+polaris/cells/llm/tool_runtime/internal/role_integrations.py:from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py:    from polaris.kernelone.fs.text_ops import write_json_atomic
+polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py:            from polaris.kernelone.storage import (
+polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py:            from polaris.kernelone.storage import resolve_workspace_persistent_path  # type: ignore
+polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py:        from polaris.kernelone.audit.invariant_sentinel import run_invariant_sentinel
+polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py:        from polaris.kernelone.prompts.meta_prompting import append_meta_prompt_hint
+polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py:    from polaris.kernelone.fs.jsonl.ops import append_jsonl
+polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py:    from polaris.kernelone.fs.jsonl.ops import append_jsonl  # type: ignore
+polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py:from polaris.kernelone.fs.jsonl.ops import append_jsonl
+polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py:from polaris.kernelone.fs.text_ops import read_file_safe
+polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:            from polaris.kernelone.runtime.shared_types import normalize_str_list
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:        from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:        from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:        from polaris.kernelone.process.codex_adapter import invoke_codex
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:        from polaris.kernelone.process.ollama_utils import invoke_ollama
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:        from polaris.kernelone.runtime.shared_types import strip_ansi
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:    from polaris.kernelone.memory.integration import get_anthropomorphic_context
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:    from polaris.kernelone.prompts.loader import current_profile, get_template, render_template
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:    from polaris.kernelone.prompts.meta_prompting import build_meta_prompting_appendix
+polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py:    from polaris.kernelone.runtime.shared_types import normalize_path_list as _impl
+polaris/cells/orchestration/pm_planning/internal/pm_agent.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/orchestration/pm_planning/internal/pm_agent.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/orchestration/pm_planning/internal/shared_quality.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py:        from polaris.kernelone.process.command_executor import CommandRequest
+polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py:from polaris.kernelone.process.command_executor import CommandExecutionService
+polaris/cells/orchestration/workflow_activity/internal/activities/qa_activities.py:from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
+polaris/cells/orchestration/workflow_activity/internal/embedded_api.py:from polaris.kernelone.workflow.activity_runner import ActivityConfig
+polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py:from polaris.kernelone.events.message_bus import MessageBus, MessageType
+polaris/cells/orchestration/workflow_activity/internal/workflows/pm_workflow.py:from polaris.kernelone.events.message_bus import MessageBus, MessageType
+polaris/cells/orchestration/workflow_runtime/internal/event_stream.py:from polaris.kernelone.fs.text_ops import open_text_log_append
+polaris/cells/orchestration/workflow_runtime/internal/observability.py:from polaris.kernelone.fs.text_ops import open_text_log_append, write_text_atomic
+polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py:from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackend
+polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py:        from polaris.kernelone.process.command_executor import CommandRequest
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py:from polaris.kernelone.process.command_executor import CommandExecutionService
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py:from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/__init__.py:from polaris.kernelone.workflow.activity_runner import ActivityConfig, ActivityRunner
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/__init__.py:from polaris.kernelone.workflow.base import (
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/__init__.py:from polaris.kernelone.workflow.contracts import RetryPolicy, TaskSpec, WorkflowContract, WorkflowContractError
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/__init__.py:from polaris.kernelone.workflow.engine import WorkflowEngine
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/__init__.py:from polaris.kernelone.workflow.task_queue import TaskQueue, TaskQueueManager
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/__init__.py:from polaris.kernelone.workflow.timer_wheel import TimerWheel
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/embedded/__init__.py:from polaris.kernelone.workflow.activity_runner import ActivityConfig, ActivityRunner
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/embedded/__init__.py:from polaris.kernelone.workflow.base import (
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/embedded/__init__.py:from polaris.kernelone.workflow.contracts import RetryPolicy, TaskSpec, WorkflowContract, WorkflowContractError
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/embedded/__init__.py:from polaris.kernelone.workflow.engine import WorkflowEngine
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/embedded/__init__.py:from polaris.kernelone.workflow.task_queue import TaskQueue, TaskQueueManager
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/embedded/__init__.py:from polaris.kernelone.workflow.timer_wheel import TimerWheel
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py:from polaris.kernelone.workflow.activity_runner import ActivityRunner
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py:from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackend
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py:from polaris.kernelone.workflow.engine import WorkflowEngine
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py:from polaris.kernelone.workflow.task_queue import TaskQueueManager
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/runtime/factory.py:from polaris.kernelone.workflow.timer_wheel import TimerWheel
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py:            from polaris.kernelone.events.message_bus import MessageBus, MessageType
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py:from polaris.kernelone.events.message_bus import MessageBus, MessageType
+polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py:from polaris.kernelone.events.message_bus import MessageBus, MessageType
+polaris/cells/policy/permission/internal/non_llm_gates.py:from polaris.kernelone.runtime.shared_types import (
+polaris/cells/qa/audit_verdict/internal/qa_agent.py:from polaris.kernelone.contracts.technical import Result, TaggedError
+polaris/cells/qa/audit_verdict/internal/qa_service.py:from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
+polaris/cells/qa/audit_verdict/internal/qa_service.py:from polaris.kernelone.events.typed import (
+polaris/cells/qa/audit_verdict/internal/quality_service.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/resident/autonomy/internal/pm_bridge.py:from polaris.kernelone.storage.io_paths import build_cache_root
+polaris/cells/resident/autonomy/internal/resident_storage.py:from polaris.kernelone.fs.jsonl.ops import append_jsonl
+polaris/cells/resident/autonomy/internal/resident_storage.py:from polaris.kernelone.storage import (
+polaris/cells/roles/adapters/internal/architect_adapter.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/adapters/internal/architect_adapter.py:from polaris.kernelone.llm.engine import ResponseNormalizer
+polaris/cells/roles/adapters/internal/architect_adapter.py:from polaris.kernelone.storage import resolve_runtime_path, resolve_workspace_persistent_path
+polaris/cells/roles/adapters/internal/base.py:        from polaris.kernelone.events.task_trace_events import emit_task_trace_event
+polaris/cells/roles/adapters/internal/base.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/adapters/internal/base.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/roles/adapters/internal/base.py:from polaris.kernelone.storage.paths import resolve_signal_path
+polaris/cells/roles/adapters/internal/director/execution.py:        from polaris.kernelone.llm.toolkit import (
+polaris/cells/roles/adapters/internal/director/execution.py:        from polaris.kernelone.llm.toolkit import EditType
+polaris/cells/roles/adapters/internal/director/execution.py:        from polaris.kernelone.llm.toolkit import parse_tool_calls
+polaris/cells/roles/adapters/internal/director/execution.py:        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+polaris/cells/roles/adapters/internal/director/execution.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/adapters/internal/director/execution_tools.py:        from polaris.kernelone.process.command_executor import (
+polaris/cells/roles/adapters/internal/director/execution_tools.py:        from polaris.kernelone.process.command_executor import (
+polaris/cells/roles/adapters/internal/director/execution_tools.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/adapters/internal/director/execution_tools.py:from polaris.kernelone.llm.toolkit.tool_normalization import (
+polaris/cells/roles/adapters/internal/director/state_tracking.py:from polaris.kernelone.fs.text_ops import open_text_log_append
+polaris/cells/roles/adapters/internal/pm_adapter.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/adapters/internal/pm_adapter.py:from polaris.kernelone.storage import (
+polaris/cells/roles/adapters/internal/qa_adapter.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/adapters/internal/qa_adapter.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/roles/kernel/internal/context_event.py:from polaris.kernelone.tool.safety import (
+polaris/cells/roles/kernel/internal/context_gateway.py:    from polaris.kernelone.context.strategy_contracts import StrategyReceipt
+polaris/cells/roles/kernel/internal/context_gateway.py:from polaris.kernelone.context.chunks import PromptChunkAssembler
+polaris/cells/roles/kernel/internal/context_gateway.py:from polaris.kernelone.context.contracts import (
+polaris/cells/roles/kernel/internal/context_gateway.py:from polaris.kernelone.context.history_materialization import SessionContinuityStrategy
+polaris/cells/roles/kernel/internal/context_gateway.py:from polaris.kernelone.fs import format_workspace_tree
+polaris/cells/roles/kernel/internal/context_gateway.py:from polaris.kernelone.llm.reasoning import ReasoningStripper
+polaris/cells/roles/kernel/internal/context_gateway.py:from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+polaris/cells/roles/kernel/internal/conversation_state.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/roles/kernel/internal/error_category.py:from polaris.kernelone.llm.engine import (
+polaris/cells/roles/kernel/internal/events.py:from polaris.kernelone.events.realtime_bridge import (
+polaris/cells/roles/kernel/internal/kernel/core.py:    from polaris.kernelone.context.compaction import RoleContextCompressor
+polaris/cells/roles/kernel/internal/kernel/core.py:from polaris.kernelone.events.uep_publisher import UEPEventPublisher
+polaris/cells/roles/kernel/internal/kernel/core.py:from polaris.kernelone.storage import resolve_storage_roots
+polaris/cells/roles/kernel/internal/kernel/core.py:from polaris.kernelone.trace import get_tracer
+polaris/cells/roles/kernel/internal/kernel/turn_runner.py:from polaris.kernelone.trace import get_tracer
+polaris/cells/roles/kernel/internal/llm_caller/caller.py:from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+polaris/cells/roles/kernel/internal/llm_caller/caller.py:from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
+polaris/cells/roles/kernel/internal/llm_caller/invoker.py:                    from polaris.kernelone.llm.engine import ResponseNormalizer
+polaris/cells/roles/kernel/internal/llm_caller/invoker.py:        from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
+polaris/cells/roles/kernel/internal/llm_caller/invoker.py:from polaris.kernelone.events.uep_publisher import UEPEventPublisher
+polaris/cells/roles/kernel/internal/llm_caller/invoker.py:from polaris.kernelone.llm.engine import AIExecutor
+polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py:        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py:        from polaris.kernelone.llm.toolkit.parsers.json_based import JSONToolParser
+polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py:        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py:        from polaris.kernelone.tools import contracts as tool_contracts
+polaris/cells/roles/kernel/internal/output_parser.py:        from polaris.kernelone.llm.toolkit.parsers.json_based import JSONToolParser
+polaris/cells/roles/kernel/internal/output_parser.py:from polaris.kernelone.llm.contracts.tool import ToolCall
+polaris/cells/roles/kernel/internal/policy/approval_policy.py:from polaris.kernelone.utils.time_utils import utc_now_iso as _utc_now_iso
+polaris/cells/roles/kernel/internal/policy/budget_policy.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/roles/kernel/internal/policy/layer/budget.py:from polaris.kernelone.security.dangerous_patterns import is_dangerous_command as _is_dangerous_command
+polaris/cells/roles/kernel/internal/policy/layer/core.py:        from polaris.kernelone.llm.contracts.tool import ToolCall
+polaris/cells/roles/kernel/internal/policy/layer/core.py:    from polaris.kernelone.llm.contracts.tool import ToolCall
+polaris/cells/roles/kernel/internal/policy/layer/core.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/roles/kernel/internal/policy/layer/tool.py:from polaris.kernelone.security.dangerous_patterns import is_dangerous_command
+polaris/cells/roles/kernel/internal/policy/sandbox_policy.py:from polaris.kernelone.security.dangerous_patterns import is_dangerous_command
+polaris/cells/roles/kernel/internal/prompt_builder.py:from polaris.kernelone.context.chunks import (
+polaris/cells/roles/kernel/internal/prompt_builder.py:from polaris.kernelone.storage.persona_store import load_workspace_persona
+polaris/cells/roles/kernel/internal/prompt_builder.py:from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+polaris/cells/roles/kernel/internal/pydantic_output_parser.py:from polaris.kernelone.llm.robust_parser.extractors import JSONExtractor
+polaris/cells/roles/kernel/internal/services/context_assembler.py:from polaris.kernelone.context.chunks import (
+polaris/cells/roles/kernel/internal/services/context_assembler.py:from polaris.kernelone.context.contracts import (
+polaris/cells/roles/kernel/internal/services/context_assembler.py:from polaris.kernelone.llm.reasoning import ReasoningStripper
+polaris/cells/roles/kernel/internal/services/context_assembler.py:from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+polaris/cells/roles/kernel/internal/services/contracts.py:       from polaris.kernelone.llm.contracts import CellToolExecutorPort
+polaris/cells/roles/kernel/internal/services/contracts.py:       from polaris.kernelone.llm.contracts import ToolExecutorPort
+polaris/cells/roles/kernel/internal/services/contracts.py:    from polaris.kernelone.llm.contracts import (
+polaris/cells/roles/kernel/internal/services/contracts.py:# ToolCall is now imported from polaris.kernelone.llm.contracts.tool
+polaris/cells/roles/kernel/internal/services/contracts.py:from polaris.kernelone.llm.contracts.tool import ToolCall
+polaris/cells/roles/kernel/internal/services/llm_invoker.py:from polaris.kernelone.llm.engine import AIExecutor
+polaris/cells/roles/kernel/internal/services/llm_invoker.py:from polaris.kernelone.llm.engine.contracts import AIRequest
+polaris/cells/roles/kernel/internal/services/llm_invoker.py:from polaris.kernelone.llm.engine.error_mapping import (
+polaris/cells/roles/kernel/internal/services/llm_invoker.py:from polaris.kernelone.llm.robust_parser import ParseResult, RobustParser
+polaris/cells/roles/kernel/internal/services/llm_invoker.py:from polaris.kernelone.llm.shared_contracts import AIResponse, Usage
+polaris/cells/roles/kernel/internal/services/test_context_assembler.py:        from polaris.kernelone.context.contracts import TurnEngineContextResult
+polaris/cells/roles/kernel/internal/services/test_context_assembler.py:        from polaris.kernelone.context.contracts import TurnEngineContextResult
+polaris/cells/roles/kernel/internal/services/test_context_assembler.py:from polaris.kernelone.context.contracts import (
+polaris/cells/roles/kernel/internal/services/tests/test_llm_invoker.py:from polaris.kernelone.llm.engine.error_mapping import (
+polaris/cells/roles/kernel/internal/services/tests/test_llm_invoker.py:from polaris.kernelone.llm.shared_contracts import AIRequest, AIResponse, TaskType, Usage
+polaris/cells/roles/kernel/internal/services/tool_executor.py:            "Please update imports to use: from polaris.kernelone.errors import ErrorCategory",
+polaris/cells/roles/kernel/internal/services/tool_executor.py:        from polaris.kernelone.llm.toolkit import AgentAccelToolExecutor
+polaris/cells/roles/kernel/internal/services/tool_executor.py:from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
+polaris/cells/roles/kernel/internal/testing/__init__.py:from polaris.kernelone.llm.contracts.tool import CellToolExecutorPort
+polaris/cells/roles/kernel/internal/testing/fake_tools.py:from polaris.kernelone.llm.contracts.tool import CellToolExecutorPort
+polaris/cells/roles/kernel/internal/tests/test_action_first_integration.py:        from polaris.kernelone.storage.persona_store import load_workspace_persona
+polaris/cells/roles/kernel/internal/token_budget.py:                from polaris.kernelone.context.budget_gate import SectionAllocation
+polaris/cells/roles/kernel/internal/token_budget.py:            from polaris.kernelone.context.budget_gate import ContextBudgetGate
+polaris/cells/roles/kernel/internal/token_budget.py:    from polaris.kernelone.context.budget_gate import ContextBudgetGate
+polaris/cells/roles/kernel/internal/tool_call_protocol.py:from polaris.kernelone.llm.toolkit.tool_normalization import (
+polaris/cells/roles/kernel/internal/tool_gateway.py:            from polaris.kernelone.llm.toolkit import AgentAccelToolExecutor
+polaris/cells/roles/kernel/internal/tool_gateway.py:        from polaris.kernelone.llm.toolkit.ts_availability import is_tree_sitter_available
+polaris/cells/roles/kernel/internal/tool_gateway.py:from polaris.kernelone.llm.toolkit.tool_normalization import (
+polaris/cells/roles/kernel/internal/tool_gateway.py:from polaris.kernelone.tools.contracts import canonicalize_tool_name
+polaris/cells/roles/kernel/internal/tool_loop_controller.py:from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
+polaris/cells/roles/kernel/internal/tool_loop_controller.py:from polaris.kernelone.llm.runtime_config import get_role_model
+polaris/cells/roles/kernel/internal/tool_loop_controller.py:from polaris.kernelone.llm.toolkit.parsers import format_tool_result
+polaris/cells/roles/kernel/internal/turn_engine/engine.py:                from polaris.kernelone.llm.providers.stream_thinking_parser import (
+polaris/cells/roles/kernel/internal/turn_engine/engine.py:        from polaris.kernelone.llm.toolkit.streaming_patch_buffer import StreamingPatchBuffer
+polaris/cells/roles/profile/internal/registry.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/roles/profile/internal/registry.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/runtime/internal/agent_runtime_base.py:                from polaris.kernelone.tools.runtime_executor import BackendToolRuntime
+polaris/cells/roles/runtime/internal/agent_runtime_base.py:from polaris.kernelone.common.clock import IClock, RealClock
+polaris/cells/roles/runtime/internal/agent_runtime_base.py:from polaris.kernelone.context.compaction import (
+polaris/cells/roles/runtime/internal/agent_runtime_base.py:from polaris.kernelone.fs.text_ops import open_text_log_append, write_text_atomic
+polaris/cells/roles/runtime/internal/agent_runtime_base.py:from polaris.kernelone.storage import (
+polaris/cells/roles/runtime/internal/bus_port.py:from polaris.kernelone.agent_runtime.bus_port import (
+polaris/cells/roles/runtime/internal/kernel_one_bus_port.py:from polaris.kernelone.agent_runtime.bus_port import (
+polaris/cells/roles/runtime/internal/process_service.py:from polaris.kernelone.fs.encoding import build_utf8_env
+polaris/cells/roles/runtime/internal/process_service.py:from polaris.kernelone.process import (
+polaris/cells/roles/runtime/internal/process_service.py:from polaris.kernelone.runtime.defaults import DEFAULT_MODEL, DEFAULT_PM_LOG, DEFAULT_WORKSPACE
+polaris/cells/roles/runtime/internal/process_service.py:from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+polaris/cells/roles/runtime/internal/process_service.py:from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path
+polaris/cells/roles/runtime/internal/protocol_fsm.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/roles/runtime/internal/protocol_fsm.py:from polaris.kernelone.fs.text_ops import open_text_log_append, write_text_atomic
+polaris/cells/roles/runtime/internal/protocol_fsm.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/roles/runtime/internal/role_agent_service.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/roles/runtime/internal/role_agent_service.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/roles/runtime/internal/role_agent_service.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/roles/runtime/internal/sequential_engine.py:            from polaris.kernelone.events import emit_event
+polaris/cells/roles/runtime/internal/worker_pool.py:            from polaris.kernelone.process.command_executor import CommandRequest
+polaris/cells/roles/runtime/internal/worker_pool.py:from polaris.kernelone.process.command_executor import CommandExecutionService
+polaris/cells/roles/runtime/internal/worker_pool.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/roles/session/internal/artifact_service.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/roles/session/internal/context_memory_service.py:from polaris.kernelone.context.context_os import ContextOSSnapshot, StateFirstContextOS
+polaris/cells/roles/session/internal/conversation.py:from polaris.kernelone.db import KernelDatabase
+polaris/cells/roles/session/internal/conversation.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/roles/session/internal/data_store.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/roles/session/internal/role_session_service.py:from polaris.kernelone.context.context_os import (
+polaris/cells/roles/session/internal/role_session_service.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/roles/session/internal/session_persistence.py:                    from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/roles/session/internal/session_persistence.py:                from polaris.kernelone.events import emit_event
+polaris/cells/roles/session/internal/session_persistence.py:                from polaris.kernelone.events import emit_session_event
+polaris/cells/roles/session/internal/session_persistence.py:from polaris.kernelone._runtime_config import resolve_env_int
+polaris/cells/roles/session/internal/session_persistence.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/roles/session/internal/session_persistence.py:from polaris.kernelone.fs.registry import get_default_adapter
+polaris/cells/roles/session/internal/session_persistence.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now, utc_now_str as _utc_now_str
+polaris/cells/roles/session/internal/snapshot_service.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/roles/session/internal/snapshot_service.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/roles/session/internal/storage_paths.py:    from polaris.kernelone.db import KernelDatabase
+polaris/cells/roles/session/internal/storage_paths.py:    from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/runtime/artifact_store/internal/artifact_paths.py:from polaris.kernelone.storage import (
+polaris/cells/runtime/artifact_store/internal/artifacts.py:from polaris.kernelone.runtime.constants import (
+polaris/cells/runtime/artifact_store/internal/artifacts.py:from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
+polaris/cells/runtime/artifact_store/internal/artifacts.py:from polaris.kernelone.storage.io_paths import build_cache_root
+polaris/cells/runtime/execution_broker/internal/service.py:from polaris.kernelone.fs.encoding import build_utf8_env
+polaris/cells/runtime/execution_broker/internal/service.py:from polaris.kernelone.fs.text_ops import open_text_log_append
+polaris/cells/runtime/execution_broker/internal/service.py:from polaris.kernelone.runtime import (
+polaris/cells/runtime/execution_broker/internal/service.py:from polaris.kernelone.trace import create_task_with_context, get_logger
+polaris/cells/runtime/execution_broker/internal/service.py:from polaris.kernelone.utils.time_utils import utc_now as _utc_now
+polaris/cells/runtime/projection/internal/anthropomorphic/__init__.py:from polaris.kernelone.memory.integration import (
+polaris/cells/runtime/projection/internal/anthropomorphic/__init__.py:from polaris.kernelone.memory.project_profile import (
+polaris/cells/runtime/projection/internal/anthropomorphic/__init__.py:from polaris.kernelone.memory.schema import MemoryItem, PromptContext, ReflectionNode
+polaris/cells/runtime/projection/internal/anthropomorphic/__init__.py:from polaris.kernelone.memory.thinking import ThinkingEngine, get_thinking_engine
+polaris/cells/runtime/projection/internal/anthropomorphic/memory_store.py:from polaris.kernelone.memory.memory_store import (
+polaris/cells/runtime/projection/internal/anthropomorphic/reflection.py:from polaris.kernelone.memory.reflection import (
+polaris/cells/runtime/projection/internal/anthropomorphic/retrieval_ranker.py:from polaris.kernelone.memory.retrieval_ranker import (
+polaris/cells/runtime/projection/internal/file_io.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/runtime/projection/internal/file_io.py:from polaris.kernelone.fs.text_ops import write_text_atomic as _kernel_write_text_atomic
+polaris/cells/runtime/projection/internal/io_helpers.py:from polaris.kernelone.storage.io_paths import build_cache_root
+polaris/cells/runtime/projection/internal/llm_status.py:from polaris.kernelone.llm import config_store as llm_config
+polaris/cells/runtime/projection/internal/memos_query_service.py:from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
+polaris/cells/runtime/projection/internal/memos_query_service.py:from polaris.kernelone.storage.io_paths import (
+polaris/cells/runtime/projection/internal/runtime_projection_service.py:from polaris.kernelone.memory.integration import (
+polaris/cells/runtime/projection/internal/status_snapshot_builder.py:from polaris.kernelone.memory.integration import (
+polaris/cells/runtime/projection/internal/workflow_status.py:from polaris.kernelone.fs.text_ops import write_json_atomic
+polaris/cells/runtime/projection/internal/workspace_runtime_context.py:from polaris.kernelone.storage import resolve_storage_roots
+polaris/cells/runtime/state_owner/internal/maintenance.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/runtime/state_owner/internal/maintenance.py:from polaris.kernelone.storage.io_paths import (
+polaris/cells/runtime/state_owner/internal/pm_contract_store.py:from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+polaris/cells/runtime/task_runtime/internal/service.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/runtime/task_runtime/internal/service.py:from polaris.kernelone.fs.registry import get_default_adapter
+polaris/cells/runtime/task_runtime/internal/task_board.py:from polaris.kernelone.fs import KernelFileSystem
+polaris/cells/runtime/task_runtime/internal/task_board.py:from polaris.kernelone.fs.registry import get_default_adapter
+polaris/cells/runtime/task_runtime/internal/task_board.py:from polaris.kernelone.storage import resolve_runtime_path
+polaris/cells/storage/layout/internal/layout_business.py:    from polaris.kernelone._runtime_config import resolve_env_str
+polaris/cells/storage/layout/internal/layout_business.py:    from polaris.kernelone.storage.layout import _runtime_base_and_mode
+polaris/cells/storage/layout/internal/layout_business.py:from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
+polaris/cells/storage/layout/internal/layout_business.py:from polaris.kernelone.storage.layout import (
+polaris/cells/storage/layout/internal/settings_utils.py:from polaris.kernelone.fs.text_ops import write_text_atomic
+polaris/cells/storage/layout/internal/settings_utils.py:from polaris.kernelone.runtime.defaults import DEFAULT_PM_LOG
+polaris/cells/storage/layout/internal/settings_utils.py:from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path
+polaris/cells/workspace/integrity/internal/diff_tracker.py:from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+polaris/cells/workspace/integrity/internal/fs_utils.py:from polaris.kernelone.storage import resolve_workspace_persistent_path
+polaris/cells/workspace/integrity/internal/workspace_service.py:from polaris.kernelone.fs.text_ops import write_text_atomic as _write_text_atomic

@@ -1,0 +1,96 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Cell Verify Pack
+type: object
+additionalProperties: false
+required:
+  - version
+  - cell_id
+  - generated_at
+  - status
+  - summary
+  - verify_targets
+  - governance_artifacts
+  - open_debt_ids
+  - residual_risks
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  cell_id:
+    type: string
+    minLength: 1
+  generated_at:
+    type: string
+    minLength: 1
+  status:
+    type: string
+    enum:
+      - green
+      - guarded
+      - blocked
+  summary:
+    type: string
+    minLength: 10
+  verify_targets:
+    type: object
+    additionalProperties: false
+    required:
+      - tests
+      - contracts
+    properties:
+      tests:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required:
+            - path
+            - purpose
+          properties:
+            path:
+              type: string
+            purpose:
+              type: string
+      contracts:
+        type: array
+        minItems: 1
+        items:
+          type: string
+  governance_artifacts:
+    type: object
+    additionalProperties: false
+    required:
+      - adrs
+      - verification_cards
+      - debt_register
+      - schemas
+    properties:
+      adrs:
+        type: array
+        minItems: 1
+        items:
+          type: string
+      verification_cards:
+        type: array
+        minItems: 1
+        items:
+          type: string
+      debt_register:
+        type: string
+        minLength: 1
+      schemas:
+        type: array
+        minItems: 1
+        items:
+          type: string
+  open_debt_ids:
+    type: array
+    items:
+      type: string
+  residual_risks:
+    type: array
+    minItems: 1
+    items:
+      type: string

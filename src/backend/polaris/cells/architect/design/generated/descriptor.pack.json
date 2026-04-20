@@ -1,0 +1,140 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.805983Z",
+  "source_hash": "12de1e7b2986eb94",
+  "cell_id": "architect.design",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "BlueprintRecord",
+      "description": "In-memory architecture blueprint record.",
+      "defined_in": "polaris/cells/architect/design/internal/architect_agent.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BlueprintStore",
+      "description": "Thread-safe in-memory store for architect blueprints.",
+      "defined_in": "polaris/cells/architect/design/internal/architect_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "save",
+          "doc": ""
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "list_all",
+          "doc": ""
+        },
+        {
+          "name": "list_by_task",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArchitectAgent",
+      "description": "Architect role agent (`中书令`) on top of RoleAgent runtime.",
+      "defined_in": "polaris/cells/architect/design/internal/architect_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": ""
+        },
+        {
+          "name": "_next_blueprint_id",
+          "doc": ""
+        },
+        {
+          "name": "_tool_create_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "_tool_update_blueprint_structure",
+          "doc": ""
+        },
+        {
+          "name": "_tool_add_contract",
+          "doc": ""
+        },
+        {
+          "name": "_tool_add_boundary",
+          "doc": ""
+        },
+        {
+          "name": "_tool_finalize_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "_tool_get_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "_tool_list_blueprints",
+          "doc": ""
+        },
+        {
+          "name": "handle_message",
+          "doc": ""
+        },
+        {
+          "name": "run_cycle",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArchitectConfig",
+      "description": "Configuration for Architect Service.",
+      "defined_in": "polaris/cells/architect/design/internal/architect_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchitectureDoc",
+      "description": "An architecture document.",
+      "defined_in": "polaris/cells/architect/design/internal/architect_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchitectService",
+      "description": "Architect Service - creates project documentation and specifications.",
+      "defined_in": "polaris/cells/architect/design/internal/architect_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_sync_write_file",
+          "doc": "Synchronous file write helper."
+        },
+        {
+          "name": "get_status",
+          "doc": "Get Architect Service status."
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

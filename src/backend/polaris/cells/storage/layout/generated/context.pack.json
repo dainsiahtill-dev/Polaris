@@ -1,0 +1,70 @@
+{
+  "id": "storage.layout",
+  "title": "Storage Layout",
+  "kind": "capability",
+  "purpose": "Resolve global, workspace and runtime persistence layout and path policies as a canonical storage contract for all cells.",
+  "summary": "Business capability boundary for storage.layout.",
+  "owned_paths": [
+    "polaris/application/storage_layout.py",
+    "polaris/kernelone/storage/layout.py",
+    "polaris/kernelone/storage/storage_layout.py",
+    "polaris/kernelone/storage/policy.py",
+    "polaris/infrastructure/legacy_core/storage/layout.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "RefreshStorageLayoutCommandV1"
+    ],
+    "queries": [
+      "ResolveStorageLayoutQueryV1",
+      "ResolveRuntimePathQueryV1",
+      "ResolveWorkspacePathQueryV1"
+    ],
+    "events": [
+      "StorageLayoutResolvedEventV1"
+    ],
+    "results": [
+      "StorageLayoutResultV1"
+    ],
+    "errors": [
+      "StorageLayoutErrorV1"
+    ]
+  },
+  "neighbors": [
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "workspace/meta/storage_layout/*"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "fs.read:runtime/**",
+    "fs.write:workspace/meta/storage_layout/*"
+  ],
+  "invariants": [
+    "All state writes must remain single-owner and contract-driven.",
+    "Append-only evidence and event semantics must be preserved.",
+    "All text file reads and writes must use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/application/storage_layout.py",
+    "polaris/kernelone/storage/layout.py",
+    "polaris/kernelone/storage/storage_layout.py",
+    "polaris/kernelone/storage/policy.py",
+    "polaris/infrastructure/legacy_core/storage/layout.py"
+  ],
+  "test_targets": [
+    "polaris/kernelone/storage/tests/test_storage_layout.py",
+    "tests/test_storage_layout_v4.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

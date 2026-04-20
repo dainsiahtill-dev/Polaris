@@ -1,0 +1,35 @@
+{
+  "case_id": "l4_no_tool_needed",
+  "level": "L4",
+  "role": "director",
+  "title": "L4 No Tool Needed - Knowledge Query",
+  "description": "测试 Agent 能否识别不需要工具的知识性问题。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "解释一下 Python 中 list 和 tuple 的区别。",
+  "tags": ["l4", "no-tool", "knowledge", "zero-tool"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.9,
+    "stream": {
+      "require_no_tool_calls": true,
+      "forbidden_tools": ["read_file", "execute_command", "search_replace", "edit_file", "glob", "search_code"],
+      "required_output_patterns": [
+        "list",
+        "tuple",
+        "可变",
+        "不可变",
+        "mutable",
+        "immutable"
+      ]
+    },
+    "non_stream": {
+      "require_no_tool_calls": true,
+      "forbidden_tools": ["read_file", "execute_command", "search_replace", "edit_file", "glob", "search_code"]
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

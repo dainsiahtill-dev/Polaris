@@ -1,0 +1,67 @@
+id: director.tasking
+title: Director Tasking
+kind: workflow
+visibility: public
+stateful: true
+owner: engineering
+purpose: 'Task lifecycle management, worker pool orchestration, and worker executor
+  for Director tasks. Owns TaskService, WorkerService, WorkerExecutor, and bootstrap
+  template catalog.
+
+  '
+current_modules:
+- polaris.cells.director.tasking.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/director/tasking/**
+public_contracts:
+  modules:
+  - polaris.cells.director.tasking.public.contracts
+  commands:
+  - CreateTaskCommandV1
+  - CancelTaskCommandV1
+  queries:
+  - TaskStatusQueryV1
+  - TaskResultQueryV1
+  events: []
+  results:
+  - TaskCreatedResultV1
+  - TaskStatusResultV1
+  - TaskResultResultV1
+  errors:
+  - DirectorTaskingError
+depends_on:
+- runtime.execution_broker
+- runtime.task_runtime
+- audit.evidence
+- llm.control_plane
+- llm.provider_runtime
+- policy.workspace_guard
+subgraphs: []
+state_owners:
+- runtime/state/director/tasking/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:runtime/tasks/*
+- fs.write:runtime/state/director/tasking/*
+- process.spawn:director/task/*
+- llm.invoke:director/task/*
+verification:
+  gaps:
+  - 'Phase 3 complete: implementation migrated to director.tasking/internal. Implementation
+    files migrated: bootstrap_template_catalog, worker_executor, worker_pool_service,
+    task_lifecycle_service. Phase 4 deps (CodeGenerationEngine, FileApplyService,
+    RepairService) deferred via lazy import.
+
+    '
+  - 'Phase 3 remaining work resolved: (a) director.tasking tests added in tests/test_contracts.py
+    (45 tests, all pass); (b) Facade cut over to import from director.tasking.public;
+    (c) director.execution/internal star re-exports already removed (Phase 3 modules
+    commented out in execution/internal/__init__.py; backward-compat stubs re-export
+    from director.tasking.internal); (d) director_pipeline.yaml updated to include
+    director.tasking cell and its state boundary.
+
+    '
+  smoke_commands: []
+  tests: []
+generated_artifacts: []

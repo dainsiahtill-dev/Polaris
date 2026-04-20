@@ -1,0 +1,609 @@
+# ACGA Migration Ledger
+# Auto-generated skeleton — fill in per-wave execution data
+version: 1
+ledger_id: polaris-polaris-migration-2026-q1
+description: >
+  Migration of Polaris backend from legacy root directories (app/, core/, scripts/, api/)
+  to ACGA 2.0 compliant polaris/ structure with Cell boundary enforcement.
+  Tracks all migration units with schema-valid status, verification targets, and deletion gates.
+authority_docs:
+  - docs/FINAL_SPEC.md
+  - docs/AGENT_ARCHITECTURE_STANDARD.md
+  - docs/真正可执行的 ACGA 2.0 落地版.md
+  - docs/governance/schemas/migration-ledger.schema.yaml
+status_model:
+  planned:
+    meaning: Migration unit is scoped and documented but not yet started
+  in_progress:
+    meaning: Active development or refactoring underway
+  code_moved:
+    meaning: Source files physically relocated; imports not yet switched
+  imports_switched:
+    meaning: Import paths updated; old paths retained as thin shims
+  shim_only:
+    meaning: Old paths exist as zero-logic shims pointing to new root; ready for deletion review
+  verified:
+    meaning: Verification targets passed; graph and docs updated; ready for retirement
+  retired:
+    meaning: Old paths removed from disk; ledger entry archived
+  blocked:
+    meaning: Migration paused due to upstream dependency or graph gap
+legacy_policies:
+  POLARIS_rename_required:
+    >
+      All POLARIS_* environment variable references in polaris/ code must be
+      renamed to KERNELONE_* before old-root retirement. POLARIS_* may be
+      retained as a backward-compat alias in bootstrap config only, never in
+      polaris/ business logic.
+  no_new_shim:
+    >
+      Migration units reaching shim_only must not introduce new logic into old paths.
+      Shim files are frozen stubs; all new development goes to the new root.
+  utf8_mandatory:
+    >
+      All text file I/O introduced during migration must use explicit encoding="utf-8".
+      This applies to both old-path shims and new-path implementations.
+
+units:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Wave 1: Bootstrap + KernelOne core (completed)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: mig-bootstrap-root
+    title: bootstrap/ root convergence
+    wave: 1
+    category: bootstrap
+    scope: file_family
+    status: verified
+    current_impl_state: new_root_primary
+    owner: architecture-engineer
+    legacy_policy: no_new_shim
+    depends_on: []
+    blockers: []
+    notes:
+      - Completed 2026-03-20; bootstrap/ converged to polaris/bootstrap/
+      - "polaris/bootstrap/ now the sole bootstrap root (13 Python files)"
+    target:
+      cell: bootstrap.assembly
+      catalog_status: actual
+      target_assets_status: active_impl
+      root_dirs:
+        - polaris/bootstrap/
+      target_paths:
+        - polaris/bootstrap/
+      actual_impl_paths:
+        - polaris/bootstrap/
+      subgraphs: []
+    source_refs:
+      - path: src/backend/bootstrap/
+        kind: directory
+        coverage: full
+        note: Entire legacy bootstrap/ directory replaced by polaris/bootstrap/
+      - path: src/backend/app/bootstrap.py
+        kind: file
+        coverage: partial
+        note: backend_utils.py and bootstrap entry consolidated
+    verification:
+      checks:
+        - "pytest polaris/bootstrap/ -q"
+        - "python -m polaris.bootstrap.bootstrap_test_suite"
+      required_tests: []
+      docs_updates:
+        - docs/ARCHITECTURE_SPEC.md (bootstrap section)
+        - docs/KERNELONE_ARCHITECTURE_SPEC.md
+      graph_updates:
+        - docs/graph/catalog/cells.yaml (bootstrap.assembly owned_paths updated)
+    delete_when:
+      - "polaris/bootstrap/ smoke tests pass for 5 consecutive days"
+      - "No src/backend/bootstrap/ references remain in polaris/ code"
+
+  - id: mig-kernelone-core
+    title: KernelOne core subsystem convergence
+    wave: 1
+    category: kernelone
+    scope: capability_cluster
+    status: verified
+    current_impl_state: new_root_primary
+    owner: architecture-engineer
+    legacy_policy: utf8_mandatory
+    depends_on: []
+    blockers: []
+    notes:
+      - kernelone/ is the Agent-OS layer; must not import upper layers
+      - "2026-03-23: 211 Python files, except Exception: 206, bare pass: 53"
+      - "io_utils refs: 0; LLM contracts unified in shared_contracts.py"
+    target:
+      cell: kernelone.base
+      catalog_status: actual
+      target_assets_status: active_impl
+      root_dirs:
+        - polaris/kernelone/
+      target_paths:
+        - polaris/kernelone/
+      actual_impl_paths:
+        - polaris/kernelone/
+      subgraphs: []
+    source_refs:
+      - path: src/backend/core/
+        kind: directory
+        coverage: full
+        note: Entire legacy core/ replaced by polaris/kernelone/
+    verification:
+      checks:
+        - "python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all"
+        - "pytest tests/architecture/test_kernelone_release_gates.py -q"
+      required_tests:
+        - tests/architecture/test_kernelone_release_gates.py
+        - tests/test_kernelone_*.py
+      docs_updates:
+        - docs/KERNELONE_ARCHITECTURE_SPEC.md
+        - docs/ARCHITECTURE_SPEC.md
+      graph_updates:
+        - docs/graph/catalog/cells.yaml (kernelone.base owned_paths updated)
+    delete_when:
+      - "kernelone_release_gate --mode all passes with 0 errors"
+      - "No src/backend/core/ references in polaris/ code"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Wave 2: Application cellization batches
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: mig-application-batch1
+    title: Application cellization batch 1 (2026-03-20)
+    wave: 2
+    category: application
+    scope: file_family
+    status: shim_only
+    current_impl_state: mixed
+    owner: architecture-engineer
+    legacy_policy: no_new_shim
+    depends_on:
+      - mig-kernelone-core
+    blockers:
+      - "91 implementation files in polaris/application/ remain unclaimed by any Cell"
+    notes:
+      - "Batch 1 (2026-03-20): task_service, worker_service, worker_executor, code_generation_engine, file_apply_service, unified_apply, bootstrap_template_catalog, repair_service → director.execution"
+      - "Batch 1 (2026-03-20): orchestration/*, role_agent/*, docs_stage_service → orchestration.workflow_runtime, roles.runtime, docs.court_workflow"
+      - "Report: docs/migration/application_cellization_report_2026-03-21.md"
+    target:
+      cell: director.execution
+      catalog_status: actual
+      target_assets_status: active_impl
+      root_dirs:
+        - polaris/cells/director/execution/internal/
+        - polaris/cells/orchestration/workflow_runtime/internal/
+        - polaris/cells/roles/runtime/internal/
+        - polaris/cells/docs/court_workflow/internal/
+      target_paths:
+        - polaris/cells/director/execution/internal/task_lifecycle_service.py
+        - polaris/cells/director/execution/internal/worker_pool_service.py
+        - polaris/cells/director/execution/internal/worker_executor.py
+        - polaris/cells/director/execution/internal/code_generation_engine.py
+        - polaris/cells/director/execution/internal/file_apply_service.py
+        - polaris/cells/director/execution/internal/patch_apply_engine.py
+        - polaris/cells/director/execution/internal/bootstrap_template_catalog.py
+        - polaris/cells/director/execution/internal/repair_service.py
+        - polaris/cells/orchestration/workflow_runtime/internal/
+        - polaris/cells/roles/runtime/internal/
+        - polaris/cells/docs/court_workflow/internal/
+      actual_impl_paths:
+        - polaris/cells/director/execution/internal/
+        - polaris/cells/orchestration/workflow_runtime/internal/
+        - polaris/cells/roles/runtime/internal/
+        - polaris/cells/docs/court_workflow/internal/
+      subgraphs:
+        - execution_governance_pipeline
+    source_refs:
+      - path: polaris/application/services/task_service.py
+        kind: file
+        coverage: full
+        note: Moved to director.execution internal
+      - path: polaris/application/services/worker_service.py
+        kind: file
+        coverage: full
+        note: Moved to director.execution internal
+      - path: polaris/application/services/worker_executor.py
+        kind: file
+        coverage: full
+        note: Moved to director.execution internal
+      - path: polaris/application/services/code_generation_engine.py
+        kind: file
+        coverage: full
+        note: Moved to director.execution internal
+      - path: polaris/application/services/file_apply_service.py
+        kind: file
+        coverage: full
+        note: Moved to director.execution internal
+      - path: polaris/application/services/unified_apply.py
+        kind: file
+        coverage: full
+        note: Renamed patch_apply_engine.py in director.execution
+      - path: polaris/application/services/bootstrap_template_catalog.py
+        kind: file
+        coverage: full
+        note: Moved to director.execution internal
+      - path: polaris/application/services/repair_service.py
+        kind: file
+        coverage: full
+        note: Moved to director.execution internal
+      - path: polaris/application/orchestration/
+        kind: directory
+        coverage: full
+        note: Moved to orchestration.workflow_runtime internal
+      - path: polaris/application/role_agent/
+        kind: directory
+        coverage: partial
+        note: "Partial: 14 files moved to roles.runtime; pm_agent→pm_planning, hr_agent→llm.control_plane, architect_agent→architect.design (pending)"
+    verification:
+      checks:
+        - "pytest tests/test_director_service_convergence.py -q"
+        - "pytest tests/test_roles_kernel.py -q"
+        - "pytest tests/test_runtime_role_binding.py -q"
+      required_tests:
+        - tests/test_director_service_convergence.py
+        - tests/test_roles_kernel.py
+      docs_updates:
+        - docs/migration/application_cellization_report_2026-03-21.md
+        - docs/graph/catalog/cells.yaml
+      graph_updates:
+        - docs/graph/catalog/cells.yaml (director.execution owned_paths updated)
+        - docs/graph/catalog/cells.yaml (roles.runtime owned_paths updated)
+        - docs/graph/catalog/cells.yaml (orchestration.workflow_runtime owned_paths updated)
+    delete_when:
+      - "All batch-1 source files removed from polaris/application/"
+      - "No polaris/application/services/* references in polaris/ code"
+      - "Verification targets pass"
+
+  - id: mig-application-batch2a
+    title: Application cellization batch 2A (2026-03-21, low-risk cell merge)
+    wave: 2
+    category: application
+    scope: file_family
+    status: in_progress
+    current_impl_state: mixed
+    owner: architecture-engineer
+    legacy_policy: no_new_shim
+    depends_on:
+      - mig-application-batch1
+    blockers:
+      - "polaris/application/ still has 91 unclaimed implementation files"
+    notes:
+      - "Batch 2A (2026-03-21): director_logic, audit_llm_runtime, workspace_context, skill, agent_tui, __main__, pm_agent, hr_agent, llm_client, cfo_agent → existing cells"
+      - "Report: docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md"
+    target:
+      cell: director.execution
+      catalog_status: actual
+      target_assets_status: active_impl
+      root_dirs:
+        - polaris/cells/director/execution/internal/
+        - polaris/cells/audit/evidence/internal/
+        - polaris/cells/runtime/projection/internal/
+        - polaris/cells/roles/runtime/internal/
+        - polaris/cells/orchestration/pm_planning/internal/
+        - polaris/cells/llm/control_plane/internal/
+        - polaris/cells/finops/budget_guard/internal/
+      target_paths:
+        - polaris/cells/director/execution/internal/director_logic_rules.py
+        - polaris/cells/audit/evidence/internal/task_audit_llm_binding.py
+        - polaris/cells/runtime/projection/internal/workspace_runtime_context.py
+        - polaris/cells/roles/runtime/internal/skill_loader.py
+        - polaris/cells/roles/runtime/internal/tui_console.py
+        - polaris/cells/roles/runtime/internal/standalone_entry.py
+        - polaris/cells/orchestration/pm_planning/internal/pm_agent.py
+        - polaris/cells/llm/control_plane/internal/llm_config_agent.py
+        - polaris/cells/llm/control_plane/internal/tui_llm_client.py
+        - polaris/cells/finops/budget_guard/internal/budget_agent.py
+      actual_impl_paths: []
+      subgraphs:
+        - execution_governance_pipeline
+    source_refs:
+      - path: polaris/application/services/director_logic.py
+        kind: file
+        coverage: full
+        note: Merge into director.execution
+      - path: polaris/application/services/audit_llm_runtime.py
+        kind: file
+        coverage: full
+        note: Merge into audit.evidence
+      - path: polaris/application/services/workspace_context.py
+        kind: file
+        coverage: full
+        note: Merge into runtime.projection
+      - path: polaris/application/role_agent/skill.py
+        kind: file
+        coverage: full
+        note: Merge into roles.runtime
+      - path: polaris/application/role_agent/tui/agent_tui.py
+        kind: file
+        coverage: full
+        note: Merge into roles.runtime
+      - path: polaris/application/role_agent/__main__.py
+        kind: file
+        coverage: full
+        note: Merge into roles.runtime
+      - path: polaris/application/role_agent/pm_agent.py
+        kind: file
+        coverage: full
+        note: Merge into orchestration.pm_planning
+      - path: polaris/application/role_agent/hr_agent.py
+        kind: file
+        coverage: full
+        note: Merge into llm.control_plane
+      - path: polaris/application/role_agent/tui/llm_client.py
+        kind: file
+        coverage: full
+        note: Merge into llm.control_plane
+      - path: polaris/application/role_agent/cfo_agent.py
+        kind: file
+        coverage: full
+        note: Merge into finops.budget_guard
+    verification:
+      checks:
+        - "pytest tests/test_pm_orchestration_api.py -q"
+        - "pytest tests/test_plan_sync.py -q"
+        - "pytest polaris/cells/roles/runtime/tests/ -q"
+      required_tests:
+        - tests/test_pm_orchestration_api.py
+        - tests/test_plan_sync.py
+      docs_updates:
+        - docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md
+      graph_updates:
+        - docs/graph/catalog/cells.yaml (affected Cells owned_paths)
+    delete_when:
+      - "All batch-2A source files physically removed from polaris/application/"
+      - "Verification targets pass"
+
+  - id: mig-application-batch2b-resident
+    title: Application cellization batch 2B — resident.autonomy Cell creation
+    wave: 2
+    category: application
+    scope: cell
+    status: planned
+    current_impl_state: legacy_only
+    owner: architecture-engineer
+    legacy_policy: no_new_shim
+    depends_on:
+      - mig-application-batch2a
+    blockers:
+      - "polaris/cells/resident/autonomy/ Cell not yet created"
+      - "Requires cells.yaml update to declare resident.autonomy Cell"
+    notes:
+      - "New Cell: polaris/cells/resident/autonomy/"
+      - "Source: polaris/application/resident/* (15 files)"
+      - "Batch 2B from docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md §3.1"
+    target:
+      cell: resident.autonomy
+      catalog_status: missing
+      target_assets_status: absent
+      root_dirs:
+        - polaris/cells/resident/autonomy/
+      target_paths:
+        - polaris/cells/resident/autonomy/cell.yaml
+        - polaris/cells/resident/autonomy/public/contracts.py
+        - polaris/cells/resident/autonomy/internal/resident_runtime_service.py
+        - polaris/cells/resident/autonomy/internal/resident_storage.py
+        - polaris/cells/resident/autonomy/internal/resident_models.py
+        - polaris/cells/resident/autonomy/internal/capability_graph.py
+        - polaris/cells/resident/autonomy/internal/counterfactual_lab.py
+        - polaris/cells/resident/autonomy/internal/decision_trace.py
+        - polaris/cells/resident/autonomy/internal/execution_projection.py
+        - polaris/cells/resident/autonomy/internal/goal_governor.py
+        - polaris/cells/resident/autonomy/internal/meta_cognition.py
+        - polaris/cells/resident/autonomy/internal/pm_bridge.py
+        - polaris/cells/resident/autonomy/internal/self_improvement_lab.py
+        - polaris/cells/resident/autonomy/internal/skill_foundry.py
+        - polaris/cells/resident/autonomy/internal/evidence_bundle_service.py
+        - polaris/cells/resident/autonomy/internal/evidence_service.py
+        - polaris/cells/resident/autonomy/internal/evidence_models.py
+      actual_impl_paths: []
+      subgraphs: []
+    source_refs:
+      - path: polaris/application/resident/
+        kind: directory
+        coverage: full
+        note: "15 files: service, storage, models, capability_graph, counterfactual_lab, decision_trace, execution_projection, goal_governor, meta_cognition, pm_bridge, self_improvement_lab, skill_foundry, evidence_bundle_service, evidence_service, evidence_models"
+    verification:
+      checks:
+        - "pytest polaris/cells/resident/autonomy/tests/ -q"
+        - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
+      required_tests: []
+      docs_updates:
+        - docs/graph/catalog/cells.yaml (declare resident.autonomy)
+        - polaris/cells/resident/autonomy/README.agent.md
+      graph_updates:
+        - docs/graph/catalog/cells.yaml (new Cell declaration)
+    delete_when:
+      - "polaris/application/resident/ directory empty"
+      - "resident.autonomy Cell verified"
+
+  - id: mig-application-batch2b-architect
+    title: Application cellization batch 2B — architect.design Cell creation
+    wave: 2
+    category: application
+    scope: cell
+    status: planned
+    current_impl_state: legacy_only
+    owner: architecture-engineer
+    legacy_policy: no_new_shim
+    depends_on:
+      - mig-application-batch2b-resident
+    blockers:
+      - "polaris/cells/architect/design/ Cell not yet created"
+      - "Requires cells.yaml update to declare architect.design Cell"
+    notes:
+      - "New Cell: polaris/cells/architect/design/"
+      - "Source: architect_service.py, architect_agent.py, architect_cli.py"
+      - "Batch 2B from docs/migration/application_cellization_batch2_ide_move_list_2026-03-21.md §3.2"
+    target:
+      cell: architect.design
+      catalog_status: missing
+      target_assets_status: absent
+      root_dirs:
+        - polaris/cells/architect/design/
+      target_paths:
+        - polaris/cells/architect/design/cell.yaml
+        - polaris/cells/architect/design/public/contracts.py
+        - polaris/cells/architect/design/internal/architect_service.py
+        - polaris/cells/architect/design/internal/architect_agent.py
+        - polaris/cells/architect/design/internal/architect_cli.py
+      actual_impl_paths: []
+      subgraphs: []
+    source_refs:
+      - path: polaris/application/services/architect_service.py
+        kind: file
+        coverage: full
+        note: Move to architect.design internal
+      - path: polaris/application/role_agent/architect_agent.py
+        kind: file
+        coverage: full
+        note: Move to architect.design internal
+      - path: polaris/application/role_agent/architect_cli.py
+        kind: file
+        coverage: full
+        note: Move to architect.design internal
+    verification:
+      checks:
+        - "pytest polaris/cells/architect/design/tests/ -q"
+        - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
+      required_tests: []
+      docs_updates:
+        - docs/graph/catalog/cells.yaml (declare architect.design)
+        - polaris/cells/architect/design/README.agent.md
+      graph_updates:
+        - docs/graph/catalog/cells.yaml (new Cell declaration)
+    delete_when:
+      - "polaris/application/services/architect_service.py removed"
+      - "polaris/application/role_agent/architect_agent.py removed"
+      - "architect.design Cell verified"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Wave 3: Cross-cutting concerns
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: mig-env-var-prefix
+    title: Environment variable prefix POLARIS_ → KERNELONE_ migration
+    wave: 3
+    category: infrastructure
+    scope: file_family
+    status: planned
+    current_impl_state: mixed
+    owner: infrastructure-engineer
+    legacy_policy: POLARIS_rename_required
+    depends_on:
+      - mig-kernelone-core
+    blockers:
+      - "249 unique POLARIS_* var names referenced across 161 files (746 total occurrences)"
+      - "No complete KERNELONE_* equivalence mapping documented"
+    notes:
+      - "Snapshot (2026-03-23): POLARIS_=746 (polaris:483, tests:172) vs KERNELONE_=159 (polaris:143, tests:9, docs:4)"
+      - "Top files: config.py(86), _runtime_config.py(27), config_loader.py(24)"
+      - "POLARIS_* may be kept as backward-compat aliases in bootstrap config only"
+      - "Never retain POLARIS_* in polaris/ business logic"
+      - "Timeline: Wave 3 — after application cellization batches complete"
+    target:
+      cell: kernelone.base
+      catalog_status: actual
+      target_assets_status: active_impl
+      root_dirs:
+        - polaris/kernelone/
+        - polaris/bootstrap/
+      target_paths:
+        - polaris/kernelone/_runtime_config.py
+        - polaris/bootstrap/config_loader.py
+        - polaris/delivery/cli/pm/config.py
+        - polaris/delivery/cli/pm/cli.py
+        - polaris/delivery/cli/director/cli_thin.py
+        - polaris/cells/storage/layout/internal/settings_utils.py
+        - polaris/kernelone/process/codex_adapter.py
+      actual_impl_paths: []
+      subgraphs: []
+    source_refs:
+      - path: polaris/kernelone/_runtime_config.py
+        kind: file
+        coverage: partial
+        note: "27 POLARIS_ occurrences — rename to KERNELONE_ equivalents"
+      - path: polaris/bootstrap/config_loader.py
+        kind: file
+        coverage: partial
+        note: "24 POLARIS_ occurrences — add KERNELONE_ primary + POLARIS_ alias"
+      - path: polaris/delivery/cli/pm/config.py
+        kind: file
+        coverage: partial
+        note: "13 POLARIS_ occurrences — migrate to KERNELONE_"
+      - path: config.py
+        kind: file
+        coverage: partial
+        note: "86 POLARIS_ occurrences — root config; highest priority"
+      - path: tests/
+        kind: directory
+        coverage: partial
+        note: "172 POLARIS_ occurrences — tests follow polaris/ migration"
+    verification:
+      checks:
+        - "grep -r 'POLARIS_' polaris/ | wc -l  (expect 0)"
+        - "pytest polaris/kernelone/tests/test_runtime_config.py -q"
+        - "pytest polaris/bootstrap/tests/ -q"
+      required_tests:
+        - polaris/kernelone/tests/test_runtime_config.py
+      docs_updates:
+        - docs/KERNELONE_ARCHITECTURE_SPEC.md (env var section)
+        - README.md (env var reference)
+      graph_updates:
+        - docs/ARCHITECTURE_STANDARD.md (env var section updated)
+    delete_when:
+      - "grep -r 'POLARIS_' polaris/ returns 0 results"
+      - "POLARIS_ aliases removed from bootstrap config"
+
+  - id: mig-descriptor-pack
+    title: Descriptor pack generation for all 41 Cells
+    wave: 3
+    category: governance
+    scope: capability_cluster
+    status: planned
+    current_impl_state: legacy_only
+    owner: documentation-engineer
+    legacy_policy: utf8_mandatory
+    depends_on:
+      - mig-application-batch2a
+      - mig-application-batch2b-resident
+      - mig-application-batch2b-architect
+    blockers:
+      - "Current coverage: 0/41 (no generated descriptor.pack.json files)"
+      - "fitness-rules.yaml 16 blocker rules in seeded/draft status"
+    notes:
+      - "Use: python -m polaris.cells.context.catalog.internal.descriptor_pack_generator"
+      - "Must run after each wave's code changes"
+      - "Coverage target: 41/41 Cells with generated descriptor.pack.json"
+    target:
+      cell: context.catalog
+      catalog_status: actual
+      target_assets_status: absent
+      root_dirs:
+        - polaris/cells/*/generated/
+      target_paths:
+        - polaris/cells/*/generated/descriptor.pack.json
+      actual_impl_paths: []
+      subgraphs: []
+    source_refs:
+      - path: polaris/cells/*/cell.yaml
+        kind: glob
+        coverage: full
+        note: All 41 Cell manifests as input
+      - path: polaris/cells/*/public/
+        kind: directory
+        coverage: full
+        note: Public contracts as descriptor source
+      - path: polaris/cells/*/internal/
+        kind: directory
+        coverage: partial
+        note: Internal modules with @public-annotated items as descriptor source
+    verification:
+      checks:
+        - "python -m polaris.cells.context.catalog.internal.descriptor_pack_generator --dry-run"
+        - "ls polaris/cells/*/generated/descriptor.pack.json | wc -l  (expect 41)"
+        - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
+      required_tests: []
+      docs_updates:
+        - docs/governance/schemas/semantic-descriptor.schema.yaml
+      graph_updates:
+        - docs/graph/catalog/cells.yaml (descriptor asset status per Cell)
+    delete_when:
+      - "All 41 Cells have generated/descriptor.pack.json"
+      - "Catalog governance gate passes with 0 errors"

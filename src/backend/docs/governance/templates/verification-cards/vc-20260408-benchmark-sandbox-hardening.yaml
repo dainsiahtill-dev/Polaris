@@ -1,0 +1,93 @@
+card_id: "vc-20260408-benchmark-sandbox-hardening"
+bug_summary: >
+  llm.evaluation benchmark 在 sandbox 物化、运行时路径归属和 suite 失败统计上存在结构性缺陷，
+  导致 Windows 路径失败、状态越界写入和失败统计失真。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/llm/evaluation/internal/benchmark_loader.py + tool_calling_matrix.py + runner.py"
+  method: "materialize_case_workspace() / EvaluationRunner.run()"
+  symptom: "fixture copy 失败、workspace 根目录污染、suite 失败时 total_cases=0"
+
+assumptions:
+  - id: "A1"
+    statement: "Agentic benchmark sandbox 直接 copy fixture，会携带 .git/__pycache__ 等非测试语义文件。"
+    status: verified_true
+    evidence: >
+      benchmark_loader.materialize_case_workspace() 当前直接调用 shutil.copytree(fixture_dir, target_dir)，
+      未设置 ignore；fixture 目录包含 __pycache__ 与深层路径。
+
+  - id: "A2"
+    statement: "Tool-calling matrix sandbox 写在 workspace 根目录下，未走 runtime state owner 路径。"
+    status: verified_true
+    evidence: >
+      tool_calling_matrix.materialize_case_workspace() 目标路径为 Path(benchmark_root) / case.case_id，
+      run_tool_calling_matrix_suite() 传入 benchmark_root=workspace。
+
+  - id: "A3"
+    statement: "使用原始 case_id 作为 sandbox 目录名会放大路径长度风险。"
+    status: verified_true
+    evidence: >
+      两个 materialize_case_workspace() 均使用 case.case_id 直接拼目录名；
+      fixtures 中存在长 case_id 且嵌套目录深。
+
+  - id: "A4"
+    statement: "Runner 在 suite 异常但无 details.cases 时会把 suite_total 置为 0。"
+    status: verified_true
+    evidence: >
+      EvaluationRunner.run() 中 suite_total 初始为 1，但后续无条件赋值 suite_total=len(results)；
+      当无 case 细项时 results 为空，导致 total_cases 累加 0。
+
+  - id: "A5"
+    statement: "agentic_benchmark 内部调用 _collect_case_observation 时 model 类型与签名不一致。"
+    status: verified_true
+    evidence: >
+      run_agentic_benchmark_suite(model: str | None) 直接传 model 到
+      _collect_case_observation(model: str)，触发 mypy 类型错误。
+
+pre_mortem:
+  failure_point: >
+    若 sandbox key 变更但测试仍依赖旧路径，回归将误判；若 runtime 路径未统一，
+    仍会出现越界写入与状态归属冲突。
+  risk_zone:
+    - "tests/test_llm_benchmark_loader.py"
+    - "tests/test_llm_tool_calling_matrix.py"
+    - "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    - "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    - "polaris/cells/llm/evaluation/internal/runner.py"
+
+verification_plan:
+  unit_tests:
+    - file: "tests/test_llm_benchmark_loader.py"
+      description: "验证 sandbox 路径、替换逻辑、ignore 规则和 key 形态"
+      expected: "旧文件被替换，缓存/pyc/git 不被复制，路径位于 runtime/llm_evaluations 下"
+      status: existing_fix
+    - file: "tests/test_llm_tool_calling_matrix.py"
+      description: "验证 matrix sandbox 落在 runtime 路径而非 workspace 根目录"
+      expected: "case payload sandbox_workspace 指向 runtime/llm_evaluations/<run_id>/sandboxes/*"
+      status: existing_fix
+    - file: "polaris/cells/llm/evaluation/tests/test_runner.py"
+      description: "suite 异常时 total_cases 至少为 1"
+      expected: "summary.total_cases >= 1"
+      status: existing_fix
+  integration_tests:
+    - description: "Agentic + Matrix + Loader + Runner 相关回归"
+      command: "python -m pytest -q tests/test_llm_agentic_benchmark.py tests/test_llm_tool_calling_matrix.py tests/test_llm_benchmark_loader.py polaris/cells/llm/evaluation/tests/test_runner.py"
+      status: existing_fix
+    - description: "统一 benchmark 核心回归"
+      command: "python -m pytest -q polaris/kernelone/benchmark/tests"
+      status: existing_pass
+  manual_check:
+    - "检查 matrix sandbox 不再出现在 workspace 根目录"
+    - "检查 artifact 与 sandbox 均落在 resolve_runtime_path(runtime/llm_evaluations/*)"
+
+related_adrs:
+  - "ADR-0069"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-04-08"
+  verified_by: "self (ruff+mypy+pytest)"
+  verified_at: "2026-04-08"
+

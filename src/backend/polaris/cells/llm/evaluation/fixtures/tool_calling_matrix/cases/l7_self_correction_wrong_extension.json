@@ -1,0 +1,19 @@
+{
+  "case_id": "l7_self_correction_wrong_extension",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Self-Correction - Wrong File Extension",
+  "description": "测试 Agent 猜错文件扩展名后能否修正。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 tests/test_api.ts 2. 如果失败，改成读取 tests/test_api_real.py 3. 告诉我这个测试文件的名字",
+  "tags": ["l7", "self-correction", "extension-error"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": ["read_file"],
+    "min_tool_calls": 2,
+    "max_tool_calls": 3,
+    "required_output_substrings": ["test_api_real.py"]
+  }
+}

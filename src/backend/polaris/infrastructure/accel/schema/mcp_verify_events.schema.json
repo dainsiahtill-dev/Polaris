@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-accel.local/schema/mcp_verify_events/v1",
+  "title": "AgentAccel MCP Verify Events Response",
+  "type": "object",
+  "required": [
+    "job_id",
+    "events",
+    "count",
+    "total_available",
+    "truncated",
+    "max_events",
+    "since_seq"
+  ],
+  "properties": {
+    "job_id": { "type": "string", "minLength": 1 },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event"],
+        "properties": {
+          "seq": { "type": "integer", "minimum": 1 },
+          "ts": { "type": "string" },
+          "event": { "type": "string", "minLength": 1 },
+          "state": { "type": "string" },
+          "stage": { "type": "string" },
+          "progress": { "type": "number", "minimum": 0 },
+          "current_command": { "type": "string" },
+          "completed": { "type": "integer", "minimum": 0 },
+          "total": { "type": "integer", "minimum": 0 },
+          "exit_code": { "type": "integer" },
+          "duration": { "type": "number", "minimum": 0 },
+          "stdout_tail": { "type": "string" },
+          "stderr_tail": { "type": "string" },
+          "chunk": { "type": "string" },
+          "stream": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "count": { "type": "integer", "minimum": 0 },
+    "total_available": { "type": "integer", "minimum": 0 },
+    "truncated": { "type": "boolean" },
+    "max_events": { "type": "integer", "minimum": 1 },
+    "since_seq": { "type": "integer", "minimum": 0 },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "latest_state": { "type": "string" },
+        "latest_stage": { "type": "string" },
+        "state_source": { "type": "string" },
+        "terminal_event_seen": { "type": "boolean" },
+        "constraint_repair_count": { "type": "integer", "minimum": 0 },
+        "constraint_warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "event_type_counts": { "type": "object" },
+        "command_stats": { "type": "object" },
+        "seq_range": { "type": "object" },
+        "latest_command_complete": { "type": "object" },
+        "recent_output": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": { "type": "integer", "minimum": 0 },
+              "stream": { "type": "string" },
+              "command": { "type": "string" },
+              "chunk": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "progress": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "constraint_repair_count": { "type": "integer", "minimum": 0 },
+    "constraint_warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,86 @@
+card_id: "vc-20260327-stream-tool-provider-shape-mismatch"
+bug_summary: >
+  `agentic_benchmark` 在真实 `anthropic_compat`/Kimi 流式执行下会发出规范化 `tool_call` 事件，
+  但 TurnEngine 仍按原 provider 选择原生解析器，导致 OpenAI 形状的内部工具调用被当作 Anthropic
+  payload 解析并直接丢弃，表现为 `tool_call -> complete(content='')` 且工具零执行。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_engine.py"
+  method: "run_stream()"
+  symptom: "真实 benchmark 流式工具调用已出现，但 parsed_tool_calls 为空，随后直接 complete"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设 `call_stream` 产出的 `tool_call` 事件已经是 provider-neutral 的规范事件，而不是可直接回放给 provider-specific parser 的原始 SSE payload。"
+    status: verified_true
+    evidence: >
+      读取 polaris/kernelone/llm/engine/stream_executor.py，
+      `_invoke_structured_stream()` 最终 `yield AIStreamEvent.tool_call_event(emitted, meta=...)`；
+      `emitted` 只有 `tool` / `arguments` / `call_id` 等规范字段，不保留 Anthropic 原始 `tool_use` 结构。
+
+  - id: "A2"
+    statement: "我假设 TurnEngine 在处理流式 `tool_call` 事件时，会把规范事件重建成 OpenAI 风格 payload，但随后又用 provider hint 覆盖成 `anthropic`。"
+    status: verified_true
+    evidence: >
+      读取 polaris/cells/roles/kernel/internal/turn_engine.py 的 `run_stream()`，
+      `event_type == \"tool_call\"` 分支把事件追加为 `{type:function,function:{...}}`，
+      随后又根据 `metadata.provider_id` 调用 `_resolve_tool_call_provider()` 覆盖 `native_tool_provider`。
+
+  - id: "A3"
+    statement: "我假设底层 parser 现在把 `provider` 当成强约束而不是 hint，所以 `provider='anthropic'` + OpenAI 形状 payload 会得到空结果。"
+    status: verified_true
+    evidence: >
+      读取 polaris/kernelone/llm/toolkit/parsers/core.py，
+      `tool_calls` 路径在 `provider == 'anthropic'` 时只调用 `parse_anthropic()`，
+      不会尝试 `parse_openai()`；而 `native_function.py` 两套解析器按 `type=function` /
+      `type=tool_use` 分流，当前 payload 互不兼容。
+
+  - id: "A4"
+    statement: "我假设 chief_engineer benchmark 的真实失败不是模型没发工具，而是工具事件在 TurnEngine 内部被 provider/shape 错位吞掉。"
+    status: verified_true
+    evidence: >
+      复盘真实 `chief_engineer_blueprint_review` 流式 replay，
+      debug event 已看到 `tool_call_start` / `tool_call_complete`，工具名 `read_file`，
+      但外层 complete.result.execution_stats 仍是 `tool_calls_count=0`、`tool_results_count=0`。
+
+pre_mortem:
+  failure_point: >
+    如果我只在 TurnEngine 层把 provider 强行改成 `openai`，却不修底层 parser 的 provider/shape
+    容错，那么其他入口仍可能因 payload 形状与 provider 标签轻微漂移而再次丢失工具调用；
+    反过来如果只修 parser 而不修 TurnEngine 的流式归一化语义，后续维护者仍会继续把规范事件误当原生 payload。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    - "polaris/kernelone/llm/toolkit/parsers/core.py"
+    - "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "流式 tool_call 带 `anthropic_compat` metadata 时，TurnEngine 仍能执行规范事件对应的工具并继续下一轮"
+      expected: "事件流包含 tool_result 和 complete，最终内容来自第二轮总结而不是空字符串"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "当 provider hint 为 `anthropic` 但 native_tool_calls 实际是 OpenAI 形状时，解析器仍能提取工具调用"
+      expected: "返回一条 `read_file(path=README.md)`，不因 provider/shape 错位而丢失"
+      status: new
+  integration_tests:
+    - description: "stream tool loop 定向回归"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      status: existing_fix
+    - description: "chief engineer benchmark 单 case 回归"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace . --case-id chief_engineer_blueprint_review"
+      status: existing_fix
+  manual_check:
+    - "确认真实 benchmark replay 中不再出现 `tool_call` 已发出但 `parsed_tool_calls` 为空的提前 complete。"
+    - "确认审计包里 chief_engineer 的 `tool_calls_count` 与 `tool_results_count` 不再同时为 0。"
+
+related_adrs:
+  - "ADR-0058"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-27"
+  verified_by: "self"
+  verified_at: "2026-03-27"

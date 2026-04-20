@@ -1,0 +1,32 @@
+{
+  "case_id": "l7_path_normalization",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Path Normalization Recovery",
+  "description": "测试 Agent 能否处理路径规范化问题，如 ./config.py vs config.py vs backend/../config.py。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 config.py 文件。注意路径可能需要规范化处理。",
+  "tags": ["l7", "path", "normalization", "relative-path"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "required_output_substrings": ["DEBUG", "API_HOST"]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Director Result",
+  "description": "Outcome summary for a single Director task execution.",
+  "type": "object",
+  "examples": [
+    {
+      "schema_version": 1,
+      "status": "success",
+      "task_id": "task-001",
+      "task_title": "Add AI context files",
+      "task_goal": "Create .ai-agent context artifacts for faster agent onboarding",
+      "pm_iteration": 1,
+      "director_iteration": 1,
+      "tool_rounds": 3,
+      "total_lines_read": 420,
+      "repair_attempts": 0,
+      "duration": 42.5,
+      "changed_files": [
+        ".ai-agent/context.json",
+        ".ai-agent/project_context.md"
+      ]
+    }
+  ],
+  "required": [
+    "schema_version",
+    "status",
+    "task_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version (fixed)."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "fail",
+        "blocked",
+        "unknown"
+      ],
+      "description": "Final task outcome."
+    },
+    "error_code": {
+      "type": "string",
+      "description": "Short error code when status is fail/blocked.",
+      "examples": ["QA_FAIL", "TOOL_TIMEOUT"]
+    },
+    "failure_code": {
+      "type": "string",
+      "description": "Categorized failure code (e.g. QA_FAIL, TOOL_TIMEOUT, POLICY_BLOCKED)"
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Task id from PM_TASKS.json."
+    },
+    "task_fingerprint": {
+      "type": "string",
+      "description": "Fingerprint of immutable task fields."
+    },
+    "task_title": {
+      "type": "string",
+      "description": "Human-readable task title."
+    },
+    "task_goal": {
+      "type": "string",
+      "description": "Immutable task goal from PM_TASKS.json."
+    },
+    "pm_iteration": {
+      "type": ["integer", "null"],
+      "description": "PM iteration that produced this contract."
+    },
+    "director_iteration": {
+      "type": "integer",
+      "description": "Director loop iteration for this result."
+    },
+    "tool_rounds": {
+      "type": "integer",
+      "description": "Number of tool rounds used."
+    },
+    "total_lines_read": {
+      "type": "integer",
+      "description": "Total file/log lines read during execution."
+    },
+    "repair_attempts": {
+      "type": "integer",
+      "description": "Number of repair attempts."
+    },
+    "patch_risk": {
+      "type": "object",
+      "description": "Risk assessment for generated patch.",
+      "properties": {
+        "score": {
+          "type": "integer",
+          "description": "Aggregated risk score."
+        },
+        "factors": {
+          "type": "object",
+          "properties": {
+            "files_changed_count": { "type": "integer" },
+            "lines_added": { "type": "integer" },
+            "lines_removed": { "type": "integer" },
+            "touches_build_system": { "type": "boolean" },
+            "touches_security_sensitive": { "type": "boolean" },
+            "touches_runtime_entry": { "type": "boolean" },
+            "test_coverage_delta": { "type": ["string", "null"] }
+          },
+          "description": "Signals used to compute risk."
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "new_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "gate": { "type": "string" },
+        "threshold": { "type": "integer" }
+      }
+    },
+    "duration": {
+      "type": "number",
+      "description": "Execution duration in seconds."
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Files changed during execution."
+    },
+    "policy_effective": {
+      "type": "object",
+      "description": "The actual policy used during this run"
+    },
+    "policy_sources": {
+      "type": "object",
+      "description": "Source tracking for policy values"
+    }
+  }
+}

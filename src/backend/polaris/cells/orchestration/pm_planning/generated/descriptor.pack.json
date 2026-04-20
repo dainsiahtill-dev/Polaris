@@ -1,0 +1,675 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.525489Z",
+  "source_hash": "4df90fd976821670",
+  "cell_id": "orchestration.pm_planning",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "DependencyCycleError",
+      "description": "Raised when task dependencies contain a cycle.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_dep_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_dependency_dag",
+      "description": "Validate that the given task list forms a DAG.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_cycle",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "function",
+      "name": "dfs",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "class",
+      "name": "PmStatePort",
+      "description": "Port for PM role state container.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py",
+      "methods": [
+        {
+          "name": "workspace_full",
+          "doc": ""
+        },
+        {
+          "name": "cache_root_full",
+          "doc": ""
+        },
+        {
+          "name": "model",
+          "doc": ""
+        },
+        {
+          "name": "show_output",
+          "doc": ""
+        },
+        {
+          "name": "timeout",
+          "doc": ""
+        },
+        {
+          "name": "prompt_profile",
+          "doc": ""
+        },
+        {
+          "name": "ollama_full",
+          "doc": ""
+        },
+        {
+          "name": "events_full",
+          "doc": ""
+        },
+        {
+          "name": "log_full",
+          "doc": ""
+        },
+        {
+          "name": "llm_events_full",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "NoopPmStatePort",
+      "description": "Null-object implementation of ``PmStatePort``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py",
+      "methods": [
+        {
+          "name": "workspace_full",
+          "doc": ""
+        },
+        {
+          "name": "cache_root_full",
+          "doc": ""
+        },
+        {
+          "name": "model",
+          "doc": ""
+        },
+        {
+          "name": "show_output",
+          "doc": ""
+        },
+        {
+          "name": "timeout",
+          "doc": ""
+        },
+        {
+          "name": "prompt_profile",
+          "doc": ""
+        },
+        {
+          "name": "ollama_full",
+          "doc": ""
+        },
+        {
+          "name": "events_full",
+          "doc": ""
+        },
+        {
+          "name": "log_full",
+          "doc": ""
+        },
+        {
+          "name": "llm_events_full",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PmBackendInvokeResult",
+      "description": "Result of a PM backend invocation.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmInvokeBackendPort",
+      "description": "Port for PM LLM backend invocation.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py",
+      "methods": [
+        {
+          "name": "invoke",
+          "doc": "Invoke the PM LLM backend."
+        },
+        {
+          "name": "build_prompt",
+          "doc": "Build the PM planning prompt."
+        },
+        {
+          "name": "extract_json",
+          "doc": "Extract JSON object from LLM raw output."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "NoopPmInvokePort",
+      "description": "Null-object implementation of ``PmInvokeBackendPort``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py",
+      "methods": [
+        {
+          "name": "invoke",
+          "doc": ""
+        },
+        {
+          "name": "build_prompt",
+          "doc": ""
+        },
+        {
+          "name": "extract_json",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CellPmInvokePort",
+      "description": "Cell-local PM invoke port that never imports delivery.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py",
+      "methods": [
+        {
+          "name": "invoke",
+          "doc": ""
+        },
+        {
+          "name": "build_prompt",
+          "doc": ""
+        },
+        {
+          "name": "extract_json",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "format_json_for_prompt",
+      "description": "Format a payload as prompt-friendly JSON text.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_use_context_engine_v2",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_pm_prompt_impl",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "get_pm_state_port",
+      "description": "Return a safe PM state port placeholder.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "get_pm_invoke_port",
+      "description": "Return the Cell-local PM invoke port.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_priority",
+      "description": "Normalise a priority value to an integer.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_scope_mode",
+      "description": "Normalise scope mode to canonical token.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_phase_hint",
+      "description": "Normalise phase hint to canonical token.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_acceptance_items",
+      "description": "Normalise acceptance criteria items.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_scope_list",
+      "description": "Normalise scope list value.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_scope_paths_from_target_files",
+      "description": "Derive scope paths from target file list.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_task_id",
+      "description": "Generate a stable task ID.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_engine_config",
+      "description": "Normalize top-level engine execution config from PM payload.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_migrate_tasks_in_place",
+      "description": "Migrate tasks in place for backward compatibility.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_tool_call_output",
+      "description": "Check if output looks like a tool call.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_pm_payload",
+      "description": "Normalize raw PM payload to canonical contract format.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_pm_schema_required_fields",
+      "description": "Load required fields from schema file.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_schema_warnings",
+      "description": "Collect schema warnings for tasks.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_path_list",
+      "description": "Normalize value to canonical relative path list.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_llm_xml_tags",
+      "description": "Strip XML-like tags from LLM output.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_json_from_llm_output",
+      "description": "Try to extract a JSON object from LLM output.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "function",
+      "name": "strip_ansi",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    },
+    {
+      "type": "class",
+      "name": "PMTask",
+      "description": "Represents a task in PM's scope.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pm_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        },
+        {
+          "name": "update_status",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMTaskStore",
+      "description": "Persistent task store for PM Agent.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pm_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_dirs",
+          "doc": ""
+        },
+        {
+          "name": "_load_index",
+          "doc": ""
+        },
+        {
+          "name": "_save_index",
+          "doc": ""
+        },
+        {
+          "name": "save_task",
+          "doc": ""
+        },
+        {
+          "name": "load_task",
+          "doc": ""
+        },
+        {
+          "name": "list_tasks",
+          "doc": ""
+        },
+        {
+          "name": "get_pending_tasks",
+          "doc": ""
+        },
+        {
+          "name": "get_completed_tasks",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMAgent",
+      "description": "Autonomous Project Manager Agent.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/pm_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "taskboard",
+          "doc": "Get unified task runtime service for long-term task management."
+        },
+        {
+          "name": "protocol_fsm",
+          "doc": "Get Protocol FSM for gate checks."
+        },
+        {
+          "name": "task_store",
+          "doc": "Get task store (lazy init)."
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": "Setup PM-specific tools."
+        },
+        {
+          "name": "_tool_create_task",
+          "doc": "Create a new task."
+        },
+        {
+          "name": "_tool_get_task",
+          "doc": "Get task by ID."
+        },
+        {
+          "name": "_tool_list_tasks",
+          "doc": "List all tasks."
+        },
+        {
+          "name": "_tool_get_pending_tasks",
+          "doc": "Get tasks pending dispatch."
+        },
+        {
+          "name": "_tool_get_task_history",
+          "doc": "Get task history summaries."
+        },
+        {
+          "name": "_tool_dispatch_task",
+          "doc": "Dispatch a task to Director."
+        },
+        {
+          "name": "_tool_update_task_status",
+          "doc": "Update task status."
+        },
+        {
+          "name": "_tool_evaluate_result",
+          "doc": "Evaluate task result and decide next action."
+        },
+        {
+          "name": "_decide_on_failure",
+          "doc": "Decide what to do on task failure."
+        },
+        {
+          "name": "_tool_get_dispatch_history",
+          "doc": "Get dispatch history."
+        },
+        {
+          "name": "_tool_get_decisions",
+          "doc": "Get decision history."
+        },
+        {
+          "name": "_tool_taskboard_create",
+          "doc": "Create task in long-term TaskBoard."
+        },
+        {
+          "name": "_tool_taskboard_list_ready",
+          "doc": "List tasks ready for execution."
+        },
+        {
+          "name": "_tool_taskboard_stats",
+          "doc": "Get TaskBoard statistics."
+        },
+        {
+          "name": "_tool_request_approval",
+          "doc": "Request approval via Protocol FSM."
+        },
+        {
+          "name": "_tool_check_approval_status",
+          "doc": "Check approval request status."
+        },
+        {
+          "name": "handle_message",
+          "doc": "Handle incoming message from Director or other agents."
+        },
+        {
+          "name": "run_cycle",
+          "doc": "Main PM processing cycle."
+        },
+        {
+          "name": "_load_snapshot",
+          "doc": "Load data from snapshot."
+        },
+        {
+          "name": "save_snapshot",
+          "doc": "Save current state as snapshot."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_strip_wrapping_quotes",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_command_args",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_prompt_leakage",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_measurable_acceptance_anchor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_tail_non_empty_lines",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_integration_verify_command",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_dir_has_python_test_files",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "run_integration_verify_runner",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_integration_verify_runner",
+      "description": "Default integration verify runner (wrapper around run_integration_verify_runner).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_wrapping_quotes",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_prompt_leakage",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_measurable_acceptance_anchor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_pm_task_quality",
+      "description": "Evaluate PM task quality and return quality report.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "autofix_pm_contract_for_quality",
+      "description": "Attempt to autofix PM contract quality issues.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "check_quality_promote_candidate",
+      "description": "Determine if a quality candidate should be promoted.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "get_quality_gate_config",
+      "description": "Get quality gate configuration from environment.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "class",
+      "name": "PMRunOrchestrationRequest",
+      "description": "PM 运行编排请求（统一编排 API）",
+      "defined_in": "polaris/delivery/http/v2/pm.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PMOrchestrationResponse",
+      "description": "PM 编排响应",
+      "defined_in": "polaris/delivery/http/v2/pm.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "pm_status",
+      "description": "Get PM process status.",
+      "defined_in": "polaris/delivery/http/v2/pm.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

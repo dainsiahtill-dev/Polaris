@@ -1,0 +1,32 @@
+{
+  "case_id": "l3_wildcard_file_discovery",
+  "level": "L3",
+  "role": "director",
+  "title": "L3 Wildcard File Discovery",
+  "description": "验证模型能使用 glob 模式匹配定位文件，而非猜测路径。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "查找所有 tests/ 目录下的 .py 测试文件，然后告诉我一共有几个。",
+  "tags": ["l3", "glob", "wildcard", "discovery"],
+  "weight": 1.0,
+  "critical": false,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_any_tools": [["glob"], ["repo_rg", "search_code"]],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "required_output_substrings": ["test_api_real", "test"]
+    },
+    "non_stream": {
+      "required_any_tools": [["glob"], ["repo_rg", "search_code"]],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

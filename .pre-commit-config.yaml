@@ -1,0 +1,55 @@
+# Pre-commit hooks for Polaris
+# See https://pre-commit.com for more information
+#
+# Task #4: Mandatory Quality Gates
+# - ruff check --fix: Linting with auto-fix
+# - ruff format: Code formatting
+# - mypy --strict: Type checking (strict mode)
+
+repos:
+  # Ruff - Python linting and formatting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      # Hook 1: ruff check --fix (mandatory gate)
+      - id: ruff
+        name: ruff-check
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^(src/backend/polaris|tests)/.*\.py$
+        # Fail on lint errors - blocks commit
+        fail_fast: true
+      # Hook 2: ruff format (mandatory gate)
+      - id: ruff-format
+        name: ruff-format
+        files: ^(src/backend/polaris|tests|scripts)/.*\.py$
+        fail_fast: true
+
+  # MyPy - Type checking (strict mode)
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      # Hook 3: mypy strict (mandatory gate for critical paths)
+      - id: mypy
+        name: mypy-strict
+        args: [--strict, --show-error-codes]
+        files: ^src/backend/polaris/.*\.py$
+        exclude: ^src/backend/polaris/(cells|tests|infrastructure|scripts)/
+        additional_dependencies:
+          - pydantic>=2.5.0
+          - pydantic-settings>=2.0.0
+          - types-requests>=2.31.0
+          - types-aiofiles>=23.0.0
+        fail_fast: true
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: debug-statements

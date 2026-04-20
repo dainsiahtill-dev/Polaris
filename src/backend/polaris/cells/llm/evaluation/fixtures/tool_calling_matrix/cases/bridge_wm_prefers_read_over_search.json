@@ -1,0 +1,32 @@
+{
+  "case_id": "bridge_wm_prefers_read_over_search",
+  "level": "L5",
+  "role": "director",
+  "title": "Bridge: Working Memory Prefers Read Over Search",
+  "description": "当 working memory 已包含 suspected_files 时，LLM 应直接读取而非重新搜索。ADR-0080 上下文降维验证。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "<Goal>\n修复 server.py 端口配置错误\n</Goal>\n<Progress>\n当前阶段: investigating | 回合: 2 / 10\n</Progress>\n<WorkingMemory>\n已确认:\n  - 错误摘要: server.py 中 PORT 硬编码为 8080，与 config.py 的 49977 不一致\n  - 疑似问题文件: server.py, config.py\n待验证:\n  - server.py 中 HOST/PORT 的具体定义位置\n</WorkingMemory>\n<Instruction>\n基于以上工作记忆，执行下一步最小必要动作。直接读取疑似问题文件确认根因，不要重新搜索。\n</Instruction>",
+  "tags": ["bridge", "working-memory", "read-over-search", "adr-0080"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["repo_rg", "repo_tree", "execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "first_tool": "read_file"
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["repo_rg", "repo_tree", "execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

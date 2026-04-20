@@ -1,0 +1,42 @@
+{
+  "playwright": {
+    "enabled": true,
+    "timeout_ms": 1800000
+  },
+  "semantic": {
+    "enabled": true,
+    "command": "node infrastructure/scripts/run-stagehand-panel-task.mjs --prompt {prompt} --task-file {task_file} --evidence-json {evidence_json} --round {round}",
+    "timeout_ms": 1200000
+  },
+  "computer_use": {
+    "enabled": true,
+    "command": "node infrastructure/scripts/openai-computer-use-adapter.mjs --prompt {prompt} --task-file {task_file} --evidence-json {evidence_json} --round {round}",
+    "timeout_ms": 1800000
+  },
+  "vision_fallback": {
+    "omniparser": {
+      "enabled": true,
+      "command": "node infrastructure/scripts/run-omniparser-adapter.mjs --prompt {prompt} --task-file {task_file} --evidence-json {evidence_json} --round {round} --output-json {omniparser_json}",
+      "timeout_ms": 600000
+    },
+    "airtest": {
+      "enabled": true,
+      "command": "",
+      "timeout_ms": 1200000
+    },
+    "sikulix": {
+      "enabled": true,
+      "command": "",
+      "timeout_ms": 1200000
+    }
+  },
+  "evidence": {
+    "include_paths": [
+      "test-results/electron",
+      "playwright-report",
+      ".polaris/logs"
+    ],
+    "max_files": 120,
+    "max_depth": 6
+  }
+}

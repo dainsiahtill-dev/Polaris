@@ -1,0 +1,22 @@
+{
+  "case_id": "l7_self_correction_wrong_path",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Self-Correction - Wrong File Path",
+  "description": "测试 Agent 猜错路径后能否自我修正。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 backend/server.py 2. 如果失败，改成读取正确的路径 3. 告诉我文件内容",
+  "tags": ["l7", "self-correction", "path-error"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": ["read_file"],
+    "min_tool_calls": 2,
+    "max_tool_calls": 3,
+    "required_output_substrings": ["server.py"],
+    "validators": [
+      "self_correction_after_failure"
+    ]
+  }
+}

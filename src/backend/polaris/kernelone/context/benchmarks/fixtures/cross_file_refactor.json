@@ -1,0 +1,19 @@
+{
+  "case_id": "cross_file_refactor",
+  "description": "Refactor a helper function that appears in multiple files into a shared utility, updating all call sites.",
+  "user_prompt": "The _avg() helper is defined in both strategy_benchmark.py and likely elsewhere. Extract it into a shared utility module under polaris/kernelone/context/ and update all references.",
+  "workspace_fixture": "All .py files in polaris/kernelone/context/ directory, focusing on files with _avg or similar statistical helper functions.",
+  "expected_evidence_path": [
+    "polaris/kernelone/context/strategy_benchmark.py",
+    "polaris/kernelone/context/budget_gate.py",
+    "polaris/kernelone/context/cache_manager.py"
+  ],
+  "expected_answer_shape": "refactor_plan",
+  "budget_conditions": {
+    "max_tokens": 150000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 240.0
+  },
+  "canonical_profile": "deep_research",
+  "score_threshold": 0.70
+}

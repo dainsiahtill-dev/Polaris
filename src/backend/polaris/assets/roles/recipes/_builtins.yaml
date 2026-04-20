@@ -1,0 +1,102 @@
+# Builtin Role Recipes
+# 内置角色配方，定义 Anchor + Persona + Profession 的组合
+
+recipes:
+  # =========================================
+  # Polaris 原生角色（保持向后兼容）
+  # =========================================
+
+  pm:
+    anchor: harbor_pilot_pm
+    persona: shangshuling
+    profession: project_manager
+    description: 项目管理器，负责需求拆解和规划
+    backward_compatible: true
+    legacy_id: pm
+
+  director:
+    anchor: harbor_pilot_director
+    persona: gongbu_shilang
+    profession: software_engineer
+    description: 执行引擎，负责任务调度和代码实现
+    backward_compatible: true
+    legacy_id: director
+
+  qa:
+    anchor: harbor_pilot_qa
+    persona: mentu_xiaozhong
+    profession: quality_engineer
+    description: 质量审查，负责代码审查和测试
+    backward_compatible: true
+    legacy_id: qa
+
+  architect:
+    anchor: harbor_pilot_director
+    persona: zhongshuling
+    profession: software_engineer
+    description: 架构师，负责系统设计
+    backward_compatible: true
+    legacy_id: architect
+
+  chief_engineer:
+    anchor: harbor_pilot_director
+    persona: gongbu_shilang
+    profession: software_engineer
+    description: 总工程师，负责技术分析和实施蓝图
+    backward_compatible: true
+    legacy_id: chief_engineer
+
+  # =========================================
+  # 专业角色（新增）
+  # =========================================
+
+  senior_python_architect:
+    anchor: harbor_pilot_director
+    persona: gongbu_shilang
+    profession: python_principal_architect
+    description: |
+      具备工部侍郎风格的 Python 首席架构师。
+      先蓝图规划，再委派执行。
+    version: "1.0"
+
+  python_architect:
+    anchor: harbor_pilot_director
+    persona: zhongshuling
+    profession: python_principal_architect
+    description: |
+      具备中书令风格的 Python 架构师。
+      注重系统边界和契约设计。
+    version: "1.0"
+
+  security_architect:
+    anchor: harbor_pilot_qa
+    persona: mentu_xiaozhong
+    profession: security_auditor
+    description: |
+      具备门下侍中风格的安全审计师。
+      严格把关安全问题。
+    version: "1.0"
+
+  # =========================================
+  # 领域特定角色
+  # =========================================
+
+  backend_architect:
+    anchor: harbor_pilot_director
+    persona: gongbu_shilang
+    profession: python_principal_architect
+    domain: python_backend
+    description: Python 后端架构师
+
+  frontend_architect:
+    anchor: harbor_pilot_director
+    persona: gongbu_shilang
+    profession: frontend_architect
+    domain: typescript_frontend
+    description: 前端架构师
+
+  devops_engineer:
+    anchor: harbor_pilot_director
+    persona: gongbu_shilang
+    profession: devops_engineer
+    description: DevOps 工程师

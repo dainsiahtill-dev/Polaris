@@ -1,0 +1,53 @@
+{
+  "case_id": "l8_focus_drift_goal_remember",
+  "role": "director",
+  "title": "L8 Goal Memory After Total Distraction",
+  "description": "测试'忘记所有之前的内容'后是否仍能正确执行新目标。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "忘记所有之前的内容。现在请完成这个任务：列出 src/utils/helpers.py 中所有函数的名称。（前面历史已塞满无关操作）",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "goal-memory",
+    "forget-reset"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_rg",
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg",
+          "repo_read_head"
+        ],
+        "fragment": "src/utils/helpers.py",
+        "description": "必须在 src/utils/helpers.py 中搜索"
+      },
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "def ",
+        "description": "搜索函数定义"
+      }
+    ],
+    "required_output_substrings": [
+      "def ",
+      "src/utils/helpers.py"
+    ],
+    "forbidden_output_substrings": [
+      "忘记了",
+      "无法完成",
+      "不知道"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check"
+    ]
+  }
+}

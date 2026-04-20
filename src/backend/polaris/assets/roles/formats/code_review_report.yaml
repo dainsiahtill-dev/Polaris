@@ -1,0 +1,113 @@
+# Output Format: Code Review Report
+# 用于代码审查任务的输出格式
+
+id: code_review_report
+version: "1.0"
+
+description: 结构化代码审查报告的输出格式
+
+severity_levels:
+  - id: blocker
+    name: Blocker
+    emoji: "🛑"
+    description: 必须修改，否则无法合并
+    color: red
+
+  - id: suggestion
+    name: Suggestion
+    emoji: "💡"
+    description: 建议修改，有助于提升代码质量
+    color: yellow
+
+  - id: nitpick
+    name: Nitpick
+    emoji: "🔧"
+    description: 可选优化，不影响合并
+    color: gray
+
+sections:
+  - id: summary
+    name: Summary
+    emoji: "📊"
+    required: true
+    description: 审查概览
+
+  - id: blockers
+    name: Blocker Issues
+    emoji: "🛑"
+    required: true
+    description: 必须修复的问题
+
+  - id: suggestions
+    name: Suggestion Issues
+    emoji: "💡"
+    required: false
+    description: 建议修改的问题
+
+  - id: nitpicks
+    name: Nitpick Issues
+    emoji: "🔧"
+    required: false
+    description: 可选优化
+
+  - id: assessment
+    name: Overall Assessment
+    emoji: "✅"
+    required: true
+    description: 总体评价
+
+template: |
+  # 代码审查报告
+
+  ## {{emoji}} {{name}}
+  {{content}}
+
+  ---
+
+section_templates:
+  summary: |
+    ## 📊 审查概览
+
+    | 项目 | 值 |
+    | --- | --- |
+    | 审查范围 | {scope} |
+    | 文件数量 | {file_count} |
+    | 代码行数 | {lines_of_code} |
+    | Blocker 数 | {blocker_count} |
+    | Suggestion 数 | {suggestion_count} |
+    | Nitpick 数 | {nitpick_count} |
+
+  blockers: |
+    ## 🛑 Blocker 问题
+
+    {blocker_list}
+
+  suggestions: |
+    ## 💡 Suggestion 建议
+
+    {suggestion_list}
+
+  nitpicks: |
+    ## 🔧 Nitpick 优化
+
+    {nitpick_list}
+
+  assessment: |
+    ## ✅ 总体评价
+
+    {assessment}
+
+    **建议**: {recommendation}
+
+issue_template: |
+  ### {{index}}. {{issue_title}}
+
+  **位置**: {location}
+
+  **问题**: {description}
+
+  **根因**: {root_cause}
+
+  **建议修复**: {suggested_fix}
+
+  **严重程度**: {{severity}}

@@ -1,0 +1,257 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Construction Blueprint",
+  "description": "ChiefEngineer -> Director construction blueprint contract. Defines what Director must implement with constraints and flexible zones for autonomous execution.",
+  "type": "object",
+  "required": [
+    "blueprint_id",
+    "task_id",
+    "title",
+    "status"
+  ],
+  "properties": {
+    "blueprint_id": {
+      "type": "string",
+      "description": "Unique identifier for this construction blueprint.",
+      "examples": ["ce_task-001_20260225120000"]
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Reference to the PM task this blueprint is for.",
+      "examples": ["task-001"]
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable title of the construction plan.",
+      "examples": ["Add authentication middleware"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "finalized", "in_progress", "completed", "failed"],
+      "description": "Current status of the blueprint."
+    },
+    "modules": {
+      "type": "array",
+      "description": "List of modules to be constructed.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Module name."
+          },
+          "path": {
+            "type": "string",
+            "description": "Module path."
+          },
+          "description": {
+            "type": "string",
+            "description": "Module description."
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "description": "List of files to be constructed or modified.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path."
+          },
+          "type": {
+            "type": "string",
+            "description": "File type (e.g., 'python', 'typescript')."
+          },
+          "symbols": {
+            "type": "array",
+            "description": "List of symbols defined in this file.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "methods": {
+      "type": "array",
+      "description": "Method-level implementation plans.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Method name."
+          },
+          "class": {
+            "type": "string",
+            "description": "Class name containing this method."
+          },
+          "file": {
+            "type": "string",
+            "description": "File path."
+          },
+          "implementation_steps": {
+            "type": "array",
+            "description": "Step-by-step implementation guidance.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Module dependency graph.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "scope_for_apply": {
+      "type": "array",
+      "description": "List of files/directories Director is allowed to modify.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "description": "Hard constraints that Director MUST follow.",
+      "properties": {
+        "must_follow": {
+          "type": "array",
+          "description": "List of rules that must be strictly followed.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["使用async/await", "遵循PEP8", "错误处理必须try/except"]]
+        },
+        "tech_stack": {
+          "type": "string",
+          "description": "Required technology stack.",
+          "examples": ["Python/FastAPI", "TypeScript/React"]
+        },
+        "interface_contract": {
+          "type": "object",
+          "description": "Input/output interface specifications that cannot change.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "flexible_zone": {
+      "type": "object",
+      "description": "Areas where Director can make autonomous decisions based on its level.",
+      "properties": {
+        "implementation_details": {
+          "type": "boolean",
+          "description": "Whether Director can decide specific implementation details.",
+          "default": false
+        },
+        "algorithm_choice": {
+          "type": "boolean",
+          "description": "Whether Director can choose implementation algorithm.",
+          "default": false
+        },
+        "file_organization": {
+          "type": "boolean",
+          "description": "Whether Director can organize/split helper functions.",
+          "default": false
+        },
+        "error_handling_style": {
+          "type": "boolean",
+          "description": "Whether Director can decide error handling style.",
+          "default": false
+        },
+        "log_format": {
+          "type": "boolean",
+          "description": "Whether Director can decide log format.",
+          "default": false
+        }
+      }
+    },
+    "escalation_triggers": {
+      "type": "array",
+      "description": "Conditions when Director should escalate to ChiefEngineer.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "遇到蓝图未覆盖的场景",
+        "发现原设计有缺陷",
+        "需要引入新的依赖"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when blueprint was created."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when blueprint was last updated."
+    }
+  },
+  "examples": [
+    {
+      "blueprint_id": "ce_task-001_20260225120000",
+      "task_id": "task-001",
+      "title": "Add authentication middleware",
+      "status": "finalized",
+      "modules": [
+        {
+          "name": "auth",
+          "path": "src/backend/app/auth",
+          "description": "Authentication module"
+        }
+      ],
+      "files": [
+        {
+          "path": "src/backend/app/auth/middleware.py",
+          "type": "python",
+          "symbols": ["AuthMiddleware", "verify_token"]
+        }
+      ],
+      "methods": [
+        {
+          "name": "verify_token",
+          "class": "AuthMiddleware",
+          "file": "src/backend/app/auth/middleware.py",
+          "implementation_steps": [
+            "Extract token from Authorization header",
+            "Validate token signature",
+            "Set user context in request state"
+          ]
+        }
+      ],
+      "scope_for_apply": ["src/backend/app/auth/"],
+      "constraints": {
+        "must_follow": ["使用async/await", "遵循PEP8"],
+        "tech_stack": "Python/FastAPI",
+        "interface_contract": {
+          "input": "Request with Authorization header",
+          "output": "Request with user context or 401 response"
+        }
+      },
+      "flexible_zone": {
+        "implementation_details": true,
+        "algorithm_choice": false,
+        "file_organization": true,
+        "error_handling_style": true,
+        "log_format": true
+      },
+      "escalation_triggers": [
+        "需要修改接口契约",
+        "发现安全漏洞"
+      ],
+      "created_at": "2026-02-25T12:00:00Z",
+      "updated_at": "2026-02-25T12:00:00Z"
+    }
+  ]
+}

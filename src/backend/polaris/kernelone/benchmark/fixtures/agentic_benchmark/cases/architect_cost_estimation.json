@@ -1,0 +1,42 @@
+{
+  "case_id": "architect_cost_estimation",
+  "role": "architect",
+  "title": "Architect Estimates Infrastructure Cost",
+  "description": "The Architect must estimate and optimize infrastructure costs for a proposed system.",
+  "workspace_fixture": "architect_graph_first_boundary",
+  "prompt": "Estimate monthly infrastructure costs for the system. Return JSON: {components: [{service, instance_type, quantity, monthly_cost}], total_monthly: int, cost_optimization: [{change, savings}], scaling_model: string, budget_alerts: [string]}.",
+  "tags": [
+    "architect",
+    "cost",
+    "infrastructure"
+  ],
+  "judge": {
+    "score_threshold": 0.76,
+    "required_tools": [
+      "read_file",
+      "repo_tree"
+    ],
+    "required_output_substrings": [
+      "total_monthly",
+      "components",
+      "optimization"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "architect_cost_estimate"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 5,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

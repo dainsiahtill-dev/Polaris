@@ -1,0 +1,298 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.774649Z",
+  "source_hash": "7ea337dd5fe7febd",
+  "cell_id": "archive.run_archive",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ArchiveHook",
+      "description": "Lightweight async hook for triggering history archiving.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/archive_hook.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the ArchiveHook."
+        },
+        {
+          "name": "is_enabled",
+          "doc": "Check if archiving is enabled."
+        },
+        {
+          "name": "disable",
+          "doc": "Disable archiving (for testing or migration)."
+        },
+        {
+          "name": "enable",
+          "doc": "Enable archiving."
+        },
+        {
+          "name": "get_pending_task_count",
+          "doc": "Get the count of pending (not yet completed) tasks."
+        },
+        {
+          "name": "get_pending_task_ids",
+          "doc": "Get list of pending task identifiers."
+        },
+        {
+          "name": "_create_task_with_tracking",
+          "doc": "Create an async task with tracking and automatic cleanup."
+        },
+        {
+          "name": "_done_callback",
+          "doc": "Clean up task reference when completed."
+        },
+        {
+          "name": "trigger_run_archive",
+          "doc": "Trigger async archiving of a runtime run."
+        },
+        {
+          "name": "trigger_task_snapshot_archive",
+          "doc": "Trigger async archiving of a task snapshot."
+        },
+        {
+          "name": "trigger_factory_archive",
+          "doc": "Trigger async archiving of a factory run."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_archive_hook",
+      "description": "Get or create the global archive hook.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/archive_hook.py"
+    },
+    {
+      "type": "function",
+      "name": "create_archive_hook",
+      "description": "Create a new archive hook (for testing or isolated use).",
+      "defined_in": "polaris/cells/archive/run_archive/internal/archive_hook.py"
+    },
+    {
+      "type": "class",
+      "name": "ArchiveManifest",
+      "description": "Archive manifest - metadata for an archived run/snapshot.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_archive_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HistoryRunIndex",
+      "description": "Entry in the runs index file.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_archive_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HistoryArchiveService",
+      "description": "Service for archiving runtime data to workspace/<metadata_dir>/history.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_archive_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_rel",
+          "doc": ""
+        },
+        {
+          "name": "archive_run",
+          "doc": "Archive a runtime run to history."
+        },
+        {
+          "name": "archive_task_snapshot",
+          "doc": "Archive a task snapshot to history."
+        },
+        {
+          "name": "archive_factory_run",
+          "doc": "Archive a factory run to history."
+        },
+        {
+          "name": "list_history_runs",
+          "doc": "List archived runs from history index."
+        },
+        {
+          "name": "get_manifest",
+          "doc": "Get manifest for an archived run/snapshot."
+        },
+        {
+          "name": "get_run_events",
+          "doc": "Get events for an archived run (auto-decompresses .zst)."
+        },
+        {
+          "name": "_collect_run_files",
+          "doc": "Collect all files in a run directory (relative paths)."
+        },
+        {
+          "name": "_copy_directory",
+          "doc": "Copy directory recursively using atomic operation (temp + replace)."
+        },
+        {
+          "name": "_compress_run_events",
+          "doc": "Compress event files in a run directory."
+        },
+        {
+          "name": "_calculate_checksums",
+          "doc": "Calculate total size, file count, and content hash."
+        },
+        {
+          "name": "_append_to_index",
+          "doc": "Append an entry to an index file using atomic write."
+        },
+        {
+          "name": "_create_empty_manifest",
+          "doc": "Create an empty manifest for non-existent sources."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_history_archive_service",
+      "description": "Factory function to create a HistoryArchiveService.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_archive_service.py"
+    },
+    {
+      "type": "class",
+      "name": "IndexType",
+      "description": "Type of history index.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IndexEntry",
+      "description": "Base class for index entries.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RunIndexEntry",
+      "description": "Entry in the runs index.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskIndexEntry",
+      "description": "Entry in the tasks index.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryIndexEntry",
+      "description": "Entry in the factory index.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HistoryManifestRepository",
+      "description": "Repository for managing history index files.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the repository."
+        },
+        {
+          "name": "_get_index_path",
+          "doc": "Get the path for an index file."
+        },
+        {
+          "name": "_atomic_write",
+          "doc": "Append an entry to an index file with TOCTOU-safe serialization."
+        },
+        {
+          "name": "append_run_entry",
+          "doc": "Append a run entry to the runs index."
+        },
+        {
+          "name": "append_task_entry",
+          "doc": "Append a task entry to the tasks index."
+        },
+        {
+          "name": "append_factory_entry",
+          "doc": "Append a factory entry to the factory index."
+        },
+        {
+          "name": "read_runs_index",
+          "doc": "Read entries from the runs index."
+        },
+        {
+          "name": "read_tasks_index",
+          "doc": "Read entries from the tasks index."
+        },
+        {
+          "name": "read_factory_index",
+          "doc": "Read entries from the factory index."
+        },
+        {
+          "name": "_read_index",
+          "doc": "Generic index reader."
+        },
+        {
+          "name": "get_run_entry",
+          "doc": "Get a specific run entry by ID."
+        },
+        {
+          "name": "get_task_entry",
+          "doc": "Get a specific task entry by snapshot ID."
+        },
+        {
+          "name": "get_factory_entry",
+          "doc": "Get a specific factory entry by ID."
+        },
+        {
+          "name": "count_entries",
+          "doc": "Count entries in an index."
+        },
+        {
+          "name": "clear_index",
+          "doc": "Clear all entries from an index."
+        },
+        {
+          "name": "list_indices",
+          "doc": "List all indices and their entry counts."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_history_manifest_repository",
+      "description": "Factory function to create a HistoryManifestRepository.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/history_manifest_repository.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

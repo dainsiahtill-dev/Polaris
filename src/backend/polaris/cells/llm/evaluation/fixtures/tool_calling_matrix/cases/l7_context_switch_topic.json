@@ -1,0 +1,19 @@
+{
+  "case_id": "l7_context_switch_topic",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Context Switch - Topic Drift Recovery",
+  "description": "测试 Agent 在话题漂移后能否回到原任务。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 config.py 2. 讨论一下为什么 config 文件通常很重要 3. 现在回到最初任务：config.py 里定义了哪些配置项",
+  "tags": ["l7", "context", "switch", "topic-drift"],
+  "weight": 1.0,
+  "critical": false,
+  "judge": {
+    "score_threshold": 0.7,
+    "required_tools": ["read_file"],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_output_substrings": ["config.py"]
+  }
+}

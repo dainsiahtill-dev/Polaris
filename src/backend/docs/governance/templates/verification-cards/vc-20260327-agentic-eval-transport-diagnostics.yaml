@@ -1,0 +1,58 @@
+card_id: vc-20260327-agentic-eval-transport-diagnostics
+bug_summary: "agentic-eval 在 matrix 双传输场景下诊断信息不完整，且 baseline-only 参数组合存在无效配置未提前拦截的问题。"
+classification: one_off
+
+bug_path:
+  file: polaris/delivery/cli/agentic_eval.py
+  method: build_agentic_eval_audit_package / run_agentic_eval_command
+  symptom: "non_stream 故障时仅展示合并 observed，排障信息缺失；baseline-only 无 source 时行为不明确。"
+
+assumptions:
+  - id: A1
+    statement: "我假设 failure_diagnostics 只消费 case.observed，忽略 stream_observed/non_stream_observed，导致 transport 级证据丢失。"
+    status: verified_true
+    evidence: "读取 polaris/delivery/cli/agentic_eval.py，build_agentic_eval_audit_package 原实现仅传 observed 给 _build_observed_trace 与 _build_failure_diagnosis。"
+
+  - id: A2
+    statement: "我假设 baseline-only 与 compare-baseline 的组合校验在 baseline pull 之后，存在副作用顺序错误。"
+    status: verified_true
+    evidence: "读取 run_agentic_eval_command，原先先执行 baseline pull，再校验 --baseline-only 与 --compare-baseline 互斥。"
+
+  - id: A3
+    statement: "我假设增加 matrix_transport CLI 透传可显著提升 stream/non_stream 定位效率且不破坏既有 suite。"
+    status: verified_true
+    evidence: "新增 __main__.py 参数和 run_agentic_eval_command options 透传后，pytest 与真实命令均可分别跑 stream/non_stream。"
+
+pre_mortem:
+  failure_point: "若 transport 诊断结构与现有审计消费者不兼容，可能导致下游脚本解析失败。"
+  risk_zone:
+    - polaris/delivery/cli/agentic_eval.py
+    - polaris/delivery/cli/tests/test_agentic_eval_cli.py
+    - polaris/delivery/cli/__main__.py
+
+verification_plan:
+  unit_tests:
+    - file: polaris/delivery/cli/tests/test_agentic_eval_cli.py
+      description: "新增 transport diagnostics、matrix_transport 透传、baseline-only 参数校验测试"
+      expected: "新增测试全部通过，且原有测试不回归"
+      status: existing_fix
+
+  integration_tests:
+    - description: "执行 tool_calling_matrix 单用例，验证输出含 stream/non_stream 分离诊断"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace . --suite tool_calling_matrix --role all --case-id l1_single_tool_accuracy --matrix-transport both"
+      status: existing_fix
+    - description: "执行 non_stream 定向调试并验证 benchmark.transport_mode 正确"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace . --suite tool_calling_matrix --role all --case-id l1_single_tool_accuracy --matrix-transport non_stream --format json"
+      status: existing_fix
+
+  manual_check:
+    - "确认 human 输出中 failure_diagnostics 包含 stream_trace/non_stream_trace 与 transport_errors。"
+    - "确认 --baseline-only 无 --baseline-pull 时立即报错退出。"
+
+related_adrs: []
+
+sign_off:
+  completed_by: codex
+  completed_at: 2026-03-27
+  verified_by: codex
+  verified_at: 2026-03-27

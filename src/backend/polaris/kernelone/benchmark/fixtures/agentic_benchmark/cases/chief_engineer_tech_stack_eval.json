@@ -1,0 +1,42 @@
+{
+  "case_id": "chief_engineer_tech_stack_eval",
+  "role": "chief_engineer",
+  "title": "Chief Engineer Evaluates Technology Stack",
+  "description": "The Chief Engineer must evaluate and recommend technology choices based on project requirements.",
+  "workspace_fixture": "chief_engineer_blueprint_review",
+  "prompt": "Evaluate the current tech stack against project requirements. Return JSON: {current_stack: [{technology, version, assessment}], recommendations: [{replace, with, rationale, risk}], compliance: {meets_requirements: bool, gaps: [string]}}. Prioritize stability and team expertise.",
+  "tags": [
+    "chief_engineer",
+    "technology",
+    "evaluation"
+  ],
+  "judge": {
+    "score_threshold": 0.78,
+    "required_tools": [
+      "read_file",
+      "repo_tree"
+    ],
+    "required_output_substrings": [
+      "recommendations",
+      "rationale",
+      "compliance"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "chief_tech_eval"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 5,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "pm_risk_assessment",
+  "role": "pm",
+  "title": "PM Conducts Technical Risk Assessment",
+  "description": "The PM role must identify, categorize, and prioritize technical risks from a codebase inspection.",
+  "workspace_fixture": "pm_task_contract",
+  "prompt": "Analyze the codebase for technical risks. Return JSON with keys: `risks` (array of {type, severity, mitigation}), `overall_risk_score` (0-100), `critical_blockers` (array). Prioritize risks by severity.",
+  "tags": [
+    "pm",
+    "risk",
+    "assessment"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_tree",
+      "ripgrep"
+    ],
+    "required_output_substrings": [
+      "risks",
+      "severity",
+      "mitigation"
+    ],
+    "forbidden_output_substrings": [
+      "<thinking>",
+      "<tool_call>",
+      "system prompt"
+    ],
+    "validators": [
+      "pm_risk_json"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 6,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

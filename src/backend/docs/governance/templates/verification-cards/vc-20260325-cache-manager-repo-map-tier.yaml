@@ -1,0 +1,68 @@
+card_id: "vc-20260325-cache-manager-repo-map-tier"
+bug_summary: >
+  KernelOne cache manager 的通用 tier API 在 REPO_MAP 场景下把持久缓存写入/读取/清理到了
+  session_continuity 子目录，导致 repo_map tier 与 session_continuity tier 语义串层。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/kernelone/context/cache_manager.py"
+  method: "get() / set() / invalidate()"
+  symptom: "使用 CacheTier.REPO_MAP 的通用缓存调用会命中错误持久目录，invalidate(None) 也不会清掉 repo_map 条目"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设 CacheTier.REPO_MAP 的通用 get/set 分支硬编码成了 session_continuity 子目录。"
+    status: verified_true
+    evidence: >
+      读 cache_manager.py:295-318，REPO_MAP 分支分别调用
+      _get_persistent(key, "session_continuity") 和
+      _put_persistent(key, "session_continuity", ...)；
+      与同文件 584-596 的 get_repo_map/put_repo_map 命名 helper 使用 "repo_map" 不一致。
+
+  - id: "A2"
+    statement: "我假设 invalidate(None) 同样没有删除 repo_map 持久文件。"
+    status: verified_true
+    evidence: >
+      读 cache_manager.py:324-331，tier is None 时只清理了 hot_slice、
+      session_continuity、session_continuity persistent、symbol_index、projection，
+      没有清理 repo_map persistent。
+
+  - id: "A3"
+    statement: "我假设 tier-specific invalidate(CacheTier.REPO_MAP) 本身没有问题。"
+    status: verified_true
+    evidence: >
+      读 cache_manager.py:336-343，非 HOT_SLICE/SESSION_CONTINUITY 分支使用
+      _tier_to_subdir(t)；而 _tier_to_subdir(CacheTier.REPO_MAP) 在 700-706 返回 "repo_map"。
+
+pre_mortem:
+  failure_point: >
+    如果我只修正 get/set 的 REPO_MAP 子目录，而漏掉 invalidate(None)，
+    repo_map 条目仍会在“清全部缓存”路径下残留，导致行为继续不一致。
+  risk_zone:
+    - "polaris/kernelone/context/cache_manager.py"
+    - "依赖通用 IAssetCache API 的 context / working-set 调用方"
+
+verification_plan:
+  unit_tests:
+    - file: "tests/test_kernelone_cache_manager.py"
+      description: "test_repo_map_tier_uses_repo_map_persistent_directory"
+      expected: "通用 set/get(REPO_MAP) 只读写 repo_map 子目录，不触碰 session_continuity 子目录"
+      status: new
+    - file: "tests/test_kernelone_cache_manager.py"
+      description: "test_invalidate_all_removes_repo_map_persistent_entry"
+      expected: "invalidate(None) 能清掉 repo_map 持久条目"
+      status: new
+  integration_tests:
+    - description: "定向运行 cache manager 回归测试"
+      command: ".\\.venv\\Scripts\\python.exe -B -m pytest tests/test_kernelone_cache_manager.py -q"
+      status: new
+  manual_check:
+    - "检查 workspace/.polaris/kernelone_cache/repo_map/ 下的文件在 generic API 写入后存在"
+    - "检查 workspace/.polaris/kernelone_cache/session_continuity/ 不再承载 repo_map 通用条目"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-25"

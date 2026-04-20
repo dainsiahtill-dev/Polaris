@@ -1,0 +1,19 @@
+{
+  "bundle_id": "kernelone.default.v1",
+  "bundle_version": "1.0.0",
+  "profile_id": "canonical_balanced",
+  "profile_hash": "73ec9d8322ec98841f6d7a062ad3357b77370ef0163dc98a8f8aaebd8a54b3ca",
+  "turn_index": 0,
+  "timestamp": "2026-03-26T15:43:04.948257+00:00",
+  "budget_decisions": [],
+  "read_escalations": [],
+  "compaction_triggered": false,
+  "tool_sequence": [],
+  "prompt_tokens_estimate": 0,
+  "exploration_phase_reached": "map",
+  "cache_hits": [],
+  "cache_misses": [],
+  "run_id": "a31a144d-8cc6-4ca7-aa6e-a92c18d42768",
+  "session_id": "session-1",
+  "workspace": "workspace"
+}

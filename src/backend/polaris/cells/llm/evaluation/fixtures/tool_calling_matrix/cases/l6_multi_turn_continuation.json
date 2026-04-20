@@ -1,0 +1,31 @@
+{
+  "case_id": "l6_multi_turn_continuation",
+  "level": "L6",
+  "role": "director",
+  "title": "L6 Multi-Turn Conversation Continuation",
+  "description": "验证模型能在多轮对话中记住前序上下文，不重复执行已完成步骤。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "继续完成刚才的任务：现在请读取你创建的文件，确认内容正确。",
+  "tags": ["l6", "multi_turn", "continuation", "context_memory"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.70,
+    "stream": {
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "forbidden_tools": ["execute_command", "write_file", "append_to_file"],
+      "require_referencing_prior_context": true
+    },
+    "non_stream": {
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "forbidden_tools": ["execute_command", "write_file", "append_to_file"],
+      "require_referencing_prior_context": true
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

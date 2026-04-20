@@ -1,0 +1,35 @@
+{
+  "case_id": "l4_no_unnecessary_tool",
+  "level": "L4",
+  "role": "director",
+  "title": "L4 No Unnecessary Tool Call",
+  "description": "验证模型在不需要工具时不调用工具（如用户仅询问知识或寒暄）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "你好，感谢你的帮助。我今天心情很好。",
+  "tags": ["l4", "no_tool", "chitchat", "relevance"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.90,
+    "stream": {
+      "require_no_tool_calls": true,
+      "forbidden_tools": [
+        "read_file", "repo_read_head", "repo_rg", "search_code",
+        "write_file", "append_to_file", "execute_command", "repo_tree"
+      ],
+      "require_natural_language_response": true
+    },
+    "non_stream": {
+      "require_no_tool_calls": true,
+      "forbidden_tools": [
+        "read_file", "repo_read_head", "repo_rg", "search_code",
+        "write_file", "append_to_file", "execute_command", "repo_tree"
+      ],
+      "require_natural_language_response": true
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

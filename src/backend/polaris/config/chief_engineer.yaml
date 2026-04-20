@@ -1,0 +1,15 @@
+chief_engineer:
+  director_pool:
+    max_directors: 3
+    auto_scale: false              # P3: enable auto-scaling based on load
+    conflict_detection: global     # global | per_consumer (legacy compat)
+    graceful_degrade: true         # fallback to single Director if init fails
+    event_bus:
+      backend: sync                # sync | redis_stream (P3 upgrade path)
+      subscribers: []
+  task_market:
+    mode: off                      # off | shadow | mainline | mainline-full | mainline-durable
+    poll_interval_ms: 2000
+  blueprint:
+    adr:
+      auto_compact_threshold: 50   # Auto-merge ADRs into new base when count exceeds this

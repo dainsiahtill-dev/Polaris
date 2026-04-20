@@ -1,0 +1,1913 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.526829Z",
+  "source_hash": "149fe186cb765621",
+  "cell_id": "roles.adapters",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ArchitectAdapter",
+      "description": "Architect 角色适配器.",
+      "defined_in": "polaris/cells/roles/adapters/internal/architect_adapter.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": ""
+        },
+        {
+          "name": "get_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "_build_architect_message",
+          "doc": ""
+        },
+        {
+          "name": "_build_retry_message",
+          "doc": ""
+        },
+        {
+          "name": "_build_force_finalize_message",
+          "doc": ""
+        },
+        {
+          "name": "_build_truncated_docs_repair_message",
+          "doc": ""
+        },
+        {
+          "name": "_sanitize_architect_directive",
+          "doc": ""
+        },
+        {
+          "name": "_should_force_finalize_docs",
+          "doc": ""
+        },
+        {
+          "name": "_should_attempt_truncated_docs_repair",
+          "doc": ""
+        },
+        {
+          "name": "_extract_docs",
+          "doc": ""
+        },
+        {
+          "name": "_looks_like_safety_refusal",
+          "doc": ""
+        },
+        {
+          "name": "_looks_like_unparsed_structured_docs",
+          "doc": ""
+        },
+        {
+          "name": "_sanitize_doc_markdown",
+          "doc": ""
+        },
+        {
+          "name": "_extract_json_object",
+          "doc": ""
+        },
+        {
+          "name": "_looks_like_doc_payload",
+          "doc": ""
+        },
+        {
+          "name": "_extract_docs_from_markdown_or_text",
+          "doc": ""
+        },
+        {
+          "name": "_split_markdown_sections",
+          "doc": ""
+        },
+        {
+          "name": "_collect_doc_quality_issues",
+          "doc": ""
+        },
+        {
+          "name": "_has_blocking_doc_issues",
+          "doc": ""
+        },
+        {
+          "name": "_write_docs",
+          "doc": ""
+        },
+        {
+          "name": "_capture_attempt_snapshot",
+          "doc": "落盘 Architect 调试快照，便于压测失败后追踪真实模型输出。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BaseRoleAdapter",
+      "description": "角色适配器基类",
+      "defined_in": "polaris/cells/roles/adapters/internal/base.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_register_with_factory",
+          "doc": "Register this adapter with the given factory port."
+        },
+        {
+          "name": "role_id",
+          "doc": "角色标识"
+        },
+        {
+          "name": "get_capabilities",
+          "doc": "获取角色能力列表 - 子类可覆盖"
+        },
+        {
+          "name": "task_runtime",
+          "doc": "懒加载任务运行时服务（TaskBoard 统一入口）。"
+        },
+        {
+          "name": "task_board",
+          "doc": "兼容属性：历史调用点继续使用 ``self.task_board``。"
+        },
+        {
+          "name": "_build_env",
+          "doc": "构建环境变量"
+        },
+        {
+          "name": "_count_file_changes",
+          "doc": "统计指定路径下的文件变更。"
+        },
+        {
+          "name": "_coerce_board_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_board_task_exists",
+          "doc": ""
+        },
+        {
+          "name": "_update_board_task",
+          "doc": ""
+        },
+        {
+          "name": "_update_task_progress",
+          "doc": "更新任务进度"
+        },
+        {
+          "name": "_append_runtime_stage_signals",
+          "doc": "持久化阶段信号，供 QA 统一读取与裁决。"
+        },
+        {
+          "name": "_next_task_trace_seq",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_kernel_validation_enabled",
+          "doc": "Resolve whether kernel output validation should gate this turn."
+        },
+        {
+          "name": "_resolve_kernel_retry_budget",
+          "doc": "解析角色内核重试预算。"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_status_to_trace_type",
+      "description": "Map status string to trace_type",
+      "defined_in": "polaris/cells/roles/adapters/internal/base.py"
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerAdapter",
+      "description": "Chief Engineer 角色适配器",
+      "defined_in": "polaris/cells/roles/adapters/internal/chief_engineer_adapter.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": ""
+        },
+        {
+          "name": "get_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "_build_analysis_message",
+          "doc": "构建 Chief Engineer 角色消息"
+        },
+        {
+          "name": "_parse_analysis_result",
+          "doc": "解析分析结果"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorAdapter",
+      "description": "Director 角色适配器",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "role_id",
+          "doc": ""
+        },
+        {
+          "name": "get_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "_get_sequential_config",
+          "doc": "Get Sequential configuration from settings and context."
+        },
+        {
+          "name": "_get_task",
+          "doc": "获取任务信息"
+        },
+        {
+          "name": "_select_pending_board_task",
+          "doc": "当编排任务没有 TaskBoard 映射时，回退到可执行的真实待办任务。"
+        },
+        {
+          "name": "_materialize_runtime_task",
+          "doc": "将迁移期编排任务物化为 runtime.task_runtime 的 canonical task。"
+        },
+        {
+          "name": "_build_materialized_metadata",
+          "doc": "Build metadata dict for materialized runtime task."
+        },
+        {
+          "name": "_resolve_execution_backend_request",
+          "doc": "解析执行后端请求"
+        },
+        {
+          "name": "_persist_execution_backend_metadata",
+          "doc": "持久化执行后端元数据"
+        },
+        {
+          "name": "_build_director_message",
+          "doc": "构建 Director 角色消息"
+        },
+        {
+          "name": "_update_task_progress",
+          "doc": "更新任务进度"
+        },
+        {
+          "name": "_update_board_task",
+          "doc": "更新 TaskBoard 任务"
+        },
+        {
+          "name": "_append_runtime_stage_signals",
+          "doc": "追加运行时阶段信号"
+        },
+        {
+          "name": "_taskboard_snapshot_brief",
+          "doc": "TaskBoard 快照简要描述"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "build_sequential_config",
+      "description": "Build Sequential configuration from settings and context.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter_sequential.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_sequential_mode",
+      "description": "Resolve SequentialMode from settings and context.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/adapter_sequential.py"
+    },
+    {
+      "type": "function",
+      "name": "get_settings_safe",
+      "description": "Get settings safely, returning None on error.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/dialogue.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorPatchExecutor",
+      "description": "Director PATCH 文件执行器。",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execution.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "resolve_llm_call_timeout_seconds",
+          "doc": "解析 LLM 调用超时时间"
+        },
+        {
+          "name": "_normalize_tool_arguments",
+          "doc": "归一化工具参数"
+        },
+        {
+          "name": "_apply_protocol_operations",
+          "doc": "应用协议操作"
+        },
+        {
+          "name": "_apply_single_patch",
+          "doc": "应用单个补丁块"
+        },
+        {
+          "name": "_extract_markdown_file_blocks",
+          "doc": "从 Markdown 代码块中提取\"文件名 + 内容\"并映射为补丁。"
+        },
+        {
+          "name": "validate_generated_output",
+          "doc": "检查 Director 输出是否存在模板化/占位化迹象。"
+        },
+        {
+          "name": "_check_file_quality",
+          "doc": "检查单个文件的质量问题"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorToolExecutor",
+      "description": "Director 工具执行器。",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "execute_tool",
+          "doc": "执行指定工具"
+        },
+        {
+          "name": "_tool_write_file",
+          "doc": "写入文件工具"
+        },
+        {
+          "name": "_tool_read_file",
+          "doc": "读取文件工具"
+        },
+        {
+          "name": "_tool_edit_file",
+          "doc": "编辑文件工具（搜索替换）"
+        },
+        {
+          "name": "_tool_run_command",
+          "doc": "运行命令工具（安全加固版）"
+        },
+        {
+          "name": "_validate_command_security",
+          "doc": "验证命令安全性"
+        },
+        {
+          "name": "_run_command_service",
+          "doc": "通过 CommandExecutionService 执行命令"
+        },
+        {
+          "name": "_tool_search_code",
+          "doc": "代码搜索工具（使用 ripgrep）"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_seq_parse_bool",
+      "description": "Parse boolean value from various types.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_seq_resolve_bool",
+      "description": "Resolve boolean setting from settings object or environment.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_seq_resolve_int",
+      "description": "Resolve integer setting from settings object or environment.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_seq_resolve_str",
+      "description": "Resolve string setting from settings object or environment.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_project_code_file",
+      "description": "Check if file suffix indicates a project code file.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "preview_content_for_error",
+      "description": "Preview content for error messages, truncating if too long.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_tools_for_debug",
+      "description": "Summarize tool results for debug logging.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_format_validation_failure",
+      "description": "Check if error indicates format validation failure.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_timeout_failure",
+      "description": "Check if error indicates timeout.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "has_successful_write_tool",
+      "description": "Check if any tool result indicates a successful write operation.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_empty_role_response",
+      "description": "Check if role response is empty (no content, error, or tools).",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "looks_like_protocol_patch_response",
+      "description": "Check if text looks like a protocol patch response.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_kernel_tool_results",
+      "description": "Extract and normalize tool results from role response.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "coerce_task_record",
+      "description": "Coerce task entry to dictionary.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "taskboard_snapshot_brief",
+      "description": "Build brief string from taskboard snapshot.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/helpers.py"
+    },
+    {
+      "type": "class",
+      "name": "CommandInjectionBlocked",
+      "description": "Raised when a command string cannot be safely parsed and shell=True fallback is blocked.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/security.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_always_reject_command",
+      "description": "Always reject command (fallback when security unavailable).",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/security.py"
+    },
+    {
+      "type": "function",
+      "name": "_always_block_command",
+      "description": "Always block command (fallback when security unavailable).",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/security.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_tooling_security",
+      "description": "Load tooling security module.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/security.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorStateTracker",
+      "description": "Director 状态追踪服务。",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_tracking.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "collect_workspace_code_files",
+          "doc": "收集工作区代码文件快照指纹"
+        },
+        {
+          "name": "_build_file_content_fingerprint",
+          "doc": "构建文件内容指纹"
+        },
+        {
+          "name": "append_debug_event",
+          "doc": "Append adapter-level debug trace for diagnosing dispatch stalls/failures."
+        },
+        {
+          "name": "build_taskboard_observation_snapshot",
+          "doc": "Build a taskboard snapshot for LLM context."
+        },
+        {
+          "name": "_collect_taskboard_samples",
+          "doc": "Collect task samples from entries."
+        },
+        {
+          "name": "_derive_qa_state",
+          "doc": "Derive QA state from adapter_result and metadata."
+        },
+        {
+          "name": "_add_ready_samples",
+          "doc": "Add ready task samples."
+        },
+        {
+          "name": "build_taskboard_task_ref",
+          "doc": "Build a structured taskboard row reference for realtime observers."
+        },
+        {
+          "name": "mark_rework_round_started",
+          "doc": "Clear QA rework request marker when Director starts a new attempt."
+        },
+        {
+          "name": "sanitize_task_description",
+          "doc": "清理和截断任务描述文本"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "extract_output_requirements",
+      "description": "从任务中提取最低输出要求（文件数和行数）",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "count_changed_code_lines",
+      "description": "统计变更文件的代码行数",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "is_output_sparse",
+      "description": "判断输出是否稀疏",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_domain_tokens",
+      "description": "从任务描述中提取领域关键词",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_tool_results",
+      "description": "提炼工具结果，避免上下文爆炸。",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_pending_task_context",
+      "description": "收集待办任务上下文",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "default_projection_slug",
+      "description": "生成默认的 projection slug",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "compose_projection_requirement",
+      "description": "组合 projection requirement",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/state_utils.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorExecutionBackendRequest",
+      "description": "Resolved execution backend request for one Director task.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py",
+      "methods": [
+        {
+          "name": "is_projection_backend",
+          "doc": ""
+        },
+        {
+          "name": "is_supported",
+          "doc": ""
+        },
+        {
+          "name": "to_task_metadata",
+          "doc": "Return normalized runtime metadata for taskboard/task_runtime rows."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorProjectionBackendRunner",
+      "description": "Invoke projection/back-mapping capabilities via `factory.pipeline` public contracts.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "Execute one projection-oriented backend request."
+        },
+        {
+          "name": "_run_projection_generate",
+          "doc": ""
+        },
+        {
+          "name": "_run_projection_refresh_mapping",
+          "doc": ""
+        },
+        {
+          "name": "_run_projection_reproject",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_bool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_backend",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_project_slug",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_director_execution_backend",
+      "description": "Resolve Director execution backend from context, task metadata, and input.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director_execution_backend.py"
+    },
+    {
+      "type": "class",
+      "name": "PMAdapter",
+      "description": "PM 角色适配器.",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": ""
+        },
+        {
+          "name": "get_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "_build_pm_message",
+          "doc": "构建 PM 规划提示词。"
+        },
+        {
+          "name": "_build_pm_retry_message",
+          "doc": ""
+        },
+        {
+          "name": "_extract_task_contracts",
+          "doc": ""
+        },
+        {
+          "name": "_extract_tasks_from_payload",
+          "doc": ""
+        },
+        {
+          "name": "_extract_json_payload",
+          "doc": ""
+        },
+        {
+          "name": "_extract_tasks_from_sections",
+          "doc": ""
+        },
+        {
+          "name": "_extract_tasks_from_bullets",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_task_contract",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_list",
+          "doc": ""
+        },
+        {
+          "name": "_infer_scope_from_title",
+          "doc": ""
+        },
+        {
+          "name": "_derive_domain_token",
+          "doc": ""
+        },
+        {
+          "name": "_extract_domain_keywords",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_projection_project_slug",
+          "doc": ""
+        },
+        {
+          "name": "_extract_projection_contract_hint",
+          "doc": ""
+        },
+        {
+          "name": "_apply_projection_contract_hint",
+          "doc": ""
+        },
+        {
+          "name": "_build_projection_hint_contracts",
+          "doc": ""
+        },
+        {
+          "name": "_synthesize_task_contracts_from_directive",
+          "doc": "在 PM 输出不可解析时，基于需求指令合成最小可执行任务合同。"
+        },
+        {
+          "name": "_evaluate_contract_quality",
+          "doc": ""
+        },
+        {
+          "name": "_validate_task_contracts",
+          "doc": "Validate task contract dependencies using StructuralPlanValidator."
+        },
+        {
+          "name": "_create_board_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_index_task",
+          "doc": ""
+        },
+        {
+          "name": "_deduplicate_existing_board_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_canonical_text",
+          "doc": ""
+        },
+        {
+          "name": "_build_task_identity_signature",
+          "doc": ""
+        },
+        {
+          "name": "_pick_preferred_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_status_rank",
+          "doc": ""
+        },
+        {
+          "name": "_find_existing_task_match",
+          "doc": ""
+        },
+        {
+          "name": "_write_plan_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_parse_and_create_tasks",
+          "doc": "兼容旧接口: 从文本中解析并创建任务."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QAAdapter",
+      "description": "QA adapter.",
+      "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": ""
+        },
+        {
+          "name": "get_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "_apply_taskboard_qa_verdict",
+          "doc": "Apply QA verdict to Director TaskBoard rows."
+        },
+        {
+          "name": "_coerce_task_record",
+          "doc": ""
+        },
+        {
+          "name": "_safe_int",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_rework_retry_budget",
+          "doc": ""
+        },
+        {
+          "name": "_run_static_review",
+          "doc": "Run deterministic workspace checks."
+        },
+        {
+          "name": "_build_qa_message",
+          "doc": "Build optional LLM review prompt."
+        },
+        {
+          "name": "_parse_review_result",
+          "doc": "Parse LLM review payload."
+        },
+        {
+          "name": "_merge_review_result",
+          "doc": "Merge deterministic review with LLM review."
+        },
+        {
+          "name": "_finalize_review_result",
+          "doc": "Finalize score and verdict after merge."
+        },
+        {
+          "name": "_write_qa_report",
+          "doc": ""
+        },
+        {
+          "name": "_extract_json_payload",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_review_payload",
+          "doc": ""
+        },
+        {
+          "name": "_strip_json_line_comments",
+          "doc": ""
+        },
+        {
+          "name": "_extract_domain_tokens",
+          "doc": ""
+        },
+        {
+          "name": "_load_runtime_stage_signals",
+          "doc": ""
+        },
+        {
+          "name": "_coerce_int",
+          "doc": ""
+        },
+        {
+          "name": "_coerce_list",
+          "doc": ""
+        },
+        {
+          "name": "_dedupe_list",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_schema_for_role",
+      "description": "Get the output schema for a given role.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/__init__.py"
+    },
+    {
+      "type": "class",
+      "name": "TechnologyChoice",
+      "description": "Technology stack choice for a layer.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/architect_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ModuleDesign",
+      "description": "Module design specification.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/architect_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RiskAssessment",
+      "description": "Architecture risk assessment.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/architect_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "NFRDesign",
+      "description": "Non-functional requirements design.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/architect_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchitectOutput",
+      "description": "Architect structured output - Architecture design document with tool support.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/architect_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ToolCall",
+      "description": "Generic tool call specification for all roles.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BaseToolEnabledOutput",
+      "description": "Base class for outputs that may include tool calls.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/base.py",
+      "methods": [
+        {
+          "name": "get_tools_to_execute",
+          "doc": "Get list of tools that need to be executed."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ComplexityAssessment",
+      "description": "Technical complexity assessment.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/ce_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ConstructionPlan",
+      "description": "Step-by-step construction plan.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/ce_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DependencyInfo",
+      "description": "Dependency information.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/ce_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RiskFlag",
+      "description": "Risk assessment flag.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/ce_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BlueprintOutput",
+      "description": "Chief Engineer structured output - Construction blueprint with tool support.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/ce_schema.py",
+      "methods": [
+        {
+          "name": "validate_paths",
+          "doc": "Ensure all paths are relative and safe."
+        },
+        {
+          "name": "check_critical_risks",
+          "doc": "Ensure critical risks have mitigations."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PatchOperation",
+      "description": "Single code patch operation.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/director_schema.py",
+      "methods": [
+        {
+          "name": "validate_file_path",
+          "doc": "Ensure file path is safe."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorValidationResult",
+      "description": "Validation/test result for Director execution.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/director_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorOutput",
+      "description": "Director structured output - Implementation plan and patches.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/director_schema.py",
+      "methods": [
+        {
+          "name": "validate_patches",
+          "doc": "Ensure patches are valid."
+        },
+        {
+          "name": "model_post_init",
+          "doc": "Validate mode consistency."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Task",
+      "description": "Single task definition.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/pm_schema.py",
+      "methods": [
+        {
+          "name": "validate_paths",
+          "doc": "Ensure all paths are relative and safe."
+        },
+        {
+          "name": "validate_criteria",
+          "doc": "Ensure criteria are specific (avoid vague words)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskAnalysis",
+      "description": "Task list analysis summary.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/pm_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskListOutput",
+      "description": "PM structured output - Task list with analysis and optional tool calls.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/pm_schema.py",
+      "methods": [
+        {
+          "name": "check_unique_ids",
+          "doc": "Ensure all task IDs are unique."
+        },
+        {
+          "name": "check_dependency_exists",
+          "doc": "Ensure all dependencies reference existing tasks."
+        },
+        {
+          "name": "check_analysis_consistency",
+          "doc": "Ensure analysis is consistent with tasks when complete."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QAFinding",
+      "description": "Single QA finding/issue.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/qa_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Metrics",
+      "description": "Quality metrics summary.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/qa_schema.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QAReportOutput",
+      "description": "QA structured output - Quality assurance report with tool support.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/qa_schema.py",
+      "methods": [
+        {
+          "name": "model_post_init",
+          "doc": "Validate verdict consistency with findings."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRoleAdapter",
+      "description": "工作流角色适配器",
+      "defined_in": "polaris/cells/roles/adapters/internal/workflow_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化适配器"
+        },
+        {
+          "name": "_ensure_core_roles_loaded",
+          "doc": "确保核心角色配置已加载"
+        },
+        {
+          "name": "kernel",
+          "doc": "获取或创建执行内核"
+        },
+        {
+          "name": "get_role_profile",
+          "doc": "获取角色配置"
+        },
+        {
+          "name": "validate_role_permission",
+          "doc": "验证角色工具权限"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRoleResult",
+      "description": "工作流角色执行结果",
+      "defined_in": "polaris/cells/roles/adapters/internal/workflow_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "from_kernel_result",
+          "doc": "从内核结果创建工作流结果"
+        },
+        {
+          "name": "to_dict",
+          "doc": "转换为字典"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRoleNode",
+      "description": "统一工作流角色节点基类",
+      "defined_in": "polaris/cells/roles/adapters/internal/workflow_node.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "role_id",
+          "doc": "角色标识 (pm/architect/chief_engineer/director/qa)"
+        },
+        {
+          "name": "role_name",
+          "doc": "角色显示名（默认从profile获取）"
+        },
+        {
+          "name": "_ensure_core_roles_loaded",
+          "doc": "确保核心角色配置已加载"
+        },
+        {
+          "name": "kernel",
+          "doc": "获取或创建执行内核"
+        },
+        {
+          "name": "get_profile",
+          "doc": "获取角色配置"
+        },
+        {
+          "name": "validate_tool_permission",
+          "doc": "验证工具权限"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_AdhocNode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/workflow_node.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CreateRoleAdapterCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListSupportedRoleAdaptersQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAdapterRegisteredEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAdapterResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAdaptersError",
+      "description": "Structured contract error for `roles.adapters`.",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRoleAdaptersService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
+      "methods": [
+        {
+          "name": "create_adapter",
+          "doc": "Create one role adapter instance."
+        },
+        {
+          "name": "list_supported_roles",
+          "doc": "List supported adapter role IDs."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRoleAdapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": "Return the adapter role id."
+        },
+        {
+          "name": "get_capabilities",
+          "doc": "Return supported capabilities."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_registry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_role_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_all_adapters",
+      "description": "Register role adapter factory to orchestration service if supported.",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_supported_roles",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestCreateRoleAdapterCommandV1HappyPath",
+      "description": "Command validates role_id and workspace.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_basic_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_context_defaulted_to_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_context_is_copied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestListSupportedRoleAdaptersQueryV1",
+      "description": "Query accepts optional workspace.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_workspace_optional",
+          "doc": ""
+        },
+        {
+          "name": "test_workspace_provided",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateRoleAdapterCommandV1EdgeCases",
+      "description": "Required fields reject empty / whitespace values.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_empty_role_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_role_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestListSupportedRoleAdaptersQueryV1EdgeCases",
+      "description": "Workspace field trims whitespace and rejects empty string.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_whitespace_workspace_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleAdapterResultV1",
+      "description": "ok/error invariant.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_success_result_no_error_required",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_result_requires_error",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_with_error_code_valid",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleAdapterRegisteredEventV1",
+      "description": "Event enforces non-empty required fields.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_valid_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_event_id_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleAdaptersError",
+      "description": "Structured exception.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_default_code",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_code_and_details",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Bad",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Good",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "create_adapter",
+          "doc": ""
+        },
+        {
+          "name": "list_supported_roles",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIRoleAdaptersServiceProtocol",
+      "description": "IRoleAdaptersService is a runtime_checkable Protocol.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_incomplete_impl_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_impl_accepted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Bad",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Good",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "role_id",
+          "doc": ""
+        },
+        {
+          "name": "get_capabilities",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIRoleAdapterProtocol",
+      "description": "IRoleAdapter is a runtime_checkable Protocol.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_incomplete_impl_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_impl_accepted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateRoleAdapterFactory",
+      "description": "Factory resolves role_id to adapter class.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_pm_known_role",
+          "doc": ""
+        },
+        {
+          "name": "test_role_id_case_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_role_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_role_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_role_id_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetSupportedRoles",
+      "description": "Returns non-empty list of registered role IDs.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_returns_non_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_pm_in_supported_roles",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_lowercase",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSchemaExports",
+      "description": "Schema singletons are present and well-formed.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_contract.py",
+      "methods": [
+        {
+          "name": "test_role_output_schemas_is_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_pm_schema_exists",
+          "doc": ""
+        },
+        {
+          "name": "test_get_schema_for_role_returns_schema",
+          "doc": ""
+        },
+        {
+          "name": "test_get_schema_for_unknown_role_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_base_tool_enabled_output_is_base_class",
+          "doc": ""
+        },
+        {
+          "name": "test_schema_for_role_is_pydantic_model",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "NotReadyError",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "test_import_workflow_runtime_then_roles_adapters",
+      "description": "Import workflow_runtime first, then roles.adapters — must not raise.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_import_roles_adapters_then_workflow_runtime",
+      "description": "Import roles.adapters first, then workflow_runtime — must not raise.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_factory_registration_is_idempotent",
+      "description": "The factory must be registered exactly once; subsequent calls are no-ops.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_unified_orchestration_service_stores_factory",
+      "description": "UnifiedOrchestrationService.set_role_adapter_factory must store the factory.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_generic_pipeline_source_uses_public_factory",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_orchestration_service_reload_is_graceful",
+      "description": "Reloading roles.adapters.public.service while workflow_runtime is active must not crash.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "_fail",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_adapter_workflow_integration.py"
+    },
+    {
+      "type": "class",
+      "name": "NotReadyError",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UnknownService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_imports_without_error",
+      "description": "roles.adapters.public.service must import without raising.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_internal_init_imports_without_error",
+      "description": "roles.adapters.internal must import without raising.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_cell_entry_imports_without_error",
+      "description": "The cell top-level __init__ must import without raising.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_service_schema_exports",
+      "description": "Schema singletons are present after import.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_factory_produces_normalised_instance",
+      "description": "create_role_adapter must normalise role tokens (e.g. 'Architect' -> 'architect').",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_factory_rejects_empty_workspace",
+      "description": "Empty workspace must raise ValueError (not AttributeError).",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_factory_rejects_empty_role",
+      "description": "Empty role_id must raise ValueError (not AttributeError).",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_import_succeeds_when_orchestration_service_not_ready",
+      "description": "Importing the cell while workflow_runtime is unavailable must not crash.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "_fail",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_register_all_adapters_is_idempotent",
+      "description": "register_all_adapters must be callable without side-effects on unknown objects.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_supported_roles_contains_core_roles",
+      "description": "At minimum pm, qa, architect, chief_engineer must be present.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_director_graceful_fallback_when_unavailable",
+      "description": "When DirectorAdapter is unavailable, 'director' must not appear in supported roles silently.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "class",
+      "name": "TestBaseRoleAdapterMethods",
+      "description": "BaseRoleAdapter methods accessible via DirectorAdapter instance.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_unit.py",
+      "methods": [
+        {
+          "name": "test_build_env_default",
+          "doc": ""
+        },
+        {
+          "name": "test_build_env_with_overrides",
+          "doc": ""
+        },
+        {
+          "name": "test_coerce_board_task_id_numeric",
+          "doc": ""
+        },
+        {
+          "name": "test_coerce_board_task_id_task_prefix",
+          "doc": ""
+        },
+        {
+          "name": "test_coerce_board_task_id_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_coerce_board_task_id_non_numeric",
+          "doc": ""
+        },
+        {
+          "name": "test_next_task_trace_seq_increments",
+          "doc": ""
+        },
+        {
+          "name": "test_get_capabilities_includes_sequential",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveKernelRetryBudget",
+      "description": "_resolve_kernel_retry_budget: static — resolves max retries.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_unit.py",
+      "methods": [
+        {
+          "name": "test_default_is_1",
+          "doc": ""
+        },
+        {
+          "name": "test_respects_env_override",
+          "doc": ""
+        },
+        {
+          "name": "test_clamped_to_0_3",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveKernelValidationEnabled",
+      "description": "_resolve_kernel_validation_enabled: static — resolves validation flag.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_unit.py",
+      "methods": [
+        {
+          "name": "test_default_false",
+          "doc": ""
+        },
+        {
+          "name": "test_context_overrides",
+          "doc": ""
+        },
+        {
+          "name": "test_env_true",
+          "doc": ""
+        },
+        {
+          "name": "test_env_false",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_director_adapter",
+      "description": "Create a DirectorAdapter for testing, defaulting to the given workspace.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_unit.py"
+    },
+    {
+      "type": "class",
+      "name": "TestAdapterFactoryCreation",
+      "description": "Tests for adapter factory creation and registration.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_factory_integration.py",
+      "methods": [
+        {
+          "name": "test_factory_creates_pm_adapter",
+          "doc": "Test factory creates PM adapter correctly."
+        },
+        {
+          "name": "test_factory_creates_director_adapter",
+          "doc": "Test factory creates Director adapter correctly."
+        },
+        {
+          "name": "test_factory_creates_architect_adapter",
+          "doc": "Test factory creates Architect adapter correctly."
+        },
+        {
+          "name": "test_factory_creates_qa_adapter",
+          "doc": "Test factory creates QA adapter correctly."
+        },
+        {
+          "name": "test_factory_normalizes_role_id",
+          "doc": "Test factory normalizes role ID to lowercase."
+        },
+        {
+          "name": "test_factory_rejects_empty_role",
+          "doc": "Test factory rejects empty role ID."
+        },
+        {
+          "name": "test_factory_rejects_whitespace_role",
+          "doc": "Test factory rejects whitespace role ID."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSupportedRoles",
+      "description": "Tests for supported roles functionality.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_factory_integration.py",
+      "methods": [
+        {
+          "name": "test_get_supported_roles",
+          "doc": "Test getting list of supported roles."
+        },
+        {
+          "name": "test_pm_in_supported_roles",
+          "doc": "Test PM is in supported roles."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAdapterFactoryIntegration",
+      "description": "Integration tests for adapter factory.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_factory_integration.py",
+      "methods": [
+        {
+          "name": "test_adapter_has_task_runtime",
+          "doc": "Test adapter has task runtime property."
+        },
+        {
+          "name": "test_adapter_get_capabilities",
+          "doc": "Test adapter returns capabilities."
+        },
+        {
+          "name": "test_multiple_adapters_independent",
+          "doc": "Test multiple adapters are independent instances."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAdapterWorkflowIntegration",
+      "description": "Tests for adapter workflow integration.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_factory_integration.py",
+      "methods": [
+        {
+          "name": "test_adapter_registers_with_factory",
+          "doc": "Test adapter can register with factory port."
+        },
+        {
+          "name": "test_build_env_includes_polaris_workspace",
+          "doc": "Test adapter build_env includes POLARIS_WORKSPACE."
+        },
+        {
+          "name": "test_build_env_with_overrides",
+          "doc": "Test adapter build_env respects overrides."
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

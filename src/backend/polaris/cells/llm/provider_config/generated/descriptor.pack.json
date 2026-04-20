@@ -1,0 +1,201 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.872722Z",
+  "source_hash": "453fd1c2be145513",
+  "cell_id": "llm.provider_config",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ProviderRequestContext",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/internal/provider_context.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "resolve_provider_request_context",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/internal/provider_context.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_llm_config_sync_updates",
+      "description": "Compute the Settings updates implied by an LLM config dict.",
+      "defined_in": "polaris/cells/llm/provider_config/internal/settings_sync.py"
+    },
+    {
+      "type": "function",
+      "name": "sync_settings_from_llm",
+      "description": "Apply relevant LLM config fields back onto process settings.",
+      "defined_in": "polaris/cells/llm/provider_config/internal/settings_sync.py"
+    },
+    {
+      "type": "class",
+      "name": "LlmTestExecutionContext",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/internal/test_context.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "load_llm_config_port",
+      "description": "Delegate config loading through the control-plane module at call time.",
+      "defined_in": "polaris/cells/llm/provider_config/internal/test_context.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_llm_test_execution_context",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/internal/test_context.py"
+    },
+    {
+      "type": "class",
+      "name": "ResolveProviderContextCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolveLlmTestExecutionContextCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SyncSettingsFromLlmCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderConfigResolvedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderConfigResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmProviderConfigError",
+      "description": "Structured contract error for `llm.provider_config`.",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProviderNotFoundError",
+      "description": "Raised when a requested provider_id does not exist in config.",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProviderConfigValidationError",
+      "description": "Raised when required config fields are missing or invalid.",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleNotConfiguredError",
+      "description": "Raised when a requested role is not present in the LLM config.",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IProviderConfigService",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py",
+      "methods": [
+        {
+          "name": "sync_settings",
+          "doc": "Sync runtime settings from LLM config."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "LlmProviderConfigService",
+      "description": "Contract-first provider config facade.",
+      "defined_in": "polaris/cells/llm/provider_config/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "sync_settings",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_extract_workspace_and_cache_root",
+      "description": "Extract workspace and cache_root strings from a settings object.",
+      "defined_in": "polaris/cells/llm/provider_config/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_config/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_provider_context_contract",
+      "description": "Resolve provider context and map to contract result.",
+      "defined_in": "polaris/cells/llm/provider_config/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_test_execution_context_contract",
+      "description": "Resolve test execution context and normalize to mapping.",
+      "defined_in": "polaris/cells/llm/provider_config/public/service.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

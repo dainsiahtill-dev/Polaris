@@ -1,0 +1,14 @@
+{
+  "cell_id": "roles.kernel",
+  "version": "1.1.0",
+  "read_order": [
+    "cell.yaml",
+    "README.agent.md",
+    "generated/verify.pack.json",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/kernel.py",
+    "internal/turn_engine.py"
+  ],
+  "notes": "Read verify.pack before touching turn_engine, transcript persistence, stream tool parsing, or llm contract boundaries."
+}

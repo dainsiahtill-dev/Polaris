@@ -1,0 +1,107 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Dead Letter Item
+description: >
+  DLQ record schema for retry-exhausted or hard-failed task_market work items.
+type: object
+additionalProperties: false
+required:
+  - version
+  - workspace
+  - task_id
+  - trace_id
+  - stage
+  - status
+  - reason
+  - attempts
+  - max_attempts
+  - moved_to_dlq_at
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  workspace:
+    type: string
+    minLength: 1
+  task_id:
+    type: string
+    minLength: 1
+  trace_id:
+    type: string
+    minLength: 1
+  run_id:
+    type: string
+  plan_id:
+    type: string
+  plan_revision_id:
+    type: string
+  stage:
+    type: string
+    enum:
+      - pending_design
+      - pending_exec
+      - pending_qa
+      - waiting_human
+  status:
+    type: string
+    enum:
+      - dead_letter
+      - rejected
+      - waiting_human
+  reason:
+    type: string
+    minLength: 1
+  error_code:
+    type: string
+  error_message:
+    type: string
+  source_role:
+    type: string
+  worker_id:
+    type: string
+  lease_token:
+    type: string
+  attempts:
+    type: integer
+    minimum: 0
+  max_attempts:
+    type: integer
+    minimum: 1
+  moved_to_dlq_at:
+    type: string
+    format: date-time
+  last_failure_at:
+    type: string
+    format: date-time
+  resolution_state:
+    type: string
+    enum:
+      - open
+      - replayed
+      - resolved
+      - dismissed
+      - escalated
+  replay_count:
+    type: integer
+    minimum: 0
+  artifact_refs:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  metadata:
+    type: object
+    additionalProperties: true
+  human_review:
+    type: object
+    additionalProperties: false
+    properties:
+      requested:
+        type: boolean
+      resolution:
+        type: string
+      resolved_by:
+        type: string
+      resolved_at:
+        type: string
+        format: date-time

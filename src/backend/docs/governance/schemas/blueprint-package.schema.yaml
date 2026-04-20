@@ -1,0 +1,102 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Blueprint Package
+description: >
+  ChiefEngineer output package that gates Director execution.
+type: object
+additionalProperties: false
+required:
+  - version
+  - workspace
+  - trace_id
+  - task_id
+  - plan_revision_id
+  - blueprint_id
+  - summary
+  - guardrails
+  - execution_steps
+  - generated_at
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  workspace:
+    type: string
+    minLength: 1
+  trace_id:
+    type: string
+    minLength: 1
+  run_id:
+    type: string
+  task_id:
+    type: string
+    minLength: 1
+  plan_id:
+    type: string
+  plan_revision_id:
+    type: string
+    minLength: 1
+  blueprint_id:
+    type: string
+    minLength: 1
+  summary:
+    type: string
+    minLength: 1
+  rationale:
+    type: string
+  context_snapshot_ref:
+    type: string
+  context_snapshot_hash:
+    type: string
+  guardrails:
+    type: object
+    additionalProperties: true
+  no_touch_zones:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  execution_steps:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - step_id
+        - description
+      properties:
+        step_id:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          minLength: 1
+        scope_paths:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        target_files:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        tool_hints:
+          type: array
+          items:
+            type: string
+            minLength: 1
+  artifact_refs:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  estimated_cost_tokens:
+    type: integer
+    minimum: 0
+  llm_provider:
+    type: string
+  generated_at:
+    type: string
+    format: date-time

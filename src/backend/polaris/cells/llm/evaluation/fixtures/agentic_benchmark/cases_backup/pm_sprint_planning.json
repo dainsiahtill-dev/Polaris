@@ -1,0 +1,33 @@
+{
+  "case_id": "pm_sprint_planning",
+  "role": "pm",
+  "title": "PM Creates Sprint Plan from User Stories",
+  "description": "The PM role must transform ambiguous user stories into sprint-ready tasks with estimates.",
+  "workspace_fixture": "pm_task_contract",
+  "prompt": "Review the project requirements in README.md. Create a sprint plan as JSON with: `sprint_goal`, `stories` (array of {id, description, points, tasks}), `capacity` (total story points), `velocity_estimate`. Break down stories into actionable tasks.",
+  "tags": [
+    "pm",
+    "sprint",
+    "planning"
+  ],
+  "judge": {
+    "score_threshold": 0.80,
+    "required_tools": [
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "sprint_goal",
+      "stories",
+      "points"
+    ],
+    "forbidden_output_substrings": [
+      "<thinking>",
+      "<tool_call>"
+    ],
+    "validators": [
+      "pm_sprint_json"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 3
+  }
+}

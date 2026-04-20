@@ -1,0 +1,42 @@
+{
+  "case_id": "l4_path_structure_comprehension",
+  "level": "L4",
+  "role": "director",
+  "title": "L4 Path Structure Comprehension — Tree Format",
+  "description": "验证模型能正确理解树形目录结构，不将平级文件误读为父子关系。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "查看项目结构，告诉我 backend/ 和 frontend/ 下面各有哪些文件。",
+  "tags": ["l4", "path_structure", "tree_format", "no_hallucination"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_any_tools": [
+        ["repo_tree", "list_directory", "glob"]
+      ],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "require_correct_parent_child_relationship": true,
+      "required_output_substrings": ["backend", "frontend"],
+      "forbidden_output_patterns": [
+        "backend/frontend",
+        "backend/api.py 不是 frontend 下的"
+      ]
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["repo_tree", "list_directory", "glob"]
+      ],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3,
+      "require_correct_parent_child_relationship": true
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

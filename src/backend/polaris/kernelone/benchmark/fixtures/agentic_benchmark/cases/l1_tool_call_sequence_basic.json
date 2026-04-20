@@ -1,0 +1,38 @@
+{
+  "case_id": "l1_tool_call_sequence_basic",
+  "role": "director",
+  "title": "L1 Sequential Basic Tool Calls",
+  "description": "测试基础多步工具调用（不超过 2 个）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 显示目录结构 2. 读取 server.py",
+  "tags": [
+    "l1",
+    "basic",
+    "multi-step",
+    "sequence"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_tree",
+      "repo_read_head"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 2,
+    "required_output_substrings": [
+      "server.py"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

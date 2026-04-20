@@ -1,0 +1,34 @@
+{
+  "case_id": "l3_idempotent_read",
+  "level": "L3",
+  "role": "director",
+  "title": "L3 Idempotent Read — Same File Multiple Times",
+  "description": "验证模型能安全地多次读取同一文件，不会陷入无限循环。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 config.py 三次，告诉我每次的 API_HOST 值是否一致。",
+  "tags": ["l3", "idempotent", "repeat_read", "stability"],
+  "weight": 1.0,
+  "critical": false,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 3,
+      "require_consistent_results": true,
+      "forbidden_tools": ["execute_command", "write_file"],
+      "require_progress_beyond_repeat": true
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 3,
+      "require_consistent_results": true,
+      "forbidden_tools": ["execute_command", "write_file"]
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "ordered"
+    }
+  }
+}

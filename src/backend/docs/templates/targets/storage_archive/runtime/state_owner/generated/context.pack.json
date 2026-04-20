@@ -1,0 +1,81 @@
+{
+  "template": true,
+  "id": "runtime.state_owner",
+  "title": "Runtime State Owner",
+  "kind": "capability",
+  "purpose": "Act as the single writer for runtime task, contract, run, and state files while exposing controlled read queries for projection and archive-oriented cells.",
+  "summary": "Target blueprint for the future runtime source-of-truth cell. It isolates runtime writes from archive publication and provides the controlled read surface consumed by archive and projection flows.",
+  "owned_paths": [
+    "cells/runtime/state_owner/**"
+  ],
+  "public_contracts": {
+    "commands": [
+      "PersistRuntimeTaskStateCommandV1",
+      "PersistRuntimeContractCommandV1",
+      "PersistRuntimeRunCommandV1"
+    ],
+    "queries": [
+      "GetRuntimeSnapshotQueryV1",
+      "GetRuntimeRunQueryV1"
+    ],
+    "events": [
+      "RuntimeStateChangedEventV1",
+      "RuntimeStateWrittenEventV1"
+    ],
+    "results": [
+      "RuntimeStateWriteResultV1",
+      "RuntimeSnapshotResultV1",
+      "RuntimeRunResultV1"
+    ],
+    "errors": [
+      "RuntimeStateOwnerErrorV1"
+    ]
+  },
+  "neighbors": [
+    "storage.layout",
+    "policy.workspace_guard",
+    "audit.evidence",
+    "runtime.projection",
+    "archive.run_archive",
+    "archive.task_snapshot_archive"
+  ],
+  "state_owners": [
+    "runtime_task_state",
+    "runtime_contract_state",
+    "runtime_run_state",
+    "runtime_snapshot_state"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/*",
+    "fs.write:runtime/tasks/*",
+    "fs.write:runtime/contracts/*",
+    "fs.write:runtime/runs/*",
+    "fs.write:runtime/state/*"
+  ],
+  "invariants": [
+    "runtime source-of-truth writes remain single-owner",
+    "all runtime text file writes use explicit UTF-8",
+    "history publication is delegated to archive cells"
+  ],
+  "hotspots": [
+    "cells/runtime/state_owner/internal/application/service.py",
+    "polaris/application/app/routers/runtime.py",
+    "polaris/application/app/services/task_board.py",
+    "polaris/application/app/services/orchestration_command_service.py"
+  ],
+  "test_targets": [
+    "cells/runtime/state_owner/tests/test_contracts.py",
+    "cells/runtime/state_owner/tests/test_behavior.py",
+    "tests/architecture/test_state_owner_uniqueness.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts/*",
+      "current runtime compatibility entrypoints"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

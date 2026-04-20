@@ -1,0 +1,54 @@
+id: audit.verdict
+title: Audit Verdict
+kind: workflow
+visibility: public
+stateful: true
+owner: audit
+purpose: 'Provide review-gate verdict evaluation and runtime artifact access for QA
+  and audit pipelines through an explicit public boundary.
+
+  '
+current_modules:
+- polaris.cells.audit.verdict.public.service
+- polaris.cells.audit.verdict.internal.review_gate
+- polaris.cells.audit.verdict.internal.artifact_service
+tags: []
+owned_paths:
+- polaris/cells/audit/verdict/**
+public_contracts:
+  modules:
+  - polaris.cells.audit.verdict.public.contracts
+  commands:
+  - RunAuditVerdictCommandV1
+  queries:
+  - QueryAuditVerdictV1
+  events:
+  - AuditVerdictIssuedEventV1
+  results:
+  - AuditVerdictResultV1
+  errors:
+  - AuditVerdictErrorV1
+depends_on:
+- audit.evidence
+- runtime.projection
+- policy.workspace_guard
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/contracts/*
+- fs.write:runtime/results/audit_verdicts/*
+- fs.write:runtime/state/*
+- fs.write:runtime/status/*
+- fs.write:runtime/control/*
+- fs.write:runtime/events/*
+verification:
+  tests:
+  - tests/test_artifact_service.py
+  - tests/test_integration_qa_command.py
+  gaps:
+  - Runtime artifact state ownership still overlaps with runtime.state_owner and runtime.artifact_store.
+  - Review verdict payload schemas need full alignment with qa.audit_verdict contracts.
+  smoke_commands: []
+generated_artifacts: []

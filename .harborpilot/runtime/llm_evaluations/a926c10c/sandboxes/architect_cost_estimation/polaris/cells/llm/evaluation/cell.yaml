@@ -1,0 +1,7 @@
+id: llm.evaluation
+title: LLM Evaluation
+kind: capability
+owned_paths:
+  - polaris/cells/llm/evaluation/**
+purpose: >
+  Own evaluation suites, deterministic benchmarks, and evaluation artifacts.

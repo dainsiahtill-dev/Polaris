@@ -1,0 +1,84 @@
+card_id: "vc-20260327-agentic-benchmark-diagnosis"
+bug_summary: >
+  agentic-eval 的 benchmark 失败报告只能看到“缺少 read_file / JSON 无效”等表层症状，
+  但没有显式指出输出里存在文本式假工具调用，且 PM JSON 与 QA JSON 的解析标准不一致。
+
+classification: pattern
+
+bug_path:
+  file: "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+  method: "judge_agentic_case()"
+  symptom: "审计包给出的根因不够可执行，PM/QA 同类 JSON 输出出现不一致判分"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设当前 benchmark 的主要失败不是采集器崩溃，而是模型没有产生原生 tool_call trace。"
+    status: verified_true
+    evidence: >
+      读取 .polaris/runtime/llm_evaluations/e5cbd376/AGENTIC_BENCHMARK_REPORT.json，
+      architect/pm/qa case 的 raw_events 中没有 tool_call 事件，strategy receipt 的 tool_sequence 也是空。
+
+  - id: "A2"
+    statement: "我假设模型在输出里仍然暴露了文本式工具协议（例如 [TOOL_CALL]），但 judge 没有把它诊断为明确故障类型。"
+    status: verified_true
+    evidence: >
+      读取 benchmark report 中 architect_graph_first_boundary 的 observed.output，
+      可以看到 [TOOL_CALL] 包裹的伪工具调用文本，但 deterministic_judge.py 当前没有对应检查项。
+
+  - id: "A3"
+    statement: "我假设 PM JSON validator 比 QA validator 更严格，导致相似的 fenced JSON 被不一致地判定。"
+    status: verified_true
+    evidence: >
+      读取 business_validators.py：validate_pm_plan_json 直接 json.loads(text)，
+      而 deterministic_judge.py 的 qa_passfail_json 先用 _extract_json_dict 提取 fenced JSON。
+
+  - id: "A4"
+    statement: "我假设 benchmark case_id 的选项解析仍然对字符串输入不稳健，和 tool_calling_matrix 之前的问题同类。"
+    status: verified_true
+    evidence: >
+      读取 agentic_benchmark.py：benchmark_case_ids 直接 list(...)，若传入单个字符串会按字符拆分；
+      tool_calling_matrix.py 已有独立修复逻辑。
+
+pre_mortem:
+  failure_point: >
+    如果我把诊断做得过于宽松，可能把“只是示例代码块里提到工具标签”的正常输出误判成文本假工具调用；
+    或者把 PM JSON validator 放宽过头，掩盖真实的非 JSON 输出问题。
+  risk_zone:
+    - "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    - "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    - "polaris/domain/verification/business_validators.py"
+    - "polaris/delivery/cli/agentic_eval.py"
+
+verification_plan:
+  unit_tests:
+    - file: "tests/test_llm_agentic_benchmark.py"
+      description: "judge 在无原生 trace 且输出含 [TOOL_CALL] 时给出明确诊断 check"
+      expected: "出现 textual_tool_protocol_without_trace 失败项"
+      status: new
+    - file: "tests/test_llm_agentic_benchmark.py"
+      description: "benchmark_case_ids 支持单字符串输入"
+      expected: "只运行目标 case，不按字符拆分"
+      status: new
+    - file: "tests/test_llm_qualification_validators.py"
+      description: "PM validator 接受 fenced JSON 中的第一个对象"
+      expected: "fenced JSON 判定为有效"
+      status: new
+    - file: "polaris/delivery/cli/tests/test_agentic_eval_cli.py"
+      description: "repair hint 对 textual_tool_protocol_without_trace 输出原生工具调用修复建议"
+      expected: "repair_plan 中出现 native tool calling 方向的动作"
+      status: new
+  integration_tests:
+    - description: "回归 llm evaluation 与 CLI 相关测试"
+      command: "python -m pytest -q tests/test_llm_agentic_benchmark.py tests/test_llm_qualification_validators.py polaris/delivery/cli/tests/test_agentic_eval_cli.py"
+      status: existing_fix
+  manual_check:
+    - "重新读取 e5cbd376 审计产物，确认根因可被解释为‘文本假工具调用 + 无原生 trace’"
+    - "确认 PM/QA 对 fenced JSON 的判分口径一致"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-27"
+  verified_by: "self"
+  verified_at: "2026-03-27"

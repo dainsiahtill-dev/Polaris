@@ -1,0 +1,53 @@
+id: llm.provider_runtime
+title: LLM Provider Runtime
+kind: capability
+visibility: public
+stateful: false
+owner: llm
+purpose: 'Execute provider-level health/model actions and role-runtime provider invokes
+  via a stable contract boundary.
+
+  '
+current_modules:
+- polaris.cells.llm.provider_runtime.public.service
+- polaris.cells.llm.provider_runtime.internal.provider_actions
+- polaris.cells.llm.provider_runtime.internal.runtime_invoke
+- polaris.cells.llm.provider_runtime.internal.runtime_support
+tags: []
+owned_paths:
+- polaris/cells/llm/provider_runtime/**
+public_contracts:
+  modules:
+  - polaris.cells.llm.provider_runtime.public.contracts
+  commands:
+  - InvokeProviderActionCommandV1
+  - InvokeRoleProviderCommandV1
+  queries:
+  - QueryRoleRuntimeProviderSupportV1
+  events:
+  - ProviderInvocationCompletedEventV1
+  results:
+  - ProviderInvocationResultV1
+  errors:
+  - LlmProviderRuntimeErrorV1
+depends_on:
+- llm.provider_config
+- policy.workspace_guard
+- finops.budget_guard
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- network.http_outbound:llm/*
+- llm.invoke:roles/*
+- fs.read:config/llm/*
+verification:
+  tests:
+  - tests/test_llm_provider_actions.py
+  - tests/test_llm_phase0_regression.py
+  gaps:
+  - Provider manager resolution still has transitional call paths in infrastructure
+    adapters.
+  smoke_commands: []
+generated_artifacts: []

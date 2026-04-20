@@ -1,0 +1,55 @@
+id: qa.audit_verdict
+title: QA Audit Verdict
+kind: workflow
+visibility: public
+stateful: true
+owner: qa
+purpose: 'Run independent QA or Auditor validation and emit structured acceptance
+  verdicts for Director outputs.
+
+  '
+current_modules:
+- polaris.cells.qa.audit_verdict.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/qa/audit_verdict/internal/**
+public_contracts:
+  modules:
+  - polaris.cells.qa.audit_verdict.public.contracts
+  commands:
+  - RunQaAuditCommandV1
+  queries:
+  - GetQaVerdictQueryV1
+  events:
+  - QaVerdictIssuedEventV1
+  results:
+  - QaAuditResultV1
+  errors:
+  - QaAuditErrorV1
+depends_on:
+- director.execution
+- policy.permission
+- policy.workspace_guard
+- runtime.execution_broker
+- runtime.task_market
+- runtime.projection
+- audit.evidence
+- events.fact_stream
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/state/qa/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.read:runtime/**
+- fs.write:runtime/state/qa/*
+- fs.write:runtime/events/runtime.events.jsonl
+- process.spawn:qa/*
+verification:
+  tests:
+  - tests/test_integration_qa_command.py
+  - tests/test_quality_checker_director_tool_calls.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

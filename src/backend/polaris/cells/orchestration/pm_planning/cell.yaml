@@ -1,0 +1,59 @@
+id: orchestration.pm_planning
+title: PM Planning
+kind: workflow
+visibility: public
+stateful: true
+owner: orchestration
+purpose: 'Produce PM task contracts from project goals and docs, enforce planning
+  quality gates, and publish governed planning artifacts.
+
+  '
+current_modules:
+- polaris.cells.orchestration.pm_planning.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/orchestration/pm_planning/internal/**
+- polaris/delivery/http/v2/pm.py
+public_contracts:
+  modules:
+  - polaris.cells.orchestration.pm_planning.public.contracts
+  commands:
+  - GeneratePmTaskContractCommandV1
+  queries:
+  - GetPmPlanningStatusQueryV1
+  events:
+  - PmTaskContractGeneratedEventV1
+  results:
+  - PmTaskContractResultV1
+  errors:
+  - PmPlanningErrorV1
+depends_on:
+- context.engine
+- llm.control_plane
+- runtime.execution_broker
+- roles.runtime
+- runtime.task_runtime
+- storage.layout
+- policy.permission
+- policy.workspace_guard
+- runtime.state_owner
+- audit.evidence
+- finops.budget_guard
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/state/pm/*
+effects_allowed:
+- fs.read:workspace/docs/*
+- fs.read:runtime/contracts/*
+- fs.write:runtime/state/pm/*
+- fs.write:runtime/events/pm.events.jsonl
+- llm.invoke:pm/*
+verification:
+  tests:
+  - tests/test_pm_task_quality_gate.py
+  - tests/test_pm_orchestration_api.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

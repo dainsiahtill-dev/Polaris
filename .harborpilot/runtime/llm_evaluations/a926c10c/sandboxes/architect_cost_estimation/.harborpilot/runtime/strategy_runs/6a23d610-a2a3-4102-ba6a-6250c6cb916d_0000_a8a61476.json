@@ -1,0 +1,28 @@
+{
+  "bundle_id": "kernelone.default.v1",
+  "bundle_version": "1.0.0",
+  "profile_id": "deep_research",
+  "profile_hash": "a8a61476e438844f42792f6bff5a7b33570fbc684e210ba71e2eda8187671961",
+  "turn_index": 0,
+  "timestamp": "2026-03-28T13:10:06.255238+00:00",
+  "budget_decisions": [],
+  "read_escalations": [],
+  "compaction_triggered": false,
+  "tool_sequence": [
+    "list_directory",
+    "glob",
+    "glob",
+    "glob",
+    "list_directory",
+    "list_directory",
+    "read_file",
+    "read_file"
+  ],
+  "prompt_tokens_estimate": 0,
+  "exploration_phase_reached": "map",
+  "cache_hits": [],
+  "cache_misses": [],
+  "run_id": "6a23d610-a2a3-4102-ba6a-6250c6cb916d",
+  "session_id": "a926c10c-architect_cost_estimation-attempt-0",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\harborpilot\\.harborpilot\\runtime\\llm_evaluations\\a926c10c\\sandboxes\\architect_cost_estimation"
+}

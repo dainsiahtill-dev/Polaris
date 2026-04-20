@@ -1,0 +1,13 @@
+{
+  "cell_id": "audit.diagnosis",
+  "version": 1,
+  "read_order": [
+    "cell.yaml",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/diagnosis_engine.py"
+  ],
+  "notes": [
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline."
+  ]
+}

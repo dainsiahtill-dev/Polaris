@@ -1,0 +1,37 @@
+{
+  "status": "FAIL",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris",
+  "generated_at": "2026-04-13T13:41:35.340332+00:00",
+  "benchmark": {
+    "suite": "agentic_benchmark",
+    "run_id": "",
+    "role_scope": "director",
+    "provider_id": "runtime_binding",
+    "model": "runtime_binding",
+    "transport_mode": "stream"
+  },
+  "score": {
+    "overall_percent": 0.0,
+    "average_score": 0.0,
+    "pass_rate": 0.0,
+    "total_cases": 0,
+    "passed_cases": 0,
+    "failed_cases": 0
+  },
+  "failures": [],
+  "tool_audit": {
+    "total_calls": 0,
+    "by_tool": {},
+    "critical_failures": 0,
+    "safety_violations": []
+  },
+  "repair_plan": [],
+  "errors": [
+    "asyncio.run() cannot be called from a running event loop"
+  ],
+  "evidence_paths": {
+    "benchmark_artifact": "",
+    "audit_package": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\runtime\\llm_evaluations\\cli-20260413134135\\AGENTIC_EVAL_AUDIT.json",
+    "case_sandboxes": []
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "case_id": "l3_code_exploration_dependency_graph",
+  "role": "director",
+  "title": "L3 Dependency Graph Exploration",
+  "description": "帮我画出 helpers.py 中所有函数之间的调用关系（哪些函数调用了哪些函数）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "帮我画出 helpers.py 中所有函数之间的调用关系（哪些函数调用了哪些函数）。",
+  "tags": [
+    "l3",
+    "exploration",
+    "dependency",
+    "graph"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg",
+      "repo_read_head"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "required_output_substrings": [
+      "->",
+      "calls",
+      "helpers.py"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

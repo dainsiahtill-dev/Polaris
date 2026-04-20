@@ -1,0 +1,109 @@
+card_id: "vc-20260326-kernelone-execution-runtime-substrate"
+bug_summary: >
+  PM/Director/Workflow/Role 相关执行链路长期混用裸 `asyncio.create_task`、
+  线程池、watcher thread 和直接 subprocess handle，导致阻塞治理、取消语义、
+  超时回收和并发背压在多个模块内部分裂。
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/process/background_manager.py"
+  method: "BackgroundManagerV2._start_queue_processor / _start_task_execution"
+  symptom: "不同执行面各自维护线程/进程生命周期，容易出现阻塞、回收不一致和观测割裂"
+
+assumptions:
+  - id: "A1"
+    statement: "workflow_runtime、pm_planning、roles.runtime 的主 process spawn 路径已切换到 cell 层 runtime.execution_broker。"
+    status: verified_true
+    evidence: >
+      读 polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py，
+      现通过 LaunchExecutionProcessCommandV1 + ExecutionBrokerService.launch_process；
+      读 polaris/cells/orchestration/pm_planning/service.py 与
+      polaris/cells/roles/runtime/internal/process_service.py，spawn 已统一经由
+      get_execution_broker_service()。
+
+  - id: "A2"
+    statement: "roles/runtime 和 background manager 仍然维护自己的直接 Popen / watcher thread 路径。"
+    status: verified_true
+    evidence: >
+      读 polaris/cells/roles/runtime/internal/process_service.py，可见直接 subprocess.Popen
+      与 threading.Thread watcher；读 polaris/kernelone/process/background_manager.py，
+      可见 queue processor thread、monitor thread 与 Popen 组合。说明执行基座未统一。
+
+  - id: "A3"
+    statement: "现有 KernelOne 已具备 process / locks / scheduler / trace 等可复用底座，不需要另起平行系统。"
+    status: verified_true
+    evidence: >
+      读 docs/FINAL_SPEC.md:435-483，KernelOne 明确允许拥有 process、locks、scheduler、
+      trace 等 OS 子系统；读 polaris/kernelone/process/async_contracts.py、
+      polaris/kernelone/locks/contracts.py 和 polaris/kernelone/scheduler/__init__.py，
+      这些基础能力已存在。
+
+  - id: "A4"
+    statement: "根因不是某一个 subprocess 调用点单独写坏，而是整个仓库缺少统一的 execution lane、backpressure 和 cancellation 模型。"
+    status: verified_true
+    evidence: >
+      全仓搜索显示同时存在裸 asyncio.create_task、ThreadPoolExecutor、threading.Thread、
+      subprocess.Popen、create_subprocess_exec 等多种路径；而唯一相对统一的 lane 语义
+      仅存在于 polaris/kernelone/agent/runtime/execution_lane_selector.py 的工具执行场景，
+      并没有提升为全局 runtime substrate。
+
+pre_mortem:
+  failure_point: >
+    如果这次改动只是再包一层 facade，而没有把 timeout、cancel、backpressure 和
+    process handle 生命周期统一到同一个 runtime state 上，调用方仍会继续绕过基座，
+    阻塞与 orphan process 问题会在新旧路径上同时存在。
+  risk_zone:
+    - "polaris/cells/runtime/execution_broker/**"
+    - "polaris/kernelone/runtime/*"
+    - "polaris/cells/orchestration/workflow_runtime/internal/process_launcher.py"
+    - "polaris/cells/orchestration/pm_planning/service.py"
+    - "polaris/cells/roles/runtime/internal/process_service.py"
+    - "polaris/kernelone/process/background_manager.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/runtime/execution_broker/tests/test_service.py"
+      description: "execution broker 对 process launch/wait/terminate 与日志写入进行统一验证"
+      expected: "cell 层 broker 能稳定承接 subprocess 生命周期"
+      status: new
+    - file: "polaris/kernelone/tests/test_execution_runtime.py"
+      description: "async lane 在 max_concurrency=1 时对第二个任务保持 queued，直到第一个任务释放"
+      expected: "统一 runtime 对 async task 提供背压和状态可见性"
+      status: new
+    - file: "polaris/kernelone/tests/test_execution_runtime.py"
+      description: "blocking lane 能通过受控线程池执行同步函数并返回 SUCCESS"
+      expected: "阻塞 I/O 被收口到统一 lane，而非裸线程"
+      status: new
+    - file: "polaris/kernelone/tests/test_execution_runtime.py"
+      description: "process lane 在超时时强制回收子进程并产出 TIMED_OUT"
+      expected: "超时 subprocess 不会悬挂成孤儿进程"
+      status: new
+    - file: "polaris/kernelone/tests/test_execution_facade.py"
+      description: "高层 facade 的 batch submit/wait/cancel 与 process 输出采集行为"
+      expected: "10 Agent 对接可直接使用统一门面，不需要重新拼执行语义"
+      status: new
+  integration_tests:
+    - description: "roles.runtime 进程服务仍能发出 process_exit realtime 信号"
+      command: "python -m pytest -q tests/test_process_realtime_signal.py"
+      status: updated
+    - description: "PMService 生命周期与并发锁回归"
+      command: "python -m pytest -q tests/test_pm_service_lifecycle_lock.py"
+      status: updated
+    - description: "workflow runtime process launcher 通过 shared execution runtime 启动并等待子进程"
+      command: "python -m pytest -q polaris/kernelone/tests/test_execution_runtime.py"
+      status: new
+    - description: "execution facade 聚焦回归"
+      command: "python -m pytest -q polaris/kernelone/tests/test_execution_facade.py"
+      status: new
+  manual_check:
+    - "审查 workflow_runtime/process_launcher / pm_planning/service / roles.runtime.process_service 是否统一通过 execution_broker"
+    - "确认新增 runtime 模块不反向导入 delivery/application/domain/cells"
+    - "确认本轮未篡改用户已改脏的其他 kernelone 热点文件"
+
+related_adrs:
+  - "ADR-0057"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-26"

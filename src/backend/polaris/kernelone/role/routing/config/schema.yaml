@@ -1,0 +1,60 @@
+# Routing Rules Schema Definition
+# 用于验证 default_rules.yaml 的结构
+
+type: object
+properties:
+  rules:
+    type: array
+    items:
+      type: object
+      required:
+        - id
+        - name
+        - match
+        - recommendation
+      properties:
+        id:
+          type: string
+          description: 规则唯一标识
+        name:
+          type: string
+          description: 规则显示名称
+        priority:
+          type: integer
+          description: 优先级，数值越高越优先
+          default: 0
+        enabled:
+          type: boolean
+          default: true
+        match:
+          type: object
+          description: 匹配条件
+          properties:
+            task_type:
+              type: string
+              description: 任务类型 (new_code, bug_fix, refactor, etc.)
+            domain:
+              type: string
+              description: 领域 (python, typescript, rust, etc.)
+            intent:
+              type: string
+              description: 意图 (implement, design, review, etc.)
+            session_phase:
+              type: string
+              description: 会话阶段 (ideation, blueprint, execution, verification)
+            user_preference:
+              type: object
+              description: 用户偏好条件
+        recommendation:
+          type: object
+          description: 推荐的组合
+          properties:
+            anchor:
+              type: string
+              description: Anchor ID
+            profession:
+              type: string
+              description: Profession ID
+            persona:
+              type: [string, "null"]
+              description: Persona ID，null 表示由系统随机

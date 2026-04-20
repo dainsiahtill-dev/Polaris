@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "cell_id": "roles.kernel",
+  "generated_at": "2026-03-25T18:05:00Z",
+  "status": "guarded",
+  "summary": "roles.kernel enforces explicit raw/sanitized/native assistant-turn stages and now consumes a KernelOne session continuity engine; CLI, runtime helper, TUI, and legacy streaming hosts all converge on structured continuity packs instead of replaying stale raw history.",
+  "verify_targets": {
+    "tests": [
+      {
+        "path": "polaris/kernelone/tests/test_session_continuity_engine.py",
+        "purpose": "Protect KernelOne continuity-pack generation, reserved-key filtering, and continuity projection semantics."
+      },
+      {
+        "path": "polaris/cells/roles/runtime/tests/test_host_session_continuity.py",
+        "purpose": "Protect runtime helper hosts so local history is projected through the canonical continuity engine."
+      },
+      {
+        "path": "polaris/cells/llm/dialogue/tests/test_role_dialogue_session_continuity.py",
+        "purpose": "Protect legacy streaming dialogue so missing session_id creates a fresh ad-hoc session instead of reusing stale sessions."
+      },
+      {
+        "path": "polaris/cells/roles/session/tests/test_role_session_service.py",
+        "purpose": "Protect explicit fresh ad-hoc session creation semantics in roles.session."
+      },
+      {
+        "path": "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py",
+        "purpose": "Protect raw_content vs clean_content vs native_tool_calls stage boundaries."
+      },
+      {
+        "path": "polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py",
+        "purpose": "Protect turn-engine policy convergence and repeated tool-cycle stop conditions."
+      },
+      {
+        "path": "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py",
+        "purpose": "Protect stream fallback parsing, tool-loop execution, and transcript behavior."
+      },
+      {
+        "path": "polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py",
+        "purpose": "Protect summarize/history compaction semantics and continuity-summary notifications."
+      },
+      {
+        "path": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+        "purpose": "Protect fresh-session defaults, session continuity memory, and prompt-context filtering in role CLI hosts."
+      },
+      {
+        "path": "tests/architecture/test_structural_bug_governance_assets.py",
+        "purpose": "Protect linkage between verification cards, ADRs, debt register, and verify pack."
+      },
+      {
+        "path": "tests/architecture/test_kernelone_llm_contract_reexports.py",
+        "purpose": "Protect StreamEventType parity across shared contracts, engine contracts, and executor imports."
+      }
+    ],
+    "contracts": [
+      "AssistantTurnArtifacts.raw_content (str) is the only textual input allowed to reach tool-call parsing (Chief Architect Ruling #2).",
+      "AssistantTurnArtifacts.clean_content (str) is the only assistant text allowed to reach transcript persistence.",
+      "SanitizedOutput = NewType('SanitizedOutput', str) is the post-sanitization type used for user-visible output (public/transcript_ir.py, per Chief Architect Ruling #2).",
+      "ParsedToolPlan and TranscriptAppendRequest are explicit dataclasses in public/transcript_ir.py (Chief Architect Ruling #2).",
+      "transcript_ir.py is public (roles.kernel.public.transcript_ir), not internal; external consumers must import from the public path (Chief Architect Ruling #3).",
+      "native_tool_calls remain the primary structured stream source; raw_content is the textual fallback.",
+      "Older resumed dialogue must be compacted into continuity summaries; raw history cannot be injected twice through both history and context_override."
+    ]
+  },
+  "governance_artifacts": {
+    "adrs": [
+      "docs/governance/decisions/adr-0042-turn-engine-triple-responsibility.md",
+      "docs/governance/decisions/adr-0043-structural-bug-governance-loop.md",
+      "docs/governance/decisions/adr-0045-roles-session-continuity-memory.md",
+      "docs/governance/decisions/adr-0046-session-continuity-engine-kernelone.md"
+    ],
+    "verification_cards": [
+      "docs/governance/templates/verification-cards/vc-20260325-turn-engine-tool-loop.yaml",
+      "docs/governance/templates/verification-cards/vc-20260325-roles-session-continuity-memory.yaml",
+      "docs/governance/templates/verification-cards/vc-20260325-session-continuity-engine-kernelone.yaml"
+    ],
+    "debt_register": "docs/governance/debt.register.yaml",
+    "schemas": [
+      "docs/governance/schemas/verification-card.schema.yaml",
+      "docs/governance/schemas/debt-register.schema.yaml",
+      "docs/governance/schemas/verify-pack.schema.yaml"
+    ]
+  },
+  "open_debt_ids": [
+    "DEBT-20260325-roles-kernel-turn-stage-contract",
+    "DEBT-20260325-kernelone-llm-reexport-parity"
+  ],
+  "residual_risks": [
+    "raw_content is typed as str (not a dedicated wrapper), so downstream consumers can still pass unsanitized text if they bypass AssistantTurnArtifacts construction.",
+    "internal/transcript_ir.py is now a compatibility re-export shim; new code must import from public/transcript_ir.py to be compliant with Chief Architect Ruling #3.",
+    "KernelOne llm contract re-exports are still manual, so future shared contract additions must extend the parity gate.",
+    "Session continuity packs still use deterministic heuristics today; future tuning must preserve the single continuity-memory data model instead of adding a second memory path."
+  ]
+}

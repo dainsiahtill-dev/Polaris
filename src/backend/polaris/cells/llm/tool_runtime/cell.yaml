@@ -1,0 +1,51 @@
+id: llm.tool_runtime
+title: LLM Tool Runtime
+kind: capability
+visibility: public
+stateful: false
+owner: llm
+purpose: 'Orchestrate role-tool call rounds between LLM outputs and KernelOne tool
+  runtime under explicit policy constraints.
+
+  '
+current_modules:
+- polaris.cells.llm.tool_runtime.public.service
+- polaris.cells.llm.tool_runtime.internal.orchestrator
+tags: []
+owned_paths:
+- polaris/cells/llm/tool_runtime/**
+public_contracts:
+  modules:
+  - polaris.cells.llm.tool_runtime.public.contracts
+  commands:
+  - ExecuteToolRoundCommandV1
+  queries:
+  - QueryToolRuntimePolicyV1
+  events:
+  - ToolRoundCompletedEventV1
+  results:
+  - ToolRoundResultV1
+  errors:
+  - LlmToolRuntimeErrorV1
+depends_on:
+- policy.permission
+- policy.workspace_guard
+- runtime.execution_broker
+- events.fact_stream
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:runtime/events/runtime.events.jsonl
+- process.spawn:tools/*
+- ws.outbound:runtime/*
+verification:
+  tests:
+  - tests/test_quality_checker_director_tool_calls.py
+  - tests/test_command_security.py
+  gaps:
+  - Tool runtime still has some direct callers that bypass this public boundary.
+  smoke_commands: []
+generated_artifacts: []

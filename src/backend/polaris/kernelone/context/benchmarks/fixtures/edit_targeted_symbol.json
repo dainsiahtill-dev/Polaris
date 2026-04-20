@@ -1,0 +1,17 @@
+{
+  "case_id": "edit_targeted_symbol",
+  "description": "Edit a specific function or class symbol to add input validation, without touching unrelated code.",
+  "user_prompt": "In polaris/kernelone/context/strategy_benchmark.py, the BenchmarkCase dataclass should validate that score_threshold is between 0.0 and 1.0. Add a __post_init__ check.",
+  "workspace_fixture": "polaris/kernelone/context/strategy_benchmark.py BenchmarkCase dataclass.",
+  "expected_evidence_path": [
+    "polaris/kernelone/context/strategy_benchmark.py"
+  ],
+  "expected_answer_shape": "edit",
+  "budget_conditions": {
+    "max_tokens": 50000,
+    "max_turns": 5,
+    "max_wall_time_seconds": 60.0
+  },
+  "canonical_profile": "canonical_balanced",
+  "score_threshold": 0.70
+}

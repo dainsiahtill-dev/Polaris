@@ -1,0 +1,20 @@
+{
+  "case_id": "perf_tool_call_latency",
+  "title": "Performance Tool Call Latency",
+  "description": "Measures tool execution latency",
+  "role": "director",
+  "prompt": "搜索所有包含 'import' 的 Python 文件。",
+  "tags": ["performance", "latency", "tool_call"],
+  "weight": 1.0,
+  "critical": false,
+  "metadata": {
+    "metric": "tool_execution_ms",
+    "target_ms": 200,
+    "measurement": "single_tool"
+  },
+  "judge": {
+    "score_threshold": 0.80,
+    "required_tools": ["ripgrep"],
+    "max_tool_calls": 1
+  }
+}

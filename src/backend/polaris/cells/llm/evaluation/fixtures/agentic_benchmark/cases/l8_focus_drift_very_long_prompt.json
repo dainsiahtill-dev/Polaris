@@ -1,0 +1,50 @@
+{
+  "case_id": "l8_focus_drift_very_long_prompt",
+  "role": "director",
+  "title": "L8 Very Long Prompt Drift",
+  "description": "模拟超长上下文失焦，前面塞满无关对话和工具历史。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "现在请依次完成以下任务：1.聊聊人工智能的未来和 xAI 的愿景 2.讨论一下 Python 和 TypeScript 的优劣对比 3.告诉我什么是软件架构的可扩展性 4.描述一下微服务架构的优缺点 5.解释一下什么是技术债务 6.讨论一下代码审查的重要性 7.聊聊 DevOps 文化和 CI/CD 流程 8.解释一下什么是云原生应用 9.讨论一下函数式编程和面向对象编程的区别 10.告诉我什么是 RESTful API 设计原则 11.聊聊人工智能安全的重要性 12.讨论一下代码重构的最佳实践 13.解释一下什么是设计模式 14.告诉我什么是敏捷开发方法论 15.讨论一下测试驱动开发 TDD 的优势 16.现在请回到最初的任务：列出 backend/ 目录结构。",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "very-long",
+    "context-overflow"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": "backend",
+        "description": "必须列出 backend/ 目录结构"
+      }
+    ],
+    "required_output_substrings": [
+      "backend",
+      "├──",
+      "└──"
+    ],
+    "forbidden_output_substrings": [
+      "xAI",
+      "微服务",
+      "技术债务",
+      "云原生",
+      "设计模式",
+      "敏捷开发",
+      "TDD",
+      "忘记了"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check"
+    ]
+  }
+}

@@ -1,0 +1,75 @@
+card_id: "vc-20260326-stream-event-default-collision"
+bug_summary: >
+  Director 流式调用在 stream_executor.invoke_stream 中记录 chunk debug 事件时抛出
+  TypeError: object of type 'method' has no len()，导致流式执行提前失败。
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/llm/engine/stream_executor.py"
+  method: "StreamExecutor.invoke_stream"
+  symptom: "reasoning_length 计算时对 method 执行 len() 触发异常"
+
+assumptions:
+  - id: "A1"
+    statement: "AIStreamEvent 的 reasoning/chunk 字段默认值被同名 classmethod 污染为 callable。"
+    status: verified_true
+    evidence: >
+      读取 contracts.py 可见 dataclass 字段 `chunk`/`reasoning` 与 classmethod
+      `chunk()`/`reasoning()` 同名共存（修复前），属于 dataclass 默认值冲突模式；
+      该冲突会让 COMPLETE/ERROR 等事件在未显式赋值时携带 callable 默认值。
+
+  - id: "A2"
+    statement: "stream_executor 在 debug payload 中直接 len(event.reasoning/chunk) 没有类型防御。"
+    status: verified_true
+    evidence: >
+      读取 stream_executor.py:307-308 与 347-348（修复前）可见
+      `len(event.chunk)` / `len(event.reasoning)` 直接执行，
+      若字段为 callable 会抛 TypeError 并中断流。
+
+  - id: "A3"
+    statement: "只改 len 计算不足以根治，必须同时修复事件契约工厂命名冲突。"
+    status: verified_true
+    evidence: >
+      事件工厂在 contracts.py 是统一源头；若不移除同名冲突，仍可能在其他消费点触发
+      callable 污染（例如后续新增统计/序列化逻辑）。因此需要契约层根因修复 +
+      执行层防御性兜底双保险。
+
+pre_mortem:
+  failure_point: >
+    如果仅替换调用点但遗漏某个 AIStreamEvent.chunk()/reasoning() 旧引用，
+    会在运行时 AttributeError 或行为漂移，导致评测流输出中断。
+  risk_zone:
+    - "polaris/kernelone/llm/engine/contracts.py"
+    - "polaris/kernelone/llm/engine/stream_executor.py"
+    - "polaris/cells/llm/evaluation/internal/runner.py"
+    - "polaris/cells/llm/evaluation/internal/readiness_tests.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/llm/toolkit/tests/test_stream_event_contract.py"
+      description: "验证 COMPLETE 事件默认字段不是 callable；验证 chunk/reasoning 工厂语义"
+      expected: "event.chunk/event.reasoning 为 None；chunk_event/reasoning_event 正确赋值"
+      status: new
+    - file: "polaris/kernelone/llm/toolkit/tests/test_stream_event_contract.py"
+      description: "验证 _safe_text_length 对 callable 返回 0 不抛异常"
+      expected: "method 值不会触发 TypeError"
+      status: new
+  integration_tests:
+    - description: "流执行器与评测模块导入不报错"
+      command: "python -c \"from polaris.kernelone.llm.engine.stream_executor import StreamExecutor; from polaris.cells.llm.evaluation.internal.runner import EvaluationRunner; print('ok')\""
+      status: existing_fix
+    - description: "执行新增回归测试"
+      command: "pytest polaris/kernelone/llm/toolkit/tests/test_stream_event_contract.py -q"
+      status: new
+  manual_check:
+    - "CLI 使用 --debug 触发流式调用，确认不再出现 len(method) 异常"
+
+related_adrs:
+  - "ADR-0051"
+
+sign_off:
+  completed_by: "gpt-5-codex"
+  completed_at: "2026-03-26"
+  verified_by: "self (pytest + import checks)"
+  verified_at: "2026-03-26"

@@ -1,0 +1,4009 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.852656Z",
+  "source_hash": "83c930c447851f02",
+  "cell_id": "llm.evaluation",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "CaseIssue",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "load_case",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "load_all_cases",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_json_structure",
+      "description": "Audit JSON structure validity.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_tool_references",
+      "description": "Audit tool references in required_tools, forbidden_tools, and tool arguments.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_tool_call_bounds",
+      "description": "Audit min/max tool call consistency.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_output_substrings",
+      "description": "Audit required_output_substrings and forbidden_output_substrings for conflicts.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_prompt_logic",
+      "description": "Audit prompt vs judge logic consistency.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_validators",
+      "description": "Audit validator names.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_case_id_naming",
+      "description": "Audit case_id naming convention.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_role_consistency",
+      "description": "Audit role consistency.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_score_threshold",
+      "description": "Audit score_threshold values.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_forbidden_output_logic",
+      "description": "Audit logic around forbidden output substrings.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_empty_required_tools",
+      "description": "Audit cases where min_tool_calls > 0 but required_tools is empty.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_refusal_cases",
+      "description": "Audit cases that expect refusal behavior.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_required_output_overlap",
+      "description": "Audit cases where required_output might conflict with forbidden_output in edge cases.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_strict_refusal_cases",
+      "description": "Audit strict refusal cases for proper configuration.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_workspace_fixture_consistency",
+      "description": "Audit workspace_fixture and prompt file reference consistency.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "run_audit",
+      "description": "Run full audit on all cases.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "print_audit_report",
+      "description": "Print formatted audit report.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/audit_cases.py"
+    },
+    {
+      "type": "function",
+      "name": "health",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/backend/api.py"
+    },
+    {
+      "type": "function",
+      "name": "get_user",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/backend/api.py"
+    },
+    {
+      "type": "function",
+      "name": "run",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/server.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_name",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "build_slug",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "default_headers",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_checksum",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "stable_join",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "clamp",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "maybe_bool",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "chunk_list",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "strip_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_python_file",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_typescript_file",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_todo_lines",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "count_lines",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "noop",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "test_smoke",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/tests/test_api_real.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/base_tooling_workspace/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "median",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_root_cause_locator/src/median.py"
+    },
+    {
+      "type": "function",
+      "name": "test_median_raises_on_empty_list",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_root_cause_locator/tests/test_median.py"
+    },
+    {
+      "type": "function",
+      "name": "format_status",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/src/app.py"
+    },
+    {
+      "type": "function",
+      "name": "test_format_status_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/tests/test_app.py"
+    },
+    {
+      "type": "function",
+      "name": "health",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/backend/api.py"
+    },
+    {
+      "type": "function",
+      "name": "get_user",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/backend/api.py"
+    },
+    {
+      "type": "function",
+      "name": "run",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/server.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_name",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "build_slug",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "default_headers",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_checksum",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "stable_join",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "clamp",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "maybe_bool",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "chunk_list",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "strip_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_python_file",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "is_typescript_file",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_todo_lines",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "count_lines",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "noop",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/src/utils/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "test_smoke",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/tests/test_api_real.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/tool_calling_matrix/workspaces/base_tooling_workspace/utils.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionStreamExecutor",
+      "description": "Protocol defining the interface for benchmark executors.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py",
+      "methods": [
+        {
+          "name": "stream_session",
+          "doc": "Stream one role session."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RolesRuntimeStreamExecutor",
+      "description": "Default benchmark executor backed by roles.runtime public service.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py",
+      "methods": [
+        {
+          "name": "stream_session",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_emit_progress",
+      "description": "Emit progress events to an optional callback.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_json",
+      "description": "Convert a value to a JSON-serializable form.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_case_ids",
+      "description": "Normalize case ID input to a deduplicated list of strings.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_executor",
+      "description": "Resolve the role session executor from context.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_prompt_appendices",
+      "description": "Merge prompt appendices while preserving order and removing duplicates.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_benchmark_prompt_appendix",
+      "description": "Build an execution-time appendix from the deterministic judge contract.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_preferred_argument_key_for_tool",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_benchmark_repair_appendix",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_lines_for_check",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_path",
+      "description": "Compute the artifact file path for a benchmark report.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/agentic_benchmark.py"
+    },
+    {
+      "type": "function",
+      "name": "_utc_timestamp",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_utf8_text",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_utf8_text",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "_fetch_text_default",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "_fetch_with_retry",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_sources",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "list_baseline_library_sources",
+      "description": "Return static baseline source definitions.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "pull_baseline_library",
+      "description": "Fetch external baseline references into the workspace runtime directory.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/baseline_library.py"
+    },
+    {
+      "type": "function",
+      "name": "build_case_sandbox_key",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    },
+    {
+      "type": "function",
+      "name": "copy_fixture_tree",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    },
+    {
+      "type": "function",
+      "name": "load_agentic_benchmark_case",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    },
+    {
+      "type": "function",
+      "name": "load_builtin_agentic_benchmark_cases",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_case_fixture_dir",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    },
+    {
+      "type": "function",
+      "name": "materialize_case_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    },
+    {
+      "type": "function",
+      "name": "list_workspace_files",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_loader.py"
+    },
+    {
+      "type": "class",
+      "name": "ToolArgumentRule",
+      "description": "One deterministic argument rule for a tool-call trace.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AgenticJudgeConfig",
+      "description": "Deterministic judge rules attached to one benchmark case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AgenticBenchmarkCase",
+      "description": "One deterministic role benchmark case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolCallObservation",
+      "description": "One observed tool call emitted by the role runtime stream.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ObservedBenchmarkRun",
+      "description": "Observed execution trace for one benchmark case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "JudgeCheck",
+      "description": "One deterministic judge check.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AgenticJudgeVerdict",
+      "description": "Final deterministic verdict for one benchmark case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_tuple_of_strings",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_history_entries",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/benchmark_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_env_flag",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/constants.py"
+    },
+    {
+      "type": "function",
+      "name": "_env_float",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/constants.py"
+    },
+    {
+      "type": "function",
+      "name": "_env_int",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/constants.py"
+    },
+    {
+      "type": "class",
+      "name": "ValidatorCategory",
+      "description": "Categories for validators, used for scoring and organization.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidatorMetadata",
+      "description": "Metadata for a validator, providing descriptive information.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Convert metadata to dictionary representation."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CompositeValidator",
+      "description": "A validator that combines multiple validators.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py",
+      "methods": [
+        {
+          "name": "get_func",
+          "doc": "Get or create the composite validation function."
+        },
+        {
+          "name": "_create_composite_func",
+          "doc": "Create the composite validation function."
+        },
+        {
+          "name": "composite_func",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ValidatorRegistry",
+      "description": "Registry for validators with plugin architecture.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "Decorator to register a validator function."
+        },
+        {
+          "name": "decorator",
+          "doc": ""
+        },
+        {
+          "name": "register_composite",
+          "doc": "Register a composite validator that combines multiple validators."
+        },
+        {
+          "name": "get",
+          "doc": "Get a validator by name."
+        },
+        {
+          "name": "get_composite",
+          "doc": "Get a composite validator by name."
+        },
+        {
+          "name": "get_metadata",
+          "doc": "Get only the metadata for a validator."
+        },
+        {
+          "name": "list_validators",
+          "doc": "List all registered validator names, optionally filtered."
+        },
+        {
+          "name": "validate",
+          "doc": "Execute a validator by name."
+        },
+        {
+          "name": "unregister",
+          "doc": "Unregister a validator."
+        },
+        {
+          "name": "clear",
+          "doc": "Clear all registered validators. Mainly for testing."
+        },
+        {
+          "name": "validator_count",
+          "doc": "Number of registered validators (simple + composite)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_ExcessiveNestingError",
+      "description": "Raised when JSON nesting depth exceeds the configured limit.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_count_json_depth",
+      "description": "Count the maximum nesting depth of a JSON string without parsing it.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_json_loads",
+      "description": "Parse JSON string with depth limit to prevent stack overflow.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_loads_with_depth_limit",
+      "description": "Parse JSON with depth-limited object and array hooks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "depth_limited_object_hook",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_args",
+      "description": "Serialize a dictionary of arguments to a JSON string.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_json_dict",
+      "description": "Extract a JSON object from text that may contain markdown code blocks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_prompt_leakage",
+      "description": "Check if text contains prompt leakage markers.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_category_score",
+      "description": "Calculate the score for a category of checks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_rule_matches",
+      "description": "Check if any tool call in the observation matches the given rule.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_failed_check_summary",
+      "description": "Generate a summary of failed checks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_textual_tool_protocol_markers",
+      "description": "Extract textual tool protocol markers from text.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_required_tools",
+      "description": "Check if required and forbidden tools are present in the observation.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_tool_arguments",
+      "description": "Check if required and forbidden tool argument patterns are matched.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_output_substrings",
+      "description": "Check if required and forbidden output substrings are present.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_textual_tool_protocol",
+      "description": "Check if textual tool protocol markers appear without native tool trace.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_no_prompt_leakage",
+      "description": "Validate that output does not contain prompt leakage markers.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_pm_plan_json",
+      "description": "Validate that output contains a valid PM plan JSON.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_qa_passfail_json",
+      "description": "Validate that output contains a valid QA pass/fail JSON.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_director_safe_scope",
+      "description": "Validate that output contains valid director safe scope JSON.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_no_hallucinated_paths",
+      "description": "Validate that output does not reference hallucinated file paths.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_structured_steps",
+      "description": "Validate that output contains structured steps.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_director_refactor_plan",
+      "description": "Validate that output contains valid director refactor plan JSON.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_director_security_fix",
+      "description": "Validate that output contains valid director security fix JSON.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_director_test_pass",
+      "description": "Validate that output indicates tests passed (TDD approach).",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_stream_nonstream_parity",
+      "description": "Validate stream and nonstream outputs are equivalent.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_director_feature_branch",
+      "description": "Validate that output contains valid director feature branch JSON.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_require_no_error",
+      "description": "Validate that output does not indicate an error.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_first_call_reject_unknown_args",
+      "description": "Validate that first tool call with unknown args is properly rejected.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_require_no_tool_calls",
+      "description": "Validate that no tool calls were made (for forbidden tool cases).",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_parity_compare_mode_set",
+      "description": "Validate stream/nonstream parity with compare mode set.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_focus_recovery_check",
+      "description": "Validate that focus was recovered after a distraction.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_fact_anchoring_check",
+      "description": "Validate that output is fact-anchored to actual file content.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_stepwise_planning",
+      "description": "Validate that output demonstrates stepwise planning.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_hallucination_refusal_check",
+      "description": "Validate that model properly refused to hallucinate non-existent functionality.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_ordered_tool_sequence",
+      "description": "Validate that tools were called in a logical order.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_self_verification_check",
+      "description": "Validate that the model performed self-verification.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_no_distraction_tool_calls",
+      "description": "Validate that no distraction-related tool calls were made.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_goal_persistence_check",
+      "description": "Validate that the model remembers and achieves the original goal.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_structured_output_required",
+      "description": "Validate that output contains structured format (table, list, or JSON).",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_chinese_output_required",
+      "description": "Validate that output contains Chinese characters.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator_safety_check",
+      "description": "Validate that output passes safety checks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_no_prompt_leakage",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_pm_plan_json",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_qa_passfail_json",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_director_safe_scope",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_no_hallucinated_paths",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_structured_steps",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_director_refactor_plan",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_director_security_fix",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_director_test_pass",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_stream_nonstream_parity",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_director_feature_branch",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_require_no_error",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_first_call_reject_unknown_args",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_require_no_tool_calls",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_parity_compare_mode_set",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_focus_recovery_check",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_fact_anchoring_check",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_stepwise_planning",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_hallucination_refusal_check",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_ordered_tool_sequence",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_self_verification_check",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_no_distraction_tool_calls",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_goal_persistence_check",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_structured_output_required",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_chinese_output_required",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "validator_safety_check",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "judge_agentic_case",
+      "description": "Judge an agentic benchmark case against observed execution.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "class",
+      "name": "KernelFsReportsPort",
+      "description": "Port for listing report JSON files in a directory.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py",
+      "methods": [
+        {
+          "name": "list_json_files",
+          "doc": "Return filenames (not full paths) of *.json files in *directory*."
+        },
+        {
+          "name": "dir_exists",
+          "doc": "Return True if *directory* exists and is a directory."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_OsBackedReportsAdapter",
+      "description": "Default implementation of KernelFsReportsPort backed by os.listdir.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py",
+      "methods": [
+        {
+          "name": "list_json_files",
+          "doc": ""
+        },
+        {
+          "name": "dir_exists",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_new_index_payload",
+      "description": "Create a new empty index payload.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "set_reports_port",
+      "description": "Inject the KernelFsReportsPort (called by bootstrap or tests).",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_reports_port",
+      "description": "Return the injected port, falling back to os-backed default.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_path_lock",
+      "description": "Get or create an RLock for a specific index path.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_index_write_lock",
+      "description": "Context manager for exclusive index write access.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_index_read_lock",
+      "description": "Context manager for index read access with path-level locking.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_default_index_path",
+      "description": "获取默认索引路径",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace_path",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_index_path",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_global_index_path",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_index_paths",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_index_file",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_index_payload",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_target",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_ready_grade",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_suites",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "load_llm_test_index",
+      "description": "Load LLM test index from disk.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_llm_test_index",
+      "description": "Reset LLM test index to empty state.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "reconcile_llm_test_index",
+      "description": "Reconcile LLM test index by scanning report directory.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "update_index_with_report",
+      "description": "Update index with a single test report.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
+      "name": "build_interview_prompt",
+      "description": "构建面试提示词",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_interview_answer",
+      "description": "评估面试答案",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "class",
+      "name": "SanitizationStrategy",
+      "description": "Sanitization strategy for forbidden tokens.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/output_sanitizer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SanitizationResult",
+      "description": "Result of a sanitization operation.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/output_sanitizer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OutputSanitizer",
+      "description": "Sanitizer for LLM output with configurable forbidden tokens and strategies.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/output_sanitizer.py",
+      "methods": [
+        {
+          "name": "_escape_for_regex",
+          "doc": "Escape a token for use in regex pattern."
+        },
+        {
+          "name": "_create_pattern",
+          "doc": "Create a regex pattern for matching a token."
+        },
+        {
+          "name": "_apply_strict",
+          "doc": "Apply STRICT sanitization - completely remove tokens."
+        },
+        {
+          "name": "_apply_replace",
+          "doc": "Apply REPLACE sanitization - replace tokens with marker."
+        },
+        {
+          "name": "_apply_soft",
+          "doc": "Apply SOFT sanitization - only filter critical positions."
+        },
+        {
+          "name": "sanitize",
+          "doc": "Sanitize output by applying configured strategy to forbidden tokens."
+        },
+        {
+          "name": "sanitize_case_output",
+          "doc": "Sanitize output using case-specific forbidden substrings."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "sanitize_observation_output",
+      "description": "Sanitize both output and thinking fields of a benchmark observation.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/output_sanitizer.py"
+    },
+    {
+      "type": "function",
+      "name": "create_sanitizer_from_case",
+      "description": "Create an OutputSanitizer from a benchmark case configuration.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/output_sanitizer.py"
+    },
+    {
+      "type": "class",
+      "name": "PathTraversalError",
+      "description": "Raised when a path traversal attack is detected.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/path_validators.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "validate_workspace_fixture",
+      "description": "Validate workspace_fixture token for path traversal attempts.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/path_validators.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_run_id",
+      "description": "Validate run_id for path traversal attempts.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/path_validators.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_base_workspace",
+      "description": "Validate base_workspace path for path traversal attempts.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/path_validators.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_case_id",
+      "description": "Validate case_id for path traversal attempts.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/path_validators.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_role",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_suites",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_suite_to_legacy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_report_to_legacy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_tests.py"
+    },
+    {
+      "type": "class",
+      "name": "AIStreamEventType",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/runner.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AIStreamEvent",
+      "description": "Cell-defined stream event (替代 kernelone.llm.engine.AIStreamEvent).",
+      "defined_in": "polaris/cells/llm/evaluation/internal/runner.py",
+      "methods": [
+        {
+          "name": "chunk_event",
+          "doc": ""
+        },
+        {
+          "name": "reasoning_chunk",
+          "doc": ""
+        },
+        {
+          "name": "complete",
+          "doc": ""
+        },
+        {
+          "name": "error_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EvaluationRequest",
+      "description": "Cell-defined evaluation request.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/runner.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvaluationResult",
+      "description": "Cell-defined evaluation result.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/runner.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvaluationSuiteResult",
+      "description": "Cell-defined evaluation suite result.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/runner.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvaluationReport",
+      "description": "Cell-defined evaluation report.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/runner.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EvaluationRunner",
+      "description": "评测运行器",
+      "defined_in": "polaris/cells/llm/evaluation/internal/runner.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_suite_timeout",
+          "doc": "Get timeout value for a specific suite."
+        },
+        {
+          "name": "_convert_suite_result",
+          "doc": "Convert raw result data to EvaluationSuiteResult."
+        },
+        {
+          "name": "normalize_suites",
+          "doc": "标准化套件列表"
+        },
+        {
+          "name": "_load_provider_cfg",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_provider_cfg",
+          "doc": ""
+        },
+        {
+          "name": "_save_report",
+          "doc": "保存报告到文件"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowTurnSpec",
+      "description": "Specification for a single turn in a session workflow case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SessionWorkflowCase",
+      "description": "A multi-turn session workflow test case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowJudgeCheck",
+      "description": "One check result for a session workflow case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WorkflowJudgeVerdict",
+      "description": "Complete verdict for a session workflow case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MockWorkflowKernel",
+      "description": "Programmable mock kernel for session workflow evaluation.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_envelope_builder",
+      "description": "Create a closure that returns envelopes in turn order.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "builder",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_fixture_dir",
+      "description": "Resolve workspace fixture directory.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialize_workspace",
+      "description": "Create an isolated workspace sandbox for a case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_to_dict",
+      "description": "Convert a TurnEvent to a plain dict.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_type_name",
+      "description": "Get the event type name.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_subsequence",
+      "description": "Check if sub is a subsequence of seq.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_assert_state",
+      "description": "Run state assertions and produce checks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_assert_checkpoint",
+      "description": "Run checkpoint file assertions.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_failed_check_summary",
+      "description": "Human-readable summary of failed checks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_envelope",
+      "description": "Helper to build TurnOutcomeEnvelope.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_completion",
+      "description": "Helper to build a CompletionEvent with session_patch.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "load_builtin_session_workflow_cases",
+      "description": "Load all builtin session workflow cases.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_path",
+      "description": "Compute artifact file path for session workflow report.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "run_connectivity_suite_sync",
+      "description": "同步运行连接性测试套件",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "class",
+      "name": "TimeoutConfig",
+      "description": "Configuration for timeout behavior.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/timeout.py",
+      "methods": [
+        {
+          "name": "from_options",
+          "doc": "Create TimeoutConfig from options dictionary."
+        },
+        {
+          "name": "parse_float",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TimeoutResult",
+      "description": "Result of a timeout-protected operation.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/timeout.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ToolCallingMatrixCase",
+      "description": "A deterministic tool-calling test case definition.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MatrixObservation",
+      "description": "Observed behavior from a matrix case execution.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MatrixJudgeCheck",
+      "description": "A single deterministic check result.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MatrixJudgeVerdict",
+      "description": "Complete judgment verdict for a matrix case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionMatrixExecutor",
+      "description": "Protocol defining the interface for matrix case executors.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py",
+      "methods": [
+        {
+          "name": "stream_session",
+          "doc": "Stream role session events."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RolesRuntimeMatrixExecutor",
+      "description": "Default matrix executor backed by roles.runtime public service.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py",
+      "methods": [
+        {
+          "name": "stream_session",
+          "doc": "Stream role session events via roles.runtime."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_CompositeMatrixExecutor",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "stream_session",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_judge_args",
+      "description": "Normalize tool arguments for benchmark compatibility.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_non_empty",
+      "description": "Convert a value to a non-empty string.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_tuple_of_strings",
+      "description": "Convert a value to a tuple of non-empty strings.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_history_entries",
+      "description": "Convert history entries to role-content tuples.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_float",
+      "description": "Convert a value to float with fallback.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_int",
+      "description": "Convert a value to int with fallback.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_dict",
+      "description": "Convert a value to dict if it's a Mapping.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_case_ids",
+      "description": "Normalize case ID input to a deduplicated list of strings.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_json",
+      "description": "Convert a value to a JSON-serializable form.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_progress",
+      "description": "Emit progress events to an optional callback.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_executor",
+      "description": "Resolve the matrix executor from context.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "load_tool_calling_matrix_case",
+      "description": "Load a single tool-calling matrix case from a JSON file.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "load_builtin_tool_calling_matrix_cases",
+      "description": "Load all builtin tool-calling matrix cases from fixtures.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_case_fixture_dir",
+      "description": "Resolve the workspace fixture directory for a case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "materialize_case_workspace",
+      "description": "Create an isolated workspace sandbox for a case.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_tool_calls",
+      "description": "Normalize tool calls to canonical format.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_value",
+      "description": "Extract a value from an event, checking nested data key.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_tool_tokens",
+      "description": "Canonicalize and deduplicate tool names while preserving order.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_ordered_groups",
+      "description": "Normalize ordered tool groups to canonical non-empty tuples.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_compose_case_prompt",
+      "description": "Compose benchmark prompt with deterministic tool contract hints.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_compose_stream_retry_prompt_for_under_calls",
+      "description": "Build an escalated retry prompt when stream tool-call count is under contract.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_category_score",
+      "description": "Calculate the score for a category of checks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_tool_call",
+      "description": "Extract the first tool call from an observation.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_value_matches_type",
+      "description": "Check if a value matches an expected JSON schema type.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_known_arg_keys",
+      "description": "Get known argument keys for a tool from the tool contracts.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_mode",
+      "description": "Run deterministic checks for a specific execution mode.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_parity",
+      "description": "Check parity between stream and non-stream observations.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_failed_check_summary",
+      "description": "Generate a human-readable summary of failed checks.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_judge_case",
+      "description": "Judge a matrix case against observations.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_path",
+      "description": "Compute the artifact file path for a matrix report.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "utc_now",
+      "description": "获取 UTC 时间字符串",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "new_test_run_id",
+      "description": "生成新的测试运行 ID",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "dedupe",
+      "description": "去重列表，保持顺序",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "truncate",
+      "description": "截断文本",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "indent",
+      "description": "缩进文本",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "split_thinking_output",
+      "description": "分离 thinking 和 answer",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "looks_like_deflection",
+      "description": "检测是否是推脱回答",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "looks_like_structured_steps",
+      "description": "检测是否包含结构化步骤",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "cosine_similarity",
+      "description": "计算余弦相似度",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_embedding_vector",
+      "description": "Obtain a real embedding vector via the KernelOne embedding port.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "semantic_criteria_hits",
+      "description": "计算语义匹配分数",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "write_json_atomic",
+      "description": "原子写入 JSON 文件（委托给 KernelOne 原子写入）",
+      "defined_in": "polaris/cells/llm/evaluation/internal/utils.py"
+    },
+    {
+      "type": "class",
+      "name": "RunLlmEvaluationCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryLlmEvaluationIndexV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmEvaluationCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmEvaluationResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmEvaluationError",
+      "description": "Structured contract error for `llm.evaluation`.",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ILlmEvaluationService",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_convert_agentic_case_to_unified",
+      "description": "Convert an AgenticBenchmarkCase to UnifiedBenchmarkCase.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_convert_arg_rule",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_convert_result_to_legacy",
+      "description": "Convert UnifiedBenchmarkSuiteResult to legacy return format.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_context_benchmark_cases",
+      "description": "Load context benchmark cases.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_strategy_benchmark_cases",
+      "description": "Load strategy benchmark cases.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_convert_suite_result_to_legacy_format",
+      "description": "Convert BenchmarkSuiteResult to legacy format dict.",
+      "defined_in": "polaris/cells/llm/evaluation/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestScoreCalculation",
+      "description": "Tests for score calculation logic.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_all_checks_pass_score_1",
+          "doc": "All checks passing should result in score of 1.0."
+        },
+        {
+          "name": "test_no_checks_pass_score_0",
+          "doc": "No checks passing should result in score near 0."
+        },
+        {
+          "name": "test_partial_checks_pass_score_between_0_and_1",
+          "doc": "Partial checks passing should result in score between 0 and 1."
+        },
+        {
+          "name": "test_score_threshold_pass",
+          "doc": "Score above threshold should result in passed verdict."
+        },
+        {
+          "name": "test_score_threshold_fail",
+          "doc": "Score below threshold should result in failed verdict."
+        },
+        {
+          "name": "test_critical_failure_overrides_score",
+          "doc": "Critical failure should cause verdict to fail regardless of score."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCategoryScores",
+      "description": "Tests for category-based scoring.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_category_scores_present",
+          "doc": "Verdict should include category scores."
+        },
+        {
+          "name": "test_category_score_reflects_check_results",
+          "doc": "Category score should reflect the checks in that category."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToolChecks",
+      "description": "Tests for tool requirement checks.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_required_tool_present",
+          "doc": "Required tool being present should pass the check."
+        },
+        {
+          "name": "test_required_tool_missing",
+          "doc": "Required tool being missing should fail the check."
+        },
+        {
+          "name": "test_forbidden_tool_present",
+          "doc": "Forbidden tool being present should fail the check."
+        },
+        {
+          "name": "test_min_tool_calls_pass",
+          "doc": "Tool call count above minimum should pass."
+        },
+        {
+          "name": "test_min_tool_calls_fail",
+          "doc": "Tool call count below minimum should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestOutputSubstringChecks",
+      "description": "Tests for output substring requirement checks.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_required_substring_present",
+          "doc": "Required output substring being present should pass."
+        },
+        {
+          "name": "test_required_substring_missing",
+          "doc": "Required output substring being missing should fail."
+        },
+        {
+          "name": "test_forbidden_substring_absent",
+          "doc": "Forbidden output substring being absent should pass."
+        },
+        {
+          "name": "test_forbidden_substring_present",
+          "doc": "Forbidden output substring being present should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestValidatorIntegration",
+      "description": "Tests for validator integration in E2E workflow.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_fact_anchoring_validator_pass",
+          "doc": "fact_anchoring_check should pass when read tool is used."
+        },
+        {
+          "name": "test_fact_anchoring_validator_fail",
+          "doc": "fact_anchoring_check should fail when no read tool is used."
+        },
+        {
+          "name": "test_stepwise_planning_validator_pass",
+          "doc": "stepwise_planning should pass when steps are present."
+        },
+        {
+          "name": "test_hallucination_refusal_validator_pass",
+          "doc": "hallucination_refusal_check should pass when model refuses."
+        },
+        {
+          "name": "test_ordered_tool_sequence_validator_pass",
+          "doc": "ordered_tool_sequence should pass when tools are in correct order."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCompleteCases",
+      "description": "Tests for complete benchmark case scenarios.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_fact_anchoring_complete_pass",
+          "doc": "Complete fact anchoring case with all checks passing."
+        },
+        {
+          "name": "test_goal_decomposition_complete_pass",
+          "doc": "Complete goal decomposition case with steps."
+        },
+        {
+          "name": "test_planning_chain_complete_pass",
+          "doc": "Complete planning chain case with correct tool order."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerdictStructure",
+      "description": "Tests for verdict data structure.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_verdict_has_all_required_fields",
+          "doc": "Verdict should have all required fields."
+        },
+        {
+          "name": "test_verdict_checks_are_tuple",
+          "doc": "Verdict checks should be a tuple (immutable)."
+        },
+        {
+          "name": "test_verdict_categories_are_dict",
+          "doc": "Verdict categories should be a dict."
+        },
+        {
+          "name": "test_verdict_to_dict",
+          "doc": "Verdict should serialize to dict."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEdgeCases",
+      "description": "Tests for edge cases and boundary conditions.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_empty_output",
+          "doc": "Empty output should be handled gracefully."
+        },
+        {
+          "name": "test_empty_tool_calls",
+          "doc": "Empty tool calls should be handled gracefully."
+        },
+        {
+          "name": "test_no_workspace_files",
+          "doc": "No workspace files provided should use default behavior."
+        },
+        {
+          "name": "test_case_with_no_validators",
+          "doc": "Case with no validators should still produce verdict."
+        },
+        {
+          "name": "test_tool_with_empty_args",
+          "doc": "Tool call with empty args should be handled."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBenchmarkPromptAppendix",
+      "description": "Tests for benchmark prompt appendix generation.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_build_prompt_appendix_basic",
+          "doc": "Basic prompt appendix should be generated."
+        },
+        {
+          "name": "test_build_prompt_appendix_includes_required_tools",
+          "doc": "Prompt appendix should include required tools."
+        },
+        {
+          "name": "test_merge_prompt_appendices",
+          "doc": "Prompt appendix merging should work correctly."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCaseLoading",
+      "description": "Tests for benchmark case loading.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py",
+      "methods": [
+        {
+          "name": "test_load_specific_case",
+          "doc": "Loading specific case by ID should work."
+        },
+        {
+          "name": "test_load_cases_by_role",
+          "doc": "Loading cases by role should work."
+        },
+        {
+          "name": "test_load_all_cases",
+          "doc": "Loading all cases should work."
+        },
+        {
+          "name": "test_case_has_valid_structure",
+          "doc": "Loaded case should have valid structure."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "base_workspace_files",
+      "description": "Standard workspace files for testing.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py"
+    },
+    {
+      "type": "function",
+      "name": "make_case",
+      "description": "Create a test case with specified configuration.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py"
+    },
+    {
+      "type": "function",
+      "name": "make_observed",
+      "description": "Create an observed run for testing.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_judge_e2e.py"
+    },
+    {
+      "type": "class",
+      "name": "TestValidateWorkspaceFixture",
+      "description": "Tests for workspace_fixture validation.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_path_validators.py",
+      "methods": [
+        {
+          "name": "test_valid_simple_name",
+          "doc": "Valid simple fixture name should pass."
+        },
+        {
+          "name": "test_valid_with_underscore_and_numbers",
+          "doc": "Valid fixture name with underscores and numbers."
+        },
+        {
+          "name": "test_valid_with_hyphen",
+          "doc": "Valid fixture name with hyphens."
+        },
+        {
+          "name": "test_valid_mixed_case",
+          "doc": "Valid fixture name with mixed case."
+        },
+        {
+          "name": "test_empty_string_returns_empty",
+          "doc": "Empty string should return empty string."
+        },
+        {
+          "name": "test_whitespace_only_returns_empty",
+          "doc": "Whitespace-only should return empty string."
+        },
+        {
+          "name": "test_strips_whitespace",
+          "doc": "Valid fixture name with surrounding whitespace should be stripped."
+        },
+        {
+          "name": "test_rejects_double_dot",
+          "doc": "Double dot pattern should be rejected."
+        },
+        {
+          "name": "test_rejects_double_dot_path",
+          "doc": "Path with double dot should be rejected."
+        },
+        {
+          "name": "test_rejects_absolute_path",
+          "doc": "Absolute path should be rejected for workspace_fixture."
+        },
+        {
+          "name": "test_rejects_absolute_path_starting_with_drive",
+          "doc": "Windows absolute path should be rejected for workspace_fixture."
+        },
+        {
+          "name": "test_rejects_leading_dot_slash",
+          "doc": "Leading ./ pattern should be rejected."
+        },
+        {
+          "name": "test_rejects_leading_dot_dot_slash",
+          "doc": "Leading ../ pattern should be rejected."
+        },
+        {
+          "name": "test_rejects_home_directory",
+          "doc": "Home directory pattern should be rejected."
+        },
+        {
+          "name": "test_rejects_null_byte",
+          "doc": "Null byte should be rejected."
+        },
+        {
+          "name": "test_rejects_shell_metacharacters",
+          "doc": "Shell metacharacters should be rejected."
+        },
+        {
+          "name": "test_rejects_control_characters",
+          "doc": "Control characters should be rejected."
+        },
+        {
+          "name": "test_rejects_plus_sign",
+          "doc": "Plus sign should be rejected (not in safe pattern)."
+        },
+        {
+          "name": "test_rejects_space",
+          "doc": "Space character should be rejected (not in safe pattern)."
+        },
+        {
+          "name": "test_rejects_at_sign",
+          "doc": "At sign should be rejected (not in safe pattern)."
+        },
+        {
+          "name": "test_rejects_exceeds_max_length",
+          "doc": "Identifier exceeding max length should be rejected."
+        },
+        {
+          "name": "test_accepts_max_length",
+          "doc": "Identifier at max length should be accepted."
+        },
+        {
+          "name": "test_path_traversal_encoded_double_dot",
+          "doc": "URL-encoded double dot should be rejected."
+        },
+        {
+          "name": "test_error_includes_field_name",
+          "doc": "Error message should include field name."
+        },
+        {
+          "name": "test_error_includes_value",
+          "doc": "Error should include the invalid value."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestValidateRunId",
+      "description": "Tests for run_id validation.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_path_validators.py",
+      "methods": [
+        {
+          "name": "test_valid_simple_id",
+          "doc": "Valid simple run ID should pass."
+        },
+        {
+          "name": "test_valid_with_hyphen",
+          "doc": "Valid run ID with hyphen should pass."
+        },
+        {
+          "name": "test_valid_with_underscore",
+          "doc": "Valid run ID with underscore should pass."
+        },
+        {
+          "name": "test_valid_uuid_style",
+          "doc": "UUID-style run ID should pass."
+        },
+        {
+          "name": "test_strips_whitespace",
+          "doc": "Run ID with whitespace should be stripped."
+        },
+        {
+          "name": "test_rejects_empty_string",
+          "doc": "Empty string should be rejected (not allowed for run_id)."
+        },
+        {
+          "name": "test_rejects_whitespace_only",
+          "doc": "Whitespace-only should be rejected."
+        },
+        {
+          "name": "test_rejects_double_dot",
+          "doc": "Double dot should be rejected."
+        },
+        {
+          "name": "test_rejects_path_traversal",
+          "doc": "Path traversal pattern should be rejected."
+        },
+        {
+          "name": "test_rejects_absolute_path",
+          "doc": "Absolute path should be rejected for run_id."
+        },
+        {
+          "name": "test_rejects_windows_absolute_path",
+          "doc": "Windows absolute path should be rejected for run_id."
+        },
+        {
+          "name": "test_rejects_shell_metacharacters",
+          "doc": "Shell metacharacters should be rejected."
+        },
+        {
+          "name": "test_rejects_dot",
+          "doc": "Single dot should be rejected (not in safe pattern)."
+        },
+        {
+          "name": "test_rejects_slash",
+          "doc": "Slash should be rejected."
+        },
+        {
+          "name": "test_rejects_space",
+          "doc": "Space should be rejected."
+        },
+        {
+          "name": "test_rejects_exceeds_max_length",
+          "doc": "Identifier exceeding max length should be rejected."
+        },
+        {
+          "name": "test_error_includes_field_name",
+          "doc": "Error message should include field name."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestValidateBaseWorkspace",
+      "description": "Tests for base_workspace validation.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_path_validators.py",
+      "methods": [
+        {
+          "name": "test_valid_existing_directory",
+          "doc": "Valid existing directory should pass."
+        },
+        {
+          "name": "test_valid_existing_directory_with_subpath",
+          "doc": "Valid existing directory with subpath should pass."
+        },
+        {
+          "name": "test_rejects_empty_string",
+          "doc": "Empty string should be rejected."
+        },
+        {
+          "name": "test_rejects_whitespace_only",
+          "doc": "Whitespace-only should be rejected."
+        },
+        {
+          "name": "test_accepts_absolute_path",
+          "doc": "Absolute path should be accepted for base_workspace."
+        },
+        {
+          "name": "test_accepts_absolute_nonexistent_path",
+          "doc": "Absolute path to nonexistent location should be accepted when must_exist=False."
+        },
+        {
+          "name": "test_rejects_path_traversal",
+          "doc": "Path traversal should be rejected."
+        },
+        {
+          "name": "test_rejects_absolute_path_to_sensitive_location",
+          "doc": "Absolute path with path traversal should be rejected."
+        },
+        {
+          "name": "test_rejects_shell_metacharacters",
+          "doc": "Shell metacharacters should be rejected."
+        },
+        {
+          "name": "test_rejects_null_byte",
+          "doc": "Null byte should be rejected."
+        },
+        {
+          "name": "test_accepts_nonexistent_when_must_exist_false",
+          "doc": "Nonexistent path should be accepted when must_exist=False."
+        },
+        {
+          "name": "test_accepts_file_when_must_be_dir_false",
+          "doc": "File path should be accepted when must_be_dir=False."
+        },
+        {
+          "name": "test_rejects_file_when_must_be_dir_true",
+          "doc": "File path should be rejected when must_be_dir=True."
+        },
+        {
+          "name": "test_rejects_nonexistent_when_must_exist_true",
+          "doc": "Nonexistent path should be rejected when must_exist=True."
+        },
+        {
+          "name": "test_resolves_relative_path",
+          "doc": "Relative path should be resolved to absolute."
+        },
+        {
+          "name": "test_error_includes_field_name",
+          "doc": "Error message should include field name."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestValidateCaseId",
+      "description": "Tests for case_id validation.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_path_validators.py",
+      "methods": [
+        {
+          "name": "test_valid_simple_id",
+          "doc": "Valid simple case ID should pass."
+        },
+        {
+          "name": "test_valid_with_hyphen",
+          "doc": "Valid case ID with hyphen should pass."
+        },
+        {
+          "name": "test_valid_with_underscore",
+          "doc": "Valid case ID with underscore should pass."
+        },
+        {
+          "name": "test_strips_whitespace",
+          "doc": "Case ID with whitespace should be stripped."
+        },
+        {
+          "name": "test_rejects_empty_string",
+          "doc": "Empty string should be rejected."
+        },
+        {
+          "name": "test_rejects_whitespace_only",
+          "doc": "Whitespace-only should be rejected."
+        },
+        {
+          "name": "test_rejects_path_traversal",
+          "doc": "Path traversal should be rejected."
+        },
+        {
+          "name": "test_rejects_dot",
+          "doc": "Dot should be rejected (not in safe pattern)."
+        },
+        {
+          "name": "test_rejects_slash",
+          "doc": "Slash should be rejected."
+        },
+        {
+          "name": "test_rejects_shell_metacharacters",
+          "doc": "Shell metacharacters should be rejected."
+        },
+        {
+          "name": "test_rejects_exceeds_max_length",
+          "doc": "Identifier exceeding max length should be rejected."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPathTraversalError",
+      "description": "Tests for PathTraversalError exception.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_path_validators.py",
+      "methods": [
+        {
+          "name": "test_error_attributes",
+          "doc": "Error should have correct attributes."
+        },
+        {
+          "name": "test_error_repr",
+          "doc": "Error repr should include key attributes."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPathValidatorsIntegration",
+      "description": "Integration tests for path validators.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_path_validators.py",
+      "methods": [
+        {
+          "name": "test_realistic_path_traversal_attacks",
+          "doc": "Test common path traversal attack patterns."
+        },
+        {
+          "name": "test_valid_patterns_for_workspace_fixture",
+          "doc": "Test valid patterns that should be accepted."
+        },
+        {
+          "name": "test_valid_patterns_for_run_id",
+          "doc": "Test valid patterns for run_id."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConstants",
+      "description": "Tests for module constants.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_path_validators.py",
+      "methods": [
+        {
+          "name": "test_max_identifier_length_positive",
+          "doc": "MAX_IDENTIFIER_LENGTH should be positive."
+        },
+        {
+          "name": "test_max_identifier_length_reasonable",
+          "doc": "MAX_IDENTIFIER_LENGTH should be reasonable."
+        },
+        {
+          "name": "test_dangerous_chars_pattern_compiled",
+          "doc": "DANGEROUS_PATH_CHARS should be a compiled pattern."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCancelledErrorHandling",
+      "description": "Tests for B002: CancelledError must not be swallowed.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestTimeoutProtection",
+      "description": "Tests for B001: Suite execution timeout protection.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestStreamingMode",
+      "description": "Tests for streaming mode timeout and error handling.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestSuiteResultConversion",
+      "description": "Tests for _convert_suite_result method.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py",
+      "methods": [
+        {
+          "name": "test_convert_simple_result",
+          "doc": "Test converting simple result without cases."
+        },
+        {
+          "name": "test_convert_failed_result",
+          "doc": "Test converting failed result."
+        },
+        {
+          "name": "test_convert_result_with_cases",
+          "doc": "Test converting result with detailed cases."
+        },
+        {
+          "name": "test_convert_timeout_result",
+          "doc": "Test converting timeout result."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeSuites",
+      "description": "Tests for normalize_suites method.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py",
+      "methods": [
+        {
+          "name": "test_empty_role_defaults_to_connectivity",
+          "doc": "Test that empty role defaults to connectivity suite."
+        },
+        {
+          "name": "test_connectivity_role_only",
+          "doc": "Test that connectivity role only runs connectivity."
+        },
+        {
+          "name": "test_default_role_uses_required_suites",
+          "doc": "Test that default role uses required suites."
+        },
+        {
+          "name": "test_deduplication",
+          "doc": "Test that duplicate suites are removed."
+        },
+        {
+          "name": "test_whitespace_handling",
+          "doc": "Test that whitespace in suite names is handled."
+        },
+        {
+          "name": "test_case_insensitive",
+          "doc": "Test that suite names are case-insensitive."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEdgeCases",
+      "description": "Tests for edge cases and boundary conditions.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "mock_settings",
+      "description": "Create mock settings object.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py"
+    },
+    {
+      "type": "function",
+      "name": "timeout_config",
+      "description": "Create test timeout configuration.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py"
+    },
+    {
+      "type": "function",
+      "name": "runner",
+      "description": "Create EvaluationRunner instance with mocked settings.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py"
+    },
+    {
+      "type": "function",
+      "name": "sample_request",
+      "description": "Create sample evaluation request.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_runner.py"
+    },
+    {
+      "type": "class",
+      "name": "TestMockWorkflowKernel",
+      "description": "Tests for MockWorkflowKernel.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_session_workflow_matrix.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestHelpers",
+      "description": "Tests for helper functions.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_session_workflow_matrix.py",
+      "methods": [
+        {
+          "name": "test_is_subsequence_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_event_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCaseLoading",
+      "description": "Tests for case loading.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_session_workflow_matrix.py",
+      "methods": [
+        {
+          "name": "test_load_all_cases",
+          "doc": ""
+        },
+        {
+          "name": "test_load_filtered_cases",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCaseExecution",
+      "description": "End-to-end case execution tests.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_session_workflow_matrix.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestCustomCase",
+      "description": "Test custom case definitions.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_session_workflow_matrix.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestTimeoutConfig",
+      "description": "Tests for TimeoutConfig dataclass.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_timeout.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": "Test default configuration values."
+        },
+        {
+          "name": "test_custom_values",
+          "doc": "Test custom configuration values."
+        },
+        {
+          "name": "test_validation_positive_timeout",
+          "doc": "Test that positive timeouts are valid."
+        },
+        {
+          "name": "test_validation_zero_timeout_raises",
+          "doc": "Test that zero timeout raises ValueError."
+        },
+        {
+          "name": "test_validation_negative_timeout_raises",
+          "doc": "Test that negative timeout raises ValueError."
+        },
+        {
+          "name": "test_from_options_full",
+          "doc": "Test creating config from full options dict."
+        },
+        {
+          "name": "test_from_options_partial",
+          "doc": "Test creating config from partial options dict."
+        },
+        {
+          "name": "test_from_options_empty",
+          "doc": "Test creating config from empty options dict."
+        },
+        {
+          "name": "test_from_options_with_invalid_types",
+          "doc": "Test that invalid types use defaults."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTimeoutResult",
+      "description": "Tests for TimeoutResult dataclass.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_timeout.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": "Test default result values."
+        },
+        {
+          "name": "test_success_result",
+          "doc": "Test success result values."
+        },
+        {
+          "name": "test_timeout_result",
+          "doc": "Test timeout result values."
+        },
+        {
+          "name": "test_error_result",
+          "doc": "Test error result values."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRunWithTimeout",
+      "description": "Tests for run_with_timeout function.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_timeout.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestRunWithTimeoutOptional",
+      "description": "Tests for run_with_timeout_optional function.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_timeout.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestDefaultConfiguration",
+      "description": "Tests for DEFAULT_SUITE_TIMEOUT.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_timeout.py",
+      "methods": [
+        {
+          "name": "test_default_is_valid_config",
+          "doc": "Test that default config is valid."
+        },
+        {
+          "name": "test_default_suite_timeout_value",
+          "doc": "Test default suite timeout is 5 minutes."
+        },
+        {
+          "name": "test_default_case_timeout_value",
+          "doc": "Test default case timeout is 2 minutes."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTimeoutIntegration",
+      "description": "Integration-style tests for timeout behavior.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_timeout.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "fast_event_loop",
+      "description": "Provide a fast event loop for testing.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_timeout.py"
+    },
+    {
+      "type": "class",
+      "name": "TestBridgeCaseLoading",
+      "description": "Loading validation for ADR-0080 bridge cases.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py",
+      "methods": [
+        {
+          "name": "test_bridge_case_json_file_exists",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_case_loads_successfully",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_case_has_judge_with_stream_and_non_stream",
+          "doc": ""
+        },
+        {
+          "name": "test_all_bridge_cases_discoverable_via_builtin_loader",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_cases_filter_by_prefix",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_wm_prefers_read_over_search_structure",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_emits_session_patch_structure",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_verifying_prefers_test_structure",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_uses_failure_context_structure",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_cases_prompt_contains_working_memory_zones",
+          "doc": "Continuation-prompt bridge cases embed the 4-zone XML structure."
+        },
+        {
+          "name": "test_bridge_cases_parity_required",
+          "doc": ""
+        },
+        {
+          "name": "test_bridge_cases_workspace_fixture_set",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_case",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_appends_contract_for_stream",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_respects_non_stream_mode_spec",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_returns_original_when_mode_missing",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_includes_safety_refusal_contract",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_includes_required_any_and_output_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_does_not_infer_verification_when_forbidden",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_adds_read_search_write_contract_for_repo_rg",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_compose_case_prompt_includes_required_tool_equivalence_hints",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_normalize_judge_args_strips_dot_slash_for_repo_tree",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py"
+    },
+    {
+      "type": "class",
+      "name": "TestValidatorsDictStructure",
+      "description": "Tests for the VALIDATORS dict structure.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_all_validators_have_three_elements",
+          "doc": "All validators should have (category, critical, function) tuple."
+        },
+        {
+          "name": "test_validator_count",
+          "doc": "Should have 26 validators as documented."
+        },
+        {
+          "name": "test_expected_validator_names",
+          "doc": "All expected validator names should be present."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNoPromptLeakageValidator",
+      "description": "Tests for no_prompt_leakage validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_clean_output_passes",
+          "doc": "Clean output without leakage markers should pass."
+        },
+        {
+          "name": "test_prompt_leakage_fails",
+          "doc": "Output with leakage markers should fail."
+        },
+        {
+          "name": "test_thinking_tag_fails",
+          "doc": "Output with <thinking> tag should fail."
+        },
+        {
+          "name": "test_leakage_in_combined_text_fails",
+          "doc": "Leakage in combined output+thinking should fail."
+        },
+        {
+          "name": "test_empty_output_passes",
+          "doc": "Empty output should pass (no leakage to detect)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPmPlanJsonValidator",
+      "description": "Tests for pm_plan_json validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_valid_pm_plan_passes",
+          "doc": "Valid PM plan JSON should pass."
+        },
+        {
+          "name": "test_invalid_json_fails",
+          "doc": "Invalid JSON should fail."
+        },
+        {
+          "name": "test_missing_keys_fails",
+          "doc": "JSON missing required keys should fail."
+        },
+        {
+          "name": "test_json_in_code_block_passes",
+          "doc": "JSON in markdown code block should pass."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQaPassfailJsonValidator",
+      "description": "Tests for qa_passfail_json validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_valid_pass_passes",
+          "doc": "Valid QA pass/fail with passed=true should pass."
+        },
+        {
+          "name": "test_valid_fail_json_passes_structure",
+          "doc": "Valid QA pass/fail with passed=false has valid structure but 'passed' is False."
+        },
+        {
+          "name": "test_invalid_json_fails",
+          "doc": "Invalid JSON should fail."
+        },
+        {
+          "name": "test_no_pass_indicator_fails",
+          "doc": "JSON without pass indicator should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorSafeScopeValidator",
+      "description": "Tests for director_safe_scope validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_safe_scope_passes",
+          "doc": "Safe scope without restricted paths should pass."
+        },
+        {
+          "name": "test_restricted_path_fails",
+          "doc": "Scope with restricted path modifications should fail."
+        },
+        {
+          "name": "test_never_modify_passes",
+          "doc": "Scope that explicitly says 'never modify' should pass."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNoHallucinatedPathsValidator",
+      "description": "Tests for no_hallucinated_paths validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_known_paths_passes",
+          "doc": "Output referencing known paths should pass."
+        },
+        {
+          "name": "test_hallucinated_path_fails",
+          "doc": "Output referencing unknown paths should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStructuredStepsValidator",
+      "description": "Tests for structured_steps validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_numbered_list_passes",
+          "doc": "Output with numbered list should pass."
+        },
+        {
+          "name": "test_step_markers_passes",
+          "doc": "Output with step markers should pass."
+        },
+        {
+          "name": "test_plain_text_fails",
+          "doc": "Plain text without structured steps should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorRefactorPlanValidator",
+      "description": "Tests for director_refactor_plan validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_valid_refactor_plan_passes",
+          "doc": "Valid refactor plan with smells and plan should pass."
+        },
+        {
+          "name": "test_valid_refactor_plan_with_steps_passes",
+          "doc": "Refactor plan with smell and steps should pass."
+        },
+        {
+          "name": "test_missing_smells_fails",
+          "doc": "Plan without smells field should fail."
+        },
+        {
+          "name": "test_missing_plan_fails",
+          "doc": "Plan without plan/steps field should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorSecurityFixValidator",
+      "description": "Tests for director_security_fix validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_valid_security_fix_passes",
+          "doc": "Valid security fix with vulnerabilities and patches should pass."
+        },
+        {
+          "name": "test_valid_security_fix_with_fixes_passes",
+          "doc": "Security fix with fixes field should pass."
+        },
+        {
+          "name": "test_missing_vulnerabilities_fails",
+          "doc": "Security fix without vulnerabilities and patches should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorTestPassValidator",
+      "description": "Tests for director_test_pass validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_valueerror_found_passes",
+          "doc": "Output with ValueError should pass (expected TDD behavior)."
+        },
+        {
+          "name": "test_no_valueerror_fails",
+          "doc": "Output without ValueError should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStreamNonstreamParityValidator",
+      "description": "Tests for stream_nonstream_parity validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_normal_output_passes",
+          "doc": "Normal output without truncation markers should pass."
+        },
+        {
+          "name": "test_truncated_output_fails",
+          "doc": "Output with truncation markers should fail."
+        },
+        {
+          "name": "test_empty_output_passes",
+          "doc": "Empty output is valid (legitimate no-output cases)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorFeatureBranchValidator",
+      "description": "Tests for director_feature_branch validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_valid_feature_branch_passes",
+          "doc": "Valid feature branch with branch_name and files should pass."
+        },
+        {
+          "name": "test_valid_feature_branch_with_modified_passes",
+          "doc": "Feature branch with files_modified should pass."
+        },
+        {
+          "name": "test_missing_branch_name_fails",
+          "doc": "Branch result without branch_name should fail."
+        },
+        {
+          "name": "test_missing_files_fails",
+          "doc": "Branch result without files should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRequireNoErrorValidator",
+      "description": "Tests for require_no_error validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_clean_output_passes",
+          "doc": "Clean output without error indicators should pass."
+        },
+        {
+          "name": "test_error_indicator_fails",
+          "doc": "Output with error indicators should fail."
+        },
+        {
+          "name": "test_failure_indicator_fails",
+          "doc": "Output with failure indicators should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFirstCallRejectUnknownArgsValidator",
+      "description": "Tests for first_call_reject_unknown_args validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_tool_call_present_passes",
+          "doc": "Observed tool calls should pass (model made valid calls)."
+        },
+        {
+          "name": "test_no_tool_calls_fails",
+          "doc": "No tool calls should fail this validator (needs at least one tool call)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRequireNoToolCallsValidator",
+      "description": "Tests for require_no_tool_calls validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_no_tool_calls_with_output_passes",
+          "doc": "No tool calls with non-empty output should pass."
+        },
+        {
+          "name": "test_tool_calls_made_fails",
+          "doc": "Tool calls made should fail."
+        },
+        {
+          "name": "test_empty_output_with_no_calls_fails",
+          "doc": "Empty output with no tool calls should fail (needs non-empty output)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestParityCompareModeSetValidator",
+      "description": "Tests for parity_compare_mode_set validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_non_empty_output_passes",
+          "doc": "Non-empty output should pass."
+        },
+        {
+          "name": "test_empty_output_fails",
+          "doc": "Empty output should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFocusRecoveryCheckValidator",
+      "description": "Tests for focus_recovery_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_non_empty_output_passes",
+          "doc": "Non-empty output should pass."
+        },
+        {
+          "name": "test_empty_output_fails",
+          "doc": "Empty output should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactAnchoringCheckValidator",
+      "description": "Tests for fact_anchoring_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_read_tool_present_passes",
+          "doc": "Read tool call present should pass."
+        },
+        {
+          "name": "test_no_read_tool_fails",
+          "doc": "No read tool call should fail."
+        },
+        {
+          "name": "test_all_read_tool_variants_pass",
+          "doc": "All read tool variants should pass."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStepwisePlanningValidator",
+      "description": "Tests for stepwise_planning validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_chinese_step_markers_passes",
+          "doc": "Chinese step markers should pass."
+        },
+        {
+          "name": "test_english_step_markers_passes",
+          "doc": "English step markers should pass."
+        },
+        {
+          "name": "test_numbered_markers_passes",
+          "doc": "Numbered markers should pass."
+        },
+        {
+          "name": "test_no_step_markers_fails",
+          "doc": "No step markers should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHallucinationRefusalCheckValidator",
+      "description": "Tests for hallucination_refusal_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_refusal_markers_present_passes",
+          "doc": "Refusal markers should pass (correct behavior)."
+        },
+        {
+          "name": "test_false_success_without_refusal_fails",
+          "doc": "False success markers without refusal should fail."
+        },
+        {
+          "name": "test_neutral_output_passes",
+          "doc": "Neutral output should pass (no clear failure)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestOrderedToolSequenceValidator",
+      "description": "Tests for ordered_tool_sequence validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_read_before_write_passes",
+          "doc": "Read operations before write operations should pass."
+        },
+        {
+          "name": "test_write_before_read_fails",
+          "doc": "Write operations before read operations should fail."
+        },
+        {
+          "name": "test_only_read_tools_passes",
+          "doc": "Only read tools should pass."
+        },
+        {
+          "name": "test_only_write_tools_passes",
+          "doc": "Only write tools should pass."
+        },
+        {
+          "name": "test_no_tool_calls_passes",
+          "doc": "No tool calls should pass (nothing to validate)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSelfVerificationCheckValidator",
+      "description": "Tests for self_verification_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_verification_tool_present_passes",
+          "doc": "Verification tool call present should pass."
+        },
+        {
+          "name": "test_verification_language_present_passes",
+          "doc": "Verification language in output should pass."
+        },
+        {
+          "name": "test_no_verification_fails",
+          "doc": "No verification tool or language should fail."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUnknownValidatorHandling",
+      "description": "Tests for handling of unknown validators.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_unknown_validator_fails",
+          "doc": "Unknown validator should produce a failed check with critical=True."
+        },
+        {
+          "name": "test_mixed_valid_and_invalid",
+          "doc": "Mix of valid and invalid validators should produce mixed results."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMultipleValidatorsIntegration",
+      "description": "Tests for cases with multiple validators.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py",
+      "methods": [
+        {
+          "name": "test_all_validators_pass",
+          "doc": "All validators passing should result in overall pass."
+        },
+        {
+          "name": "test_one_validator_fails_with_threshold",
+          "doc": "One validator failing with strict threshold should fail verdict."
+        },
+        {
+          "name": "test_critical_validator_failure",
+          "doc": "Critical validator failure should always fail verdict regardless of score."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "make_case",
+      "description": "Create a benchmark case with specified validators.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "make_observed",
+      "description": "Create an observed run for testing.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "base_workspace_files",
+      "description": "Create base workspace files for testing.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_integration.py"
+    },
+    {
+      "type": "class",
+      "name": "TestFactAnchoringRegression",
+      "description": "Regression tests for fact_anchoring_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_fact_anchoring_read_tool_passes",
+          "doc": "fact_anchoring_check should pass when read tool is used."
+        },
+        {
+          "name": "test_regression_fact_anchoring_no_read_fails",
+          "doc": "fact_anchoring_check should fail when no read tool is used."
+        },
+        {
+          "name": "test_regression_fact_anchoring_output_format",
+          "doc": "fact_anchoring_check should work with read tool present."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStepwisePlanningRegression",
+      "description": "Regression tests for stepwise_planning validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_stepwise_chinese_markers_pass",
+          "doc": "stepwise_planning should pass with Chinese step markers."
+        },
+        {
+          "name": "test_regression_stepwise_english_markers_pass",
+          "doc": "stepwise_planning should pass with English step markers."
+        },
+        {
+          "name": "test_regression_stepwise_numbered_list_pass",
+          "doc": "stepwise_planning should pass with numbered list."
+        },
+        {
+          "name": "test_regression_stepwise_no_markers_fails",
+          "doc": "stepwise_planning should fail without step markers."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHallucinationPressureRegression",
+      "description": "Regression tests for hallucination_refusal_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_hallucination_refusal_chinese_pass",
+          "doc": "hallucination_refusal_check should pass with Chinese refusal markers."
+        },
+        {
+          "name": "test_regression_hallucination_refusal_english_pass",
+          "doc": "hallucination_refusal_check should pass with English refusal markers."
+        },
+        {
+          "name": "test_regression_hallucination_false_success_fails",
+          "doc": "hallucination_refusal_check should fail with false success claims."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestOrderedToolSequenceRegression",
+      "description": "Regression tests for ordered_tool_sequence validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_ordered_sequence_read_before_write",
+          "doc": "ordered_tool_sequence should pass with read before write."
+        },
+        {
+          "name": "test_regression_ordered_sequence_write_before_read_fails",
+          "doc": "ordered_tool_sequence should fail with write before read."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSelfVerificationRegression",
+      "description": "Regression tests for self_verification_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_self_verification_with_tool",
+          "doc": "self_verification_check should pass with verification tool."
+        },
+        {
+          "name": "test_regression_self_verification_with_language",
+          "doc": "self_verification_check should pass with verification language."
+        },
+        {
+          "name": "test_regression_self_verification_no_verification_fails",
+          "doc": "self_verification_check should fail with no verification."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPromptLeakageRegression",
+      "description": "Regression tests for no_prompt_leakage validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_no_leakage_clean_output",
+          "doc": "no_prompt_leakage should pass with clean output."
+        },
+        {
+          "name": "test_regression_no_leakage_system_prompt_fails",
+          "doc": "no_prompt_leakage should fail with system prompt reference."
+        },
+        {
+          "name": "test_regression_no_leakage_thinking_tag_fails",
+          "doc": "no_prompt_leakage should fail with thinking tags."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStreamNonstreamParityRegression",
+      "description": "Regression tests for stream_nonstream_parity validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_parity_clean_output",
+          "doc": "stream_nonstream_parity should pass with clean output."
+        },
+        {
+          "name": "test_regression_parity_truncated_fails",
+          "doc": "stream_nonstream_parity should fail with truncation markers."
+        },
+        {
+          "name": "test_regression_parity_partial_fails",
+          "doc": "stream_nonstream_parity should fail with partial markers."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFocusRecoveryRegression",
+      "description": "Regression tests for focus_recovery_check validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_focus_recovery_with_content",
+          "doc": "focus_recovery_check should pass with non-empty output."
+        },
+        {
+          "name": "test_regression_focus_recovery_empty_fails",
+          "doc": "focus_recovery_check should fail with empty output."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHallucinatedPathsRegression",
+      "description": "Regression tests for no_hallucinated_paths validator.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_known_paths_pass",
+          "doc": "no_hallucinated_paths should pass with known paths."
+        },
+        {
+          "name": "test_regression_unknown_paths_fail",
+          "doc": "no_hallucinated_paths should fail with unknown paths."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestJsonValidatorsRegression",
+      "description": "Regression tests for JSON validators.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_pm_plan_valid_json",
+          "doc": "pm_plan_json should pass with valid JSON structure."
+        },
+        {
+          "name": "test_regression_pm_plan_invalid_json",
+          "doc": "pm_plan_json should fail with invalid JSON."
+        },
+        {
+          "name": "test_regression_qa_passfail_valid",
+          "doc": "qa_passfail_json should pass with valid pass/fail structure."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCriticalValidatorRegression",
+      "description": "Regression tests for critical validators overriding verdict.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_critical_failure_overrides_score",
+          "doc": "Critical failure should override score threshold."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestScoreCalculationRegression",
+      "description": "Regression tests for score calculation.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_regression_score_at_threshold",
+          "doc": "Score at or above threshold should pass with all checks passing."
+        },
+        {
+          "name": "test_regression_score_below_threshold",
+          "doc": "Score below threshold should fail verdict."
+        },
+        {
+          "name": "test_regression_category_scores_sum",
+          "doc": "Category scores should be properly calculated."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCompleteCaseIntegration",
+      "description": "Integration tests using real benchmark cases.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py",
+      "methods": [
+        {
+          "name": "test_load_l8_classic_fact_anchoring",
+          "doc": "Should be able to load l8_classic_fact_anchoring case."
+        },
+        {
+          "name": "test_load_l8_classic_goal_decomposition",
+          "doc": "Should be able to load l8_classic_goal_decomposition case."
+        },
+        {
+          "name": "test_load_l8_classic_hallucination_pressure",
+          "doc": "Should be able to load l8_classic_hallucination_pressure case."
+        },
+        {
+          "name": "test_load_l8_classic_planning_chain",
+          "doc": "Should be able to load l8_classic_planning_chain case."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "workspace_files",
+      "description": "Standard workspace files for regression tests.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py"
+    },
+    {
+      "type": "function",
+      "name": "make_case",
+      "description": "Create a test case with specified configuration.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py"
+    },
+    {
+      "type": "function",
+      "name": "make_observed",
+      "description": "Create an observed run for testing.",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_validator_regression.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

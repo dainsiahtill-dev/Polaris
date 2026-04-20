@@ -1,0 +1,110 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Context OS + Cognitive Runtime Eval Suite
+type: object
+additionalProperties: false
+required:
+  - version
+  - suite_id
+  - domain
+  - suites
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  suite_id:
+    type: string
+    minLength: 1
+  domain:
+    type: string
+    minLength: 1
+  metadata:
+    type: object
+  suites:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - suite_type
+        - cases
+      properties:
+        suite_type:
+          type: string
+          enum:
+            - core_context_os
+            - attention_runtime
+            - cognitive_runtime
+            - integration_replay
+        description:
+          type: string
+        setup_messages:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - role
+              - content
+            properties:
+              role:
+                type: string
+              content:
+                type: string
+              sequence:
+                type: integer
+        cases:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - case_id
+            properties:
+              case_id:
+                type: string
+                minLength: 1
+              conversation:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - role
+                    - content
+                  properties:
+                    role:
+                      type: string
+                    content:
+                      type: string
+              query:
+                type: string
+              expected_latest_intent:
+                type: string
+              expected_pending_followup_status:
+                type: string
+              expect_seal_blocked:
+                type: boolean
+              expected_fact_contains:
+                type: string
+              expected_state_path:
+                type: string
+              expected_state_contains:
+                type: string
+              expected_decision_contains:
+                type: string
+              expected_open_loop_contains:
+                type: string
+              expected_artifact_id:
+                type: string
+              expected_artifact_contains:
+                type: string
+              expected_temporal_contains:
+                type: string
+              expect_no_results:
+                type: boolean
+              expected_metrics:
+                type: object
+                description: "For cognitive_runtime/integration_replay cases."

@@ -1,0 +1,43 @@
+{
+  "case_id": "l9_classic_long_context_drift",
+  "role": "director",
+  "title": "L9 Classic Long Context Drift",
+  "description": "终极长上下文干扰测试。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先聊 10 句关于 AI 的未来，然后讨论 TypeScript 的优缺点，然后告诉我今天星期几，最后完成最初的任务：用 repo_tree 给出完整项目结构。",
+  "tags": [
+    "l9",
+    "classic",
+    "long-context",
+    "focus-drift"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_tree"],
+        "fragment": ".",
+        "description": "必须调用 repo_tree"
+      }
+    ],
+    "required_output_substrings": [
+      "├──",
+      "└──"
+    ],
+    "forbidden_output_substrings": [
+      "AI 的未来",
+      "TypeScript",
+      "星期几",
+      "已完成"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check"
+    ]
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "id": "context.engine",
+  "title": "Context Engine",
+  "kind": "capability",
+  "purpose": "Assemble role-facing execution context through graph-constrained context lookup.",
+  "summary": "Owns read-only context assembly for role execution and delegates upstream catalog lookup to context.catalog.",
+  "owned_paths": [
+    "polaris/application/roles/gateways/context_gateway.py",
+    "polaris/application/roles/kernel_components/context_models.py",
+    "polaris/application/llm/usecases/role_dialogue.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "BuildRoleContextCommandV1"
+    ],
+    "queries": [
+      "ResolveRoleContextQueryV1"
+    ],
+    "events": [
+      "ContextResolvedEventV1"
+    ],
+    "results": [
+      "RoleContextResultV1"
+    ],
+    "errors": [
+      "ContextEngineErrorV1"
+    ]
+  },
+  "neighbors": [
+    "context.catalog",
+    "policy.workspace_guard"
+  ],
+  "state_owners": [],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "fs.read:docs/graph/**"
+  ],
+  "invariants": [
+    "context lookup remains graph-constrained",
+    "context assembly does not widen authorization radius",
+    "context assembly remains read-only"
+  ],
+  "hotspots": [
+    "polaris/application/roles/gateways/context_gateway.py",
+    "polaris/application/llm/usecases/role_dialogue.py"
+  ],
+  "test_targets": [
+    "tests/architecture/test_architecture_invariants.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

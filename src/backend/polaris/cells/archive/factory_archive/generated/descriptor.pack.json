@@ -1,0 +1,267 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.757485Z",
+  "source_hash": "b7de335d07d70375",
+  "cell_id": "archive.factory_archive",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "FactoryArchiveManifest",
+      "description": "Manifest for one archived factory run.",
+      "defined_in": "polaris/cells/archive/factory_archive/internal/factory_archive_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryArchiveService",
+      "description": "Cell-local archival service for factory runs.",
+      "defined_in": "polaris/cells/archive/factory_archive/internal/factory_archive_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "archive_factory_run",
+          "doc": "Archive factory run files into ``workspace/history/factory``."
+        },
+        {
+          "name": "get_manifest",
+          "doc": "Load factory archive manifest by run ID."
+        },
+        {
+          "name": "list_factory_runs",
+          "doc": "List archived factory runs from canonical index."
+        },
+        {
+          "name": "_workspace_rel",
+          "doc": ""
+        },
+        {
+          "name": "_safe_rel",
+          "doc": ""
+        },
+        {
+          "name": "_copy_directory",
+          "doc": ""
+        },
+        {
+          "name": "_calculate_checksums",
+          "doc": ""
+        },
+        {
+          "name": "_create_empty_manifest",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArchiveFactoryRunCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetFactoryArchiveManifestQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchiveManifestV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryArchivedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryArchiveError",
+      "description": "Raised when factory archive publication fails.",
+      "defined_in": "polaris/cells/archive/factory_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryArchiveManifest",
+      "description": "Manifest for one archived factory run.",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryArchiveService",
+      "description": "Cell-local archival service for factory runs.",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "archive_factory_run",
+          "doc": ""
+        },
+        {
+          "name": "get_manifest",
+          "doc": ""
+        },
+        {
+          "name": "list_factory_runs",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_rel",
+          "doc": ""
+        },
+        {
+          "name": "_safe_rel",
+          "doc": ""
+        },
+        {
+          "name": "_copy_directory",
+          "doc": ""
+        },
+        {
+          "name": "_calculate_checksums",
+          "doc": ""
+        },
+        {
+          "name": "_create_empty_manifest",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_run_background",
+      "description": "Schedule a coroutine for background execution.",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_factory_archive_service",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "archive_factory_run",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "trigger_factory_archive",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_manifest",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_factory_runs",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestArchiveFactoryRunCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetFactoryArchiveManifestQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestArchiveManifestV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryArchivedEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryArchiveError",
+      "description": "",
+      "defined_in": "polaris/cells/archive/factory_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

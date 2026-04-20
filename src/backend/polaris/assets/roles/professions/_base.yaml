@@ -1,0 +1,90 @@
+# Profession Base Template
+# Y-Axis: Profession - 决定"具备什么硬核技能"和"微观执行标准"
+
+# 所有 Profession 必须继承此基类
+
+base_settings:
+  # 工程标准覆盖模式
+  # - inherit: 继承全局标准
+  # - extend: 在全局标准上扩展
+  # - strict: 比全局标准更严格
+  # - override: 完全覆盖
+  coverage_mode: inherit
+
+  # 标准继承顺序 (later overrides earlier)
+  # 1. global standards (polaris/assets/roles/formats/global_standards.yaml)
+  # 2. profession-specific standards (this file)
+  # 3. task-type overrides (task_protocols)
+
+  # 通用工程红线（绝对禁止）
+  global_red_lines:
+    - 严禁裸露的 except:
+    - 严禁 bare except
+    - 严禁 pass 作为异常处理
+    - 严禁 any 类型（除非与无类型提示的老旧库交互且极其必要）
+    - 严禁隐藏副作用
+    - 严禁重复代码（DRY）
+
+  # 通用输出格式
+  output_format:
+    default: standard
+
+    formats:
+      standard:
+        sections:
+          - Result
+          - Analysis
+          - Risks & Boundaries
+          - Testing
+          - Self-Check
+          - Future Optimization
+
+      # 特定场景格式
+      architecture:
+        sections:
+          - Architecture Overview
+          - Module Design
+          - Data Flow
+          - Technology Choices
+          - Risk Assessment
+          - Implementation Plan
+
+      code_review:
+        sections:
+          - Summary
+          - Blocker Issues
+          - Suggestion Issues
+          - Nitpick Issues
+          - Overall Assessment
+
+      bug_fix:
+        sections:
+          - Reproduction
+          - Root Cause Analysis
+          - Fix Implementation
+          - Regression Prevention
+          - Verification
+
+  # 任务协议模板
+  task_protocol_templates:
+    new_code:
+      quality_bar: production_ready
+      requires_documentation: true
+      requires_tests: true
+      test_coverage_min: 70
+
+    refactor:
+      backward_compatible: true
+      migration_path: optional
+      regression_tests: mandatory
+
+    code_review:
+      levels:
+        - blocker: 必须修改，否则无法合并
+        - suggestion: 建议修改，有助于提升代码质量
+        - nitpick: 可选优化，不影响合并
+
+    bug_fix:
+      root_cause_analysis: mandatory
+      regression_test: required
+      fix_verification: required

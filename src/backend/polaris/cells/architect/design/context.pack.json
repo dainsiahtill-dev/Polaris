@@ -1,0 +1,10 @@
+{
+  "cell_id": "architect.design",
+  "version": 1,
+  "purpose": "Architect design capability boundary",
+  "exports": [
+    "ArchitectService",
+    "ArchitectConfig",
+    "ArchitectureDoc"
+  ]
+}

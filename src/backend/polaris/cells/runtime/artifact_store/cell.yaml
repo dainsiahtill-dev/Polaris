@@ -1,0 +1,57 @@
+id: runtime.artifact_store
+title: Runtime Artifact Store
+kind: capability
+visibility: public
+stateful: true
+owner: runtime
+purpose: 'Provide canonical runtime artifact path resolution, read wrappers, and Arrow
+  IPC helpers for runtime snapshots and artifact-backed records. This cell is a read-access
+  and path-resolution auxiliary; it does NOT own or write runtime/contracts, runtime/state,
+  runtime/runs, or runtime/events. Those state namespaces are owned exclusively by
+  runtime.state_owner. This cell owns only the runtime/artifacts namespace.
+
+  '
+current_modules:
+- polaris.cells.runtime.artifact_store.public.service
+- polaris.cells.runtime.artifact_store.internal.arrow_service
+tags: []
+owned_paths:
+- polaris/cells/runtime/artifact_store/**
+public_contracts:
+  modules:
+  - polaris.cells.runtime.artifact_store.public.contracts
+  commands:
+  - WriteRuntimeArtifactCommandV1
+  queries:
+  - ReadRuntimeArtifactQueryV1
+  - RuntimeV2ExportQueryV1
+  events:
+  - RuntimeArtifactWrittenEventV1
+  results:
+  - RuntimeArtifactResultV1
+  errors:
+  - RuntimeArtifactStoreErrorV1
+depends_on:
+- policy.workspace_guard
+- storage.layout
+- audit.evidence
+- runtime.state_owner
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- runtime/artifacts/*
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/artifacts/*
+verification:
+  tests:
+  - tests/test_artifact_service.py
+  - tests/test_runtime_projection_snapshot_tasks.py
+  - tests/test_runtime_state_ownership.py
+  gaps:
+  - Runtime V2 typed exports now come from runtime.projection and require descriptor/context
+    freshness regeneration.
+  - WriteRuntimeArtifactCommandV1 implementation must be verified to only write under
+    runtime/artifacts/* namespace.
+  smoke_commands: []
+generated_artifacts: []

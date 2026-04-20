@@ -1,0 +1,34 @@
+{
+  "case_id": "chief_engineer_debug_session",
+  "role": "chief_engineer",
+  "title": "Chief Engineer Conducts Debug Session",
+  "description": "The Chief Engineer must systematically debug a failing system using structured methodology.",
+  "workspace_fixture": "director_root_cause_locator",
+  "prompt": "A critical bug is causing production issues. Investigate and diagnose. Return JSON: {hypothesis: string, evidence: [{source, finding}], root_cause: string, fix_applied: string, verification: string, lessons_learned: [string]}. Use scientific method.",
+  "tags": [
+    "chief_engineer",
+    "debug",
+    "root_cause"
+  ],
+  "judge": {
+    "score_threshold": 0.82,
+    "required_tools": [
+      "read_file",
+      "ripgrep",
+      "execute_command"
+    ],
+    "required_output_substrings": [
+      "root_cause",
+      "evidence",
+      "verification"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "chief_debug_session"
+    ],
+    "min_tool_calls": 4,
+    "max_tool_calls": 10
+  }
+}

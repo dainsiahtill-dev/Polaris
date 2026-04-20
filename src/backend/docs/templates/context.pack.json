@@ -1,0 +1,52 @@
+{
+  "template": true,
+  "id": "sample.example",
+  "title": "Sample Example",
+  "kind": "capability",
+  "purpose": "Replace this sample with a real capability description.",
+  "summary": "One-paragraph summary for AI consumption.",
+  "owned_paths": [
+    "cells/sample/example/**"
+  ],
+  "public_contracts": {
+    "commands": [
+      "SampleCommand"
+    ],
+    "queries": [],
+    "events": [
+      "SampleCompletedEvent"
+    ],
+    "results": [
+      "SampleResult"
+    ],
+    "errors": [
+      "SampleError"
+    ]
+  },
+  "neighbors": [
+    "audit.evidence"
+  ],
+  "state_owners": [],
+  "effects_allowed": [],
+  "invariants": [
+    "all state changes must be represented by explicit contracts",
+    "all text file writes must use UTF-8"
+  ],
+  "hotspots": [
+    "cells/sample/example/internal/application/service.py"
+  ],
+  "test_targets": [
+    "cells/sample/example/tests/test_contracts.py",
+    "cells/sample/example/tests/test_behavior.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts/*",
+      "public/api.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

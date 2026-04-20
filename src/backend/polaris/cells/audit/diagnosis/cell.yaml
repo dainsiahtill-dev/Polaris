@@ -1,0 +1,55 @@
+id: audit.diagnosis
+title: Audit Diagnosis
+kind: capability
+visibility: public
+stateful: true
+owner: audit
+purpose: 'Provide deterministic diagnosis and trace query capabilities for runtime
+  audit events, including event-chain inspection and WebSocket lifecycle audit writes
+  through KernelOne filesystem.
+
+  '
+current_modules:
+- polaris.cells.audit.diagnosis.public.service
+- polaris.cells.audit.diagnosis.internal.diagnosis_engine
+- polaris.cells.audit.diagnosis.internal.toolkit.service
+- polaris.cells.audit.diagnosis.internal.usecases.facade
+tags: []
+owned_paths:
+- polaris/cells/audit/diagnosis/**
+public_contracts:
+  modules:
+  - polaris.cells.audit.diagnosis.public.contracts
+  commands:
+  - RunAuditDiagnosisCommandV1
+  queries:
+  - QueryAuditDiagnosisTrailV1
+  events:
+  - AuditDiagnosisCompletedEventV1
+  results:
+  - AuditDiagnosisResultV1
+  errors:
+  - AuditDiagnosisErrorV1
+depends_on:
+- audit.evidence
+- storage.layout
+- policy.workspace_guard
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/events/ws.connection.events.jsonl
+effects_allowed:
+- fs.read:runtime/events/*
+- fs.write:runtime/events/ws.connection.events.jsonl
+- fs.read:workspace/**
+- network.http_outbound:audit/*
+- process.exec:git
+verification:
+  tests:
+  - tests/test_audit_llm_runtime.py
+  - tests/test_command_security.py
+  gaps:
+  - Audit toolkit command surface still carries legacy envelope compatibility payloads.
+  - Event diagnosis query facades still need typed adapters for all consumers.
+  smoke_commands: []
+generated_artifacts: []

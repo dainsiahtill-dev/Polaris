@@ -1,0 +1,64 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.586933Z",
+  "source_hash": "40fb2e303738c555",
+  "cell_id": "roles.host",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "UnifiedHostAdapter",
+      "description": "Unified host adapter.",
+      "defined_in": "polaris/cells/roles/host/internal/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "host_kind",
+          "doc": "The host kind this adapter is configured for."
+        },
+        {
+          "name": "get_profile",
+          "doc": "Get the capability profile for this host kind."
+        },
+        {
+          "name": "supports_streaming",
+          "doc": "Whether this host supports SSE streaming."
+        },
+        {
+          "name": "supports_tool_async",
+          "doc": "Whether this host supports async tool execution."
+        },
+        {
+          "name": "supports_file_write",
+          "doc": "Whether this host supports direct file system writes."
+        },
+        {
+          "name": "get_execution_hints",
+          "doc": "Get execution hints for role runtime based on host capabilities."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HostCapabilityProfile",
+      "description": "Capability profile for a given host kind.",
+      "defined_in": "polaris/cells/roles/host/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_capability_profile",
+      "description": "Get the capability profile for a host kind.",
+      "defined_in": "polaris/cells/roles/host/public/contracts.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

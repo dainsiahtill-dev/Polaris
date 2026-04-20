@@ -1,0 +1,76 @@
+id: factory.pipeline
+title: Factory Pipeline
+kind: workflow
+visibility: public
+stateful: true
+owner: orchestration
+purpose: 'Composite factory execution workflow boundary from delivery ingress to run
+  orchestration, controlled projection archetype experiments, back-mapping refresh,
+  selective reprojection, and archive trigger integration.
+
+  '
+current_modules:
+- polaris.cells.factory.pipeline.public.contracts
+tags:
+- composite
+owned_paths:
+- polaris/delivery/http/routers/factory.py
+- polaris/delivery/cli/factory/**
+- polaris/cells/factory/pipeline/internal/**
+- polaris/cells/factory/pipeline/tests/**
+public_contracts:
+  modules:
+  - polaris.cells.factory.pipeline.public.contracts
+  commands:
+  - StartFactoryRunCommandV1
+  - CancelFactoryRunCommandV1
+  - RunProjectionExperimentCommandV1
+  - RefreshProjectionBackMappingCommandV1
+  - ReprojectProjectionExperimentCommandV1
+  queries:
+  - GetFactoryRunStatusQueryV1
+  - ListFactoryRunsQueryV1
+  events:
+  - FactoryRunStartedEventV1
+  - FactoryRunCompletedEventV1
+  results:
+  - FactoryRunResultV1
+  - ProjectionExperimentResultV1
+  - ProjectionBackMappingRefreshResultV1
+  - ProjectionReprojectionResultV1
+  errors:
+  - FactoryPipelineErrorV1
+depends_on:
+- roles.runtime
+- runtime.task_runtime
+- runtime.state_owner
+- runtime.execution_broker
+- archive.factory_archive
+- audit.evidence
+- policy.workspace_guard
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- workspace/factory/*
+- runtime/factory/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:workspace/factory/*
+- fs.write:workspace/experiments/*
+- fs.write:runtime/runs/*
+- fs.write:runtime/events/*
+- process.spawn:factory/*
+- process.spawn:workspace/experiments/*
+- ws.outbound:factory/*
+verification:
+  tests:
+  - tests/test_worker_executor_smoke.py
+  - polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py
+  - polaris/cells/factory/pipeline/tests/test_projection_lab.py
+  - polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py
+  - polaris/cells/factory/pipeline/tests/test_projection_http_resources.py
+  - polaris/cells/factory/pipeline/tests/test_projection_reproject.py
+  gaps:
+  - Composite child-cell split for planner/director/qa paths is pending.
+  smoke_commands: []
+generated_artifacts: []

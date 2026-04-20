@@ -1,0 +1,77 @@
+card_id: "vc-20260325-terminal-console-thinking-stream"
+bug_summary: >
+  统一终端 console 在角色流式对话时吞掉 thinking 输出：kernel 与 console_host
+  仍保留了 thinking_chunk / complete.thinking，但 terminal_console._stream_turn
+  没有消费 thinking contract，导致用户看不到 think/thinking。
+
+classification: structural
+
+bug_path:
+  file: "polaris/delivery/cli/terminal_console.py"
+  method: "_stream_turn()"
+  symptom: "plain console 中 think/thinking 完全不显示，只剩 content/tool 事件"
+
+assumptions:
+  - id: "A1"
+    statement: "thinking 不是在 kernel 层丢失，而是 terminal console 渲染链没有处理 thinking_chunk"
+    status: verified_true
+    evidence: >
+      读 polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py，
+      现有测试明确断言 run_stream() 会发出 thinking_chunk；
+      读 polaris/delivery/cli/terminal_console.py:_stream_turn()，
+      只处理了 content_chunk/tool_call/tool_result/error/complete，没有 thinking_chunk 分支。
+
+  - id: "A2"
+    statement: "RoleConsoleHost 已经把 thinking 保留到了 complete 事件，所以只修 chunk 分支还不够"
+    status: verified_true
+    evidence: >
+      读 polaris/delivery/cli/director/console_host.py: stream_turn()，
+      complete 事件会带上 data.thinking；如果没有可见 thinking chunk，仍可通过 complete fallback 恢复。
+
+  - id: "A3"
+    statement: "这个问题属于共享 stream contract 消费不完整，而不是某个具体角色提示词问题"
+    status: verified_true
+    evidence: >
+      terminal_console 是统一 CLI 入口，被 director/toad/router/polaris_cli 复用。
+      一旦这里漏消费 thinking_chunk，所有走统一 console 的角色都会丢失 thinking 可见面。
+
+pre_mortem:
+  failure_point: >
+    如果修复只是在看到 thinking_chunk 时简单 print，而没有处理 thinking->content、
+    thinking->tool、complete.thinking fallback 和换行收束，最终会出现 thinking 仍丢失、
+    标签不闭合或 content/tool 排版重复的问题。
+  risk_zone:
+    - "polaris/delivery/cli/terminal_console.py"
+    - "polaris/delivery/cli/tests/test_terminal_console.py"
+    - "polaris/delivery/cli/director/console_host.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/delivery/cli/tests/test_terminal_console.py"
+      description: "新增统一 console 直接流式输出 thinking block 的回归测试"
+      expected: "thinking_chunk 会以 <thinking>...</thinking> 形式显示，content 仍只打印一次"
+      status: new
+    - file: "polaris/delivery/cli/tests/test_terminal_console.py"
+      description: "新增 complete.thinking fallback 的回归测试"
+      expected: "即使没有单独的 thinking_chunk，complete 里的 thinking 也会显示"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py"
+      description: "现有 kernel visible stream contract 测试"
+      expected: "thinking_chunk contract 继续成立"
+      status: existing_pass
+  integration_tests:
+    - description: "定向运行 terminal console 测试"
+      command: "python -m pytest -q polaris/delivery/cli/tests/test_terminal_console.py"
+      status: new
+  manual_check:
+    - "运行 python -m polaris.delivery.cli console --backend plain，确认 think/thinking 在终端重新可见"
+    - "确认 content/tool 事件排版未回退为重复输出"
+
+related_adrs:
+  - "ADR-0044"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-25"
+  verified_by: "self"
+  verified_at: "2026-03-25"

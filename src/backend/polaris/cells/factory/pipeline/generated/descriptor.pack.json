@@ -1,0 +1,1052 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.141392Z",
+  "source_hash": "b622e54a2301a5c9",
+  "cell_id": "factory.pipeline",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "build_python_back_mapping_index",
+      "description": "Create a symbol-level back-mapping index from projected Python files.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "build_python_back_mapping_index_from_workspace",
+      "description": "Refresh a symbol-level back-mapping index from current workspace files.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_python_back_mapping_index",
+      "description": "Create a symbol-level back-mapping index from a projection content map.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_symbol_rows",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_symbol_rows_with_tree_sitter",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_tree_sitter_parser",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tree_sitter_name",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_node_line_bounds",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_symbol_rows_with_ast",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_fallback_symbol_row",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_symbol_rows",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunStatus",
+      "description": "Factory run lifecycle status.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryConfig",
+      "description": "Factory run configuration.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StageResult",
+      "description": "Result of a stage execution.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRun",
+      "description": "A factory run with full audit trail.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryStageExecutor",
+      "description": "Execution adapter for concrete factory stages.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OrchestrationStageExecutor",
+      "description": "Production executor backed by OrchestrationCommandService.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_artifact_path",
+          "doc": ""
+        },
+        {
+          "name": "_write_json_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_write_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_write_stage_signal_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_artifact_exists",
+          "doc": ""
+        },
+        {
+          "name": "_missing_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_is_substantive_doc_text",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_docs_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_validate_pm_plan_contract",
+          "doc": ""
+        },
+        {
+          "name": "_load_pm_plan_tasks",
+          "doc": ""
+        },
+        {
+          "name": "_build_director_task_filter",
+          "doc": ""
+        },
+        {
+          "name": "_read_taskboard_stats",
+          "doc": ""
+        },
+        {
+          "name": "_is_taskboard_converged",
+          "doc": ""
+        },
+        {
+          "name": "_has_director_progress",
+          "doc": ""
+        },
+        {
+          "name": "_has_director_execution_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_metadata_indicates_execution",
+          "doc": ""
+        },
+        {
+          "name": "_build_orchestration_service",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_abort_checker",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunService",
+      "description": "Formal service for Factory runs with persistence and recovery.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_run_lock",
+          "doc": "获取 run_id 对应的细粒度锁。"
+        },
+        {
+          "name": "_build_abort_checker",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_heartbeat_interval_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_trigger_archive",
+          "doc": "Trigger async archiving of factory run to history."
+        },
+        {
+          "name": "_append_unique",
+          "doc": ""
+        },
+        {
+          "name": "_now",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FileLockTimeoutError",
+      "description": "Raised when file lock acquisition times out.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryStore",
+      "description": "Durable storage for factory runs with atomic writes",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_run_dir",
+          "doc": "Get directory for a run"
+        },
+        {
+          "name": "_write_temp_file",
+          "doc": "同步文件写入（在线程池中执行）"
+        },
+        {
+          "name": "_read_file_sync",
+          "doc": "同步文件读取（在线程池中执行）"
+        },
+        {
+          "name": "_write_file_sync",
+          "doc": "同步文件写入 helper（在线程池中执行）"
+        },
+        {
+          "name": "_append_file_sync",
+          "doc": "同步文件追加（在线程池中执行）"
+        },
+        {
+          "name": "_read_lines_sync",
+          "doc": "同步文件读取行（在线程池中执行）"
+        },
+        {
+          "name": "list_runs",
+          "doc": "List all run IDs"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_run_file_lock",
+      "description": "Return a process-local threading.Lock keyed by the resolved lower-case path.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_acquire_lock_with_timeout",
+      "description": "Acquire a threading.Lock with timeout.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
+    },
+    {
+      "type": "class",
+      "name": "JsonCliAppRenderer",
+      "description": "Render a traditional Python project from a target manifest.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/json_cli_app_renderer.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": ""
+        },
+        {
+          "name": "_render_readme",
+          "doc": ""
+        },
+        {
+          "name": "_render_pyproject",
+          "doc": ""
+        },
+        {
+          "name": "_render_package_init",
+          "doc": ""
+        },
+        {
+          "name": "_render_main",
+          "doc": ""
+        },
+        {
+          "name": "_render_models",
+          "doc": ""
+        },
+        {
+          "name": "_render_store",
+          "doc": ""
+        },
+        {
+          "name": "_render_service",
+          "doc": ""
+        },
+        {
+          "name": "_render_cli",
+          "doc": ""
+        },
+        {
+          "name": "_render_tests",
+          "doc": ""
+        },
+        {
+          "name": "_service_parameter",
+          "doc": ""
+        },
+        {
+          "name": "_to_text",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FieldSpec",
+      "description": "Describe one generated entity field.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CommandSpec",
+      "description": "Describe one user-visible capability command.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EntitySpec",
+      "description": "Describe the primary entity generated for a target project.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py",
+      "methods": [
+        {
+          "name": "record_id_field",
+          "doc": ""
+        },
+        {
+          "name": "searchable_fields",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TargetProjectManifest",
+      "description": "Describe a generated target project in Cell IR form.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py",
+      "methods": [
+        {
+          "name": "project_root",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TargetCellSpec",
+      "description": "Describe one target-side Cell produced for the experiment.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectionEntry",
+      "description": "Map one projected file back to one or more target cells.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_settings",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_verification_commands",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/models.py"
+    },
+    {
+      "type": "class",
+      "name": "ProjectionChangeAnalysisService",
+      "description": "Refresh back-mapping artifacts and compute impacted target cells.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_change_analysis.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "refresh_back_mapping",
+          "doc": "Refresh the current back-mapping index and compute change impact."
+        },
+        {
+          "name": "refresh_back_mapping_result",
+          "doc": ""
+        },
+        {
+          "name": "_read_required_json",
+          "doc": ""
+        },
+        {
+          "name": "_read_optional_json",
+          "doc": ""
+        },
+        {
+          "name": "_extract_project_root",
+          "doc": ""
+        },
+        {
+          "name": "_parse_projection_entries",
+          "doc": ""
+        },
+        {
+          "name": "_diff_indexes",
+          "doc": ""
+        },
+        {
+          "name": "_index_files",
+          "doc": ""
+        },
+        {
+          "name": "_index_symbols",
+          "doc": ""
+        },
+        {
+          "name": "_file_cell_ids",
+          "doc": ""
+        },
+        {
+          "name": "_symbol_cell_ids",
+          "doc": ""
+        },
+        {
+          "name": "_symbol_report",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectRenderer",
+      "description": "Render one project style into a traditional source tree.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": "Render a project manifest into relative file paths."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectVerificationRunner",
+      "description": "Run verification commands against a projected project root.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py",
+      "methods": [
+        {
+          "name": "run",
+          "doc": "Execute verification commands for a project root."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectionScenarioDefinition",
+      "description": "Describe how one experiment scenario is normalized and projected.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SubprocessProjectVerificationRunner",
+      "description": "Verification runner backed by subprocess execution.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "run",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryProjectionLabService",
+      "description": "Compile controlled experiment projects from Cell IR manifests.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "run_projection_experiment",
+          "doc": ""
+        },
+        {
+          "name": "reproject_experiment",
+          "doc": ""
+        },
+        {
+          "name": "_build_scenarios",
+          "doc": ""
+        },
+        {
+          "name": "_get_scenario_definition",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_renderer",
+          "doc": ""
+        },
+        {
+          "name": "_read_required_json",
+          "doc": ""
+        },
+        {
+          "name": "_extract_project_root",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_reprojection_impacts",
+          "doc": ""
+        },
+        {
+          "name": "_build_record_cli_manifest",
+          "doc": ""
+        },
+        {
+          "name": "_build_record_cli_target_cells",
+          "doc": ""
+        },
+        {
+          "name": "_build_record_cli_projection_entries",
+          "doc": ""
+        },
+        {
+          "name": "_build_resource_http_service_manifest",
+          "doc": ""
+        },
+        {
+          "name": "_build_resource_http_service_target_cells",
+          "doc": ""
+        },
+        {
+          "name": "_build_resource_http_service_projection_entries",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_project_slug",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_requirement",
+          "doc": ""
+        },
+        {
+          "name": "_build_requirement_fallback",
+          "doc": ""
+        },
+        {
+          "name": "_build_record_cli_pm_requirement_prompt",
+          "doc": ""
+        },
+        {
+          "name": "_build_resource_http_service_pm_requirement_prompt",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_int_setting",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_host_setting",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_bool_setting",
+          "doc": ""
+        },
+        {
+          "name": "_parse_json_object",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResourceHttpServiceRenderer",
+      "description": "Render a traditional Python HTTP resource service from a target manifest.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/resource_http_service_renderer.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": ""
+        },
+        {
+          "name": "_render_readme",
+          "doc": ""
+        },
+        {
+          "name": "_render_pyproject",
+          "doc": ""
+        },
+        {
+          "name": "_render_env",
+          "doc": ""
+        },
+        {
+          "name": "_render_package_init",
+          "doc": ""
+        },
+        {
+          "name": "_render_main",
+          "doc": ""
+        },
+        {
+          "name": "_render_models",
+          "doc": ""
+        },
+        {
+          "name": "_render_config",
+          "doc": ""
+        },
+        {
+          "name": "_render_blob_store",
+          "doc": ""
+        },
+        {
+          "name": "_render_index_store",
+          "doc": ""
+        },
+        {
+          "name": "_render_service",
+          "doc": ""
+        },
+        {
+          "name": "_render_http_api",
+          "doc": ""
+        },
+        {
+          "name": "_render_cli",
+          "doc": ""
+        },
+        {
+          "name": "_render_service_tests",
+          "doc": ""
+        },
+        {
+          "name": "_render_http_tests",
+          "doc": ""
+        },
+        {
+          "name": "_setting_text",
+          "doc": ""
+        },
+        {
+          "name": "_setting_int",
+          "doc": ""
+        },
+        {
+          "name": "_setting_bool",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakeNode",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakeTree",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakeParser",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py",
+      "methods": [
+        {
+          "name": "parse",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "test_back_mapping_prefers_tree_sitter_when_parser_is_available",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_configure_default_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py"
+    },
+    {
+      "type": "function",
+      "name": "test_refresh_back_mapping_detects_added_method_and_impacted_cell",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py"
+    },
+    {
+      "type": "function",
+      "name": "_configure_default_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
+    },
+    {
+      "type": "function",
+      "name": "test_resource_http_service_projection_generates_large_verified_project",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
+    },
+    {
+      "type": "function",
+      "name": "test_resource_http_service_projection_consumes_host_and_port_from_normalization",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
+    },
+    {
+      "type": "function",
+      "name": "_fake_normalize_requirement",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
+    },
+    {
+      "type": "function",
+      "name": "_configure_default_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+    },
+    {
+      "type": "function",
+      "name": "test_projection_lab_generates_record_cli_project_and_artifacts",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+    },
+    {
+      "type": "function",
+      "name": "test_projection_lab_rejects_unsupported_scenario",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+    },
+    {
+      "type": "function",
+      "name": "_configure_default_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_reproject.py"
+    },
+    {
+      "type": "function",
+      "name": "test_reproject_resource_http_service_rewrites_only_impacted_cells",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_reproject.py"
+    },
+    {
+      "type": "function",
+      "name": "_fake_normalize_requirement",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_reproject.py"
+    },
+    {
+      "type": "function",
+      "name": "build_parser",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/factory/projection_change_analysis.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/factory/projection_change_analysis.py"
+    },
+    {
+      "type": "function",
+      "name": "build_parser",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/factory/projection_lab.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/factory/projection_lab.py"
+    },
+    {
+      "type": "function",
+      "name": "build_parser",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/factory/projection_reproject.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/factory/projection_reproject.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_service",
+      "description": "Get a service instance bound to the current workspace.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_datetime",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_calculate_progress",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_phase",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_roles",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_gates",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_failure",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_map_service_run_to_contract",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_docs_ready",
+      "description": "Check whether required docs are already present.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_start_from",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_stage_list",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_stage_context",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_runtime_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_json_artifact",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_pm_plan_signature",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_docs_pipeline_state",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_loop_max_cycles",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_loop_stall_threshold",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_decide_delivery_loop_action",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_summary_json",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_summary_markdown",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

@@ -1,0 +1,33 @@
+{
+  "case_id": "qa_test_automation_strategy",
+  "role": "qa",
+  "title": "QA Creates Test Automation Strategy",
+  "description": "The QA role must design a comprehensive test automation strategy.",
+  "workspace_fixture": "qa_release_verdict",
+  "prompt": "Design a test automation strategy for the project. Return JSON: {pyramid_levels: {unit: int, integration: int, e2e: int}, frameworks: {unit: string, integration: string, e2e: string}, ci_cd_integration: string, test_data_strategy: string, maintenance_plan: string}.",
+  "tags": [
+    "qa",
+    "automation",
+    "strategy"
+  ],
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": [
+      "repo_tree",
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "pyramid_levels",
+      "frameworks",
+      "ci_cd"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "qa_automation_strategy"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4
+  }
+}

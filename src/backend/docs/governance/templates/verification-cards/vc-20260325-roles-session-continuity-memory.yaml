@@ -1,0 +1,86 @@
+card_id: "vc-20260325-roles-session-continuity-memory"
+bug_summary: >
+  角色对话在 CLI 中反复聚焦旧话题，并把历史消息重复注入给 LLM。
+  根因不是单一泄露，而是 session 复用、history 原样回放、context_override
+  重复注入以及 summarize 策略名实不符共同叠加。
+
+classification: structural
+
+bug_path:
+  file: "polaris/delivery/cli/director/console_host.py"
+  method: "stream_turn() + roles kernel context compaction"
+  symptom: >
+    旧对话主题（如改名、模型身份等元话题）会在后续工程会话里持续被模型当成当前上下文，
+    导致输出反复围绕过时主题展开。
+
+assumptions:
+  - id: "A1"
+    statement: "RoleConsoleHost 同时通过 history 和 context_override 把历史消息喂给模型。"
+    status: verified_true
+    evidence: >
+      读 console_host.py 旧实现，stream_turn() 在生成 ExecuteRoleSessionCommandV1 前
+      既设置 history=runtime_history，又把 merged_context['history']=history_messages 写入 context。
+      runtime/public/service.py 再把 command.context 转成 RoleTurnRequest.context_override，
+      于是同一批历史被重复注入一次为 history，一次为 system JSON。
+
+  - id: "A2"
+    statement: "无显式 session_id 时，CLI/host 会复用活动会话。"
+    status: verified_true
+    evidence: >
+      terminal_console.py 的 _resolve_role_session 旧实现调用 ensure_session()；
+      console_host.py 的 stream_turn() 旧实现也在 session_id 为空时调用 ensure_session()。
+      这让新进程仍能捡回旧 session 的 history。
+
+  - id: "A3"
+    statement: "roles.kernel 的 summarize 策略当前不做真实摘要，只退化为滑窗。"
+    status: verified_true
+    evidence: >
+      context_gateway.py 旧实现中 _summarize_messages() 直接返回 _adaptive_sliding_window(messages, 0)，
+      compression_strategy='summarize' 名义上开启摘要，实际上没有 continuity summary。
+
+pre_mortem:
+  failure_point: >
+    如果只禁止 session 复用而不处理 history/context layering，那么显式 resume
+    或其他宿主入口仍会把旧 history 作为高优先级 system context 注入，问题会换入口复发。
+  risk_zone:
+    - "polaris/delivery/cli/director/console_host.py"
+    - "polaris/cells/roles/kernel/internal/context_gateway.py"
+    - "polaris/kernelone/context/compaction.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/delivery/cli/director/tests/test_stream_protocol.py"
+      description: "RoleConsoleHost 新会话策略、continuity summary、上下文过滤"
+      expected: "显式 role 优先；无 session_id 创建新 session；summary 不带低价值旧话题"
+      status: added_pass
+    - file: "polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py"
+      description: "history summarize 与 token 压缩的 continuity summary 行为"
+      expected: "旧 history 生成摘要消息而非原样回灌"
+      status: added_pass
+    - file: "polaris/delivery/cli/tests/test_terminal_console.py"
+      description: "terminal_console 默认新 session 与输出去重"
+      expected: "默认 create_session；complete.content 不重复打印"
+      status: existing_pass
+  regression_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_stream_visible_output_contract.py"
+      description: "stream 可见输出合同"
+      expected: "thinking/content 仅输出清洗后的可见内容"
+      status: existing_pass
+    - file: "polaris/cells/roles/kernel/tests/test_run_stream_parity.py"
+      description: "run/run_stream parity"
+      expected: "tool-loop 与 transcript 行为不回归"
+      status: existing_pass
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "kernel stream tool loop"
+      expected: "工具循环语义保持正确"
+      status: existing_pass
+
+related_adrs:
+  - "ADR-0043"
+  - "ADR-0044"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-25"
+  verified_by: "self (targeted pytest)"
+  verified_at: "2026-03-25"

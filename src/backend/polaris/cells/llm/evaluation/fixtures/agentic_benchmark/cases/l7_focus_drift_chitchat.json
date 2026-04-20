@@ -1,0 +1,52 @@
+{
+  "case_id": "l7_focus_drift_chitchat",
+  "role": "director",
+  "title": "L7 Focus Drift - Long Chit-Chat",
+  "description": "纯对话干扰后回归文件读取。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "我们先聊聊人工智能的未来吧，你觉得 Grok 怎么样？再讨论一下 TypeScript 和 Python 哪个更好？现在请回到最初的任务：读取 src/utils/helpers.py 的前 30 行。",
+  "tags": [
+    "l7",
+    "focus-drift",
+    "chitchat",
+    "conversation"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "src/utils/helpers.py",
+        "description": "必须读取 src/utils/helpers.py"
+      },
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "30",
+        "description": "n 参数必须为 30 或省略（默认行为）"
+      }
+    ],
+    "required_output_substrings": [
+      "src/utils/helpers.py",
+      "def "
+    ],
+    "forbidden_output_substrings": [
+      "Grok",
+      "TypeScript",
+      "Python",
+      "忘记了"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check"
+    ]
+  }
+}

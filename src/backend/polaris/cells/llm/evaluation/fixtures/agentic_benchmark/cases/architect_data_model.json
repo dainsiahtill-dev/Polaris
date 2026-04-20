@@ -1,0 +1,33 @@
+{
+  "case_id": "architect_data_model",
+  "role": "architect",
+  "title": "Architect Designs Data Model",
+  "description": "The Architect must design a normalized data model with proper relationships.",
+  "workspace_fixture": "architect_graph_first_boundary",
+  "prompt": "Design a normalized data model for a project management system. Return JSON: {entities: [{name, fields: [{name, type, constraints}], relationships: [{to, type}]}], indexes: [string], constraints: [string]}. Minimize redundancy, maximize integrity.",
+  "tags": [
+    "architect",
+    "database",
+    "data_model"
+  ],
+  "judge": {
+    "score_threshold": 0.80,
+    "required_tools": [
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "entities",
+      "fields",
+      "relationships"
+    ],
+    "forbidden_output_substrings": [
+      "<thinking>",
+      "<tool_call>"
+    ],
+    "validators": [
+      "architect_data_model"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2
+  }
+}

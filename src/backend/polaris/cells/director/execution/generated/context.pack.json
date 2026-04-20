@@ -1,0 +1,83 @@
+{
+  "id": "director.execution",
+  "title": "Director Execution",
+  "kind": "workflow",
+  "purpose": "Execute Director task workflows from claim to verification based on approved blueprints with strict policy and audit controls.",
+  "summary": "Business capability boundary for director.execution.",
+  "owned_paths": [
+    "polaris/application/services/director_service.py",
+    "polaris/application/services/director_logic.py",
+    "polaris/application/services/director_code_intel.py",
+    "polaris/application/role_agent/director_agent.py",
+    "polaris/application/role_agent/director_cli.py",
+    "polaris/kernelone/tools/director/**",
+    "polaris/delivery/http/v2/director.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ExecuteDirectorTaskCommandV1",
+      "RetryDirectorTaskCommandV1"
+    ],
+    "queries": [
+      "GetDirectorTaskStatusQueryV1"
+    ],
+    "events": [
+      "DirectorTaskStartedEventV1",
+      "DirectorTaskCompletedEventV1"
+    ],
+    "results": [
+      "DirectorExecutionResultV1"
+    ],
+    "errors": [
+      "DirectorExecutionErrorV1"
+    ]
+  },
+  "neighbors": [
+    "chief_engineer.blueprint",
+    "policy.permission",
+    "policy.workspace_guard",
+    "runtime.state_owner",
+    "audit.evidence",
+    "finops.budget_guard",
+    "events.fact_stream",
+    "llm.control_plane"
+  ],
+  "state_owners": [
+    "runtime/state/director/*"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "fs.write:runtime/tasks/*",
+    "fs.write:runtime/state/director/*",
+    "fs.write:runtime/events/director.llm.events.jsonl",
+    "process.spawn:director/*",
+    "llm.invoke:director/*"
+  ],
+  "invariants": [
+    "All state writes must remain single-owner and contract-driven.",
+    "Append-only evidence and event semantics must be preserved.",
+    "All text file reads and writes must use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/application/services/director_service.py",
+    "polaris/application/services/director_logic.py",
+    "polaris/application/services/director_code_intel.py",
+    "polaris/application/role_agent/director_agent.py",
+    "polaris/application/role_agent/director_cli.py",
+    "polaris/kernelone/tools/director/**",
+    "polaris/delivery/http/v2/director.py"
+  ],
+  "test_targets": [
+    "tests/test_director_logic.py",
+    "tests/test_director_service_convergence.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

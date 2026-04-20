@@ -1,0 +1,38 @@
+export const UI_TERMS = {
+  roles: {
+    pm: '尚书令',
+    director: '工部侍郎',
+    chief_engineer: '工部尚书',
+    qa: '门下侍中',
+    architect: '中书令',
+    cfo: '户部尚书',
+    hr: '吏部尚书',
+  },
+  nouns: {
+    workspace: '疆域',
+    logs: '起居注',
+    history: '案卷史',
+    docsWizard: '政事堂',
+    runtimeArtifacts: '起居注卷宗',
+  },
+  states: {
+    running: '当值',
+    idle: '休朝',
+    active: '在值',
+    ready: '就绪',
+    offline: '离线',
+    pinging: '探测中',
+    success: '允准',
+    failed: '黜落',
+    blocked: '留中',
+    unknown: '未判',
+  },
+  actions: {
+    startLoop: '启署',
+    stopLoop: '停署',
+    runOnce: '单次督办',
+    resumeLast: '续办上轮',
+    openLogs: '阅起居注',
+    openSettings: '治所设置',
+  },
+} as const;

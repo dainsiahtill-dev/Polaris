@@ -1,0 +1,29 @@
+{
+  "case_id": "l7_error_recovery",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Error Recovery",
+  "description": "验证模型能从错误中恢复。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取一个不存在的文件 nonexistent_file_xyz.py，然后读取 config.py。",
+  "tags": ["l7", "recovery", "error_handling"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

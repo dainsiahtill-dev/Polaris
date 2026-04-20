@@ -1,0 +1,75 @@
+card_id: "vc-20260327-context-os-attention-followup-window"
+bug_summary: >
+  Context OS 在用户短确认回复（例如“需要”）场景下无法承接上一条 assistant 的待确认动作，
+  同时 active window 未强制保留最近 2-3 条消息，导致焦点回退到更早任务。
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/context/context_os/runtime.py + domain_adapters/generic.py"
+  method: "_canonicalize_and_offload / extract_state_hints / _collect_active_window"
+  symptom: "用户回复“需要”后，run_card.next_action_hint 仍停留在上上条任务"
+
+assumptions:
+  - id: "A1"
+    statement: "短确认回复需要和上一条 assistant 问句绑定，否则无法形成可执行状态补丁"
+    status: verified_true
+    evidence: >
+      Generic adapter 仅按关键词抽取 state hints；“需要”本身不携带目标动作，导致 current_goal/open_loops
+      不更新。
+
+  - id: "A2"
+    statement: "仅依赖 recent_window_messages 参数不足以稳定保留最新对话关键语义"
+    status: verified_true
+    evidence: >
+      _collect_active_window 可被传入 recent_window_messages=1；在低信号路由下，最近确认消息可能被清出。
+
+  - id: "A3"
+    statement: "active_window 内事件不应同时出现在 context_slice_plan.excluded"
+    status: verified_true
+    evidence: >
+      excluded 构建先判断 clear 后判断 active，存在近期低信号事件被双重标记风险。
+
+pre_mortem:
+  failure_point: >
+    若 follow-up 绑定过宽，会把无关“需要”误绑定旧问题；若 recent pin 太强，会挤占 token 预算。
+    采用策略：只绑定“assistant 问句 -> 下一条 user 回复”单跳窗口，且 pin 数量由 policy 控制。
+  risk_zone:
+    - "polaris/kernelone/context/context_os/runtime.py"
+    - "polaris/kernelone/context/context_os/domain_adapters/generic.py"
+    - "polaris/kernelone/context/tests/test_context_os.py"
+    - "polaris/kernelone/context/tests/test_context_os_domain_adapters.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/context/tests/test_context_os_domain_adapters.py"
+      description: "metadata follow-up 确认时，generic adapter 提取 goals/open_loops"
+      expected: "“需要”+followup_action 被提升为目标与 open loop"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_context_os.py"
+      description: "assistant 问句 + user 短确认，run_card 持续聚焦 follow-up action"
+      expected: "current_goal/next_action_hint 为 follow-up action，不回退旧任务"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_context_os.py"
+      description: "recent_window_messages=1 时仍强制 pin 最新 3 条消息"
+      expected: "latest 3 sequences 始终在 active_window，且不出现在 excluded"
+      status: new
+  integration_tests:
+    - description: "Context OS 核心回归"
+      command: >
+        pytest polaris/kernelone/context/tests/test_context_os_domain_adapters.py
+        polaris/kernelone/context/tests/test_context_os.py
+        polaris/kernelone/context/tests/test_continuity.py -q
+      status: existing_fix
+  manual_check:
+    - "复现实例：assistant 问“需要我修复吗”，user 回复“需要”，确认 Next focus 指向修复动作"
+    - "确认 latest 2-3 messages 在调试视图中稳定可见，不被 low_signal 清洗掉"
+
+related_adrs:
+  - "ADR-0060"
+
+sign_off:
+  completed_by: "codex-gpt5"
+  completed_at: "2026-03-27"
+  verified_by: "self (tests)"
+  verified_at: "2026-03-27"

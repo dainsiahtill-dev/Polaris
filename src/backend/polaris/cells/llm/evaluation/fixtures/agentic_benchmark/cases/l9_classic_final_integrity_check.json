@@ -1,0 +1,37 @@
+{
+  "case_id": "l9_classic_final_integrity_check",
+  "role": "director",
+  "title": "L9 Classic Final Integrity Check",
+  "description": "最终完整性检查。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "完成所有操作后，用 repo_tree 检查项目结构是否仍然完整，没有任何文件丢失或损坏。",
+  "tags": [
+    "l9",
+    "classic",
+    "integrity-check",
+    "final-verification"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_tree"],
+        "fragment": ".",
+        "description": "检查完整项目结构"
+      }
+    ],
+    "required_output_substrings": [
+      "├──",
+      "└──"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "integrity_check"
+    ]
+  }
+}

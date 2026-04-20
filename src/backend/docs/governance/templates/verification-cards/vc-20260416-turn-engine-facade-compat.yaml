@@ -1,0 +1,87 @@
+card_id: "vc-20260416-turn-engine-facade-compat"
+bug_summary: >
+  TurnEngine 在 cutover 为 TransactionKernel facade 之后，遗失了部分兼容契约
+  （stream finalization 覆盖、complete.result、turn metadata），同时测试仍把旧 run/stream
+  parity 当成当前事实，导致 facade 真实缺口与过时断言混在一起。
+
+classification: pattern
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_engine/engine.py"
+  method: "run() / run_stream()"
+  symptom: >
+    stream complete 事件缺失 result，finalization 内容与决策期文本混拼，
+    run 结果缺失 turn_id / turn_envelope；测试大量按旧双轨 parity 失败。
+
+assumptions:
+  - id: "A1"
+    statement: "TurnEngine 仍应恢复旧 while-loop/tool-loop 行为，才能让 parity 测试成立"
+    status: verified_false
+    evidence: >
+      当前 graph/verify pack 已把 TransactionKernel 作为单轮事务内核；TurnEngine 只是 facade。
+      旧多轮 loop parity 不是当前架构事实。
+
+  - id: "A2"
+    statement: "complete.result 缺失只是测试问题，不需要补 facade 契约"
+    status: verified_false
+    evidence: >
+      现有兼容调用点和测试都把 complete.result 当作 TurnEngine facade 的可消费结果；
+      这是兼容层应维持的最小契约。
+
+  - id: "A3"
+    statement: "run_stream 内容混拼是 because finalization 没有覆盖决策期可见文本"
+    status: verified_true
+    evidence: >
+      engine.py 当前在所有非 thinking chunk 上一律 append；
+      core.py 的 stream shim 已经在 is_finalization=True 时 reset accumulated_content。
+
+  - id: "A4"
+    statement: "kernel stream/tool-loop 相关失败里有一部分只是测试替身签名不匹配"
+    status: verified_true
+    evidence: >
+      当前实现用 keyword `args=` 调 `_execute_single_tool`；
+      多个测试替身仍定义为 `tool_args`，导致执行记录为空或结果走 error receipt。
+
+pre_mortem:
+  failure_point: >
+    如果为了通过旧 parity 测试而把 TransactionKernel 重新扩成旧 loop 语义，
+    会把 facade freeze 逆转并重新引入双轨行为。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/turn_engine/engine.py"
+    - "polaris/cells/roles/kernel/tests/test_run_stream_parity.py"
+    - "polaris/cells/roles/kernel/tests/test_stream_parity.py"
+    - "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_run_stream_parity.py"
+      description: "验证 facade metadata、complete.result 与 finalization 覆盖逻辑"
+      expected: "只断言当前兼容契约，不再断言旧双轨 parity"
+      status: pending
+    - file: "polaris/cells/roles/kernel/tests/test_stream_parity.py"
+      description: "删除/改写过时 parity 断言，保留当前 stream facade 事实"
+      expected: "所有保留测试通过"
+      status: pending
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "对齐 kernel stream/tool-loop 的上下文与替身签名"
+      expected: "工具调用与 finalization 语义按当前事实通过"
+      status: pending
+  gates:
+    - command: "ruff check polaris/cells/roles/kernel/internal/turn_engine/engine.py polaris/cells/roles/kernel/tests/test_run_stream_parity.py polaris/cells/roles/kernel/tests/test_stream_parity.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py --fix"
+      expected: "0 issues"
+    - command: "ruff format polaris/cells/roles/kernel/internal/turn_engine/engine.py polaris/cells/roles/kernel/tests/test_run_stream_parity.py polaris/cells/roles/kernel/tests/test_stream_parity.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      expected: "formatted"
+    - command: "mypy polaris/cells/roles/kernel/internal/turn_engine/engine.py polaris/cells/roles/kernel/tests/test_run_stream_parity.py polaris/cells/roles/kernel/tests/test_stream_parity.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      expected: "Success: no issues found"
+    - command: "python -m pytest polaris/cells/roles/kernel/tests/test_run_stream_parity.py polaris/cells/roles/kernel/tests/test_stream_parity.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py -q"
+      expected: "all pass"
+
+related_adrs:
+  - "ADR-0042"
+  - "ADR-0043"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-04-16"
+  verified_by: "pending"
+  verified_at: ""

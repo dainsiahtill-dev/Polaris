@@ -1,0 +1,99 @@
+id: roles.kernel
+title: Roles Kernel
+kind: capability
+visibility: public
+stateful: false
+owner: roles
+purpose: 'Provide the shared role execution kernel for prompt construction, output
+  parsing, quality checking, error classification, retry policy, and kernel-level
+  observability.
+
+  '
+current_modules:
+- polaris.cells.roles.kernel.public.service
+- polaris.cells.roles.kernel.internal.kernel
+- polaris.cells.roles.kernel.internal.prompt_builder
+- polaris.cells.roles.kernel.internal.output_parser
+- polaris.cells.roles.kernel.internal.quality_checker
+- polaris.cells.roles.kernel.internal.llm_caller
+- polaris.cells.roles.kernel.internal.llm_cache
+- polaris.cells.roles.kernel.internal.error_category
+- polaris.cells.roles.kernel.internal.retry_policy_engine
+- polaris.cells.roles.kernel.internal.token_budget
+- polaris.cells.roles.kernel.internal.events
+- polaris.cells.roles.kernel.internal.context_gateway
+- polaris.cells.roles.kernel.internal.context_models
+- polaris.cells.roles.kernel.internal.tool_gateway
+- polaris.cells.roles.kernel.internal.turn_engine
+- polaris.cells.roles.kernel.internal.constitution_rules
+- polaris.cells.roles.kernel.internal.constitution_adaptor
+tags: []
+owned_paths:
+- polaris/cells/roles/kernel/**
+public_contracts:
+  modules:
+  - polaris.cells.roles.kernel.public.contracts
+  commands:
+  - BuildRolePromptCommandV1
+  - ParseRoleOutputCommandV1
+  - CheckRoleQualityCommandV1
+  - ExecuteRoleKernelTurnCommandV1
+  queries:
+  - ClassifyKernelErrorQueryV1
+  - ResolveRetryPolicyQueryV1
+  events:
+  - RoleKernelPromptBuiltEventV1
+  - RoleKernelParsedOutputEventV1
+  - RoleKernelQualityCheckedEventV1
+  results:
+  - RoleKernelResultV1
+  errors:
+  - RoleKernelErrorV1
+depends_on:
+- director.execution
+- llm.dialogue
+- roles.adapters
+- roles.profile
+- roles.session
+- runtime.task_runtime
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- ws.outbound:runtime/*
+- llm.invoke:roles/*
+- process.spawn:roles/*
+verification:
+  tests:
+  - tests/test_prompt_builder_retry.py
+  - tests/test_output_parser_patch_file.py
+  - tests/test_quality_checker_director_tool_calls.py
+  - tests/test_llm_caller.py
+  - tests/test_role_kernel_write_budget.py
+  - tests/test_turn_engine_semantic_stages.py
+  - tests/test_turn_engine_policy_convergence.py
+  - tests/test_kernel_stream_tool_loop.py
+  gaps:
+  - Some legacy callers still import role kernel components through application-level
+    compatibility paths.
+  - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts,
+    but parser input and transcript output are not yet compile-time-distinct types.
+
+    '
+  - 'KernelOne llm stream contracts still pass through a re-export chain (shared_contracts
+    -> engine.contracts -> executor) and rely on parity tests until more consumers
+    adopt canonical source imports.
+
+    '
+  - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the\
+    \ single execution engine supporting CHAT and WORKFLOW modes: - kernel.run(role,\
+    \ request) — blocking execution with RoleTurnResult - kernel.run_stream(role,\
+    \ request) — async generator yielding event dicts Both accept RoleTurnRequest\
+    \ with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified path (mandatory):\n  \
+    \  RoleRuntimeService → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel\
+    \ is the execution engine; roles.runtime is the facade + lifecycle. Legacy standalone\
+    \ paths (StandaloneRoleAgent, AgentService, RoleAgentTUI) are frozen — all production\
+    \ routes must go through RoleExecutionKernel.\n"
+  smoke_commands: []
+generated_artifacts: []

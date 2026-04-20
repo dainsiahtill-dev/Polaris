@@ -1,0 +1,49 @@
+{
+  "case_id": "l9_hallucination_after_tool_result",
+  "role": "director",
+  "title": "L9 Hallucination After Real Tool Result",
+  "description": "测试是否基于真实工具结果回答。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先读取 server.py，然后告诉我它里面有没有一个叫 start_server() 的函数。",
+  "tags": [
+    "l9",
+    "hallucination",
+    "tool-result",
+    "faithfulness"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "server.py",
+        "description": "必须读取 server.py"
+      }
+    ],
+    "forbidden_output_substrings": [
+      "根据文件内容推测",
+      "可能",
+      "也许"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "fact_anchoring_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

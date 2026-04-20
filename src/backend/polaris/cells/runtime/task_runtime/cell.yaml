@@ -1,0 +1,55 @@
+id: runtime.task_runtime
+title: Runtime Task Runtime
+kind: workflow
+visibility: public
+stateful: true
+owner: runtime
+purpose: 'Provide the single task lifecycle runtime for PM/Director/QA collaboration,
+  including create/claim/update/reopen transitions and canonical taskboard rows.
+
+  '
+current_modules:
+- polaris.cells.runtime.task_runtime.public.service
+- polaris.cells.runtime.task_runtime.internal.service
+- polaris.kernelone.task_graph.task_board
+tags: []
+owned_paths:
+- polaris/cells/runtime/task_runtime/**
+public_contracts:
+  modules:
+  - polaris.cells.runtime.task_runtime.public.contracts
+  commands:
+  - CreateRuntimeTaskCommandV1
+  - UpdateRuntimeTaskCommandV1
+  - ReopenRuntimeTaskCommandV1
+  queries:
+  - ListRuntimeTasksQueryV1
+  - GetRuntimeTaskQueryV1
+  events:
+  - RuntimeTaskLifecycleEventV1
+  results:
+  - RuntimeTaskResultV1
+  errors:
+  - RuntimeTaskRuntimeErrorV1
+depends_on:
+- policy.workspace_guard
+- audit.evidence
+- events.fact_stream
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/tasks/*
+effects_allowed:
+- fs.read:runtime/tasks/*
+- fs.write:runtime/tasks/*
+- fs.write:runtime/events/taskboard.terminal.events.jsonl
+- ws.outbound:runtime/*
+verification:
+  tests:
+  - polaris/cells/runtime/task_runtime/tests/test_service.py
+  - polaris/tests/test_runtime_projection_snapshot_tasks.py
+  gaps:
+  - Role-agent legacy entrypoints still need full migration to runtime.task_runtime
+    contracts.
+  smoke_commands: []
+generated_artifacts: []

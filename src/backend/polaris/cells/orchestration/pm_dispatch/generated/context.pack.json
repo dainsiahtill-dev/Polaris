@@ -1,0 +1,81 @@
+{
+  "id": "orchestration.pm_dispatch",
+  "title": "PM Dispatch",
+  "kind": "workflow",
+  "purpose": "Dispatch PM contracts into executable task iterations, drive task assignment and lifecycle transitions, and record dispatch outcomes.",
+  "summary": "Business capability boundary for orchestration.pm_dispatch.",
+  "owned_paths": [
+    "polaris/application/orchestration/support/dispatch_pipeline.py",
+    "polaris/application/orchestration/support/iteration_state.py",
+    "polaris/application/orchestration/support/file_change_tracker.py",
+    "polaris/application/orchestration/support/error_classifier.py",
+    "polaris/application/orchestration/usecases/orchestration_command_service.py",
+    "polaris/application/orchestration/state_bridge.py",
+    "polaris/delivery/http/v2/orchestration.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "DispatchPmTasksCommandV1",
+      "ResumePmIterationCommandV1"
+    ],
+    "queries": [
+      "GetPmDispatchStatusQueryV1"
+    ],
+    "events": [
+      "PmTaskDispatchedEventV1",
+      "PmIterationAdvancedEventV1"
+    ],
+    "results": [
+      "PmDispatchResultV1"
+    ],
+    "errors": [
+      "PmDispatchErrorV1"
+    ]
+  },
+  "neighbors": [
+    "orchestration.pm_planning",
+    "orchestration.workflow_runtime",
+    "director.execution",
+    "qa.audit_verdict",
+    "runtime.state_owner",
+    "audit.evidence",
+    "policy.permission",
+    "policy.workspace_guard"
+  ],
+  "state_owners": [
+    "runtime/state/dispatch/*"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/contracts/*",
+    "fs.write:runtime/state/dispatch/*",
+    "fs.write:runtime/events/runtime.events.jsonl",
+    "ws.outbound:runtime/*"
+  ],
+  "invariants": [
+    "All state writes must remain single-owner and contract-driven.",
+    "Append-only evidence and event semantics must be preserved.",
+    "All text file reads and writes must use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/application/orchestration/support/dispatch_pipeline.py",
+    "polaris/application/orchestration/support/iteration_state.py",
+    "polaris/application/orchestration/support/file_change_tracker.py",
+    "polaris/application/orchestration/support/error_classifier.py",
+    "polaris/application/orchestration/usecases/orchestration_command_service.py",
+    "polaris/application/orchestration/state_bridge.py",
+    "polaris/delivery/http/v2/orchestration.py"
+  ],
+  "test_targets": [
+    "tests/test_dispatch_pipeline_engine_dispatch.py",
+    "tests/test_orchestration_command_service.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

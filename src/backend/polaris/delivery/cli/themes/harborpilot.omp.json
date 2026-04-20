@@ -1,0 +1,51 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "version": 3,
+  "final_space": true,
+  "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#22c55e",
+          "template": "{{ if .Env.POLARIS_ROLE }}{{ .Env.POLARIS_ROLE }}{{ else }}role{{ end }}"
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#94a3b8",
+          "template": " :: "
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#60a5fa",
+          "template": "{{ if .Env.POLARIS_SESSION_ID }}{{ .Env.POLARIS_SESSION_ID }}{{ else }}session{{ end }}"
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#94a3b8",
+          "template": " @ "
+        },
+        {
+          "type": "path",
+          "style": "plain",
+          "foreground": "#f8fafc",
+          "properties": {
+            "style": "full"
+          }
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#94a3b8",
+          "template": " >"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "case_id": "qa_release_verdict",
+  "role": "qa",
+  "title": "QA Returns Deterministic Pass-Fail JSON",
+  "description": "The QA role must inspect the local release note and emit a JSON verdict with `passed` and `findings`.",
+  "workspace_fixture": "qa_release_verdict",
+  "prompt": "Read the local README.md and return JSON only with keys `passed` and `findings`. The verdict must reflect the release note and test summary in the file.",
+  "tags": [
+    "qa",
+    "json",
+    "verdict"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "read_file"
+    ],
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "read_file"
+        ],
+        "fragment": "README.md",
+        "description": "must inspect release note"
+      }
+    ],
+    "required_output_substrings": [
+      "passed",
+      "findings"
+    ],
+    "validators": [
+      "qa_passfail_json",
+      "no_prompt_leakage"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 4
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "case_id": "l2_complex_types_enum",
+  "level": "L2",
+  "role": "director",
+  "title": "Complex Type Adherence",
+  "prompt": "请用 repo_rg 搜索 backend 和 frontend 目录里的 TODO 注释，paths 参数必须是数组。",
+  "description": "验证模型是否遵守数组参数类型约束，避免把数组字段写成字符串。",
+  "workspace_fixture": "base_tooling_workspace",
+  "tags": ["schema", "array_type"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["repo_rg"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file", "append_to_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "repo_rg",
+      "first_call_arg_equals": {
+        "pattern": "TODO"
+      },
+      "first_call_arg_types": {
+        "paths": "array"
+      },
+      "first_call_arg_array_contains": {
+        "paths": ["backend", "frontend"]
+      },
+      "first_call_reject_unknown_args": true
+    },
+    "non_stream": {
+      "required_tools": ["repo_rg"],
+      "min_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

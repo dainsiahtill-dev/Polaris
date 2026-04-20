@@ -1,0 +1,79 @@
+version: 1
+pipeline_id: acga-governance-architecture-guard
+description: >
+  Governance pipeline template for ACGA catalog/subgraph enforcement and
+  KernelOne release-grade architecture gates.
+
+report_directory: workspace/meta/governance_reports
+baseline_file: tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+stages:
+  - id: catalog_governance_audit
+    purpose: Produce governance audit report without blocking CI.
+    commands:
+      - python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only --report workspace/meta/governance_reports/catalog_governance_gate.audit.json
+
+  - id: catalog_governance_fail_on_new
+    purpose: Block newly introduced governance violations against baseline.
+    commands:
+      - python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json --report workspace/meta/governance_reports/catalog_governance_gate.fail_on_new.json
+      - python -m pytest -q tests/architecture/test_catalog_governance_gate.py
+
+  - id: catalog_governance_hard_fail
+    purpose: Strict mode for cleaned domains; fail on any blocker/high violation.
+    commands:
+      - python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode hard-fail --report workspace/meta/governance_reports/catalog_governance_gate.hard_fail.json
+
+  - id: kernelone_release_gate
+    purpose: >
+      Enforce KernelOne publish-grade gates: collect-only stability, architecture
+      fences, exception budget non-regression, and suite execution.
+    commands:
+      - python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode collect --report workspace/meta/governance_reports/kernelone_release_gate.collect.json
+      - python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+      - python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode tests --report workspace/meta/governance_reports/kernelone_release_gate.tests.json
+
+  - id: delivery_cli_hygiene_gate
+    purpose: >
+      Enforce non-kernelone/cells delivery CLI import hygiene: conditional path
+      bootstrap only, no legacy path injection, and import-time side-effect guard.
+    commands:
+      - python -m pytest -q tests/architecture/test_delivery_cli_import_hygiene.py
+
+  - id: opencode_convergence_gate
+    purpose: >
+      Enforce canonical OpenCode-derived entrypoints and block deep-module
+      import forks outside owner packages.
+    commands:
+      - python docs/governance/ci/scripts/run_opencode_convergence_gate.py --workspace . --mode hard-fail --report workspace/meta/governance_reports/opencode_convergence_gate.json
+      - python -m pytest -q tests/architecture/test_opencode_convergence_gate.py
+
+  - id: manifest_catalog_reconciliation_gate
+    purpose: Block new manifest<->catalog drift while freezing existing debt.
+    commands:
+      - python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --mismatch-baseline tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl --report workspace/meta/governance_reports/manifest_catalog_reconciliation.json
+      - python -m pytest -q tests/test_governance_cell_manifests.py
+
+  - id: structural_bug_governance_gate
+    purpose: >
+      Enforce structural bug governance closure for runtime contracts: verify
+      debt register, verify packs, ADR/card linkage, llm contract parity, and
+      raw/sanitized assistant-turn stage boundaries.
+    commands:
+      - python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py
+      - python -m pytest -q tests/architecture/test_kernelone_llm_contract_reexports.py
+      - python -m pytest -q polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py
+
+  - id: tool_calling_canonical_gate
+    purpose: >
+      Enforce canonical tool identity at raw stream-event level for
+      tool_calling_matrix so alias mapping cannot mask missing/incorrect tools.
+    commands:
+      - python -m polaris.delivery.cli agentic-eval --workspace . --suite tool_calling_matrix --role director --matrix-transport both --provider-id runtime_binding --model runtime_binding --format json
+      - python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py --workspace . --role director --mode hard-fail --report workspace/meta/governance_reports/tool_calling_canonical_gate.json
+
+notes:
+  - catalog_governance_fail_on_new is the default gate during migration and blocks regressions.
+  - catalog_governance_hard_fail can be enabled per branch once baseline debt is burned down.
+  - Keep report paths stable to preserve machine-readable audit history.
+  - structural_bug_governance_gate is intended for high-risk runtime fixes, not every trivial bug.

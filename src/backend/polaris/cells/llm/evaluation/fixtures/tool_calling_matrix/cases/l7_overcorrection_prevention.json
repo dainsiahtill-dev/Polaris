@@ -1,0 +1,36 @@
+{
+  "case_id": "l7_overcorrection_prevention",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Overcorrection Prevention",
+  "description": "测试 Agent 能否避免过度修正（正确路径被错误修正）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 config.py。如果成功，不要尝试其他路径；如果失败，再用搜索工具查找。",
+  "tags": ["l7", "overcorrection", "path-stability", "success-detection"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2,
+      "first_tool": "read_file",
+      "first_call_arg_equals": {
+        "file": "config.py"
+      },
+      "required_output_substrings": []
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,57 @@
+id: orchestration.workflow_activity
+title: Workflow Activity Definitions
+kind: capability
+visibility: public
+stateful: false
+owner: orchestration
+purpose: 'Owns the Activity and Workflow definition public contracts and DI port for
+  injecting HandlerRegistry implementations (ActivityRegistry, WorkflowRegistry) into
+  the WorkflowEngine. All concrete implementations live in workflow_runtime; this
+  cell defines only the port contracts and the registry abstractions.
+
+  '
+current_modules:
+- polaris.cells.orchestration.workflow_activity.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/orchestration/workflow_activity/**
+public_contracts:
+  modules:
+  - polaris.cells.orchestration.workflow_activity.public.contracts
+  commands: []
+  queries: []
+  events: []
+  results:
+  - ActivityExecutionContext
+  - ActivityExecutionResult
+  - DirectorTaskInput
+  - DirectorTaskResult
+  - DirectorWorkflowInput
+  - DirectorWorkflowResult
+  - EmbeddedActivityAPI
+  - EmbeddedWorkflowAPI
+  - ExecutionEvent
+  - PMWorkflowInput
+  - PMWorkflowResult
+  - QAWorkflowInput
+  - QAWorkflowResult
+  - TaskContract
+  - TaskExecutionStatus
+  - TaskFailureRecord
+  - WorkflowContext
+  errors: []
+depends_on:
+- orchestration.workflow_engine
+- orchestration.workflow_runtime
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed: []
+verification:
+  tests:
+  - tests/orchestration/test_workflow_runtime.py
+  gaps:
+  - Activity definition unit tests not yet separated from integration tests.
+  - Workflow definition coverage pending.
+  smoke_commands: []
+generated_artifacts: []

@@ -1,0 +1,57 @@
+{
+  "case_id": "l8_focus_drift_goal_switch",
+  "role": "director",
+  "title": "L8 Goal Switch Then Recover",
+  "description": "明确'忘记刚才任务'后强制回归原始目标。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先帮我实现一个新函数 add_numbers，然后忘记刚才的任务。现在请完成最初的目标：列出 tests/ 目录下的所有文件。",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "goal-switch",
+    "recovery"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": "tests",
+        "description": "必须针对 tests 目录"
+      }
+    ],
+    "forbidden_tools": [
+      "search_replace",
+      "append_to_file",
+      "precision_edit"
+    ],
+    "required_output_substrings": [
+      "tests/"
+    ],
+    "forbidden_output_substrings": [
+      "add_numbers",
+      "def add_numbers",
+      "忘记了"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

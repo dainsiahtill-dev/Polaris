@@ -1,0 +1,118 @@
+# Output Format: Architecture Blueprint
+# 用于架构设计任务的输出格式
+
+id: architecture_blueprint
+version: "1.0"
+
+description: 架构设计/重构方案的专用输出格式
+
+sections:
+  - id: overview
+    name: Architecture Overview
+    emoji: "🏛️"
+    required: true
+    description: 系统整体架构描述
+
+  - id: modules
+    name: Module Design
+    emoji: "📦"
+    required: true
+    description: 模块职责划分和接口定义
+
+  - id: data_flow
+    name: Data Flow
+    emoji: "🔄"
+    required: true
+    description: 核心数据流和控制流
+
+  - id: technology
+    name: Technology Choices
+    emoji: "⚙️"
+    required: true
+    description: 技术选型理由
+
+  - id: risks
+    name: Risk Assessment
+    emoji: "⚠️"
+    required: true
+    description: 风险识别和缓解措施
+
+  - id: plan
+    name: Implementation Plan
+    emoji: "📋"
+    required: true
+    description: 实施步骤和时间线
+
+template: |
+  # 架构设计文档
+
+  ## {{emoji}} {{name}}
+  {{content}}
+
+  ---
+
+section_templates:
+  overview: |
+    ## 🏛️ 系统架构概述
+
+    ### 背景
+    {background}
+
+    ### 目标
+    {goals}
+
+    ### 约束
+    {constraints}
+
+  modules: |
+    ## 📦 模块设计
+
+    ### 模块结构
+    ```
+    {module_diagram}
+    ```
+
+    ### 模块职责
+    {module_responsibilities}
+
+    ### 接口契约
+    {contracts}
+
+  data_flow: |
+    ## 🔄 数据流
+
+    ### 核心流程
+    {flows}
+
+    ### 状态管理
+    {state_management}
+
+  technology: |
+    ## ⚙️ 技术选型
+
+    ### 选型对比
+    {comparisons}
+
+    ### 选型理由
+    {rationale}
+
+  risks: |
+    ## ⚠️ 风险评估
+
+    ### 识别风险
+    {risks}
+
+    ### 缓解措施
+    {mitigations}
+
+  plan: |
+    ## 📋 实施计划
+
+    ### 阶段划分
+    {phases}
+
+    ### 时间线
+    {timeline}
+
+    ### 验收标准
+    {acceptance_criteria}

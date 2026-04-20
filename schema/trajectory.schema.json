@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Director Trajectory",
+  "description": "Index linking a Director run to its inputs, artifacts, and event span.",
+  "type": "object",
+  "examples": [
+    {
+      "schema_version": 1,
+      "run_id": "pm-2026-02-02-0001",
+      "task": {
+        "task_id": "task-001",
+        "task_fingerprint": "sha1:abcd1234",
+        "pm_iteration": 1,
+        "director_iteration": 1
+      },
+      "inputs": {
+        "pm_tasks_path": ".polaris/runtime/PM_TASKS.json",
+        "policy_path": ".polaris/runtime/director_policy.json",
+        "policy_effective_hash": "sha1:ef01",
+        "required_evidence_present": true
+      },
+      "artifacts": {
+        "director_result_path": ".polaris/runtime/DIRECTOR_RESULT.json",
+        "qa_response_path": ".polaris/runtime/QA_RESPONSE.md",
+        "events_path": ".polaris/runtime/events.jsonl"
+      },
+      "event_span": {
+        "seq_start": 120,
+        "seq_end": 180,
+        "count": 61
+      },
+      "summary": {
+        "status": "success",
+        "tool_rounds": 3,
+        "total_lines_read": 420
+      }
+    }
+  ],
+  "required": [
+    "schema_version",
+    "run_id",
+    "task",
+    "inputs",
+    "artifacts",
+    "event_span",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version (fixed)."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Run identifier that links artifacts and events."
+    },
+    "task": {
+      "type": "object",
+      "description": "Task identifiers for this trajectory.",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task id from PM_TASKS.json."
+        },
+        "task_fingerprint": {
+          "type": "string",
+          "description": "Fingerprint of immutable task fields."
+        },
+        "pm_iteration": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "PM iteration that produced the contract."
+        },
+        "director_iteration": {
+          "type": "integer",
+          "description": "Director iteration for this run."
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Input artifacts used to start the run.",
+      "properties": {
+        "pm_tasks_path": {
+          "type": "string",
+          "description": "Path to PM_TASKS.json used for the run."
+        },
+        "policy_path": {
+          "type": "string",
+          "description": "Path to director policy file."
+        },
+        "policy_effective_hash": {
+          "type": "string",
+          "description": "Hash of the effective policy."
+        },
+        "required_evidence_present": {
+          "type": "boolean",
+          "description": "Whether required evidence was present at start."
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Artifacts produced by the run.",
+      "properties": {
+        "director_result_path": {
+          "type": "string",
+          "description": "Path to DIRECTOR_RESULT.json."
+        },
+        "qa_response_path": {
+          "type": "string",
+          "description": "Path to QA_RESPONSE.md."
+        },
+        "planner_response_path": {
+          "type": "string",
+          "description": "Path to PLANNER_RESPONSE.md."
+        },
+        "ollama_response_path": {
+          "type": "string",
+          "description": "Path to OLLAMA_RESPONSE.md."
+        },
+        "reviewer_response_path": {
+          "type": "string",
+          "description": "Path to REVIEW_RESPONSE.md."
+        },
+        "evidence_path": {
+          "type": "string",
+          "description": "Path to evidence JSON for validation."
+        },
+        "events_path": {
+          "type": "string",
+          "description": "Path to events.jsonl."
+        }
+      }
+    },
+    "event_span": {
+      "type": "object",
+      "description": "Event sequence span covering this run.",
+      "properties": {
+        "seq_start": {
+          "type": "integer",
+          "description": "First event seq for this run."
+        },
+        "seq_end": {
+          "type": "integer",
+          "description": "Last event seq for this run."
+        },
+        "count": {
+          "type": "integer",
+          "description": "Total number of events in span."
+        }
+      },
+      "required": [
+        "seq_start",
+        "seq_end"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "description": "Outcome summary for quick display.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "success/fail/blocked/unknown"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Failure code if any."
+        },
+        "tool_rounds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Tool rounds used."
+        },
+        "total_lines_read": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Total lines read."
+        },
+        "repair_attempts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Repair attempts performed."
+        },
+        "risk_score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Patch risk score."
+        }
+      }
+    }
+  }
+}

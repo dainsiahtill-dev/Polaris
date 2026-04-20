@@ -1,0 +1,44 @@
+{
+  "case_id": "pm_stakeholder_report",
+  "role": "pm",
+  "title": "PM Generates Stakeholder Status Report",
+  "description": "The PM role must synthesize project status into a clear report for non-technical stakeholders.",
+  "workspace_fixture": "pm_task_contract",
+  "prompt": "Review the current project state and generate a stakeholder report. Return JSON with: `summary` (2 sentence executive summary), `progress` (percentage), `blockers` (array), `next_steps` (array), `metrics` ({velocity, burndown, cycle_time}). Write for non-technical audience.",
+  "tags": [
+    "pm",
+    "reporting",
+    "stakeholder"
+  ],
+  "judge": {
+    "score_threshold": 0.78,
+    "required_tools": [
+      "read_file",
+      "repo_tree"
+    ],
+    "required_output_substrings": [
+      "summary",
+      "progress",
+      "blockers"
+    ],
+    "forbidden_output_substrings": [
+      "<thinking>",
+      "<tool_call>",
+      "stack trace"
+    ],
+    "validators": [
+      "pm_report_json"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

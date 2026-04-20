@@ -1,0 +1,90 @@
+id: archive.run_archive
+title: Run Archive
+kind: capability
+visibility: public
+stateful: true
+owner: governance
+
+purpose: >
+  Publish terminal runtime runs into immutable history manifests and index entries
+  under workspace history while keeping runtime state read-only from the archive path.
+
+tags:
+  - template
+  - target
+  - storage-archive
+
+owned_paths:
+  - cells/archive/run_archive/**
+
+inputs:
+  - name: archive_run
+    mode: command
+    contract: ArchiveRunCommandV1
+    returns: ArchiveManifestV1
+  - name: list_history_runs
+    mode: query
+    contract: ListHistoryRunsQueryV1
+    returns: HistoryRunsResultV1
+  - name: get_archive_manifest
+    mode: query
+    contract: GetArchiveManifestQueryV1
+    returns: ArchiveManifestV1
+
+outputs:
+  - name: read_runtime_run
+    mode: query
+    target: runtime.state_owner
+    contract: GetRuntimeRunQueryV1
+  - name: resolve_storage_layout
+    mode: query
+    target: storage.layout
+    contract: GetStorageLayoutQueryV1
+  - name: enforce_workspace_archive_guard
+    mode: query
+    target: policy.workspace_guard
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - name: emit_run_archived
+    mode: event
+    target: audit.evidence
+    contract: RunArchivedEventV1
+
+depends_on:
+  - runtime.state_owner
+  - storage.layout
+  - policy.workspace_guard
+  - audit.evidence
+
+state_owners:
+  - history_run_archive
+
+effects_allowed:
+  - fs.read:runtime/runs/*
+  - fs.write:workspace/history/runs/*
+  - fs.write:workspace/history/runs.index.jsonl
+
+does_not:
+  - mutate_runtime_source_state
+  - write_history_outside_run_archive_scope
+  - bypass_workspace_guard
+
+invariants:
+  - history run manifests are append-only once published
+  - history index updates are idempotent
+  - all archive text writes use explicit UTF-8
+
+verification:
+  tests:
+    - cells/archive/run_archive/tests/test_behavior.py
+    - cells/archive/run_archive/tests/test_contracts.py
+  contracts:
+    - ArchiveRunCommandV1
+    - GetArchiveManifestQueryV1
+    - ListHistoryRunsQueryV1
+    - RunArchivedEventV1
+    - ArchiveManifestV1
+
+generated_artifacts:
+  - generated/context.pack.json
+
+template: true

@@ -1,0 +1,79 @@
+card_id: "vc-20260327-context-os-invariant-enforcement"
+bug_summary: >
+  state_first_context_os 在会话持久化入口缺少强制不变量校验，导致包含 raw truth
+  字段（如 transcript_log/messages）的 payload 可能被写入 context_config，破坏 truth/projection 边界。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/session/internal/role_session_service.py"
+  method: "_sanitize_context_config / get_context_os_snapshot / update_context_os_snapshot"
+  symptom: "state_first_context_os 可能被当成会话真相副本而非派生投影"
+
+assumptions:
+  - id: "A1"
+    statement: "state_first_context_os 持久化入口需要统一校验，不应依赖调用方自觉"
+    status: verified_true
+    evidence: >
+      RoleSessionService 之前直接写入 context_config，缺少对 state_first_context_os
+      的 ownership boundary 校验。
+
+  - id: "A2"
+    statement: "SessionContinuityEngine 的 persisted payload 也应在生成端执行 invariant 校验"
+    status: verified_true
+    evidence: >
+      _build_context_os_persisted_payload 是 canonical 写入源之一，若未校验，后续演进可能回流
+      forbidden truth keys。
+
+  - id: "A3"
+    statement: "读取链路遇到历史脏数据时应安全降级而不是继续当作有效 snapshot"
+    status: verified_true
+    evidence: >
+      get_context_os_snapshot 增加校验失败告警并返回 None，可避免脏投影污染 context memory 查询。
+
+pre_mortem:
+  failure_point: >
+    如果校验规则过严，会误杀合法前向兼容字段；如果过松，会继续允许 raw truth 渗透。
+    采取策略：仅拦截 ownership 违规键，不做全 schema 白名单锁死。
+  risk_zone:
+    - "polaris/kernelone/context/context_os/invariants.py"
+    - "polaris/kernelone/context/session_continuity.py"
+    - "polaris/cells/roles/session/internal/role_session_service.py"
+    - "polaris/cells/roles/session/internal/context_memory_service.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/context/tests/test_context_os_invariants.py"
+      description: "新增 persisted projection invariant 校验测试"
+      expected: "允许派生 payload；拒绝 raw truth keys 与错误 mode"
+      status: new
+    - file: "polaris/cells/roles/session/tests/test_role_session_service.py"
+      description: "新增写入拒绝与读侧降级测试"
+      expected: "update_context_os_snapshot 拒绝 truth payload；get_context_os_snapshot 遇脏数据返回 None"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_continuity.py"
+      description: "新增 continuity 投影持久化键边界测试"
+      expected: "persisted state_first_context_os 不包含 transcript_log/messages/history"
+      status: new
+  integration_tests:
+    - description: "Context OS + roles.session + roles.runtime continuity 回归"
+      command: >
+        pytest polaris/kernelone/context/tests/test_context_os_invariants.py
+        polaris/cells/roles/session/tests/test_role_session_service.py
+        polaris/cells/roles/session/tests/test_context_memory_service.py
+        polaris/kernelone/context/tests/test_continuity.py
+        polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+        -q
+      status: existing_fix
+  manual_check:
+    - "确认 state_first_context_os 持久化内容为派生投影，不包含 raw transcript payload"
+    - "确认历史脏数据不会被 context memory service 当作可查询快照"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt5"
+  completed_at: "2026-03-27"
+  verified_by: "self (tests)"
+  verified_at: "2026-03-27"
+

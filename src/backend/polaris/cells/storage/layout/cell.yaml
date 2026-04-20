@@ -1,0 +1,53 @@
+id: storage.layout
+title: Storage Layout
+kind: capability
+visibility: public
+stateful: true
+owner: storage
+purpose: 'Resolve global, workspace and runtime persistence layout and path policies
+  as a canonical storage contract for all cells.
+
+  '
+current_modules:
+- polaris.cells.storage.layout.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/storage/layout/internal/**
+- polaris/kernelone/storage/layout.py
+- polaris/kernelone/storage/io_paths.py
+- polaris/kernelone/storage/policy.py
+public_contracts:
+  modules:
+  - polaris.cells.storage.layout.public.contracts
+  commands:
+  - RefreshStorageLayoutCommandV1
+  queries:
+  - ResolveStorageLayoutQueryV1
+  - ResolveRuntimePathQueryV1
+  - ResolveWorkspacePathQueryV1
+  events:
+  - StorageLayoutResolvedEventV1
+  results:
+  - StorageLayoutResultV1
+  errors:
+  - StorageLayoutErrorV1
+depends_on:
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- storage_archive_pipeline
+- execution_governance_pipeline
+state_owners:
+- workspace/meta/storage_layout/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.read:runtime/**
+- fs.write:workspace/meta/storage_layout/*
+verification:
+  tests:
+  - polaris/kernelone/storage/tests/test_storage_layout.py
+  - tests/test_storage_layout_v4.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

@@ -1,0 +1,58 @@
+id: roles.profile
+title: Roles Profile
+kind: capability
+visibility: public
+stateful: true
+owner: roles
+purpose: 'Own the canonical role profile schema, policy model, registry, builtin profile
+  loading, and profile serialization boundaries.
+
+  '
+current_modules:
+- polaris.cells.roles.profile.public.service
+- polaris.cells.roles.profile.internal.schema
+- polaris.cells.roles.profile.internal.registry
+- polaris.cells.roles.profile.internal.builtin_profiles
+tags: []
+owned_paths:
+- polaris/cells/roles/profile/**
+public_contracts:
+  modules:
+  - polaris.cells.roles.profile.public.contracts
+  commands:
+  - RegisterRoleProfileCommandV1
+  - LoadRoleProfilesCommandV1
+  - SaveRoleProfilesCommandV1
+  queries:
+  - GetRoleProfileQueryV1
+  - ListRoleProfilesQueryV1
+  events:
+  - RoleProfileRegisteredEventV1
+  - RoleProfilesLoadedEventV1
+  results:
+  - RoleProfileResultV1
+  - RoleProfilesResultV1
+  errors:
+  - RoleProfileErrorV1
+depends_on:
+- policy.workspace_guard
+- storage.layout
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- config/roles/*
+effects_allowed:
+- fs.read:config/roles/*
+- fs.write:config/roles/*
+verification:
+  tests:
+  - tests/test_role_adapters_taskboard_alignment.py
+  - tests/test_role_dialogue_validation_retry.py
+  - tests/test_role_events.py
+  - tests/test_role_kernel_write_budget.py
+  gaps:
+  - Several consumers still rely on application-level role exports and should be redirected
+    to the cell boundary.
+  smoke_commands: []
+generated_artifacts: []

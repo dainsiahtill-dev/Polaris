@@ -1,0 +1,54 @@
+{
+  "case_id": "l3_precise_multi_file_refactor",
+  "role": "director",
+  "title": "L3 Precise Multi-File Refactor",
+  "description": "把 stable_join 函数改名为 safe_join，并更新项目中所有调用它的地方（包括 frontend/app.ts）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "把 stable_join 函数改名为 safe_join，并更新项目中所有调用它的地方（包括 frontend/app.ts）。",
+  "tags": [
+    "l3",
+    "refactor",
+    "multi-file",
+    "rename"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg",
+      "search_replace"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 10,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "stable_join",
+        "description": "搜索 stable_join 函数"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "safe_join",
+        "description": "替换为 safe_join"
+      }
+    ],
+    "forbidden_output_substrings": [
+      "stable_join"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

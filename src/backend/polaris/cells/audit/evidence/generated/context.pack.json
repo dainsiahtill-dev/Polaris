@@ -1,0 +1,67 @@
+{
+  "id": "audit.evidence",
+  "title": "Evidence Audit",
+  "kind": "capability",
+  "purpose": "Own append-only runtime evidence events, integrity verification, and evidence query/export.",
+  "summary": "Owns runtime evidence event storage and verification so audit trails remain append-only and queryable.",
+  "owned_paths": [
+    "polaris/application/audit/**",
+    "polaris/application/services/evidence_service.py",
+    "polaris/application/services/audit_service.py",
+    "polaris/kernelone/audit/**",
+    "polaris/infrastructure/audit/**",
+    "polaris/delivery/http/audit_router.py",
+    "polaris/delivery/http/v2/audit.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "AppendEvidenceEventCommandV1"
+    ],
+    "queries": [
+      "QueryEvidenceEventsV1",
+      "VerifyEvidenceChainV1"
+    ],
+    "events": [
+      "EvidenceAppendedEventV1"
+    ],
+    "results": [
+      "EvidenceQueryResultV1",
+      "EvidenceVerificationResultV1"
+    ],
+    "errors": [
+      "EvidenceAuditErrorV1"
+    ]
+  },
+  "neighbors": [
+    "policy.workspace_guard"
+  ],
+  "state_owners": [
+    "runtime/events/*"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/*",
+    "fs.write:runtime/events/*"
+  ],
+  "invariants": [
+    "evidence storage is append-only",
+    "evidence verification never mutates source data",
+    "all text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "polaris/application/services/evidence_service.py",
+    "polaris/infrastructure/audit/stores/evidence_store.py"
+  ],
+  "test_targets": [
+    "tests/test_log_pipeline_storage_layout.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
+

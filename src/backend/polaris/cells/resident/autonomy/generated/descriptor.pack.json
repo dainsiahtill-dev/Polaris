@@ -1,0 +1,959 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.400272Z",
+  "source_hash": "0c1d94a372ba6b9b",
+  "cell_id": "resident.autonomy",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "CapabilityGraph",
+      "description": "Maintain an evidence-backed capability graph.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/capability_graph.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "rebuild",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CounterfactualLab",
+      "description": "Generate simulated experiments from failed decisions.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/counterfactual_lab.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "replay",
+          "doc": ""
+        },
+        {
+          "name": "_baseline_strategy",
+          "doc": ""
+        },
+        {
+          "name": "_select_candidate",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_success_rate",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/counterfactual_lab.py"
+    },
+    {
+      "type": "class",
+      "name": "DecisionTraceRecorder",
+      "description": "Append-only decision trace.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/decision_trace.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "record",
+          "doc": ""
+        },
+        {
+          "name": "list_recent",
+          "doc": ""
+        },
+        {
+          "name": "count_by_verdict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ExecutionStage",
+      "description": "执行阶段",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskProgressItem",
+      "description": "单个任务的进度",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "GoalExecutionView",
+      "description": "目标执行投影 - 派生视图，不持久化",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ExecutionProjectionService",
+      "description": "执行投影服务",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "build_projection",
+          "doc": "构建执行投影"
+        },
+        {
+          "name": "get_cached_projection",
+          "doc": "获取缓存的投影（如果有）"
+        },
+        {
+          "name": "invalidate_cache",
+          "doc": "使缓存失效"
+        },
+        {
+          "name": "build_bulk_projections",
+          "doc": "批量构建执行投影"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "infer_stage",
+      "description": "从任务列表推断当前阶段",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "estimate_eta",
+      "description": "估算剩余时间（分钟）",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "calculate_percent",
+      "description": "计算整体进度百分比",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "get_current_task",
+      "description": "获取当前正在执行的任务主题",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "build_goal_execution_projection",
+      "description": "构建目标执行投影",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py"
+    },
+    {
+      "type": "function",
+      "name": "get_execution_projection_service",
+      "description": "获取全局 ExecutionProjectionService 实例",
+      "defined_in": "polaris/cells/resident/autonomy/internal/execution_projection.py"
+    },
+    {
+      "type": "class",
+      "name": "GoalGovernor",
+      "description": "Create, approve, reject, and materialize governed goals.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_governor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "list_goals",
+          "doc": ""
+        },
+        {
+          "name": "create_manual_proposal",
+          "doc": ""
+        },
+        {
+          "name": "generate",
+          "doc": ""
+        },
+        {
+          "name": "approve_goal",
+          "doc": ""
+        },
+        {
+          "name": "reject_goal",
+          "doc": ""
+        },
+        {
+          "name": "materialize_goal",
+          "doc": ""
+        },
+        {
+          "name": "_title_from_insight",
+          "doc": ""
+        },
+        {
+          "name": "_build_pm_contract",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_stable_goal_fingerprint",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_governor.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_from_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/goal_governor.py"
+    },
+    {
+      "type": "class",
+      "name": "StrategyInsightEngine",
+      "description": "Build strategy scorecards and decision-process insights.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/meta_cognition.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "refresh",
+          "doc": ""
+        },
+        {
+          "name": "analyze_decisions",
+          "doc": "Analyze decisions and return strategy insights."
+        },
+        {
+          "name": "_build_strategy_scorecard",
+          "doc": ""
+        },
+        {
+          "name": "_build_insights",
+          "doc": ""
+        },
+        {
+          "name": "_collect_evidence_refs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "selected_strategy_tags",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/meta_cognition.py"
+    },
+    {
+      "type": "function",
+      "name": "verdict_success",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/meta_cognition.py"
+    },
+    {
+      "type": "function",
+      "name": "outcome_gap",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/meta_cognition.py"
+    },
+    {
+      "type": "class",
+      "name": "ResidentPMBridge",
+      "description": "Stage approved Resident goals into governed PM-facing artifacts.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/pm_bridge.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "stage_goal",
+          "doc": ""
+        },
+        {
+          "name": "_promote_to_pm_runtime",
+          "doc": ""
+        },
+        {
+          "name": "_build_staged_contract",
+          "doc": ""
+        },
+        {
+          "name": "_render_plan_block",
+          "doc": ""
+        },
+        {
+          "name": "_build_run_directive",
+          "doc": ""
+        },
+        {
+          "name": "_backup_active_pm_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_upsert_plan_block",
+          "doc": ""
+        },
+        {
+          "name": "_begin_marker",
+          "doc": ""
+        },
+        {
+          "name": "_end_marker",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_json_text",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/pm_bridge.py"
+    },
+    {
+      "type": "class",
+      "name": "_ResidentServiceCache",
+      "description": "Thread-safe LRU cache for ResidentService instances.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_runtime_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_or_create",
+          "doc": "Return cached service or create a new one, evicting LRU if needed."
+        },
+        {
+          "name": "clear",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ResidentService",
+      "description": "Long-lived resident engineer service with explicit persistence boundaries.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_runtime_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "recover",
+          "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": ""
+        },
+        {
+          "name": "stop",
+          "doc": ""
+        },
+        {
+          "name": "set_mode",
+          "doc": ""
+        },
+        {
+          "name": "update_identity",
+          "doc": ""
+        },
+        {
+          "name": "record_decision",
+          "doc": ""
+        },
+        {
+          "name": "list_decisions",
+          "doc": ""
+        },
+        {
+          "name": "get_decision_evidence_bundle",
+          "doc": "获取决策关联的证据包详情。"
+        },
+        {
+          "name": "list_goals",
+          "doc": ""
+        },
+        {
+          "name": "create_goal_proposal",
+          "doc": ""
+        },
+        {
+          "name": "approve_goal",
+          "doc": ""
+        },
+        {
+          "name": "reject_goal",
+          "doc": ""
+        },
+        {
+          "name": "materialize_goal",
+          "doc": ""
+        },
+        {
+          "name": "stage_goal",
+          "doc": ""
+        },
+        {
+          "name": "list_skills",
+          "doc": ""
+        },
+        {
+          "name": "list_experiments",
+          "doc": ""
+        },
+        {
+          "name": "list_improvements",
+          "doc": ""
+        },
+        {
+          "name": "run_meta_cognition",
+          "doc": ""
+        },
+        {
+          "name": "run_skill_foundry",
+          "doc": ""
+        },
+        {
+          "name": "rebuild_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "run_counterfactual_lab",
+          "doc": ""
+        },
+        {
+          "name": "run_self_improvement_lab",
+          "doc": ""
+        },
+        {
+          "name": "tick",
+          "doc": ""
+        },
+        {
+          "name": "get_status",
+          "doc": ""
+        },
+        {
+          "name": "_persist_core_state",
+          "doc": ""
+        },
+        {
+          "name": "_record_locked_decision",
+          "doc": ""
+        },
+        {
+          "name": "_stage_goal_locked",
+          "doc": ""
+        },
+        {
+          "name": "_find_goal",
+          "doc": ""
+        },
+        {
+          "name": "_refresh_identity_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "_refresh_agenda_view",
+          "doc": ""
+        },
+        {
+          "name": "get_goal_execution_view",
+          "doc": "获取目标执行投影视图。"
+        },
+        {
+          "name": "list_goal_executions",
+          "doc": "列出所有目标的执行投影（仅 approved 和 materialized 状态）。"
+        },
+        {
+          "name": "update_goal_execution_progress",
+          "doc": "更新目标执行进度（由 Director 调用）。"
+        },
+        {
+          "name": "_extract_tasks_from_pm_run",
+          "doc": "从 PM run 结果提取任务列表。"
+        },
+        {
+          "name": "_extract_tasks_from_contract",
+          "doc": "从 contract 提取任务列表。"
+        },
+        {
+          "name": "_map_director_status",
+          "doc": "映射 Director 任务状态到执行投影状态。"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_runtime_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_mode",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_runtime_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_resident_service",
+      "description": "Get or create a ResidentService for the given workspace (LRU-cached).",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_runtime_service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_resident_services",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_runtime_service.py"
+    },
+    {
+      "type": "function",
+      "name": "record_resident_decision",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_runtime_service.py"
+    },
+    {
+      "type": "class",
+      "name": "ResidentPaths",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_storage.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentStorage",
+      "description": "Filesystem persistence for resident state.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/resident_storage.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "ensure_dirs",
+          "doc": ""
+        },
+        {
+          "name": "read_json",
+          "doc": ""
+        },
+        {
+          "name": "write_json",
+          "doc": ""
+        },
+        {
+          "name": "read_jsonl",
+          "doc": ""
+        },
+        {
+          "name": "append_jsonl",
+          "doc": ""
+        },
+        {
+          "name": "_load_items_container",
+          "doc": ""
+        },
+        {
+          "name": "save_items",
+          "doc": ""
+        },
+        {
+          "name": "load_identity",
+          "doc": ""
+        },
+        {
+          "name": "save_identity",
+          "doc": ""
+        },
+        {
+          "name": "load_agenda",
+          "doc": ""
+        },
+        {
+          "name": "save_agenda",
+          "doc": ""
+        },
+        {
+          "name": "load_runtime_state",
+          "doc": ""
+        },
+        {
+          "name": "save_runtime_state",
+          "doc": ""
+        },
+        {
+          "name": "load_goals",
+          "doc": ""
+        },
+        {
+          "name": "save_goals",
+          "doc": ""
+        },
+        {
+          "name": "load_insights",
+          "doc": ""
+        },
+        {
+          "name": "save_insights",
+          "doc": ""
+        },
+        {
+          "name": "load_meta_state",
+          "doc": ""
+        },
+        {
+          "name": "save_meta_state",
+          "doc": ""
+        },
+        {
+          "name": "load_capability_graph",
+          "doc": ""
+        },
+        {
+          "name": "save_capability_graph",
+          "doc": ""
+        },
+        {
+          "name": "load_skills",
+          "doc": ""
+        },
+        {
+          "name": "save_skills",
+          "doc": ""
+        },
+        {
+          "name": "load_skill_proposals",
+          "doc": ""
+        },
+        {
+          "name": "save_skill_proposals",
+          "doc": ""
+        },
+        {
+          "name": "find_skill_proposal_by_pattern",
+          "doc": "Find a skill proposal by pattern (for duplicate detection)."
+        },
+        {
+          "name": "load_experiments",
+          "doc": ""
+        },
+        {
+          "name": "save_experiments",
+          "doc": ""
+        },
+        {
+          "name": "load_improvements",
+          "doc": ""
+        },
+        {
+          "name": "save_improvements",
+          "doc": ""
+        },
+        {
+          "name": "append_decision",
+          "doc": ""
+        },
+        {
+          "name": "load_decisions",
+          "doc": ""
+        },
+        {
+          "name": "append_tick_history",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SelfImprovementLab",
+      "description": "Promote strong experiments into governed improvement proposals.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/self_improvement_lab.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "propose",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_target_surface",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/self_improvement_lab.py"
+    },
+    {
+      "type": "class",
+      "name": "SkillFoundry",
+      "description": "Build evidence-backed skill artifacts from successful execution traces.",
+      "defined_in": "polaris/cells/resident/autonomy/internal/skill_foundry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "extract",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_primary_strategy_tag",
+      "description": "",
+      "defined_in": "polaris/cells/resident/autonomy/internal/skill_foundry.py"
+    },
+    {
+      "type": "class",
+      "name": "ResidentWorkspaceRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentStartRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResidentIdentityPatch",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DecisionOptionPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DecisionRecordPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GoalProposalPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GoalNotePayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GoalStageRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GoalRunRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_settings",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_start",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_stop",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_tick",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_identity",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_patch_identity",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_agenda",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_goals",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_create_goal",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_approve_goal",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_reject_goal",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_materialize_goal",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_stage_goal",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_goal_execution",
+      "description": "Get GoalExecutionView for a specific goal.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_goals_execution_bulk",
+      "description": "Get GoalExecutionView for all active goals.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_decisions",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_decision_evidence",
+      "description": "Get EvidenceBundle for a specific decision.",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_record_decision",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_skills",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_extract_skills",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_experiments",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_run_experiments",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_improvements",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    },
+    {
+      "type": "function",
+      "name": "resident_run_improvements",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/resident.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

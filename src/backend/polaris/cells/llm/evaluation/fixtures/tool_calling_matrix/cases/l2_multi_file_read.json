@@ -1,0 +1,34 @@
+{
+  "case_id": "l2_multi_file_read",
+  "level": "L2",
+  "role": "director",
+  "title": "L2 Multi-File Read",
+  "description": "验证模型能并行读取多个文件。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请读取 workspace 根目录下的 config.py 和 server.py 两个文件。",
+  "tags": ["l2", "parallel", "read"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 2,
+      "required_tool_call_counts": {
+        "read_file": 2
+      }
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 2
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

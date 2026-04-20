@@ -1,0 +1,67 @@
+id: orchestration.workflow_runtime
+title: Workflow Runtime
+kind: capability
+visibility: public
+stateful: true
+owner: orchestration
+purpose: 'Own workflow engine runtime, activity and workflow registration, and workflow
+  state persistence for PM, Director and QA orchestration.
+
+  '
+current_modules:
+- polaris.cells.orchestration.workflow_runtime.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/orchestration/workflow_runtime/internal/**
+- polaris/infrastructure/db/repositories/workflow_runtime_store.py
+public_contracts:
+  modules:
+  - polaris.cells.orchestration.workflow_runtime.public.contracts
+  commands:
+  - StartWorkflowCommandV1
+  - CancelWorkflowCommandV1
+  queries:
+  - QueryWorkflowStatusV1
+  - QueryWorkflowEventsV1
+  events:
+  - WorkflowExecutionStartedEventV1
+  - WorkflowExecutionCompletedEventV1
+  results:
+  - WorkflowExecutionResultV1
+  errors:
+  - WorkflowRuntimeErrorV1
+depends_on:
+- archive.run_archive
+- audit.evidence
+- events.fact_stream
+- orchestration.pm_dispatch
+- orchestration.pm_planning
+- orchestration.workflow_engine
+- policy.permission
+- policy.workspace_guard
+- resident.autonomy
+- roles.adapters
+- roles.profile
+- runtime.execution_broker
+- runtime.state_owner
+- workspace.integrity
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/workflows/*
+- runtime/state/workflow/*
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/workflows/*
+- fs.write:runtime/state/workflow/*
+- fs.write:runtime/events/runtime.events.jsonl
+- db.read_write:workflow_runtime
+- process.spawn:workflow/*
+verification:
+  tests:
+  - tests/orchestration/test_workflow_runtime.py
+  - tests/test_embedded_orchestration_dag.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

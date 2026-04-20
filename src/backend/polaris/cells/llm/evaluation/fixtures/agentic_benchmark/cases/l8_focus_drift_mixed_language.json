@@ -1,0 +1,59 @@
+{
+  "case_id": "l8_focus_drift_mixed_language",
+  "role": "director",
+  "title": "L8 Mixed Language Drift",
+  "description": "语言切换干扰，测试多语言环境下目标专注度。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先用英文聊 5 句关于 xAI 的话题，然后用中文告诉我项目结构，最后回到最初的任务：用中文表格展示所有 Python 文件的函数数量。",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "mixed-language",
+    "multilingual"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_rg",
+      "repo_tree"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "def ",
+        "description": "搜索函数定义"
+      },
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": ".",
+        "description": "列出项目结构"
+      }
+    ],
+    "required_output_substrings": [
+      "文件",
+      "函数",
+      "数量",
+      "|",
+      "---",
+      ".py"
+    ],
+    "forbidden_output_substrings": [
+      "xAI",
+      "Grok",
+      "忘记了",
+      "I forget"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check",
+      "structured_output_required",
+      "chinese_output_required"
+    ]
+  }
+}

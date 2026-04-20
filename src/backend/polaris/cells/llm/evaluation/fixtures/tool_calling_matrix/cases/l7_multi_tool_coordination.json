@@ -1,0 +1,42 @@
+{
+  "case_id": "l7_multi_tool_coordination",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Multi-Tool Coordination",
+  "description": "测试 Agent 能否协调多个工具完成复杂任务。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 用 glob 找出所有 .py 文件 2. 用 file_exists 检查 tests/test_api_real.py 是否存在 3. 如果存在，读取它",
+  "tags": ["l7", "coordination", "multi-tool", "workflow"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.65,
+    "stream": {
+      "required_tools": ["glob", "file_exists"],
+      "required_any_tools": [
+        ["read_file"]
+      ],
+      "ordered_tool_groups": [
+        ["glob"],
+        ["file_exists"],
+        ["read_file"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 5
+    },
+    "non_stream": {
+      "required_tools": ["glob", "file_exists"],
+      "required_any_tools": [
+        ["read_file"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 5
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

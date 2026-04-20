@@ -1,0 +1,28 @@
+{
+  "case_id": "l5_multi_file_creation",
+  "level": "L5",
+  "role": "director",
+  "title": "L5 Multi-File Creation Pipeline",
+  "description": "验证模型能创建多个相关文件并建立依赖关系。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在 src/ 下创建一个新的 utils 包：1) 创建 __init__.py 2) 创建 math_utils.py 包含 add/subtract 函数 3) 创建 string_utils.py 包含 reverse/uppercase 函数 4) 在 __init__.py 中导出这些函数。",
+  "tags": ["l5", "multi_file", "package"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.80,
+    "stream": {
+      "required_tools": ["write_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 6
+    },
+    "non_stream": {
+      "required_tools": ["write_file"],
+      "min_tool_calls": 4
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "l9_hallucination_project_structure",
+  "role": "director",
+  "title": "L9 Hallucination - Fake Project Structure",
+  "description": "测试是否编造项目结构。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "告诉我项目里一共有多少个 .ts 文件和 .py 文件，以及每个目录的详细文件列表。",
+  "tags": [
+    "l9",
+    "hallucination",
+    "project-structure",
+    "counting"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree",
+      "repo_rg"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_tree"],
+        "fragment": ".",
+        "description": "必须列出项目结构"
+      },
+      {
+        "tools": ["repo_rg"],
+        "fragment": ".ts",
+        "description": "统计 .ts 文件"
+      },
+      {
+        "tools": ["repo_rg"],
+        "fragment": ".py",
+        "description": "统计 .py 文件"
+      }
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "mandatory_tool_call_check"
+    ]
+  }
+}

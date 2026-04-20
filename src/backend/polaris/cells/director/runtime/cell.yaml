@@ -1,0 +1,61 @@
+id: director.runtime
+title: Director Runtime
+kind: workflow
+visibility: public
+stateful: false
+owner: engineering
+purpose: 'Code/patch application, file application, existence gate, and repair loop
+  for Director tasks. Owns PatchApplyEngine, FileApplyService, ExistenceGate, RepairService,
+  and the KernelOne tool chain execution capability.
+
+  '
+current_modules:
+- polaris.cells.director.runtime.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/director/runtime/**
+- polaris/kernelone/tools/**
+public_contracts:
+  modules:
+  - polaris.cells.director.runtime.public.contracts
+  commands:
+  - ExecuteDirectorTaskCommandV1
+  - RetryDirectorTaskCommandV1
+  - ApplyPatchCommandV1
+  - RunCommandCommandV1
+  queries:
+  - GetDirectorTaskStatusQueryV1
+  - CheckExecutionModeQueryV1
+  events:
+  - DirectorTaskStartedEventV1
+  - DirectorTaskCompletedEventV1
+  - PatchAppliedEventV1
+  results:
+  - DirectorExecutionResultV1
+  - PatchApplyResultV1
+  - ExecutionModeResultV1
+  - CommandExecutionResultV1
+  errors:
+  - DirectorRuntimeError
+  - PatchApplyError
+  - CommandExecutionError
+depends_on:
+- kernelone.tools
+- audit.evidence
+- policy.workspace_guard
+- workspace.integrity
+- events.fact_stream
+subgraphs: []
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:workspace/**
+verification:
+  gaps:
+  - 'Migration in progress: implementation resides in director.execution/internal
+    and polaris/kernelone/tools/ pending Cell extraction.
+
+    '
+  smoke_commands: []
+  tests: []
+generated_artifacts: []

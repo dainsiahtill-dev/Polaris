@@ -1,0 +1,33 @@
+{
+  "case_id": "qa_regression_analysis",
+  "role": "qa",
+  "title": "QA Performs Regression Risk Assessment",
+  "description": "The QA role must assess the risk of changes to existing functionality.",
+  "workspace_fixture": "qa_release_verdict",
+  "prompt": "Analyze changed files for regression risk. Return JSON: {changed_modules: [string], risk_level: \"low\"|\"medium\"|\"high\", affected_features: [string], test_plan: [{scenario, tests_needed, priority}], rollback_procedure: string}.",
+  "tags": [
+    "qa",
+    "regression",
+    "risk"
+  ],
+  "judge": {
+    "score_threshold": 0.78,
+    "required_tools": [
+      "read_file",
+      "ripgrep"
+    ],
+    "required_output_substrings": [
+      "risk_level",
+      "test_plan",
+      "rollback"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "qa_regression_analysis"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 6
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "case_id": "l7_context_switch_with_memory",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Context Switch with Memory Retention",
+  "description": "测试 Agent 能否在上下文切换后保留关键信息。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 config.py，记住 API_PORT 的值 2. 现在讨论一下为什么配置文件很重要 3. 回到任务：确认 server.py 中使用的端口与 config.py 中定义的一致",
+  "tags": ["l7", "context-switch", "memory", "retention", "topic-drift"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.7,
+    "stream": {
+      "required_tools": ["read_file"],
+      "required_tool_call_counts": {
+        "read_file": 2
+      },
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 3,
+      "required_output_substrings": ["49977", "端口", "一致"]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

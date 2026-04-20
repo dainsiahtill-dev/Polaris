@@ -1,0 +1,105 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ACGA Context Pack
+type: object
+additionalProperties: false
+required:
+  - id
+  - title
+  - kind
+  - purpose
+  - summary
+  - owned_paths
+  - public_contracts
+  - neighbors
+  - state_owners
+  - effects_allowed
+  - invariants
+  - hotspots
+  - test_targets
+  - change_guidance
+
+properties:
+  template:
+    type: boolean
+  id:
+    type: string
+    pattern: "^[a-z0-9_]+\\.[a-z0-9_]+$"
+  title:
+    type: string
+  kind:
+    type: string
+  purpose:
+    type: string
+  summary:
+    type: string
+  owned_paths:
+    type: array
+    items:
+      type: string
+  public_contracts:
+    type: object
+    additionalProperties: false
+    required:
+      - commands
+      - queries
+      - events
+      - results
+      - errors
+    properties:
+      commands:
+        type: array
+        items:
+          type: string
+      queries:
+        type: array
+        items:
+          type: string
+      events:
+        type: array
+        items:
+          type: string
+      results:
+        type: array
+        items:
+          type: string
+      errors:
+        type: array
+        items:
+          type: string
+  neighbors:
+    type: array
+    items:
+      type: string
+  state_owners:
+    type: array
+    items:
+      type: string
+  effects_allowed:
+    type: array
+    items:
+      type: string
+  invariants:
+    type: array
+    items:
+      type: string
+  hotspots:
+    type: array
+    items:
+      type: string
+  test_targets:
+    type: array
+    items:
+      type: string
+  change_guidance:
+    type: object
+    additionalProperties: false
+    required:
+      - read_order
+      - expand_to_neighbors_only_when_needed
+    properties:
+      read_order:
+        type: array
+        items:
+          type: string
+      expand_to_neighbors_only_when_needed:
+        type: boolean

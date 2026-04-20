@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "suite_id": "context-os-runtime-full-gate-v1",
+  "domain": "code",
+  "metadata": {
+    "owner": "kernelone.context",
+    "notes": "Template for deterministic + replay quality cases."
+  },
+  "suites": [
+    {
+      "suite_type": "core_context_os",
+      "description": "State-first retrieval and continuity metrics.",
+      "setup_messages": [
+        {
+          "role": "user",
+          "content": "Fix session continuity and keep context.engine behavior.",
+          "sequence": 1
+        },
+        {
+          "role": "assistant",
+          "content": "Decision: preserve SessionContinuityEngine facade and continue refactor.",
+          "sequence": 2
+        }
+      ],
+      "cases": [
+        {
+          "case_id": "core_fact_001",
+          "query": "SessionContinuityEngine facade",
+          "expected_fact_contains": "SessionContinuityEngine"
+        },
+        {
+          "case_id": "core_state_001",
+          "expected_state_path": "task_state.current_goal",
+          "expected_state_contains": "session continuity"
+        }
+      ]
+    },
+    {
+      "suite_type": "attention_runtime",
+      "description": "Latest-turn focus + follow-up lifecycle.",
+      "cases": [
+        {
+          "case_id": "attn_followup_001",
+          "conversation": [
+            {
+              "role": "user",
+              "content": "请修复这个问题"
+            },
+            {
+              "role": "assistant",
+              "content": "需要我帮你修复吗？"
+            },
+            {
+              "role": "user",
+              "content": "需要"
+            }
+          ],
+          "expected_latest_intent": "需要",
+          "expected_pending_followup_status": "confirmed"
+        }
+      ]
+    },
+    {
+      "suite_type": "cognitive_runtime",
+      "description": "Receipt and handoff health checks from runtime traces.",
+      "cases": [
+        {
+          "case_id": "cog_receipt_001",
+          "expected_metrics": {
+            "receipt_coverage": 1.0,
+            "handoff_roundtrip_success_rate": 1.0
+          }
+        }
+      ]
+    }
+  ]
+}

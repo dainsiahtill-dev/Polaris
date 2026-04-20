@@ -1,0 +1,53 @@
+{
+  "case_id": "l7_focus_drift_simple",
+  "role": "director",
+  "title": "L7 Focus Drift - Simple Distraction",
+  "description": "最基础的'闲聊干扰'后回归原始目录任务。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先列出当前项目的根目录结构。然后告诉我现在几点钟？再告诉我今天天气怎么样？现在回到最初的任务，完成它。",
+  "tags": [
+    "l7",
+    "focus-drift",
+    "distraction",
+    "basic"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": ".",
+        "description": "最终必须调用 repo_tree 列出目录结构"
+      }
+    ],
+    "required_output_substrings": [
+      "├──",
+      "└──"
+    ],
+    "forbidden_output_substrings": [
+      "时间",
+      "天气",
+      "忘记了"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

@@ -1,0 +1,192 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ACGA Cell Evolution Decision Log Entry
+description: >
+  Schema for one JSON object entry in the cell evolution decision log. The
+  recommended storage format is JSONL so every decision remains append-only and
+  independently auditable.
+type: object
+additionalProperties: false
+required:
+  - version
+  - decision_id
+  - proposal_id
+  - decided_at
+  - decision
+  - decider
+  - reason
+  - evidence_refs
+  - governance_verdict
+  - harness_verdict
+  - graph_update
+  - execution_followup
+properties:
+  version:
+    type: integer
+    minimum: 1
+  decision_id:
+    type: string
+    pattern: "^ced-[a-z0-9-]+$"
+  proposal_id:
+    type: string
+    pattern: "^cep-[a-z0-9-]+$"
+  decided_at:
+    type: string
+    minLength: 1
+  decision:
+    type: string
+    enum:
+      - approved
+      - rejected
+      - superseded
+      - withdrawn
+      - applied
+      - rolled_back
+  decider:
+    type: object
+    additionalProperties: false
+    required:
+      - kind
+      - id
+    properties:
+      kind:
+        type: string
+        enum:
+          - human
+          - ci
+          - assistant
+          - policy_engine
+      id:
+        type: string
+        minLength: 2
+      display_name:
+        type: string
+        minLength: 2
+  reason:
+    type: string
+    minLength: 8
+  evidence_refs:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      minLength: 3
+  governance_verdict:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - passed_checks
+      - failed_checks
+    properties:
+      status:
+        type: string
+        enum:
+          - not_run
+          - passed
+          - failed
+          - waived
+      passed_checks:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      failed_checks:
+        type: array
+        items:
+          type: string
+          minLength: 3
+      waivers:
+        type: array
+        items:
+          type: string
+          minLength: 3
+  harness_verdict:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - contract_verdict
+      - effect_verdict
+      - state_owner_verdict
+    properties:
+      status:
+        type: string
+        enum:
+          - not_run
+          - passed
+          - failed
+          - waived
+      contract_verdict:
+        type: string
+        enum:
+          - pass
+          - fail
+          - skipped
+      effect_verdict:
+        type: string
+        enum:
+          - pass
+          - fail
+          - skipped
+      state_owner_verdict:
+        type: string
+        enum:
+          - pass
+          - fail
+          - skipped
+      targeted_tests:
+        type: array
+        items:
+          type: string
+          minLength: 3
+  graph_update:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - refs
+    properties:
+      status:
+        type: string
+        enum:
+          - not_required
+          - pending
+          - committed
+          - rejected
+      refs:
+        type: array
+        items:
+          type: string
+          minLength: 3
+  execution_followup:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - actions
+    properties:
+      status:
+        type: string
+        enum:
+          - none
+          - todo
+          - in_progress
+          - completed
+          - blocked
+      actions:
+        type: array
+        items:
+          type: string
+          minLength: 8
+  rollback:
+    type: object
+    additionalProperties: false
+    properties:
+      required:
+        type: boolean
+      strategy:
+        type: string
+        minLength: 8
+      completed_at:
+        type: string
+        minLength: 1

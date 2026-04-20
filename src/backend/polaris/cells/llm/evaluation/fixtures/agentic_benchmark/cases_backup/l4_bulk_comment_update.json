@@ -1,0 +1,45 @@
+{
+  "case_id": "l4_bulk_comment_update",
+  "role": "director",
+  "title": "L4 Bulk Comment Update",
+  "description": "把项目中所有 # TODO: 注释统一改成 # FIXME: [日期] - 格式，今天是 2026-03-29。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "把项目中所有 # TODO: 注释统一改成 # FIXME: [日期] - 格式，今天是 2026-03-29。",
+  "tags": [
+    "l4",
+    "bulk-edit",
+    "comment",
+    "replace"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg",
+      "search_replace"
+    ],
+    "min_tool_calls": 4,
+    "max_tool_calls": 20,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "TODO:",
+        "description": "定位所有 TODO"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "FIXME: 2026-03-29",
+        "description": "替换为 FIXME 格式"
+      }
+    ],
+    "forbidden_output_substrings": [
+      "# TODO:"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "id": "finops.budget_guard",
+  "title": "FinOps Budget Guard",
+  "kind": "policy",
+  "purpose": "Enforce token and execution budget controls with explicit reserve and consume accounting and threshold signals.",
+  "summary": "Business capability boundary for finops.budget_guard.",
+  "owned_paths": [
+    "polaris/kernelone/runtime/usage_metrics.py",
+    "polaris/domain/services/token_service.py",
+    "polaris/infrastructure/accel/query/adaptive_budget.py",
+    "polaris/infrastructure/accel/token_estimator.py"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ReserveBudgetCommandV1",
+      "RecordUsageCommandV1"
+    ],
+    "queries": [
+      "GetBudgetStatusQueryV1"
+    ],
+    "events": [
+      "BudgetThresholdExceededEventV1"
+    ],
+    "results": [
+      "BudgetDecisionResultV1"
+    ],
+    "errors": [
+      "FinOpsBudgetErrorV1"
+    ]
+  },
+  "neighbors": [
+    "policy.permission",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "runtime/state/budget/*"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/**",
+    "fs.write:runtime/state/budget/*",
+    "fs.write:runtime/events/runtime.events.jsonl"
+  ],
+  "invariants": [
+    "All state writes must remain single-owner and contract-driven.",
+    "Append-only evidence and event semantics must be preserved.",
+    "All text file reads and writes must use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/kernelone/runtime/usage_metrics.py",
+    "polaris/domain/services/token_service.py",
+    "polaris/infrastructure/accel/query/adaptive_budget.py",
+    "polaris/infrastructure/accel/token_estimator.py"
+  ],
+  "test_targets": [
+    "tests/test_llm_token_budget.py",
+    "tests/test_token_estimator.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

@@ -1,0 +1,51 @@
+id: finops.budget_guard
+title: FinOps Budget Guard
+kind: policy
+visibility: public
+stateful: true
+owner: finops
+purpose: 'Enforce token and execution budget controls with explicit reserve and consume
+  accounting and threshold signals.
+
+  '
+current_modules:
+- polaris.cells.finops.budget_guard.public.contracts
+tags: []
+owned_paths:
+- polaris/kernelone/runtime/usage_metrics.py
+- polaris/domain/services/token_service.py
+- polaris/infrastructure/accel/query/adaptive_budget.py
+- polaris/infrastructure/accel/token_estimator.py
+public_contracts:
+  modules:
+  - polaris.cells.finops.budget_guard.public.contracts
+  commands:
+  - ReserveBudgetCommandV1
+  - RecordUsageCommandV1
+  queries:
+  - GetBudgetStatusQueryV1
+  events:
+  - BudgetThresholdExceededEventV1
+  results:
+  - BudgetDecisionResultV1
+  errors:
+  - FinOpsBudgetErrorV1
+depends_on:
+- policy.permission
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/state/budget/*
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/state/budget/*
+- fs.write:runtime/events/runtime.events.jsonl
+verification:
+  tests:
+  - tests/test_llm_token_budget.py
+  - tests/test_token_estimator.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

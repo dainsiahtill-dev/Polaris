@@ -1,0 +1,87 @@
+id: roles.runtime
+title: Roles Runtime
+kind: capability
+visibility: public
+stateful: true
+owner: orchestration
+purpose: 'Composite runtime boundary for shared role kernel and role-session lifecycle;
+  PM/Director/QA/ChiefEngineer behavior is delegated to dedicated business cells.
+
+  '
+current_modules:
+- polaris.cells.roles.runtime.public.contracts
+tags:
+- composite
+owned_paths:
+- polaris/cells/roles/runtime/internal/**
+- polaris/delivery/http/routers/role_chat.py
+- polaris/delivery/http/routers/role_session.py
+public_contracts:
+  modules:
+  - polaris.cells.roles.runtime.public.contracts
+  commands:
+  - ExecuteRoleTaskCommandV1
+  - ExecuteRoleSessionCommandV1
+  queries:
+  - GetRoleRuntimeStatusQueryV1
+  events:
+  - RoleTaskStartedEventV1
+  - RoleTaskCompletedEventV1
+  results:
+  - RoleExecutionResultV1
+  errors:
+  - RoleRuntimeErrorV1
+depends_on:
+- architect.design
+- chief_engineer.blueprint
+- director.execution
+- finops.budget_guard
+- llm.control_plane
+- orchestration.pm_planning
+- qa.audit_verdict
+- roles.adapters
+- roles.engine
+- roles.kernel
+- roles.profile
+- roles.session
+- runtime.state_owner
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/roles/*
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/roles/*
+- fs.write:runtime/tasks/*
+- fs.write:runtime/state/*
+- fs.write:runtime/events/*
+- ws.outbound:runtime/*
+- process.spawn:roles/*
+- bus.publish:agent_messages/*
+- bus.consume:agent_messages/*
+verification:
+  tests:
+  - tests/test_roles_kernel.py
+  - tests/test_runtime_role_binding.py
+  - tests/test_roles_state_ownership.py
+  - tests/test_roles_runtime_bus.py
+  - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+  gaps:
+  - Role kernel is converged; business-role cell extraction still has remaining call-site
+    rewiring.
+  - 'KernelOne Bus integration uses InMemoryAgentBusPort (in-process only); full cross-process
+    NATS topic routing is not yet wired. Tracked gap: bus_port requires KernelOne
+    MessageBus adapter for durable delivery.
+
+    '
+  - "Phase 4 execution unification (Task #47): dual execution paths frozen. Legacy\
+    \ frozen surfaces (no new features, critical bug fixes only): - standalone_runner.py:\
+    \ StandaloneRoleAgent, ArchitectStandaloneAgent,\n  ChiefEngineerStandaloneAgent,\
+    \ DirectorStandaloneAgent\n- role_agent_service.py: AgentService - tui_console.py:\
+    \ RoleAgentTUI, DirectorRoleAgentTUI - standalone_entry.py: module (frozen CLI\
+    \ entry) Unified execution path (mandatory for all production):\n    RoleRuntimeService\
+    \ → RoleExecutionKernel (CHAT | WORKFLOW mode)\nPath audit: RoleRuntimeService.execute_role_task(),\
+    \ execute_role_session(), execute_role() all route through RoleExecutionKernel\
+    \ — no legacy StandaloneRoleAgent paths remain.\n"
+  smoke_commands: []
+generated_artifacts: []

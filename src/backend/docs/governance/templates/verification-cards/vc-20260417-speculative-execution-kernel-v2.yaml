@@ -1,0 +1,218 @@
+card_id: "vc-20260417-speculative-execution-kernel-v2"
+bug_summary: >
+  StreamShadowEngine 当前仅是一个骨架实现：以 READONLY_TOOLS 二分法做权限判定、
+  0.2s timeout 后直接 task.cancel() 强杀、缺少 ADOPT/JOIN/CANCEL/REPLAY 事务语义、
+  无参数稳定度判定、无预算治理、无可追踪的 ShadowTaskRegistry。
+  这导致高并发或复杂流式场景下可能出现 ghost tasks、重复执行、错误复用旧结果、
+  以及取消不干净等资源泄漏问题。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/stream_shadow_engine.py"
+  method: "StreamShadowEngine.speculate_tool_call / _drain_speculative_tasks"
+  symptom: "推测执行缺少事务语义约束，正式执行阶段无法安全复用或取消后台 shadow task"
+
+assumptions:
+  - id: "A1"
+    statement: "当前 StreamShadowEngine 和 SpeculativeExecutor 已实现骨架代码，默认 feature flag 关闭。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/stream_shadow_engine.py L17-91：
+      consume_delta() 仅缓冲 + 关键词触发；speculate_tool_call() 检查 READONLY_TOOLS。
+      polaris/cells/roles/kernel/internal/speculative_executor.py L16-64：
+      调用 ToolBatchRuntime.execute_batch() 执行 speculative batch。
+      polaris/cells/roles/kernel/internal/speculative_flags.py：默认关闭。
+
+  - id: "A2"
+    statement: "TurnTransactionController 已在流式路径中集成 StreamShadowEngine，并有 _drain_speculative_tasks 清理逻辑。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/turn_transaction_controller.py：
+      第 331-341 行 _build_stream_shadow_engine() 创建引擎；
+      第 1522-1611 行 execute_stream() 在 thinking_chunk / content_chunk / tool_call 处调用引擎；
+      第 343-374 行 _drain_speculative_tasks() 在 finally 中收集或取消任务。
+
+  - id: "A3"
+    statement: "TurnLedger 已具备 speculative hit_rate / false_positive_rate 监控字段，可扩展为更细粒度指标。"
+    status: verified_true
+    evidence: >
+      已核对 turn_transaction_controller.py L110-146：
+      TurnLedger 已有 speculative_attempted_call_ids、speculative_successful_call_ids、
+      canonical_tool_call_ids，以及 build_monitoring_metrics() 输出 hit_rate / false_positive_rate。
+
+  - id: "A4"
+    statement: "ToolBatchRuntime.execute_batch() 是当前唯一工具执行入口，可通过 ToolExecutionContext 扩展字段透传 speculative 标记与 cancel_token。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/internal/tool_batch_runtime.py：
+      execute_batch() 接受 ToolBatch 并返回 BatchReceipt；
+      ToolExecutionContext（L49-57）可被增量扩展而不破坏现有签名。
+
+  - id: "A5"
+    statement: "现有测试已覆盖 flag / executor / shadow engine / controller 集成，可作为 regression baseline。"
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/kernel/tests/test_speculative_execution.py：
+      包含 8 个测试，覆盖 enabled/disabled 场景、controller stream 集成、hit_rate 断言。
+
+  - id: "A6"
+    statement: "如果跳过 ShadowTaskRegistry 和 resolve_or_execute 四动作，直接扩展参数解析，会在正式执行阶段产生竞态和错误复用。"
+    status: verified_true
+    evidence: >
+      当前 _drain_speculative_tasks() 只收集结果到 TurnLedger，
+      正式执行时并未复用这些结果，而是独立再调用 tool_runtime；
+      这意味着即使 shadow 命中，系统仍可能重复执行（或未来错误复用旧结果）。
+
+pre_mortem:
+  failure_point: >
+    最可能在 ShadowTaskRegistry 的锁保护和状态机边界处出错：
+    adopt 时 task 尚未 COMPLETED、join 时 future 已被取消、
+    cancel 与 complete 竞态导致状态不一致、spec_key 归一化遗漏导致同名不同义被错误复用。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/speculation/shadow_registry.py"
+    - "polaris/cells/roles/kernel/internal/speculation/resolver.py"
+    - "polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+    - "polaris/cells/roles/kernel/internal/tool_batch_runtime.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_speculative_execution.py"
+      description: "保留现有 8 个测试作为 regression baseline，改造后必须全部通过"
+      expected: "8/8 PASS"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_registry.py"
+      description: "Registry 去重：同 spec_key 只保留一个 active task"
+      expected: "重复启动被拒绝，返回已有 record"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_registry.py"
+      description: "Registry adopt 语义：COMPLETED task 可被 adopt，state→ADOPTED"
+      expected: "返回 result，状态正确流转"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_registry.py"
+      description: "Registry join 语义：RUNNING task 可被 join，不重复执行"
+      expected: "等待 future 完成，返回同一结果"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_registry.py"
+      description: "Registry cancel 语义：RUNNING task cancel 后状态为 CANCELLED"
+      expected: "future 收到 CancelledError，状态正确"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_resolver.py"
+      description: "Resolver ADOPT：spec_key 匹配且已完成"
+      expected: "直接返回 shadow result，不调用 authoritative runtime"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_resolver.py"
+      description: "Resolver JOIN：spec_key 匹配且仍在运行"
+      expected: "等待 shadow future，不重复执行"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_resolver.py"
+      description: "Resolver REPLAY：无匹配 shadow 或状态异常"
+      expected: "调用 authoritative runtime 正常执行"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_param_stability.py"
+      description: "关键字段覆写导致 stability_score 下降和 parse_state 回退"
+      expected: "query 从 auth 改为 auth middleware 时，SEMANTICALLY_STABLE 回退"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_cancellation.py"
+      description: "cooperative cancellation：runner 在 check_cancel 处正确抛出 CancelledError"
+      expected: "finally 清理被执行，资源无泄漏"
+      status: completed
+
+    - file: "polaris/cells/roles/kernel/tests/test_speculation_budget.py"
+      description: "budget abandonment 超阈值时降级为仅允许 S0/S1"
+      expected: "S2/S3 工具的 speculative start 被拒绝"
+      status: completed
+
+  integration_tests:
+    - description: "单 turn 单工具 ADOPT 集成"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_single_tool_adopt"
+      expected: "tool_runtime 仅被 authoritative 路径调用 0 次（完全 adopt）"
+      status: completed
+
+    - description: "单 turn 单工具 JOIN 集成"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_single_tool_join"
+      expected: "shadow future 被 join，不重复创建任务"
+      status: completed
+
+    - description: "参数漂移后 REPLAY 集成"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_param_drift_replay"
+      expected: "旧 shadow 无法 adopt，新 authoritative 执行成功"
+      status: completed
+
+    - description: "turn cancel 后无 ghost task"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_turn_cancel_no_ghost"
+      expected: "registry 中该 turn 所有任务状态为 CANCELLED 或 ABANDONED"
+      status: completed
+
+    - description: "refusal abort 后 shadow 不可 adopt"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_refusal_abort"
+      expected: "已完成的 shadow task 被标记为不可采用，resolver 走 replay"
+      status: completed
+
+    - description: "refusal abort 后 shadow 不可 adopt"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_refusal_abort"
+      expected: "已完成的 shadow task 被标记为不可采用，resolver 走 replay"
+      status: completed
+
+    - description: "Phase 5: ChainSpeculator 从 repo_rg 触发 read_file shadow"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_chain.py -k test_on_shadow_completed_triggers_downstream"
+      expected: "下游 read_file shadow 被创建并注册到 chain_index"
+      status: completed
+
+    - description: "Phase 5: 级联取消生效"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_chain.py -k test_cascade_cancel_abandons_downstream"
+      expected: "上游 cancel 后下游任务状态为 CANCELLED 或 CANCEL_REQUESTED"
+      status: completed
+
+    - description: "Phase 5: web_search 后自动触发 fetch_url"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_web_prefetch.py -k test_web_search_shadow_triggers_fetch_url_shadows"
+      expected: "fetch_url shadows 被正确创建"
+      status: completed
+
+    - description: "Phase 5: URL 白名单过滤恶意/内部地址"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_web_prefetch.py -k test_blocks_localhost or test_blocks_admin_paths"
+      expected: "localhost、admin、internal 等 URL 被过滤"
+      status: completed
+
+    - description: "Phase 5: write tool prepare shadow 可被 adopt"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_write_phases.py -k test_resolver_adopts_prepare_shadow_for_write_tool"
+      expected: "resolver 返回 action=adopt"
+      status: completed
+
+    - description: "Phase 5: write tool commit 必须走 authoritative"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_write_tool_commit_never_speculative"
+      expected: "prepare 被 adopt 但 commit 仍调用 tool_runtime 1 次"
+      status: completed
+
+    - description: "Phase 5: retrieval chain 集成 ADOPT"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_speculation_integration.py -k test_retrieval_chain_adopts_prefetch"
+      expected: "下游 read_file 被 ADOPT，不再走 authoritative replay"
+      status: completed
+
+    - description: "全目录回归测试"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests"
+      expected: "1049 passed, 1 skipped"
+      status: completed
+
+  manual_check:
+    - "关闭 ENABLE_SPECULATIVE_EXECUTION 后，运行一次端到端对话，验证 correctness 不变"
+    - "开启 ENABLE_SPECULATIVE_EXECUTION=1 后，检查日志中是否存在 speculation.shadow.started / speculation.resolve.adopt 事件"
+
+related_adrs:
+  - "ADR-0071"
+  - "ADR-0077"
+
+sign_off:
+  completed_by: "Claude Code"
+  completed_at: "2026-04-17"
+  verified_by: "Claude Code"
+  verified_at: "2026-04-17"

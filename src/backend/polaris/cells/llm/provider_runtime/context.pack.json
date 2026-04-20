@@ -1,0 +1,15 @@
+{
+  "cell_id": "llm.provider_runtime",
+  "version": 1,
+  "read_order": [
+    "cell.yaml",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/provider_actions.py",
+    "internal/runtime_invoke.py",
+    "internal/runtime_support.py"
+  ],
+  "notes": [
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline."
+  ]
+}

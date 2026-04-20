@@ -1,0 +1,125 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Governance Debt Register
+type: object
+additionalProperties: false
+required:
+  - version
+  - generated_at
+  - scope
+  - debts
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  generated_at:
+    type: string
+    minLength: 1
+  scope:
+    type: string
+    minLength: 1
+  debts:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - classification
+        - status
+        - severity
+        - scope_refs
+        - summary
+        - root_cause
+        - trigger_conditions
+        - mitigations
+        - residual_risks
+        - linked_assets
+        - next_actions
+      properties:
+        id:
+          type: string
+          pattern: "^DEBT-[0-9]{8}-[a-z0-9-]+$"
+        title:
+          type: string
+          minLength: 5
+        classification:
+          type: string
+          enum:
+            - one_off
+            - pattern
+            - structural
+        status:
+          type: string
+          enum:
+            - active
+            - monitoring
+            - retired
+        severity:
+          type: string
+          enum:
+            - medium
+            - high
+            - blocker
+        scope_refs:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        summary:
+          type: string
+          minLength: 10
+        root_cause:
+          type: string
+          minLength: 10
+        trigger_conditions:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        mitigations:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        residual_risks:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        linked_assets:
+          type: object
+          additionalProperties: false
+          required:
+            - adrs
+            - verification_cards
+            - verify_packs
+            - tests
+          properties:
+            adrs:
+              type: array
+              minItems: 1
+              items:
+                type: string
+            verification_cards:
+              type: array
+              minItems: 1
+              items:
+                type: string
+            verify_packs:
+              type: array
+              minItems: 1
+              items:
+                type: string
+            tests:
+              type: array
+              minItems: 1
+              items:
+                type: string
+        next_actions:
+          type: array
+          minItems: 1
+          items:
+            type: string

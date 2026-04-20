@@ -1,0 +1,547 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Polaris Telemetry Schema",
+  "description": "Telemetry data schema for Polaris, compatible with OpenTelemetry semantic conventions",
+  "version": "1.0.0",
+  "type": "object",
+  "definitions": {
+    "base_event": {
+      "type": "object",
+      "required": [
+        "timestamp",
+        "service_name",
+        "event_type",
+        "trace_id",
+        "span_id"
+      ],
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp in UTC"
+        },
+        "service_name": {
+          "type": "string",
+          "enum": [
+            "polaris-frontend",
+            "polaris-backend",
+            "polaris-electron"
+          ],
+          "description": "Service identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "description": "Event category"
+        },
+        "trace_id": {
+          "type": "string",
+          "description": "OpenTelemetry trace ID (32 hex characters)"
+        },
+        "span_id": {
+          "type": "string",
+          "description": "OpenTelemetry span ID (16 hex characters)"
+        },
+        "user_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "User identifier if authenticated"
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Current workspace path"
+        }
+      }
+    },
+    "pm_metrics": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/base_event"
+        }
+      ],
+      "properties": {
+        "event_type": {
+          "const": "pm_metrics"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "delivery_success_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Integration QA first-pass pass rate"
+            },
+            "quality_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "PM task quality score"
+            },
+            "critical_issues_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of critical issues in tasks"
+            },
+            "task_completion_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Task completion rate"
+            },
+            "contract_quality": {
+              "type": "object",
+              "properties": {
+                "goal_score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 25
+                },
+                "scope_score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 25
+                },
+                "steps_score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 25
+                },
+                "acceptance_score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 25
+                },
+                "total_score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                }
+              }
+            },
+            "prompt_leakage_detected": {
+              "type": "boolean",
+              "description": "Whether prompt leakage was detected"
+            },
+            "prompt_leakage_keywords": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "List of detected leakage keywords"
+            },
+            "pm_task_id": {
+              "type": "string",
+              "description": "PM task identifier"
+            },
+            "execution_round": {
+              "type": "integer",
+              "description": "Current execution round number"
+            }
+          }
+        }
+      }
+    },
+    "director_metrics": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/base_event"
+        }
+      ],
+      "properties": {
+        "event_type": {
+          "const": "director_metrics"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "IDLE",
+                "RUNNING",
+                "COMPLETED",
+                "FAILED",
+                "CANCELLED"
+              ],
+              "description": "Director execution status"
+            },
+            "status_transition": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            },
+            "closed_loop_achieved": {
+              "type": "boolean",
+              "description": "Whether running=true->false transition completed"
+            },
+            "pm_task_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Associated PM task ID"
+            },
+            "tool_calls": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tool_name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "SUCCESS",
+                      "FAILED",
+                      "UNAUTHORIZED",
+                      "DANGEROUS"
+                    ]
+                  },
+                  "unauthorized": {
+                    "type": "boolean"
+                  },
+                  "dangerous_command": {
+                    "type": "boolean"
+                  },
+                  "latency_ms": {
+                    "type": "integer"
+                  },
+                  "timestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            },
+            "total_tool_calls": {
+              "type": "integer",
+              "description": "Total number of tool calls"
+            },
+            "unauthorized_blocked_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of unauthorized calls blocked"
+            },
+            "dangerous_command_blocked_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of dangerous commands blocked"
+            },
+            "tool_success_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Tool call success rate"
+            },
+            "execution_duration_ms": {
+              "type": "integer",
+              "description": "Total execution duration in milliseconds"
+            }
+          }
+        }
+      }
+    },
+    "qa_metrics": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/base_event"
+        }
+      ],
+      "properties": {
+        "event_type": {
+          "const": "qa_metrics"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL",
+                "INCONCLUSIVE"
+              ],
+              "description": "QA audit verdict"
+            },
+            "verdict_reason": {
+              "type": "string",
+              "description": "Human-readable verdict summary"
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "List of findings"
+            },
+            "defect_ticket": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "description": "Defect ticket if generated"
+            },
+            "pm_task_id": {
+              "type": "string",
+              "description": "Associated PM task ID"
+            },
+            "director_task_id": {
+              "type": "string",
+              "description": "Associated Director task ID"
+            },
+            "audit_duration_ms": {
+              "type": "integer",
+              "description": "Audit execution duration in milliseconds"
+            },
+            "retry_count": {
+              "type": "integer",
+              "description": "Number of retries performed"
+            },
+            "evidence_summary": {
+              "type": "object",
+              "properties": {
+                "file_changes_count": {
+                  "type": "integer"
+                },
+                "tool_outputs_count": {
+                  "type": "integer"
+                },
+                "verification_results_count": {
+                  "type": "integer"
+                },
+                "has_critical_issues": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "memory_metrics": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/base_event"
+        }
+      ],
+      "properties": {
+        "event_type": {
+          "const": "memory_metrics"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "search_type": {
+              "type": "string",
+              "enum": [
+                "hybrid",
+                "semantic",
+                "keyword",
+                "memory",
+                "reflection"
+              ],
+              "description": "Type of search performed"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search query text"
+            },
+            "latency_ms": {
+              "type": "integer",
+              "description": "Search latency in milliseconds"
+            },
+            "results_count": {
+              "type": "integer",
+              "description": "Number of results returned"
+            },
+            "ndcg_at_10": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "NDCG@10 score (for evaluation sets)"
+            },
+            "recall": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Recall rate (for evaluation sets)"
+            },
+            "storage_size_bytes": {
+              "type": "integer",
+              "description": "Current storage size in bytes"
+            },
+            "storage_growth_rate": {
+              "type": "number",
+              "description": "Daily storage growth rate"
+            }
+          }
+        }
+      }
+    },
+    "system_metrics": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/base_event"
+        }
+      ],
+      "properties": {
+        "event_type": {
+          "const": "system_metrics"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "api_latency_ms": {
+              "type": "object",
+              "properties": {
+                "p50": {
+                  "type": "number"
+                },
+                "p90": {
+                  "type": "number"
+                },
+                "p99": {
+                  "type": "number"
+                },
+                "avg": {
+                  "type": "number"
+                }
+              },
+              "description": "API latency percentiles"
+            },
+            "active_tasks": {
+              "type": "integer",
+              "description": "Number of currently active tasks"
+            },
+            "error_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "API error rate"
+            },
+            "worker_backlog": {
+              "type": "integer",
+              "description": "Worker queue backlog size"
+            },
+            "llm_latency_ms": {
+              "type": "integer",
+              "description": "LLM call latency"
+            },
+            "llm_cost_usd": {
+              "type": "number",
+              "description": "Cumulative LLM cost in USD"
+            },
+            "provider": {
+              "type": "string",
+              "description": "LLM provider name"
+            },
+            "model": {
+              "type": "string",
+              "description": "LLM model name"
+            }
+          }
+        }
+      }
+    },
+    "audit_event": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/base_event"
+        }
+      ],
+      "properties": {
+        "event_type": {
+          "const": "audit_event"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "audit_type": {
+              "type": "string",
+              "enum": [
+                "security",
+                "compliance",
+                "access",
+                "tool_execution"
+              ],
+              "description": "Type of audit"
+            },
+            "action": {
+              "type": "string",
+              "description": "Action being audited"
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "ALLOW",
+                "DENY",
+                "WARN"
+              ],
+              "description": "Audit result"
+            },
+            "reason": {
+              "type": "string",
+              "description": "Audit decision reason"
+            },
+            "risk_level": {
+              "type": "string",
+              "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "CRITICAL"
+              ],
+              "description": "Risk level assessment"
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Additional audit metadata"
+            }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/pm_metrics"
+    },
+    {
+      "$ref": "#/definitions/director_metrics"
+    },
+    {
+      "$ref": "#/definitions/qa_metrics"
+    },
+    {
+      "$ref": "#/definitions/memory_metrics"
+    },
+    {
+      "$ref": "#/definitions/system_metrics"
+    },
+    {
+      "$ref": "#/definitions/audit_event"
+    }
+  ]
+}

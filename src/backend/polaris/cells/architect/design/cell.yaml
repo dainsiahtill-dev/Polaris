@@ -1,0 +1,50 @@
+id: architect.design
+title: Architect Design
+kind: capability
+visibility: public
+stateful: true
+owner: engineering
+purpose: 'Produce architecture-level design decisions and implementation blueprints
+  for complex tasks, without directly performing workspace write operations.
+
+  '
+current_modules:
+- polaris.cells.architect.design.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/architect/design/internal/**
+public_contracts:
+  modules:
+  - polaris.cells.architect.design.public.contracts
+  commands:
+  - GenerateArchitectureDesignCommandV1
+  queries:
+  - QueryArchitectureDesignStatusV1
+  events:
+  - ArchitectureDesignGeneratedEventV1
+  results:
+  - ArchitectureDesignResultV1
+  errors:
+  - ArchitectDesignErrorV1
+depends_on:
+- context.engine
+- llm.control_plane
+- policy.permission
+- policy.workspace_guard
+- finops.budget_guard
+- audit.evidence
+subgraphs: []
+state_owners:
+- runtime/state/architect/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:runtime/state/architect/*
+- fs.write:runtime/events/runtime.events.jsonl
+- llm.invoke:architect/*
+verification:
+  tests:
+  - tests/test_architect_adapter_docs_extract.py
+  gaps:
+  - Architect output routing into downstream execution cells is being consolidated.
+  smoke_commands: []
+generated_artifacts: []

@@ -1,0 +1,428 @@
+{
+  "prompt": "创建一个企业级任务管理系统，包含用户认证、任务CRUD、任务分配、进度跟踪、通知系统和RESTful API。技术栈：Node.js + Express + TypeScript + Prisma + PostgreSQL + Redis + JWT认证 + Swagger文档 + Jest测试。要求支持多租户、角色权限控制、任务依赖关系、甘特图数据接口、实时WebSocket通知、导出PDF/Excel报告。",
+  "gateConfig": {
+    "strictErrors": true,
+    "strictTerminalErrors": true,
+    "startupSettleMs": 2000,
+    "postActionSettleMs": 1200
+  },
+  "projectDefinition": {
+    "name": "enterprise-task-management-system",
+    "complexity": "high",
+    "architecture": {
+      "pattern": "layered-hexagonal",
+      "layers": [
+        "api",
+        "service",
+        "repository",
+        "domain"
+      ],
+      "external": [
+        "postgresql",
+        "redis",
+        "jwt",
+        "websocket"
+      ]
+    },
+    "modules": [
+      {
+        "name": "auth",
+        "features": [
+          "login",
+          "register",
+          "jwt-refresh",
+          "logout",
+          "password-reset"
+        ],
+        "dependencies": [
+          "redis"
+        ]
+      },
+      {
+        "name": "users",
+        "features": [
+          "crud",
+          "roles",
+          "permissions",
+          "profile"
+        ],
+        "dependencies": [
+          "auth",
+          "postgresql"
+        ]
+      },
+      {
+        "name": "tasks",
+        "features": [
+          "crud",
+          "assignment",
+          "status-workflow",
+          "priority",
+          "tags",
+          "dependencies",
+          "time-tracking"
+        ],
+        "dependencies": [
+          "users",
+          "postgresql",
+          "redis"
+        ]
+      },
+      {
+        "name": "projects",
+        "features": [
+          "crud",
+          "members",
+          "milestones",
+          "gantt-data"
+        ],
+        "dependencies": [
+          "tasks",
+          "users"
+        ]
+      },
+      {
+        "name": "notifications",
+        "features": [
+          "websocket-realtime",
+          "email-digest",
+          "in-app",
+          "push"
+        ],
+        "dependencies": [
+          "redis",
+          "websocket"
+        ]
+      },
+      {
+        "name": "reports",
+        "features": [
+          "pdf-export",
+          "excel-export",
+          "dashboard-stats",
+          "burndown-chart"
+        ],
+        "dependencies": [
+          "tasks",
+          "projects"
+        ]
+      }
+    ],
+    "technicalRequirements": {
+      "backend": {
+        "framework": "Express.js",
+        "language": "TypeScript",
+        "database": "PostgreSQL with Prisma ORM",
+        "cache": "Redis",
+        "auth": "JWT with refresh tokens",
+        "api": "RESTful with OpenAPI/Swagger",
+        "testing": "Jest with coverage >80%",
+        "validation": "Zod schema validation"
+      },
+      "devops": {
+        "containerization": "Docker + Docker Compose",
+        "migrations": "Prisma Migrate",
+        "seeding": "Prisma Seed",
+        "logging": "Structured JSON logging with Pino",
+        "monitoring": "Health check endpoints"
+      }
+    },
+    "acceptanceCriteria": [
+      "所有API端点必须有OpenAPI文档和Jest测试",
+      "认证流程必须包含access token和refresh token机制",
+      "任务状态流转必须支持：待办->进行中->审核中->已完成->已关闭",
+      "任务依赖关系必须检测循环依赖并抛出错误",
+      "甘特图数据接口必须返回符合FR.js标准的JSON格式",
+      "WebSocket通知必须支持房间隔离（按projectId）",
+      "PDF导出必须包含任务列表和统计摘要",
+      "所有数据库操作必须使用Prisma事务确保一致性",
+      "Redis缓存必须实现合理的TTL和缓存失效策略",
+      "角色权限必须支持：admin、manager、member、viewer四级"
+    ]
+  },
+  "navigationSteps": [
+    {
+      "name": "open-settings",
+      "selectorCandidates": [
+        "button:has(svg.lucide-settings)",
+        ".btn-icon:has(svg.lucide-settings)",
+        "[data-testid='open-settings']",
+        "button[aria-label='Settings']",
+        "button[title='Settings']"
+      ],
+      "textCandidates": [
+        "设置",
+        "Settings"
+      ],
+      "role": "button",
+      "timeoutMs": 5000
+    },
+    {
+      "name": "verify-workspace",
+      "action": "check_and_update_workspace",
+      "targetWorkspace": "C:/Temp/etms-test-{timestamp}",
+      "timeoutMs": 10000
+    },
+    {
+      "name": "open-docs-wizard",
+      "selectorCandidates": [
+        "button:has-text('生成计划')",
+        "[data-testid='generate-plan-button']",
+        "button:has-text('政事堂')"
+      ],
+      "textCandidates": [
+        "生成计划",
+        "政事堂"
+      ],
+      "role": "button",
+      "timeoutMs": 8000
+    },
+    {
+      "name": "fill-goal-input",
+      "action": "fill_textarea",
+      "targetLabel": "圣意目标",
+      "value": "创建一个企业级任务管理系统，包含用户认证、任务CRUD、任务分配、进度跟踪、通知系统和RESTful API。技术栈：Node.js + Express + TypeScript + Prisma + PostgreSQL + Redis + JWT认证 + Swagger文档 + Jest测试。要求支持多租户、角色权限控制、任务依赖关系、甘特图数据接口、实时WebSocket通知、导出PDF/Excel报告。",
+      "timeoutMs": 5000
+    },
+    {
+      "name": "start-dialogue",
+      "selectorCandidates": [
+        "button:has-text('发起奏对')",
+        "button:has-text('奏对')"
+      ],
+      "textCandidates": [
+        "发起奏对",
+        "奏对"
+      ],
+      "role": "button",
+      "timeoutMs": 60000
+    },
+    {
+      "name": "wait-for-phase-ready",
+      "action": "wait_for_text",
+      "expectedText": "可拟定条陈",
+      "timeoutMs": 120000
+    },
+    {
+      "name": "build-preview",
+      "selectorCandidates": [
+        "button:has-text('拟定条陈')",
+        "button:has-text('拟稿')"
+      ],
+      "textCandidates": [
+        "拟定条陈",
+        "拟稿"
+      ],
+      "role": "button",
+      "timeoutMs": 180000
+    },
+    {
+      "name": "wait-for-preview-complete",
+      "action": "wait_for_element",
+      "selector": "button:has-text('批红')",
+      "timeoutMs": 300000
+    },
+    {
+      "name": "apply-docs",
+      "selectorCandidates": [
+        "button:has-text('批红')",
+        "button:has-text('用印')",
+        "button:has-text('批红 / 用印')"
+      ],
+      "textCandidates": [
+        "批红",
+        "用印",
+        "批红 / 用印"
+      ],
+      "role": "button",
+      "timeoutMs": 30000
+    },
+    {
+      "name": "enter-pm-workspace",
+      "selectorCandidates": [
+        "[data-testid='enter-pm-workspace']",
+        "button:has-text('进入PM工作区')",
+        "button:has-text('尚书省')"
+      ],
+      "textCandidates": [
+        "进入PM工作区",
+        "尚书省"
+      ],
+      "role": "button",
+      "timeoutMs": 10000
+    },
+    {
+      "name": "run-pm-once",
+      "selectorCandidates": [
+        "[data-testid='pm-workspace-run-once']",
+        "button:has-text('单次督办')"
+      ],
+      "textCandidates": [
+        "单次督办"
+      ],
+      "role": "button",
+      "timeoutMs": 1200000
+    },
+    {
+      "name": "wait-for-pm-complete",
+      "action": "poll_api",
+      "endpoint": "/v2/pm/status",
+      "condition": "field:running equals:false",
+      "timeoutMs": 1200000,
+      "intervalMs": 5000
+    },
+    {
+      "name": "verify-snapshot-tasks",
+      "action": "verify_api",
+      "endpoint": "/state/snapshot",
+      "assertions": [
+        "field:tasks length > 0",
+        "field:pm_state.completed_task_count > 0",
+        "field:pm_state.last_director_status exists"
+      ],
+      "timeoutMs": 60000
+    },
+    {
+      "name": "back-to-main",
+      "selectorCandidates": [
+        "[data-testid='pm-workspace-back']",
+        "button:has-text('返回')"
+      ],
+      "textCandidates": [
+        "返回"
+      ],
+      "role": "button",
+      "timeoutMs": 5000
+    },
+    {
+      "name": "enter-director-workspace",
+      "selectorCandidates": [
+        "[data-testid='enter-director-workspace']",
+        "button:has-text('进入Director工作区')",
+        "button:has-text('工部侍郎')"
+      ],
+      "textCandidates": [
+        "进入Director工作区",
+        "工部侍郎"
+      ],
+      "role": "button",
+      "timeoutMs": 10000
+    },
+    {
+      "name": "execute-director",
+      "selectorCandidates": [
+        "[data-testid='director-workspace-execute']",
+        "button:has-text('执行')"
+      ],
+      "textCandidates": [
+        "执行"
+      ],
+      "role": "button",
+      "timeoutMs": 60000
+    },
+    {
+      "name": "wait-for-director-running",
+      "action": "poll_api",
+      "endpoint": "/v2/director/status",
+      "condition": "field:state equals:RUNNING",
+      "timeoutMs": 60000,
+      "intervalMs": 2000
+    },
+    {
+      "name": "wait-for-director-complete",
+      "action": "poll_api",
+      "endpoint": "/v2/director/status",
+      "condition": "field:state not_equals:RUNNING",
+      "timeoutMs": 1800000,
+      "intervalMs": 10000
+    },
+    {
+      "name": "verify-director-tasks",
+      "action": "verify_api",
+      "endpoint": "/v2/director/tasks",
+      "assertions": [
+        "response is array",
+        "every item has metadata.pm_task_id"
+      ],
+      "timeoutMs": 60000
+    }
+  ],
+  "fieldAction": {
+    "name": "complex-project-goal-input",
+    "selectorCandidates": [
+      "input[placeholder*='目标']",
+      "textarea[placeholder*='目标']",
+      "input[placeholder*='例：']",
+      "textarea[placeholder*='例：']"
+    ],
+    "labelCandidates": [
+      "圣意目标",
+      "目标",
+      "Goal"
+    ],
+    "placeholderCandidates": [
+      "例：",
+      "目标",
+      "goal"
+    ],
+    "inputValue": "创建一个企业级任务管理系统，包含用户认证、任务CRUD、任务分配、进度跟踪、通知系统和RESTful API",
+    "expectContains": "任务管理"
+  },
+  "qualityGates": {
+    "pm": {
+      "minScore": 80,
+      "maxCriticalIssues": 0,
+      "requiredFields": [
+        "goal",
+        "scope",
+        "steps",
+        "acceptance"
+      ],
+      "leakageDetection": {
+        "forbiddenPatterns": [
+          "you are",
+          "role",
+          "system prompt",
+          "no yapping",
+          "提示词",
+          "角色设定",
+          "<thinking>",
+          "<tool_call>"
+        ],
+        "severity": "P0"
+      }
+    },
+    "director": {
+      "toolAudit": {
+        "checkUnauthorized": true,
+        "checkDangerousCommands": true,
+        "checkPathTraversal": true
+      },
+      "codeQuality": {
+        "minTestCoverage": 80,
+        "requireTypeScript": true,
+        "requireLintPass": true
+      }
+    },
+    "integration": {
+      "expectedReason": "integration_qa_passed",
+      "allowedReasons": [
+        "integration_qa_passed",
+        "pending_director_tasks",
+        "director_failures_present"
+      ]
+    }
+  },
+  "auditConfig": {
+    "collectEvidence": true,
+    "evidencePaths": [
+      "test-results/electron",
+      "playwright-report",
+      ".polaris/logs",
+      ".polaris/runtime/status",
+      ".polaris/runtime/results"
+    ],
+    "maxRounds": 5,
+    "untilPass": true
+  }
+}

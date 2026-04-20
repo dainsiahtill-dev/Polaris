@@ -1,0 +1,4380 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.715971Z",
+  "source_hash": "66bfc2d83b35336d",
+  "cell_id": "audit.evidence",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "EvidenceBundleService",
+      "description": "Service for managing EvidenceBundles.",
+      "defined_in": "polaris/cells/audit/evidence/bundle_service.py",
+      "methods": [
+        {
+          "name": "create_from_working_tree",
+          "doc": "Create an evidence bundle from current working tree changes."
+        },
+        {
+          "name": "create_from_director_run",
+          "doc": "Create an evidence bundle from director run results."
+        },
+        {
+          "name": "get_bundle",
+          "doc": "Get bundle details."
+        },
+        {
+          "name": "list_bundles",
+          "doc": "List bundles metadata from index."
+        },
+        {
+          "name": "_collect_working_tree_changes",
+          "doc": "Collect working tree changes via git diff."
+        },
+        {
+          "name": "_collect_changes_from_tasks",
+          "doc": "Collect changes from task results."
+        },
+        {
+          "name": "_save_bundle",
+          "doc": "Save bundle to disk."
+        },
+        {
+          "name": "_update_index",
+          "doc": "Update bundle index."
+        },
+        {
+          "name": "_get_current_commit",
+          "doc": "Get current HEAD commit SHA."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_fs_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/bundle_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_bundle_storage_path",
+      "description": "Get bundle storage path.",
+      "defined_in": "polaris/cells/audit/evidence/bundle_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_bundle_index_path",
+      "description": "Get bundle index path.",
+      "defined_in": "polaris/cells/audit/evidence/bundle_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_fs",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/bundle_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_rel",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/bundle_service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_evidence_bundle_service",
+      "description": "工厂函数：创建一个新的 EvidenceBundleService 实例。",
+      "defined_in": "polaris/cells/audit/evidence/bundle_service.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionAuditService",
+      "description": "Write and query role-session audit events.",
+      "defined_in": "polaris/cells/audit/evidence/internal/role_session_audit_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_audit_logical_path",
+          "doc": ""
+        },
+        {
+          "name": "append_audit_event",
+          "doc": ""
+        },
+        {
+          "name": "get_events",
+          "doc": ""
+        },
+        {
+          "name": "get_event_count",
+          "doc": "Get the count of events for a session without loading all events into memory."
+        },
+        {
+          "name": "export_audit_log",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditLLMBindingConfig",
+      "description": "Runtime binding policy for independent audit LLM calls.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "get_audit_role_descriptor",
+      "description": "Return canonical audit role mapping used by the runtime.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "build_audit_llm_binding_config",
+      "description": "Build typed audit LLM config from Settings-like object.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_non_local_provider_types",
+      "description": "Collect all configured provider types except local Ollama.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_error_summary",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_provider_info",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "make_audit_llm_caller",
+      "description": "Build `IndependentAuditService` compatible LLM caller.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_caller",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_audit_llm_to_task_service",
+      "description": "Configure TaskService independent audit caller from runtime settings.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "class",
+      "name": "AppendEvidenceEventCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryEvidenceEventsV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerifyEvidenceChainV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvidenceQueryResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvidenceVerificationResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvidenceAppendedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvidenceAuditError",
+      "description": "Raised when evidence append or verification fails.",
+      "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvidenceService",
+      "description": "Service wrapper around task evidence builders.",
+      "defined_in": "polaris/cells/audit/evidence/task_service.py",
+      "methods": [
+        {
+          "name": "build_file_evidence",
+          "doc": ""
+        },
+        {
+          "name": "build_error_evidence",
+          "doc": ""
+        },
+        {
+          "name": "detect_language",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "detect_language",
+      "description": "Detect a file language from its path.",
+      "defined_in": "polaris/cells/audit/evidence/task_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_file_evidence",
+      "description": "Build evidence items for created or modified files.",
+      "defined_in": "polaris/cells/audit/evidence/task_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_error_evidence",
+      "description": "Build evidence items for execution failures.",
+      "defined_in": "polaris/cells/audit/evidence/task_service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestAppendEvidenceEventCommandV1",
+      "description": "Command carries kind and payload.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_basic_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_payload_accepted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQueryEvidenceEventsV1",
+      "description": "Default limit is 50.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_default_limit",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_limit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerifyEvidenceChainV1",
+      "description": "start_at is optional.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_default_start_at_none",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit_start_at",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvidenceQueryResultV1",
+      "description": "Result carries events and total count.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_basic_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_events_are_tuple",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvidenceVerificationResultV1",
+      "description": "Result carries ok flag and checked count.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_verification_ok",
+          "doc": ""
+        },
+        {
+          "name": "test_verification_failed",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvidenceAppendedEventV1EdgeCases",
+      "description": "EvidenceAppendedEventV1 is a frozen dataclass; field validation is caller responsibility.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_frozen_prevents_modification",
+          "doc": ""
+        },
+        {
+          "name": "test_constructs_with_any_string_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvidenceAuditError",
+      "description": "Structured exception from evidence boundary.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_default_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_raised_and_caught",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDetectLanguage",
+      "description": "Language detection from file path extension.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_python_py_file_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_typescript_tsx_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_rust_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_go_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_yaml_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_json_detected",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_path_returns_unknown",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildFileEvidence",
+      "description": "File evidence construction from list of file dicts.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_single_file_creates_one_evidence",
+          "doc": ""
+        },
+        {
+          "name": "test_path_extracted",
+          "doc": ""
+        },
+        {
+          "name": "test_language_from_path",
+          "doc": ""
+        },
+        {
+          "name": "test_skips_non_dict_entry",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_content_field",
+          "doc": ""
+        },
+        {
+          "name": "test_content_truncated_at_1000_chars",
+          "doc": ""
+        },
+        {
+          "name": "test_multiple_files",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildErrorEvidence",
+      "description": "Error evidence construction.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_single_evidence_created",
+          "doc": ""
+        },
+        {
+          "name": "test_duration_in_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_content_is_error_text",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_error_text",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvidenceServiceDelegation",
+      "description": "EvidenceService delegates to module-level helpers.",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "test_detect_language_delegates",
+          "doc": ""
+        },
+        {
+          "name": "test_build_file_evidence_delegates",
+          "doc": ""
+        },
+        {
+          "name": "test_build_error_evidence_delegates",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_runtime_root",
+      "description": "Get runtime root path from settings.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "get_audit_facade",
+      "description": "Get audit use case facade for the resolved runtime root.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "get_diagnosis_engine",
+      "description": "Build diagnosis/scanning engine with runtime+workspace context.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_datetime",
+      "description": "Parse ISO8601 datetime string.",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_line_range",
+      "description": "",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_failure_hops_events_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/audit_router.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditStoreAdapter",
+      "description": "Expose AuditStore through the KernelOne audit port.",
+      "defined_in": "polaris/infrastructure/audit/adapters/store_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "runtime_root",
+          "doc": ""
+        },
+        {
+          "name": "raw_store",
+          "doc": "Expose underlying store instance."
+        },
+        {
+          "name": "append",
+          "doc": ""
+        },
+        {
+          "name": "query",
+          "doc": ""
+        },
+        {
+          "name": "export_json",
+          "doc": ""
+        },
+        {
+          "name": "export_csv",
+          "doc": ""
+        },
+        {
+          "name": "verify_chain",
+          "doc": ""
+        },
+        {
+          "name": "get_stats",
+          "doc": ""
+        },
+        {
+          "name": "cleanup_old_logs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditHashSink",
+      "description": "UEP consumer that writes audit events to the HMAC chain.",
+      "defined_in": "polaris/infrastructure/audit/sinks/audit_hash_sink.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize sink."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_resolve_audit_event_type",
+      "description": "Map UEP event type to KernelAuditEventType.",
+      "defined_in": "polaris/infrastructure/audit/sinks/audit_hash_sink.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditEventResult",
+      "description": "Result status for audit events.",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditRole",
+      "description": "Roles that can generate audit events.",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResourceType",
+      "description": "Types of resources in audit events.",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResourceOperation",
+      "description": "Operations on resources.",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditStore",
+      "description": "Append-only audit log store with HMAC-SHA256 hash chain.",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize audit store."
+        },
+        {
+          "name": "_load_or_generate_key",
+          "doc": "Load existing key or generate new one."
+        },
+        {
+          "name": "_load_last_hash",
+          "doc": "Load the last hash from existing log file."
+        },
+        {
+          "name": "_get_current_log_file",
+          "doc": "Get current log file with monthly rotation."
+        },
+        {
+          "name": "_get_log_files",
+          "doc": "Get all audit log files sorted by date."
+        },
+        {
+          "name": "_compute_signature",
+          "doc": "Compute HMAC-SHA256 signature for event."
+        },
+        {
+          "name": "append",
+          "doc": "Append signed event to audit log."
+        },
+        {
+          "name": "_read_events_from_file",
+          "doc": "Read events from a log file."
+        },
+        {
+          "name": "query",
+          "doc": "Query audit events with filters."
+        },
+        {
+          "name": "verify_chain",
+          "doc": "Verify integrity of the entire audit chain."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get audit statistics."
+        },
+        {
+          "name": "export_json",
+          "doc": "Export events in JSON format."
+        },
+        {
+          "name": "export_csv",
+          "doc": "Export events in CSV format."
+        },
+        {
+          "name": "cleanup_old_logs",
+          "doc": "Clean up logs older than retention period."
+        },
+        {
+          "name": "get_log_file_path",
+          "doc": "Get path to current audit log file."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "audit_event_to_kernel",
+      "description": "Convert AuditEvent to canonical KernelAuditEvent.",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py"
+    },
+    {
+      "type": "function",
+      "name": "kernel_event_to_audit",
+      "description": "Convert KernelAuditEvent to AuditEvent (for backward compatibility).",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py"
+    },
+    {
+      "type": "function",
+      "name": "create_audit_event",
+      "description": "Helper to create a structured audit event.",
+      "defined_in": "polaris/infrastructure/audit/stores/audit_store.py"
+    },
+    {
+      "type": "class",
+      "name": "EvidenceNotFoundError",
+      "description": "Raised when evidence is not found.",
+      "defined_in": "polaris/infrastructure/audit/stores/evidence_store.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EvidenceStore",
+      "description": "File-based evidence storage for Director v2.",
+      "defined_in": "polaris/infrastructure/audit/stores/evidence_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize evidence store with external runtime root."
+        },
+        {
+          "name": "_get_task_evidence_dir",
+          "doc": "Get evidence directory for a task."
+        },
+        {
+          "name": "save_evidence",
+          "doc": "Save evidence package to file."
+        },
+        {
+          "name": "load_evidence",
+          "doc": "Load evidence package from file."
+        },
+        {
+          "name": "load_latest_evidence",
+          "doc": "Load latest evidence for a task."
+        },
+        {
+          "name": "list_evidence",
+          "doc": "List all evidence iterations for a task."
+        },
+        {
+          "name": "append_to_evidence_log",
+          "doc": "Append entry to evidence log (JSONL format)."
+        },
+        {
+          "name": "read_evidence_log",
+          "doc": "Read evidence log for a task."
+        },
+        {
+          "name": "export_for_role_agent",
+          "doc": "Export evidence package for another role agent."
+        },
+        {
+          "name": "_create_qa_summary",
+          "doc": "Create QA-focused evidence summary."
+        },
+        {
+          "name": "_create_pm_summary",
+          "doc": "Create PM-focused evidence summary."
+        },
+        {
+          "name": "_create_director_summary",
+          "doc": "Create Director-focused evidence summary."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LogStore",
+      "description": "File-based log storage for Director v2.",
+      "defined_in": "polaris/infrastructure/audit/stores/log_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_task_log_dir",
+          "doc": "Get log directory for a task."
+        },
+        {
+          "name": "write_director_log",
+          "doc": "Write entry to main director log."
+        },
+        {
+          "name": "write_task_log",
+          "doc": "Write entry to task-specific log."
+        },
+        {
+          "name": "write_event",
+          "doc": "Write structured event (JSONL format)."
+        },
+        {
+          "name": "read_director_log",
+          "doc": "Read main director log."
+        },
+        {
+          "name": "read_task_log",
+          "doc": "Read task-specific log."
+        },
+        {
+          "name": "read_events",
+          "doc": "Read structured events."
+        },
+        {
+          "name": "_parse_log_line",
+          "doc": "Parse a log line into structured format."
+        },
+        {
+          "name": "export_logs",
+          "doc": "Export logs to file."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AlertSeverity",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/alerting.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AlertStatus",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/alerting.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AlertCondition",
+      "description": "Condition that triggers an alert.",
+      "defined_in": "polaris/kernelone/audit/alerting.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AlertRule",
+      "description": "A rule that evaluates conditions and produces alerts.",
+      "defined_in": "polaris/kernelone/audit/alerting.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Alert",
+      "description": "An active or historical alert.",
+      "defined_in": "polaris/kernelone/audit/alerting.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AlertingEngine",
+      "description": "Evaluates events against rules and produces alerts.",
+      "defined_in": "polaris/kernelone/audit/alerting.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "add_rule",
+          "doc": ""
+        },
+        {
+          "name": "remove_rule",
+          "doc": ""
+        },
+        {
+          "name": "evaluate",
+          "doc": "Evaluate one event against all rules. Returns new alerts."
+        },
+        {
+          "name": "_track_event",
+          "doc": ""
+        },
+        {
+          "name": "_exceeds_threshold",
+          "doc": ""
+        },
+        {
+          "name": "_in_cooldown",
+          "doc": ""
+        },
+        {
+          "name": "_fire_alert",
+          "doc": ""
+        },
+        {
+          "name": "_fire_storm_alert",
+          "doc": "Fire an alert triggered by a specific storm level transition."
+        },
+        {
+          "name": "_log_alert",
+          "doc": ""
+        },
+        {
+          "name": "_severity_to_log_level",
+          "doc": ""
+        },
+        {
+          "name": "get_active_alerts",
+          "doc": ""
+        },
+        {
+          "name": "acknowledge",
+          "doc": ""
+        },
+        {
+          "name": "resolve",
+          "doc": ""
+        },
+        {
+          "name": "rules",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_default_rules",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/alerting.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditFieldError",
+      "description": "审计字段类型错误（不抛出，用于记录）",
+      "defined_in": "polaris/kernelone/audit/audit_field.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SafeValueResult",
+      "description": "安全值处理结果",
+      "defined_in": "polaris/kernelone/audit/audit_field.py",
+      "methods": [
+        {
+          "name": "unwrap",
+          "doc": "解包值，失败时返回默认值"
+        },
+        {
+          "name": "unwrap_or_raise",
+          "doc": "解包值，失败时抛出原始错误"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TypeSafeDict",
+      "description": "类型安全的字典，封装 audit_len 等工具。",
+      "defined_in": "polaris/kernelone/audit/audit_field.py",
+      "methods": [
+        {
+          "name": "len",
+          "doc": "安全获取 key 对应值的长度"
+        },
+        {
+          "name": "get_str",
+          "doc": "安全获取 key 对应值的字符串"
+        },
+        {
+          "name": "safe",
+          "doc": "安全获取 key 对应值"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TypeSafeList",
+      "description": "类型安全的列表，提供安全的元素访问。",
+      "defined_in": "polaris/kernelone/audit/audit_field.py",
+      "methods": [
+        {
+          "name": "safe_get",
+          "doc": "安全获取索引处的元素"
+        },
+        {
+          "name": "safe_map",
+          "doc": "安全映射，忽略错误元素"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_capture_stack",
+      "description": "捕获调用栈摘要",
+      "defined_in": "polaris/kernelone/audit/audit_field.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_dict_attr",
+      "description": "Check if object has __dict__ attribute.",
+      "defined_in": "polaris/kernelone/audit/audit_field.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_len",
+      "description": "安全获取对象长度。",
+      "defined_in": "polaris/kernelone/audit/audit_field.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_str",
+      "description": "安全获取对象的字符串表示。",
+      "defined_in": "polaris/kernelone/audit/audit_field.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_repr",
+      "description": "安全获取对象的 repr 表示。",
+      "defined_in": "polaris/kernelone/audit/audit_field.py"
+    },
+    {
+      "type": "function",
+      "name": "safe_value",
+      "description": "安全获取值，自动处理各种边界类型。",
+      "defined_in": "polaris/kernelone/audit/audit_field.py"
+    },
+    {
+      "type": "class",
+      "name": "KernelAuditEventType",
+      "description": "Canonical event types for runtime audit.",
+      "defined_in": "polaris/kernelone/audit/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KernelAuditRole",
+      "description": "Canonical runtime role sentinel for audit attribution.",
+      "defined_in": "polaris/kernelone/audit/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KernelAuditEvent",
+      "description": "Kernel-level audit event payload.",
+      "defined_in": "polaris/kernelone/audit/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize event to JSON-friendly mapping."
+        },
+        {
+          "name": "from_dict",
+          "doc": "Build event from mapping."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "KernelChainVerificationResult",
+      "description": "Chain integrity verification result.",
+      "defined_in": "polaris/kernelone/audit/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KernelAuditWriteResult",
+      "description": "Result of one audit write operation.",
+      "defined_in": "polaris/kernelone/audit/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KernelAuditStorePort",
+      "description": "Storage port required by KernelAuditRuntime.",
+      "defined_in": "polaris/kernelone/audit/contracts.py",
+      "methods": [
+        {
+          "name": "runtime_root",
+          "doc": ""
+        },
+        {
+          "name": "append",
+          "doc": ""
+        },
+        {
+          "name": "query",
+          "doc": ""
+        },
+        {
+          "name": "export_json",
+          "doc": ""
+        },
+        {
+          "name": "export_csv",
+          "doc": ""
+        },
+        {
+          "name": "verify_chain",
+          "doc": ""
+        },
+        {
+          "name": "get_stats",
+          "doc": ""
+        },
+        {
+          "name": "cleanup_old_logs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ErrorPattern",
+      "description": "错误模式定义",
+      "defined_in": "polaris/kernelone/audit/diagnosis.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SuspiciousLocation",
+      "description": "可疑代码位置",
+      "defined_in": "polaris/kernelone/audit/diagnosis.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DiagnosisResult",
+      "description": "诊断结果",
+      "defined_in": "polaris/kernelone/audit/diagnosis.py",
+      "methods": [
+        {
+          "name": "has_result",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PatternRegistry",
+      "description": "错误模式注册表",
+      "defined_in": "polaris/kernelone/audit/diagnosis.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "match",
+          "doc": "匹配错误消息，返回模式和提取的信息"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "diagnose_error",
+      "description": "诊断错误，定位根因。",
+      "defined_in": "polaris/kernelone/audit/diagnosis.py"
+    },
+    {
+      "type": "function",
+      "name": "diagnose_from_exception",
+      "description": "从异常对象诊断错误",
+      "defined_in": "polaris/kernelone/audit/diagnosis.py"
+    },
+    {
+      "type": "class",
+      "name": "FailureClass",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/error_correlator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ErrorCorrelationResult",
+      "description": "Result of error correlation query.",
+      "defined_in": "polaris/kernelone/audit/error_correlator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ErrorCorrelator",
+      "description": "Links KernelAuditEvent instances into causal chains.",
+      "defined_in": "polaris/kernelone/audit/error_correlator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register_rule",
+          "doc": ""
+        },
+        {
+          "name": "correlate",
+          "doc": "Build error correlation chain for an error event."
+        },
+        {
+          "name": "_find_upstream",
+          "doc": "Find events that preceded the error_event on the same task."
+        },
+        {
+          "name": "_find_downstream",
+          "doc": "Find events affected by the error_event on the same task."
+        },
+        {
+          "name": "_determine_primary_cause",
+          "doc": "Find the primary cause from matched rules."
+        },
+        {
+          "name": "_compute_confidence",
+          "doc": "Compute confidence score 0.0-1.0."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_classify_event",
+      "description": "Classify an event into a failure category.",
+      "defined_in": "polaris/kernelone/audit/error_correlator.py"
+    },
+    {
+      "type": "function",
+      "name": "_map_to_resolution_hint",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/error_correlator.py"
+    },
+    {
+      "type": "class",
+      "name": "CorrelationType",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/error_correlator_rules.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CorrelationRule",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/error_correlator_rules.py",
+      "methods": [
+        {
+          "name": "matches",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EventTypeMatchRule",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/error_correlator_rules.py",
+      "methods": [
+        {
+          "name": "matches",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_init_builtin_rules",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/error_correlator_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "get_rules",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/error_correlator_rules.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_audit_internal_failure",
+      "description": "Attempt to emit internal audit event; degrade gracefully on failure.",
+      "defined_in": "polaris/kernelone/audit/evidence_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_within_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/evidence_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_logical_path_from_absolute",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/evidence_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_evidence_artifact_reference",
+      "description": "Resolve artifact reference to canonical absolute+logical paths.",
+      "defined_in": "polaris/kernelone/audit/evidence_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_failure_run_id",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/evidence_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_failure_hops_output_path",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/evidence_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_runtime_scoped_directory",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/evidence_paths.py"
+    },
+    {
+      "type": "class",
+      "name": "FailureClass",
+      "description": "Standard failure classification dictionary.",
+      "defined_in": "polaris/kernelone/audit/failure_envelope.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FailureEnvelope",
+      "description": "Unified failure representation.",
+      "defined_in": "polaris/kernelone/audit/failure_envelope.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary for serialization."
+        },
+        {
+          "name": "from_dict",
+          "doc": "Create from dictionary."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_failure",
+      "description": "Convenience function to create a FailureEnvelope.",
+      "defined_in": "polaris/kernelone/audit/failure_envelope.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_audit_internal_failure",
+      "description": "Attempt to emit internal audit event; degrade gracefully on failure.",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_dict",
+      "description": "Type guard for dict.",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_str",
+      "description": "Safely get string value from dict.",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_int",
+      "description": "Safely get int value from dict.",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_failed_observation",
+      "description": "Check if event is a failed observation.",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_events",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_paths",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_failure_code",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_hop3",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "build_failure_hops",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "function",
+      "name": "write_failure_index",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/failure_hops.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditGateway",
+      "description": "Legacy-compatible gateway facade over KernelAuditRuntime.",
+      "defined_in": "polaris/kernelone/audit/gateway.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_instance",
+          "doc": ""
+        },
+        {
+          "name": "shutdown_all",
+          "doc": ""
+        },
+        {
+          "name": "reset_instance",
+          "doc": ""
+        },
+        {
+          "name": "shutdown",
+          "doc": ""
+        },
+        {
+          "name": "emit_event",
+          "doc": ""
+        },
+        {
+          "name": "emit_llm_event",
+          "doc": ""
+        },
+        {
+          "name": "emit_dialogue",
+          "doc": ""
+        },
+        {
+          "name": "query_by_run_id",
+          "doc": ""
+        },
+        {
+          "name": "query_by_task_id",
+          "doc": ""
+        },
+        {
+          "name": "query_by_trace_id",
+          "doc": ""
+        },
+        {
+          "name": "get_corruption_log",
+          "doc": ""
+        },
+        {
+          "name": "verify_chain",
+          "doc": ""
+        },
+        {
+          "name": "store",
+          "doc": ""
+        },
+        {
+          "name": "runtime_root",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_to_kernel_event_type",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_kernel_role",
+      "description": "Convert role to plain string.",
+      "defined_in": "polaris/kernelone/audit/gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_legacy_event",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "get_gateway",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "emit_audit_event",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash_payload",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_contract_fingerprint",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "function",
+      "name": "load_contract_fingerprint",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_events_append_only",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_contract_immutable",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_memory_refs",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_failure_hops_ready",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "function",
+      "name": "run_invariant_sentinel",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/invariant_sentinel.py"
+    },
+    {
+      "type": "class",
+      "name": "LLMuditBridge",
+      "description": "Bridges llm/toolkit/audit.py sessions into KernelAuditRuntime.",
+      "defined_in": "polaris/kernelone/audit/llm_bridge.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "runtime",
+          "doc": ""
+        },
+        {
+          "name": "replay_session",
+          "doc": "Replay one session file into the audit chain."
+        },
+        {
+          "name": "_bridge_event",
+          "doc": "Convert llm/toolkit/audit.py event to KernelAuditEvent."
+        },
+        {
+          "name": "replay_directory",
+          "doc": "Replay all session files in a directory."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "KernelRuntimeAdapterConfig",
+      "description": "Configuration for KernelRuntimeAdapter.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/kernel_runtime_adapter.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CircuitBreaker",
+      "description": "Thread-safe circuit breaker for audit writes.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/kernel_runtime_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "state",
+          "doc": "Get current circuit breaker state."
+        },
+        {
+          "name": "record_success",
+          "doc": "Record a successful operation."
+        },
+        {
+          "name": "record_failure",
+          "doc": "Record a failed operation."
+        },
+        {
+          "name": "is_write_allowed",
+          "doc": "Check if writes are allowed in current state."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BufferedEvent",
+      "description": "An audit event with metadata in the buffer.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/kernel_runtime_adapter.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KernelRuntimeAdapter",
+      "description": "Async batched adapter for KernelAuditRuntime.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/kernel_runtime_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the adapter."
+        },
+        {
+          "name": "_get_partition_key",
+          "doc": "Get partition key for an event."
+        },
+        {
+          "name": "_write_partition_sync",
+          "doc": "Sync file write - runs in thread pool via asyncio.to_thread()."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get adapter statistics."
+        },
+        {
+          "name": "get_partition_stats",
+          "doc": "Get statistics about existing audit partitions."
+        },
+        {
+          "name": "update_stats",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_default_adapter",
+      "description": "Get the default adapter instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/kernel_runtime_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_default_adapter",
+      "description": "Reset the default adapter instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/kernel_runtime_adapter.py"
+    },
+    {
+      "type": "class",
+      "name": "OpenTelemetryExporter",
+      "description": "OpenTelemetry span exporter via OTLP HTTP Protocol.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/otel_exporter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the OTLP exporter."
+        },
+        {
+          "name": "_to_otlp_span",
+          "doc": "Convert TracingAuditInterceptor span to OTLP JSON format."
+        },
+        {
+          "name": "_build_otlp_payload",
+          "doc": "Build OTLP JSON payload for a batch of spans."
+        },
+        {
+          "name": "_sync_post",
+          "doc": ""
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get exporter statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "JaegerExporter",
+      "description": "Jaeger trace exporter via Jaeger HTTP Thrift API.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/otel_exporter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the Jaeger exporter."
+        },
+        {
+          "name": "_to_jaeger_span",
+          "doc": "Convert a span dict to Jaeger Thrift format."
+        },
+        {
+          "name": "_build_jaeger_payload",
+          "doc": "Build Jaeger HTTP Thrift batch payload."
+        },
+        {
+          "name": "_sync_post",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SanitizationConfig",
+      "description": "Configuration for sanitization behavior.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/sanitization_hook.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SanitizationHook",
+      "description": "Hook for sanitizing audit events before persistence.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/sanitization_hook.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize sanitization hook."
+        },
+        {
+          "name": "config",
+          "doc": "Get sanitization configuration."
+        },
+        {
+          "name": "sanitize",
+          "doc": "Sanitize an audit event."
+        },
+        {
+          "name": "_sanitize_impl",
+          "doc": "Internal sanitize implementation."
+        },
+        {
+          "name": "_sanitize_dict",
+          "doc": "Sanitize a dictionary."
+        },
+        {
+          "name": "_sanitize_list",
+          "doc": "Sanitize a list."
+        },
+        {
+          "name": "_is_sensitive_key",
+          "doc": "Check if a key matches any sensitive pattern."
+        },
+        {
+          "name": "_sanitize_string",
+          "doc": "Sanitize a string value."
+        },
+        {
+          "name": "_looks_like_token",
+          "doc": "Check if a string looks like a token."
+        },
+        {
+          "name": "_truncate",
+          "doc": "Truncate a value to max_preview_length."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_default_sanitizer",
+      "description": "Get the default sanitizer instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/sanitization_hook.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_default_sanitizer",
+      "description": "Reset the default sanitizer instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/sanitization_hook.py"
+    },
+    {
+      "type": "class",
+      "name": "StorageTierAdapter",
+      "description": "Cold/Hot分层存储适配器.",
+      "defined_in": "polaris/kernelone/audit/omniscient/adapters/storage_tier_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the storage tier adapter."
+        },
+        {
+          "name": "is_hot",
+          "doc": "判断事件或日期是否属于热存储."
+        },
+        {
+          "name": "_extract_date",
+          "doc": "从事件dict或日期字符串提取datetime."
+        },
+        {
+          "name": "get_tier",
+          "doc": "Get storage tier for an event or date."
+        },
+        {
+          "name": "_compress_file_sync",
+          "doc": "Sync gzip compression."
+        },
+        {
+          "name": "_delete_partition_sync",
+          "doc": "Sync delete partition directory."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get adapter statistics."
+        },
+        {
+          "name": "get_archive_stats",
+          "doc": "Get statistics about archived (cold) partitions."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditPriority",
+      "description": "Priority levels for audit event processing.",
+      "defined_in": "polaris/kernelone/audit/omniscient/bus.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditDegradationLevel",
+      "description": "Degradation levels for audit system back-pressure.",
+      "defined_in": "polaris/kernelone/audit/omniscient/bus.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditEventEnvelope",
+      "description": "Envelope wrapping an audit event with metadata.",
+      "defined_in": "polaris/kernelone/audit/omniscient/bus.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OmniscientAuditBus",
+      "description": "Core event bus for Omniscient Audit with Priority Queue + Back-pressure.",
+      "defined_in": "polaris/kernelone/audit/omniscient/bus.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the audit bus."
+        },
+        {
+          "name": "get_default",
+          "doc": "Get the default singleton bus instance."
+        },
+        {
+          "name": "get_instance",
+          "doc": "Get or create a named bus instance."
+        },
+        {
+          "name": "get_optional",
+          "doc": "Get optional bus instance (for decorator fallthrough)."
+        },
+        {
+          "name": "reset_default",
+          "doc": "Reset the default singleton (for testing)."
+        },
+        {
+          "name": "emit_sync",
+          "doc": "Synchronous emit wrapper for sync code paths."
+        },
+        {
+          "name": "subscribe",
+          "doc": "Subscribe an interceptor to audit events."
+        },
+        {
+          "name": "unsubscribe",
+          "doc": "Unsubscribe an interceptor from audit events."
+        },
+        {
+          "name": "unsubscribe_by_name",
+          "doc": "Unsubscribe an interceptor by name."
+        },
+        {
+          "name": "open_circuit",
+          "doc": "Open the circuit breaker — drop all non-CRITICAL/ERROR events."
+        },
+        {
+          "name": "close_circuit",
+          "doc": "Close the circuit breaker — resume normal operation."
+        },
+        {
+          "name": "circuit_open",
+          "doc": "Check if circuit breaker is open."
+        },
+        {
+          "name": "degradation_level",
+          "doc": "Get current degradation level."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get bus statistics."
+        },
+        {
+          "name": "get_storm_level",
+          "doc": "Get current storm detection level."
+        },
+        {
+          "name": "_track_lost_event",
+          "doc": "Track events lost due to fallback failures."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditContext",
+      "description": "Immutable audit context for correlation across async tasks.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py",
+      "methods": [
+        {
+          "name": "with_span",
+          "doc": "Create a new context with a new span_id, chaining to current."
+        },
+        {
+          "name": "with_metadata",
+          "doc": "Create a new context with added metadata."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Serialize to dictionary for logging/serialization."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_AuditContextManager",
+      "description": "Async context manager for managing audit context lifecycle.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the context manager with correlation fields."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ThreadAuditContextManager",
+      "description": "Sync context manager for managing audit context in sync code.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the context manager with correlation fields."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_current_audit_context",
+      "description": "Get the current audit context from context variable.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py"
+    },
+    {
+      "type": "function",
+      "name": "set_audit_context",
+      "description": "Set the current audit context in the context variable.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_audit_context",
+      "description": "Clear the current audit context.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py"
+    },
+    {
+      "type": "function",
+      "name": "get_thread_audit_context",
+      "description": "Get audit context from thread-local storage (for sync code).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py"
+    },
+    {
+      "type": "function",
+      "name": "set_thread_audit_context",
+      "description": "Set audit context in thread-local storage (for sync code).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_thread_audit_context",
+      "description": "Clear audit context from thread-local storage (for sync code).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context.py"
+    },
+    {
+      "type": "class",
+      "name": "UnifiedAuditContext",
+      "description": "Unified audit context bridging PolarisContext and AuditContext.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py",
+      "methods": [
+        {
+          "name": "with_span",
+          "doc": "Create new context with new span_id, chaining to current."
+        },
+        {
+          "name": "with_task",
+          "doc": "Create new context with updated task_id."
+        },
+        {
+          "name": "with_turn",
+          "doc": "Create new context with updated turn_id."
+        },
+        {
+          "name": "with_metadata",
+          "doc": "Create new context with added metadata."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Serialize to dictionary for logging/serialization."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UnifiedContextFactory",
+      "description": "Factory for creating UnifiedAuditContext from various sources.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py",
+      "methods": [
+        {
+          "name": "from_polaris_context",
+          "doc": "Create UnifiedAuditContext from PolarisContext."
+        },
+        {
+          "name": "from_env_vars",
+          "doc": "Create UnifiedAuditContext from environment variables."
+        },
+        {
+          "name": "create",
+          "doc": "Create a new UnifiedAuditContext from scratch."
+        },
+        {
+          "name": "inherit",
+          "doc": "Inherit from current context, applying overrides."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_AuditContextScope",
+      "description": "Async context manager for managing unified audit context lifecycle.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ThreadAuditContextScope",
+      "description": "Sync context manager for managing audit context in sync code.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_generate_trace_id",
+      "description": "Generate a standardized trace_id (16-char hex).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_span_id",
+      "description": "Generate a standardized span_id (16-char hex).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "get_current_audit_context",
+      "description": "Get current unified audit context from contextvars.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "set_audit_context",
+      "description": "Set current unified audit context in contextvars.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_audit_context",
+      "description": "Clear the current unified audit context.",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "get_thread_audit_context",
+      "description": "Get audit context from thread-local storage (for sync code).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "set_thread_audit_context",
+      "description": "Set audit context in thread-local storage (for sync code).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_thread_audit_context",
+      "description": "Clear audit context from thread-local storage (for sync code).",
+      "defined_in": "polaris/kernelone/audit/omniscient/context_manager.py"
+    },
+    {
+      "type": "class",
+      "name": "DegradationLevel",
+      "description": "System degradation levels.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HAConfig",
+      "description": "Configuration for high availability features.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditStormDetector",
+      "description": "Sliding window event counter with back-pressure.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize storm detector."
+        },
+        {
+          "name": "record_event",
+          "doc": "Record an event for storm detection."
+        },
+        {
+          "name": "get_level",
+          "doc": "Get current storm level."
+        },
+        {
+          "name": "should_drop",
+          "doc": "Check if events should be dropped."
+        },
+        {
+          "name": "should_skip_body",
+          "doc": "Check if event bodies should be skipped."
+        },
+        {
+          "name": "should_redact_body",
+          "doc": "Check if event bodies should be redacted."
+        },
+        {
+          "name": "get_sampling_rate",
+          "doc": "Get current sampling rate."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get storm detector statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PriorityBasedStormDetector",
+      "description": "Storm detector with priority-based handling.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": [
+        {
+          "name": "should_drop_for_priority",
+          "doc": "Check if event should be dropped based on priority."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditSampler",
+      "description": "Priority-based dynamic sampler.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize sampler."
+        },
+        {
+          "name": "should_sample",
+          "doc": "Check if event should be sampled."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MemoryBoundedBatcher",
+      "description": "Memory-bounded batcher with OOM protection.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize memory-bounded batcher."
+        },
+        {
+          "name": "estimate_event_size",
+          "doc": "Estimate memory size of an event."
+        },
+        {
+          "name": "should_flush",
+          "doc": "Check if batch should be flushed."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get batcher statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditCircuitBreaker",
+      "description": "Circuit breaker for audit write operations.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize circuit breaker."
+        },
+        {
+          "name": "state",
+          "doc": "Get current state."
+        },
+        {
+          "name": "is_write_allowed",
+          "doc": "Check if writes are allowed."
+        },
+        {
+          "name": "record_success",
+          "doc": "Record a successful write."
+        },
+        {
+          "name": "record_failure",
+          "doc": "Record a failed write."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get circuit breaker statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditFallbackManager",
+      "description": "Multi-tier fallback manager for audit system.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize fallback manager."
+        },
+        {
+          "name": "add_tier_callback",
+          "doc": "Add callback for tier transitions."
+        },
+        {
+          "name": "get_current_tier",
+          "doc": "Get current active tier."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get fallback manager statistics."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "apply_ha_config",
+      "description": "Apply HA configuration to an audit bus.",
+      "defined_in": "polaris/kernelone/audit/omniscient/high_availability.py"
+    },
+    {
+      "type": "class",
+      "name": "AgentCommInterceptor",
+      "description": "Interceptor for auditing multi-agent communication.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the agent communication interceptor."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process an agent communication audit event."
+        },
+        {
+          "name": "_process_agent_event",
+          "doc": "Process a single agent communication event."
+        },
+        {
+          "name": "_handle_director_started",
+          "doc": "Handle Director started event."
+        },
+        {
+          "name": "_handle_director_stopped",
+          "doc": "Handle Director stopped event."
+        },
+        {
+          "name": "_handle_director_paused",
+          "doc": "Handle Director paused event."
+        },
+        {
+          "name": "_handle_director_resumed",
+          "doc": "Handle Director resumed event."
+        },
+        {
+          "name": "_handle_agent_communication",
+          "doc": "Handle agent communication event."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get agent communication audit statistics."
+        },
+        {
+          "name": "reset_stats",
+          "doc": "Reset all statistics counters."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditAlertInterceptor",
+      "description": "Interceptor that bridges audit bus to AlertingEngine.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/alert.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the alert interceptor."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process an audit event and forward to alerting engine."
+        },
+        {
+          "name": "_to_kernel_event",
+          "doc": "Convert omniscient event dict to KernelAuditEvent."
+        },
+        {
+          "name": "_check_circuit_breaker_alerts",
+          "doc": "Check for circuit breaker state changes and emit alerts."
+        },
+        {
+          "name": "_get_interceptor_circuit_states",
+          "doc": "Get circuit breaker state for all registered interceptors."
+        },
+        {
+          "name": "_fire_circuit_alert",
+          "doc": "Fire an internal audit failure alert for circuit breaker open."
+        },
+        {
+          "name": "get_active_alerts",
+          "doc": "Get all active alerts from the alerting engine."
+        },
+        {
+          "name": "get_fired_alerts",
+          "doc": "Get all alerts fired by this interceptor this session."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get alert interceptor statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditInterceptor",
+      "description": "Protocol for audit interceptors.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/base.py",
+      "methods": [
+        {
+          "name": "name",
+          "doc": "Interceptor name for logging and identification."
+        },
+        {
+          "name": "priority",
+          "doc": "Default priority for events from this interceptor."
+        },
+        {
+          "name": "circuit_open",
+          "doc": "Whether circuit breaker is open."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process an audit event."
+        },
+        {
+          "name": "open_circuit",
+          "doc": "Open circuit breaker."
+        },
+        {
+          "name": "close_circuit",
+          "doc": "Close circuit breaker."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get interceptor statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BaseAuditInterceptor",
+      "description": "Base class for audit interceptors with common functionality.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/base.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the interceptor."
+        },
+        {
+          "name": "name",
+          "doc": "Interceptor name."
+        },
+        {
+          "name": "priority",
+          "doc": "Default priority for events."
+        },
+        {
+          "name": "circuit_open",
+          "doc": "Whether circuit breaker is open."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process an audit event with exception safety."
+        },
+        {
+          "name": "open_circuit",
+          "doc": "Open circuit breaker."
+        },
+        {
+          "name": "close_circuit",
+          "doc": "Close circuit breaker."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get interceptor statistics."
+        },
+        {
+          "name": "reset_stats",
+          "doc": "Reset statistics counters."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ContextAuditInterceptor",
+      "description": "Interceptor for auditing context management.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/context_mgmt.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the context management interceptor."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process a context audit event."
+        },
+        {
+          "name": "_process_context_event",
+          "doc": "Process a single context management event."
+        },
+        {
+          "name": "_update_window_status",
+          "doc": "Update current window status from event."
+        },
+        {
+          "name": "_handle_window_status",
+          "doc": "Handle context window status event."
+        },
+        {
+          "name": "_handle_context_management",
+          "doc": "Handle context management event."
+        },
+        {
+          "name": "_handle_compact_requested",
+          "doc": "Handle compaction requested event."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get context management audit statistics."
+        },
+        {
+          "name": "reset_stats",
+          "doc": "Reset all statistics counters."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMAuditInterceptor",
+      "description": "Interceptor for auditing LLM interactions.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the LLM audit interceptor."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process an LLM audit event."
+        },
+        {
+          "name": "_process_llm_event",
+          "doc": "Process a single LLM interaction event."
+        },
+        {
+          "name": "_check_failure_threshold",
+          "doc": "Check if failure threshold is exceeded and open circuit if needed."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get LLM audit statistics."
+        },
+        {
+          "name": "reset_stats",
+          "doc": "Reset all statistics counters."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMAuditWrapper",
+      "description": "Wrapper/decorator for LLM provider calls.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the LLM audit wrapper."
+        },
+        {
+          "name": "wrap_generate",
+          "doc": "Wrap a provider's generate method."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMCallTracker",
+      "description": "Tracks an in-progress LLM call for audit.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py",
+      "methods": [
+        {
+          "name": "add_prompt",
+          "doc": "Record prompt details."
+        },
+        {
+          "name": "add_response",
+          "doc": "Record response details."
+        },
+        {
+          "name": "record_first_token",
+          "doc": "Record when first token was received (for streaming)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMCallInterceptor",
+      "description": "Bus interceptor for LLM audit events.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the LLM interceptor."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "_process_event",
+          "doc": "Process an LLM audit event."
+        },
+        {
+          "name": "_check_failure_threshold",
+          "doc": "Check if failure threshold exceeded."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get LLM audit statistics."
+        },
+        {
+          "name": "reset_stats",
+          "doc": "Reset all statistics counters."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "llm_audit",
+      "description": "Decorator to audit an LLM call function.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py"
+    },
+    {
+      "type": "function",
+      "name": "decorator",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_interceptor.py"
+    },
+    {
+      "type": "class",
+      "name": "LLMProviderAuditInterceptor",
+      "description": "Interceptor that bridges provider runtime to Omniscient Audit Bus.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_provider_integration.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the LLM provider audit interceptor."
+        },
+        {
+          "name": "attach_to_bus",
+          "doc": "Attach this interceptor to the default audit bus."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process an audit event."
+        },
+        {
+          "name": "_update_metrics",
+          "doc": "Update internal metrics from an LLM event."
+        },
+        {
+          "name": "emit_runtime_result",
+          "doc": "Emit an audit event from a RuntimeProviderInvokeResult."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get LLM provider audit statistics."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_extract_usage",
+      "description": "Extract prompt and completion tokens from usage dict.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_provider_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "_error_type_from_error",
+      "description": "Categorize error string into error type.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/llm_provider_integration.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskState",
+      "description": "Task state constants.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/task.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskOrchestrationInterceptor",
+      "description": "Interceptor for auditing task orchestration.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/task.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the task orchestration interceptor."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process a task audit event."
+        },
+        {
+          "name": "_process_task_event",
+          "doc": "Process a single task orchestration event."
+        },
+        {
+          "name": "_handle_task_submitted",
+          "doc": "Handle task submitted event."
+        },
+        {
+          "name": "_handle_task_claimed",
+          "doc": "Handle task claimed event."
+        },
+        {
+          "name": "_handle_task_started",
+          "doc": "Handle task started event."
+        },
+        {
+          "name": "_handle_task_completed",
+          "doc": "Handle task completed event."
+        },
+        {
+          "name": "_handle_task_failed",
+          "doc": "Handle task failed event."
+        },
+        {
+          "name": "_handle_task_cancelled",
+          "doc": "Handle task cancelled event."
+        },
+        {
+          "name": "_handle_task_retry",
+          "doc": "Handle task retry event."
+        },
+        {
+          "name": "_handle_task_orchestration",
+          "doc": "Handle generic task orchestration event."
+        },
+        {
+          "name": "_record_transition",
+          "doc": "Record a state transition."
+        },
+        {
+          "name": "_check_deadlock",
+          "doc": "Check for potential deadlocks among waiting tasks."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get task orchestration audit statistics."
+        },
+        {
+          "name": "reset_stats",
+          "doc": "Reset all statistics counters."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolAuditInterceptor",
+      "description": "Interceptor for auditing tool executions.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/tool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the tool audit interceptor."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process a tool audit event."
+        },
+        {
+          "name": "_process_tool_event",
+          "doc": "Process a single tool execution event."
+        },
+        {
+          "name": "_update_tool_circuit",
+          "doc": "Update circuit breaker state for a specific tool."
+        },
+        {
+          "name": "_close_tool_circuit",
+          "doc": "Reset circuit breaker state for a tool on success."
+        },
+        {
+          "name": "_check_global_failure_threshold",
+          "doc": "Check if global failure threshold is exceeded."
+        },
+        {
+          "name": "_should_attempt_recovery",
+          "doc": "Check if enough time has passed to attempt circuit recovery."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get tool audit statistics."
+        },
+        {
+          "name": "reset_stats",
+          "doc": "Reset all statistics counters."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TracingAuditInterceptor",
+      "description": "Interceptor that bridges audit bus to Polaris UnifiedTracer.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/tracing.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the tracing interceptor."
+        },
+        {
+          "name": "_get_tracer",
+          "doc": "Get the tracer instance (lazy import to avoid circular deps)."
+        },
+        {
+          "name": "_handle_envelope",
+          "doc": "Handle incoming audit event envelope."
+        },
+        {
+          "name": "intercept",
+          "doc": "Process an audit event and create a trace span."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get tracing interceptor statistics."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_map_priority_to_status",
+      "description": "Map AuditPriority and error flag to SpanStatus string.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/tracing.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_span_tags",
+      "description": "Build span tags from event data.",
+      "defined_in": "polaris/kernelone/audit/omniscient/interceptors/tracing.py"
+    },
+    {
+      "type": "class",
+      "name": "CircuitBreakerState",
+      "description": "Circuit breaker states for audit bus.",
+      "defined_in": "polaris/kernelone/audit/omniscient/metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StormLevel",
+      "description": "Audit storm detection levels.",
+      "defined_in": "polaris/kernelone/audit/omniscient/metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HistogramBucket",
+      "description": "Single histogram bucket for latency tracking.",
+      "defined_in": "polaris/kernelone/audit/omniscient/metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EventMetrics",
+      "description": "Metrics for a specific domain/event_type/priority combination.",
+      "defined_in": "polaris/kernelone/audit/omniscient/metrics.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditMetricsCollector",
+      "description": "Thread-safe metrics collector for Omniscient Audit System.",
+      "defined_in": "polaris/kernelone/audit/omniscient/metrics.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the metrics collector."
+        },
+        {
+          "name": "record_event",
+          "doc": "Record an audit event."
+        },
+        {
+          "name": "record_event_from_audit",
+          "doc": "Record an audit event from an AuditEvent instance."
+        },
+        {
+          "name": "set_buffer_size",
+          "doc": "Set the current audit buffer size."
+        },
+        {
+          "name": "set_circuit_breaker_state",
+          "doc": "Set the circuit breaker state."
+        },
+        {
+          "name": "set_storm_level",
+          "doc": "Set the audit storm detection level."
+        },
+        {
+          "name": "_make_key",
+          "doc": "Create a unique key for metric labeling."
+        },
+        {
+          "name": "_parse_key",
+          "doc": "Parse a composite key into its components."
+        },
+        {
+          "name": "get_prometheus_format",
+          "doc": "Export metrics in Prometheus exposition format."
+        },
+        {
+          "name": "reset",
+          "doc": "Reset all metrics."
+        },
+        {
+          "name": "get_summary",
+          "doc": "Get a summary of total events by domain."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_unified_prometheus_metrics",
+      "description": "Get unified Prometheus metrics from both AuditMetricsCollector and MetricsRecorder.",
+      "defined_in": "polaris/kernelone/audit/omniscient/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "get_metrics_collector",
+      "description": "Get the global metrics collector instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/metrics.py"
+    },
+    {
+      "type": "class",
+      "name": "PartitionStats",
+      "description": "Immutable statistics for a single partition.",
+      "defined_in": "polaris/kernelone/audit/omniscient/query_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryResult",
+      "description": "Paginated query result container.",
+      "defined_in": "polaris/kernelone/audit/omniscient/query_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditEventIndex",
+      "description": "Thread-safe in-memory index for O(1) event lookups.",
+      "defined_in": "polaris/kernelone/audit/omniscient/query_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "add_entry",
+          "doc": "Add an entry to the index."
+        },
+        {
+          "name": "increment_file_count",
+          "doc": "Increment the event count for a file."
+        },
+        {
+          "name": "lookup_trace",
+          "doc": "Look up events by trace_id."
+        },
+        {
+          "name": "lookup_run",
+          "doc": "Look up events by run_id."
+        },
+        {
+          "name": "lookup_task",
+          "doc": "Look up events by task_id."
+        },
+        {
+          "name": "get_file_counts",
+          "doc": "Get event counts per file."
+        },
+        {
+          "name": "is_built",
+          "doc": "Check if index has been built."
+        },
+        {
+          "name": "mark_built",
+          "doc": "Mark the index as fully built."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AuditQueryEngine",
+      "description": "High-performance query engine for partitioned audit logs.",
+      "defined_in": "polaris/kernelone/audit/omniscient/query_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the query engine."
+        },
+        {
+          "name": "discover_partitions",
+          "doc": "Discover all partitions matching criteria."
+        },
+        {
+          "name": "build_index",
+          "doc": "Build in-memory index for indexed lookups."
+        },
+        {
+          "name": "_index_partition",
+          "doc": "Index events in a single partition file."
+        },
+        {
+          "name": "query_by_time_range",
+          "doc": "Query events within a time range using partition pruning."
+        },
+        {
+          "name": "query_by_trace_id",
+          "doc": "Query events by trace_id using O(1) index lookup."
+        },
+        {
+          "name": "query_by_run_id",
+          "doc": "Query events by run_id using O(1) index lookup."
+        },
+        {
+          "name": "query_by_task_id",
+          "doc": "Query events by task_id using O(1) index lookup."
+        },
+        {
+          "name": "query_all",
+          "doc": "Query all events with optional filters (no time range)."
+        },
+        {
+          "name": "_ensure_index_built",
+          "doc": "Ensure the index is built, building if necessary."
+        },
+        {
+          "name": "_read_partition_events",
+          "doc": "Read events from a partition within a time range."
+        },
+        {
+          "name": "_read_all_partition_events",
+          "doc": "Read all events from a partition."
+        },
+        {
+          "name": "_fetch_events_at_locations",
+          "doc": "Fetch events at specific (file_path, line_number) locations."
+        },
+        {
+          "name": "_read_specific_lines",
+          "doc": "Read specific lines from a file."
+        },
+        {
+          "name": "_extract_timestamp",
+          "doc": "Extract datetime from an event's timestamp field."
+        },
+        {
+          "name": "get_partition_stats",
+          "doc": "Get comprehensive partition statistics."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SensitiveFieldRedactor",
+      "description": "Redact sensitive fields from audit payloads.",
+      "defined_in": "polaris/kernelone/audit/omniscient/redaction.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the redactor with sensitive patterns."
+        },
+        {
+          "name": "placeholder",
+          "doc": "Placeholder text for redacted values."
+        },
+        {
+          "name": "redact",
+          "doc": "Recursively redact sensitive fields in data."
+        },
+        {
+          "name": "_redact_dict",
+          "doc": "Redact sensitive fields in a dictionary."
+        },
+        {
+          "name": "_redact_list",
+          "doc": "Redact sensitive fields in a list."
+        },
+        {
+          "name": "_is_sensitive_key",
+          "doc": "Check if a key matches any sensitive pattern."
+        },
+        {
+          "name": "_redact_string",
+          "doc": "Redact sensitive patterns in a string value."
+        },
+        {
+          "name": "_looks_like_token",
+          "doc": "Check if a string looks like a token."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_default_redactor",
+      "description": "Get the default redactor instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/redaction.py"
+    },
+    {
+      "type": "function",
+      "name": "redact_sensitive_data",
+      "description": "Convenience function to redact sensitive data.",
+      "defined_in": "polaris/kernelone/audit/omniscient/redaction.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_default_redactor",
+      "description": "Reset the default redactor instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/redaction.py"
+    },
+    {
+      "type": "class",
+      "name": "SchemaVersion",
+      "description": "Version information for a registered schema.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schema_registry.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SchemaRegistration",
+      "description": "Registration record for an AuditEvent schema.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schema_registry.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SchemaRegistry",
+      "description": "Registry for AuditEvent schemas with version tracking.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schema_registry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the schema registry."
+        },
+        {
+          "name": "register",
+          "doc": "Register an AuditEvent schema."
+        },
+        {
+          "name": "register_all_known_schemas",
+          "doc": "Register all known AuditEvent schemas from the schemas module."
+        },
+        {
+          "name": "validate",
+          "doc": "Validate an event against registered schema."
+        },
+        {
+          "name": "get_schema",
+          "doc": "Get the registered schema class for a domain/event_type."
+        },
+        {
+          "name": "get_versions",
+          "doc": "Get all registered versions for a schema."
+        },
+        {
+          "name": "get_latest_version",
+          "doc": "Get the latest version for a schema."
+        },
+        {
+          "name": "get_schema_uri",
+          "doc": "Get the schema URI for a specific version or latest."
+        },
+        {
+          "name": "list_registered",
+          "doc": "List all registered schemas."
+        },
+        {
+          "name": "increment_event_count",
+          "doc": "Increment the event count for a schema version."
+        },
+        {
+          "name": "_make_key",
+          "doc": "Create a unique key for domain/event_type pair."
+        },
+        {
+          "name": "_parse_key",
+          "doc": "Parse a composite key into domain and event_type."
+        },
+        {
+          "name": "_compare_versions",
+          "doc": "Compare two version strings."
+        },
+        {
+          "name": "_parse_version",
+          "doc": "Parse a semantic version string."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_import_time",
+      "description": "Get the import time for uptime tracking.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schema_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "get_schema_registry",
+      "description": "Get the global schema registry instance.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schema_registry.py"
+    },
+    {
+      "type": "class",
+      "name": "EventDomain",
+      "description": "Event domain classification for the omniscient audit system.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditEvent",
+      "description": "Base audit event schema with CloudEvents alignment.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/base.py",
+      "methods": [
+        {
+          "name": "_strip_whitespace",
+          "doc": "Strip whitespace from ID fields."
+        },
+        {
+          "name": "_validate_trace_id",
+          "doc": "Validate trace_id format (hex, 16-32 chars)."
+        },
+        {
+          "name": "to_audit_dict",
+          "doc": "Serialize to dict for audit logging (CloudEvents-compatible)."
+        },
+        {
+          "name": "from_audit_dict",
+          "doc": "Deserialize from audit dict (CloudEvents-compatible)."
+        },
+        {
+          "name": "with_trace",
+          "doc": "Create a new event with updated trace context."
+        },
+        {
+          "name": "with_priority",
+          "doc": "Create a new event with updated priority."
+        },
+        {
+          "name": "with_data",
+          "doc": "Create a new event with merged data."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ContextOperation",
+      "description": "Context operation type.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/context_event.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ContextEvent",
+      "description": "Context management audit event.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/context_event.py",
+      "methods": [
+        {
+          "name": "to_audit_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_audit_dict",
+          "doc": ""
+        },
+        {
+          "name": "create",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MessageDirection",
+      "description": "Direction of message flow.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/dialogue_event.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MessageType",
+      "description": "Type of message.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/dialogue_event.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DialogueEvent",
+      "description": "Role communication audit event.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/dialogue_event.py",
+      "methods": [
+        {
+          "name": "to_audit_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_audit_dict",
+          "doc": ""
+        },
+        {
+          "name": "create",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMStrategy",
+      "description": "LLM invocation strategy for audit tracking.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/llm_event.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LLMFinishReason",
+      "description": "LLM completion finish reason.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/llm_event.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LLMEvent",
+      "description": "LLM interaction audit event.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/llm_event.py",
+      "methods": [
+        {
+          "name": "_truncate_preview",
+          "doc": "Ensure previews are truncated to 500 chars."
+        },
+        {
+          "name": "total_tokens",
+          "doc": "Total token count (computed)."
+        },
+        {
+          "name": "tokens_per_second",
+          "doc": "Throughput in tokens per second."
+        },
+        {
+          "name": "is_success",
+          "doc": "Whether the LLM call succeeded."
+        },
+        {
+          "name": "to_audit_dict",
+          "doc": "Serialize to audit dict (extends base)."
+        },
+        {
+          "name": "from_audit_dict",
+          "doc": "Deserialize from audit dict."
+        },
+        {
+          "name": "create",
+          "doc": "Factory to create an LLMEvent."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskState",
+      "description": "Task state in orchestration lifecycle.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/task_event.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskEvent",
+      "description": "Task orchestration audit event.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/task_event.py",
+      "methods": [
+        {
+          "name": "to_audit_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_audit_dict",
+          "doc": ""
+        },
+        {
+          "name": "create",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolCategory",
+      "description": "Tool category for classification.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/tool_event.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ToolEvent",
+      "description": "Tool/function call audit event.",
+      "defined_in": "polaris/kernelone/audit/omniscient/schemas/tool_event.py",
+      "methods": [
+        {
+          "name": "_validate_input_args",
+          "doc": "Validate input args are serializable."
+        },
+        {
+          "name": "total_latency_ms",
+          "doc": "Total latency including queue time."
+        },
+        {
+          "name": "is_success",
+          "doc": "Whether the tool call succeeded."
+        },
+        {
+          "name": "to_audit_dict",
+          "doc": "Serialize to audit dict (extends base)."
+        },
+        {
+          "name": "from_audit_dict",
+          "doc": "Deserialize from audit dict."
+        },
+        {
+          "name": "create",
+          "doc": "Factory to create a ToolEvent."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StormLevel",
+      "description": "Storm detection levels for audit event back-pressure.",
+      "defined_in": "polaris/kernelone/audit/omniscient/storm_detector.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_EventCount",
+      "description": "Count entry for a specific event type.",
+      "defined_in": "polaris/kernelone/audit/omniscient/storm_detector.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditStormDetector",
+      "description": "Sliding window event counter with multi-level storm detection.",
+      "defined_in": "polaris/kernelone/audit/omniscient/storm_detector.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the storm detector with thresholds."
+        },
+        {
+          "name": "record_event",
+          "doc": "Record an event occurrence for storm detection."
+        },
+        {
+          "name": "get_level",
+          "doc": "Compute current storm level based on sliding window counts."
+        },
+        {
+          "name": "should_drop",
+          "doc": "Determine if events should be dropped based on storm level."
+        },
+        {
+          "name": "should_skip_body",
+          "doc": "Determine if event bodies (prompts/responses) should be skipped."
+        },
+        {
+          "name": "should_drop_event_type",
+          "doc": "Determine if a specific event type should be dropped."
+        },
+        {
+          "name": "should_redact_body",
+          "doc": "Determine if event body should be redacted."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Get current storm detection statistics."
+        },
+        {
+          "name": "reset",
+          "doc": "Reset all counters and state."
+        },
+        {
+          "name": "_cleanup_locked",
+          "doc": "Remove timestamps outside the sliding window."
+        },
+        {
+          "name": "current_count",
+          "doc": "Get current event count in the window (thread-safe)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAuditContext",
+      "description": "Tests for AuditContext dataclass.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
+      "methods": [
+        {
+          "name": "test_create_empty_context",
+          "doc": "Test creating an empty context."
+        },
+        {
+          "name": "test_create_full_context",
+          "doc": "Test creating a context with all fields."
+        },
+        {
+          "name": "test_context_is_immutable",
+          "doc": "Test that AuditContext is immutable (frozen)."
+        },
+        {
+          "name": "test_with_span",
+          "doc": "Test creating new context with span chaining."
+        },
+        {
+          "name": "test_with_metadata",
+          "doc": "Test adding metadata to context."
+        },
+        {
+          "name": "test_to_dict",
+          "doc": "Test serialization to dict."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAuditContextManager",
+      "description": "Tests for async context manager.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestThreadAuditContextManager",
+      "description": "Tests for sync thread context manager.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
+      "methods": [
+        {
+          "name": "test_sync_context_manager",
+          "doc": "Test sync context manager sets and clears."
+        },
+        {
+          "name": "test_sync_context_manager_restores_previous",
+          "doc": "Test sync context manager restores previous context."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContextVars",
+      "description": "Tests for context variable helpers.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_context.py",
+      "methods": [
+        {
+          "name": "test_clear_thread_audit_context",
+          "doc": "Test clearing thread context."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "temp_runtime_root",
+      "description": "Provide a temporary runtime root for audit files.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "adapter_config",
+      "description": "Low-latency config for tests.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_singleton_state",
+      "description": "Reset bus singleton state after each test.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "test_metrics_collector_prometheus_output",
+      "description": "Verify AuditMetricsCollector outputs valid Prometheus format.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "test_schema_registry_auto_registers_all_schemas",
+      "description": "Verify SchemaRegistry registers all 6 AuditEvent schemas on init.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "test_unified_audit_context_with_span_chaining",
+      "description": "Verify UnifiedAuditContext.with_span() correctly chains parent span.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "test_unified_audit_context_with_metadata",
+      "description": "Verify UnifiedAuditContext.with_metadata() merges correctly.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_audit_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "temp_runtime",
+      "description": "Provide a temporary runtime root for audit files.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_full_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_state",
+      "description": "Reset all global state before and after each test.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_full_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "test_metrics_collector_tracks_full_event_lifecycle",
+      "description": "Verify AuditMetricsCollector tracks events through full lifecycle.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_e2e_full_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "test_apply_ha_config_still_works",
+      "description": "apply_ha_config() still works and creates storm detector.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_ha_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "clean_bus",
+      "description": "Provide a fresh bus instance per test.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_integration.py"
+    },
+    {
+      "type": "class",
+      "name": "_FakeSpan",
+      "description": "Fake span for testing.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_interceptors.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "set_tag",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FakeTracer",
+      "description": "Fake tracer for testing TracingAuditInterceptor.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_interceptors.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "start_span",
+          "doc": ""
+        },
+        {
+          "name": "end_span",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "test_otel_exporter_init_defaults",
+      "description": "Exporter initializes with correct defaults.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_exporter_init_custom",
+      "description": "Exporter accepts custom configuration.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_sampling_drops_events",
+      "description": "Sampling rate of 0.0 drops all events.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_sampling_allows_all",
+      "description": "Sampling rate of 1.0 allows all events into the batch.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_export_span_sampling_100",
+      "description": "100% sampling rate accepts all spans.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_to_otlp_span_conversion",
+      "description": "_to_otlp_span() converts span dict to OTLP format.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_to_otlp_span_error_status",
+      "description": "Error status is correctly mapped.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_build_payload",
+      "description": "_build_otlp_payload() creates valid JSON payload.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_export_batch",
+      "description": "export_batch() exports multiple spans.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_stats",
+      "description": "get_stats() returns correct statistics.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_jaeger_exporter_init_defaults",
+      "description": "JaegerExporter initializes with correct defaults.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_jaeger_to_span_conversion",
+      "description": "_to_jaeger_span() converts to Jaeger format.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_jaeger_span_error_handling",
+      "description": "Error spans include error tags.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_jaeger_build_payload",
+      "description": "_build_jaeger_payload() creates valid JSON.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_otel_endpoint_env_default",
+      "description": "DEFAULT_OTEL_ENDPOINT and JAEGER_ENDPOINT are set.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_otel_exporter.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSensitiveFieldRedactor",
+      "description": "Tests for SensitiveFieldRedactor.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_redaction.py",
+      "methods": [
+        {
+          "name": "test_redact_password",
+          "doc": "Test password field redaction."
+        },
+        {
+          "name": "test_redact_nested_password",
+          "doc": "Test redaction in nested dictionaries."
+        },
+        {
+          "name": "test_redact_list_of_dicts",
+          "doc": "Test redaction in lists of dictionaries."
+        },
+        {
+          "name": "test_redact_case_insensitive",
+          "doc": "Test redaction is case-insensitive."
+        },
+        {
+          "name": "test_preserves_non_sensitive_fields",
+          "doc": "Test that non-sensitive fields are preserved."
+        },
+        {
+          "name": "test_preserves_structure",
+          "doc": "Test that structure is preserved (same keys, same indices)."
+        },
+        {
+          "name": "test_preserves_primitives",
+          "doc": "Test that primitive values are returned as-is."
+        },
+        {
+          "name": "test_redact_token_string_values",
+          "doc": "Test that strings that look like tokens are redacted."
+        },
+        {
+          "name": "test_redact_long_hex_strings",
+          "doc": "Test that long hex strings are treated as tokens."
+        },
+        {
+          "name": "test_redact_jwt_tokens",
+          "doc": "Test JWT token detection and redaction."
+        },
+        {
+          "name": "test_redact_base64_strings",
+          "doc": "Test base64 string detection."
+        },
+        {
+          "name": "test_extra_sensitive_patterns",
+          "doc": "Test extra sensitive patterns can be added."
+        },
+        {
+          "name": "test_custom_placeholder",
+          "doc": "Test custom placeholder text."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestModuleFunctions",
+      "description": "Tests for module-level convenience functions.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_redaction.py",
+      "methods": [
+        {
+          "name": "test_redact_sensitive_data",
+          "doc": "Test convenience function."
+        },
+        {
+          "name": "test_get_default_redactor",
+          "doc": "Test default redactor is shared."
+        },
+        {
+          "name": "test_reset_default_redactor",
+          "doc": "Test reset clears the singleton."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEdgeCases",
+      "description": "Edge case tests.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_redaction.py",
+      "methods": [
+        {
+          "name": "test_empty_dict",
+          "doc": "Test empty dict handling."
+        },
+        {
+          "name": "test_empty_list",
+          "doc": "Test empty list handling."
+        },
+        {
+          "name": "test_empty_string",
+          "doc": "Test empty string handling."
+        },
+        {
+          "name": "test_deeply_nested",
+          "doc": "Test deeply nested structures."
+        },
+        {
+          "name": "test_mixed_nested_list_dict",
+          "doc": "Test mixed list and dict nesting."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "temp_runtime",
+      "description": "Provide a temporary runtime root.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_is_hot_recent_event",
+      "description": "Recent events (within TTL) are hot.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_is_hot_event_dict_with_recent_timestamp",
+      "description": "Event dict with recent timestamp is hot.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_is_cold_old_event",
+      "description": "Old events (beyond hot TTL) are cold.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_tier_hot",
+      "description": "Events within hot TTL return 'hot'.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_tier_cold",
+      "description": "Events beyond hot but within cold TTL return 'cold'.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_tier_expired",
+      "description": "Events beyond cold TTL return 'expired'.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_tier_with_iso_string",
+      "description": "ISO date strings are correctly classified.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_default_ttl_constants",
+      "description": "Default TTL values are correct.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storage_tier_adapter.py"
+    },
+    {
+      "type": "class",
+      "name": "TestAuditStormDetector",
+      "description": "Tests for AuditStormDetector.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_create_detector",
+          "doc": "Test creating a detector with default thresholds."
+        },
+        {
+          "name": "test_create_detector_with_custom_thresholds",
+          "doc": "Test creating a detector with custom thresholds."
+        },
+        {
+          "name": "test_invalid_window_seconds",
+          "doc": "Test that invalid window_seconds raises ValueError."
+        },
+        {
+          "name": "test_invalid_elevated_threshold",
+          "doc": "Test that invalid elevated_threshold raises ValueError."
+        },
+        {
+          "name": "test_invalid_threshold_order",
+          "doc": "Test that threshold ordering is validated."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStormDetectorLevels",
+      "description": "Tests for storm detection levels.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_normal_level",
+          "doc": "Test that normal level is returned with low event count."
+        },
+        {
+          "name": "test_elevated_level",
+          "doc": "Test elevated level is reached."
+        },
+        {
+          "name": "test_warning_level",
+          "doc": "Test warning level is reached."
+        },
+        {
+          "name": "test_critical_level",
+          "doc": "Test critical level is reached."
+        },
+        {
+          "name": "test_emergency_level",
+          "doc": "Test emergency level is reached."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStormDetectorSlidingWindow",
+      "description": "Tests for sliding window behavior.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_sliding_window_expiry",
+          "doc": "Test that events expire after window duration."
+        },
+        {
+          "name": "test_partial_window_expiry",
+          "doc": "Test that only old events expire."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStormDetectorShouldDrop",
+      "description": "Tests for should_drop() behavior.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_should_drop_at_emergency",
+          "doc": "Test that should_drop returns True at emergency level."
+        },
+        {
+          "name": "test_should_not_drop_below_emergency",
+          "doc": "Test that should_drop returns False below emergency level."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStormDetectorShouldSkipBody",
+      "description": "Tests for should_skip_body() behavior.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_should_skip_body_at_critical",
+          "doc": "Test that should_skip_body returns True at critical level."
+        },
+        {
+          "name": "test_should_not_skip_body_below_critical",
+          "doc": "Test that should_skip_body returns False below critical level."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStormDetectorPerTypeCounting",
+      "description": "Tests for per-type event counting.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_per_type_stats",
+          "doc": "Test that per-type stats are tracked."
+        },
+        {
+          "name": "test_should_drop_event_type",
+          "doc": "Test that specific event types can be dropped."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStormDetectorStats",
+      "description": "Tests for storm detector statistics.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_get_stats_structure",
+          "doc": "Test that get_stats returns correct structure."
+        },
+        {
+          "name": "test_reset",
+          "doc": "Test that reset clears all state."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStormDetectorConcurrency",
+      "description": "Tests for thread safety.",
+      "defined_in": "polaris/kernelone/audit/omniscient/tests/test_storm_detector.py",
+      "methods": [
+        {
+          "name": "test_concurrent_record_events",
+          "doc": "Test that concurrent event recording is safe."
+        },
+        {
+          "name": "record_events",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "set_audit_store_factory",
+      "description": "Set the factory for creating audit stores.",
+      "defined_in": "polaris/kernelone/audit/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "has_audit_store_factory",
+      "description": "Return whether an audit store factory has been registered.",
+      "defined_in": "polaris/kernelone/audit/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "create_audit_store",
+      "description": "Create an audit store using the registered factory.",
+      "defined_in": "polaris/kernelone/audit/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "get_audit_store",
+      "description": "Get or create a cached audit store for a runtime root.",
+      "defined_in": "polaris/kernelone/audit/registry.py"
+    },
+    {
+      "type": "class",
+      "name": "AuditIndex",
+      "description": "Lightweight in-memory index for O(1) event lookups.",
+      "defined_in": "polaris/kernelone/audit/runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "index_event",
+          "doc": ""
+        },
+        {
+          "name": "_evict_if_needed_locked",
+          "doc": ""
+        },
+        {
+          "name": "_remove_by_id_locked",
+          "doc": ""
+        },
+        {
+          "name": "query_by_task",
+          "doc": ""
+        },
+        {
+          "name": "query_by_trace",
+          "doc": ""
+        },
+        {
+          "name": "query_by_type",
+          "doc": ""
+        },
+        {
+          "name": "query_recent",
+          "doc": ""
+        },
+        {
+          "name": "evict_old",
+          "doc": "Remove all events older than `before`. Returns count evicted."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "KernelAuditWriteError",
+      "description": "Raised when a mandatory audit write cannot be persisted.",
+      "defined_in": "polaris/kernelone/audit/runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HealthResult",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KernelAuditRuntime",
+      "description": "Single runtime entrypoint for runtime audit operations.",
+      "defined_in": "polaris/kernelone/audit/runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_check_key_file_permissions",
+          "doc": "Warn if key file has loose permissions (group/others have access)."
+        },
+        {
+          "name": "_verify_key_file_permissions",
+          "doc": "Verify that key file was created with correct 0o600 permissions."
+        },
+        {
+          "name": "get_instance",
+          "doc": "Get per-runtime-root runtime singleton."
+        },
+        {
+          "name": "shutdown_all",
+          "doc": "Clear runtime singletons."
+        },
+        {
+          "name": "runtime_root",
+          "doc": "Resolved runtime root."
+        },
+        {
+          "name": "raw_store",
+          "doc": "Expose wrapped store for compatibility calls."
+        },
+        {
+          "name": "emit_event",
+          "doc": "Write one normalized audit event."
+        },
+        {
+          "name": "_resolve_previous_hash",
+          "doc": "Resolve the previous event hash for the next append."
+        },
+        {
+          "name": "_hash_event",
+          "doc": "Compute the canonical SHA-256 hash for one audit event."
+        },
+        {
+          "name": "_compute_signature",
+          "doc": "Compute HMAC-SHA256 signature for an audit event."
+        },
+        {
+          "name": "emit_llm_event",
+          "doc": "Write standardized LLM call event."
+        },
+        {
+          "name": "emit_dialogue",
+          "doc": "Write standardized dialogue audit event."
+        },
+        {
+          "name": "query_events",
+          "doc": "Query events from store."
+        },
+        {
+          "name": "query_by_run_id",
+          "doc": "Filter events by run id."
+        },
+        {
+          "name": "query_by_task_id",
+          "doc": "Filter events by task id using index."
+        },
+        {
+          "name": "query_by_trace_id",
+          "doc": "Filter events by trace id using index."
+        },
+        {
+          "name": "export_json",
+          "doc": "Export events in JSON payload."
+        },
+        {
+          "name": "export_csv",
+          "doc": "Export events as CSV text."
+        },
+        {
+          "name": "verify_chain",
+          "doc": "Verify chain integrity."
+        },
+        {
+          "name": "get_stats",
+          "doc": "Read aggregate stats."
+        },
+        {
+          "name": "cleanup_old_logs",
+          "doc": "Cleanup old logs via backend retention policy."
+        },
+        {
+          "name": "get_corruption_log",
+          "doc": "Read corruption records."
+        },
+        {
+          "name": "_emit_internal_event",
+          "doc": "将审计系统自身失败写入审计链，而非 stdlib logging。"
+        },
+        {
+          "name": "_write_canonical_log",
+          "doc": ""
+        },
+        {
+          "name": "_record_corruption",
+          "doc": ""
+        },
+        {
+          "name": "_append_jsonl",
+          "doc": ""
+        },
+        {
+          "name": "_fs_for_workspace",
+          "doc": ""
+        },
+        {
+          "name": "_determine_channel",
+          "doc": ""
+        },
+        {
+          "name": "_determine_severity",
+          "doc": ""
+        },
+        {
+          "name": "_determine_kind",
+          "doc": ""
+        },
+        {
+          "name": "health_check",
+          "doc": "Perform health check on the audit runtime."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "validate_run_id",
+      "description": "Validate run id using KernelOne-owned deterministic rules.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    },
+    {
+      "type": "function",
+      "name": "require_valid_run_id",
+      "description": "Require a valid run id, otherwise raise ValueError.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_workspace_path",
+      "description": "Normalize workspace path to an absolute path.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_optional_mapping",
+      "description": "Normalize optional mapping input.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    },
+    {
+      "type": "function",
+      "name": "derive_task_id",
+      "description": "Derive task id when caller did not provide one.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    },
+    {
+      "type": "function",
+      "name": "derive_trace_id",
+      "description": "Generate a compact trace id.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_event_type",
+      "description": "Normalize event type input into enum.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_role",
+      "description": "Normalize role input into a plain string.",
+      "defined_in": "polaris/kernelone/audit/validators.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

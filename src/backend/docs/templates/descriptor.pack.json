@@ -1,0 +1,126 @@
+{
+  "cell_id": "context.catalog",
+  "title": "Context Catalog",
+  "primary_category": "system",
+  "domain": "context",
+  "kind": "capability",
+  "visibility": "public",
+  "stateful": true,
+  "owner": "context",
+  "capability_summary": "Builds semantic Cell descriptors and serves graph-constrained lookup.",
+  "purpose": "Provide AI and Agent Cell discovery without blind repository scanning.",
+  "schema_version": 1,
+  "descriptor_version": 1,
+  "generated_at": "2026-03-18T00:00:00Z",
+  "graph_fingerprint": "sha256:graph-fingerprint",
+  "descriptor_hash": "sha256:descriptor-hash",
+  "embedding_runtime_fingerprint": "sentence-transformers/all-MiniLM-L6-v2:cpu",
+  "derived_from": {
+    "cell_manifest": "cells/context/catalog/cell.yaml",
+    "readme": "cells/context/catalog/README.agent.md",
+    "context_pack": "cells/context/catalog/generated/context.pack.json",
+    "code_fingerprint": "sha256:source-hash"
+  },
+  "classification": {
+    "plane": "context",
+    "kind": "capability",
+    "domain": "context",
+    "role": "system",
+    "state_profile": "owner",
+    "effect_profile": [
+      "fs",
+      "db"
+    ],
+    "criticality": "normal"
+  },
+  "subgraphs": [
+    "context_plane"
+  ],
+  "when_to_use": [
+    "Need graph-constrained semantic lookup for candidate Cells.",
+    "Need descriptor freshness and local semantic index maintenance."
+  ],
+  "when_not_to_use": [
+    "Do not use as an authority for architecture truth.",
+    "Do not bypass graph filters with blind vector search."
+  ],
+  "responsibilities": [
+    "Generate deterministic descriptor cards.",
+    "Serve semantic search over Cell capability descriptions."
+  ],
+  "non_goals": [
+    "Does not override graph truth."
+  ],
+  "invariants": [
+    "Descriptor input is graph and Cell assets, not raw source blobs.",
+    "Descriptor artifacts are UTF-8 and hash-tracked."
+  ],
+  "key_invariants": [
+    "Graph remains the source of truth.",
+    "Embedding is generated from descriptor text, not raw code."
+  ],
+  "testability": {
+    "standalone_runnable": true,
+    "standalone_testable": true,
+    "stateful": true,
+    "verify_targets": [
+      "cells/context/catalog/tests/test_service.py"
+    ],
+    "requires_injected_ports": [
+      "kernelone.db_runtime",
+      "kernelone.embedding_runtime"
+    ]
+  },
+  "classification_tags": [
+    "context",
+    "system",
+    "capability",
+    "public",
+    "stateful"
+  ],
+  "public_contracts": {
+    "commands": [],
+    "queries": [
+      "SearchCellsQueryV1"
+    ],
+    "events": [],
+    "results": [
+      "SearchCellsResultV1",
+      "CellDescriptorV1"
+    ],
+    "errors": []
+  },
+  "dependencies": [
+    "storage.layout",
+    "kernelone.db_runtime",
+    "kernelone.embedding_runtime"
+  ],
+  "state_owners": [
+    "workspace/meta/context_catalog/*"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "fs.write:workspace/meta/context_catalog/*",
+    "db.write:lancedb/context_catalog_descriptors"
+  ],
+  "owned_paths": [
+    "cells/context/catalog/**"
+  ],
+  "source_files": [
+    "cells/context/catalog/cell.yaml",
+    "cells/context/catalog/README.agent.md",
+    "cells/context/catalog/generated/context.pack.json"
+  ],
+  "source_hash": "sha256:source-hash",
+  "descriptor_text": "Cell context.catalog serves graph-constrained semantic lookup for AI and Agent runtime flows.",
+  "embedding_vector": [
+    0.12,
+    0.01
+  ],
+  "embedding_provider": "sentence_transformers",
+  "embedding_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_device": "cpu",
+  "metadata": {
+    "asset_root": "cells/context/catalog"
+  }
+}

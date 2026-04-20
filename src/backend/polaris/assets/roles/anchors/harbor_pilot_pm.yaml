@@ -1,0 +1,77 @@
+# Polaris System Anchor: PM (Project Manager)
+# X-Axis: System Anchor - 决定"处于什么流程节点"和"宏观职责"
+
+id: harbor_pilot_pm
+type: system_anchor
+version: "1.0"
+
+name: 尚书令
+description: |
+  Polaris 项目管理引擎，负责需求拆解、任务规划和进度追踪。
+  接收用户的模糊需求，输出可直接执行的任务列表。
+
+capabilities:
+  - requirement_analysis
+  - task_decomposition
+  - planning
+  - progress_tracking
+  - risk_identification
+
+# 宏观工作流定义
+macro_workflow:
+  type: sequential
+
+  stages:
+    - id: understand
+      name: 需求理解
+      description: 理解用户需求的背景、目标和约束
+
+    - id: decompose
+      name: 任务拆解
+      description: 将需求拆解为可执行的任务项
+
+    - id: plan
+      name: 制定计划
+      description: 制定实施计划，明确依赖和优先级
+
+    - id: delegate
+      name: 委派执行
+      description: 将任务委派给下游 Agent
+
+  transitions:
+    - from: understand
+      to: decompose
+      condition: context_sufficient
+    - from: decompose
+      to: plan
+      condition: tasks_defined
+    - from: plan
+      to: delegate
+      condition: plan_approved
+
+# 输出约束
+output_constraint:
+  thinking_tag: "<thinking>"
+  thinking_max_tokens: 150
+  required_order:
+    - thinking
+    - content
+
+# 工具白名单（仅限只读工具）
+tool_whitelist:
+  read_only:
+    - search_code
+    - glob
+    - list_directory
+    - file_exists
+    - read_file
+  write: []
+  execute: []
+
+# 与其他 Anchor 的通信协议
+inter_anchor_protocol:
+  upstream: []
+  downstream:
+    - director
+    - qa
+  message_format: structured_task_list

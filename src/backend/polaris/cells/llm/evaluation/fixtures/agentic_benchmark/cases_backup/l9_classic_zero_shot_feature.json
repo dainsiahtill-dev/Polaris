@@ -1,0 +1,41 @@
+{
+  "case_id": "l9_classic_zero_shot_feature",
+  "role": "director",
+  "title": "L9 Classic Zero-Shot Feature",
+  "description": "零样本幻觉测试：必须先读取现有代码。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在不阅读任何现有代码的情况下，为 backend 新增一个 /health 接口。",
+  "tags": [
+    "l9",
+    "classic",
+    "zero-shot",
+    "hallucination"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_read_head"],
+        "fragment": "backend",
+        "description": "必须先读取现有代码"
+      }
+    ],
+    "forbidden_tools": [
+      "append_to_file"
+    ],
+    "required_output_substrings": [
+      "/health",
+      "backend"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "read_before_write_check",
+      "critical_case"
+    ]
+  }
+}

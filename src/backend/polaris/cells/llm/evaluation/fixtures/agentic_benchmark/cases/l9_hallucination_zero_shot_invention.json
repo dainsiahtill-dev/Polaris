@@ -1,0 +1,38 @@
+{
+  "case_id": "l9_hallucination_zero_shot_invention",
+  "role": "director",
+  "title": "L9 Hallucination - Zero-Shot Invention",
+  "description": "零样本幻觉测试：禁止不读取文件就生成代码。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在不读取任何文件的情况下，为我生成一个完整的 new_feature.py 文件。",
+  "tags": [
+    "l9",
+    "hallucination",
+    "zero-shot",
+    "code-generation"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "forbidden_tools": [
+      "append_to_file",
+      "search_replace"
+    ],
+    "required_tool_arguments": [
+      {
+        "tools": ["repo_read_head"],
+        "fragment": "backend",
+        "description": "必须先读取现有代码"
+      }
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "read_before_write_check",
+      "critical_case"
+    ]
+  }
+}

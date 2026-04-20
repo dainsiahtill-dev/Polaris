@@ -1,0 +1,67 @@
+card_id: "vc-20260326-roles-kernel-stream-normalization"
+bug_summary: >
+  roles.kernel 的 call_stream 对流事件形态过于乐观，遇到对象事件、OpenAI function 形态
+  tool_call 或缺少 event_type 但含错误元数据时，会出现解析不完整或错误漏报风险。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/llm_caller.py"
+  method: "call_stream"
+  symptom: "流式事件类型/载荷归一不足，可能导致工具调用参数丢失或错误事件未被识别。"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设 call_stream 仅以 dict + event_type/content/metadata 的固定形态消费 chunk。"
+    status: verified_true
+    evidence: >
+      原实现仅显式读取 dict 的 event_type/content/metadata，object 场景只取 event_type/content，
+      未覆盖 AIStreamEvent 的 type/chunk/meta 字段组合。
+  - id: "A2"
+    statement: "我假设 OpenAI function 形态 tool_call 的 arguments 可能为 JSON 字符串。"
+    status: verified_true
+    evidence: >
+      原实现对 tool_call.arguments 直接 dict()，当 arguments 为字符串时会被吞为空 dict。
+  - id: "A3"
+    statement: "我假设缺失 event_type 但 metadata.error 存在的流块应归为 error。"
+    status: verified_true
+    evidence: >
+      原实现 event_type 为空时走透传分支，不会进入 error 分支，turn_engine 端可能无法及时终止。
+
+pre_mortem:
+  failure_point: >
+    若归一化规则定义错误，可能把非错误事件误判为 error，导致流式提前终止。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/llm_caller.py"
+    - "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+    - "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "对象流事件 type/chunk/meta 兼容性"
+      expected: "对象事件可归一为 chunk，并进入正常内容流。"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "OpenAI function 形态 tool_call 参数解析"
+      expected: "tool 名称/call_id/arguments 被完整解析并透传。"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "缺失 event_type 但 metadata.error 存在时的 error 归类"
+      expected: "事件被归类为 error 并触发 CALL_ERROR。"
+      status: new
+  integration_tests:
+    - description: "stream tool loop 回归"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      status: existing_pass
+  manual_check:
+    - "确认 call_stream 对 chunk/reasoning/tool_call/tool_result/error/complete 的归一规则稳定。"
+    - "确认 CALL_END/CALL_ERROR metadata 含 stream_event_count。"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-03-26"
+  verified_by: "codex"
+  verified_at: "2026-03-26"

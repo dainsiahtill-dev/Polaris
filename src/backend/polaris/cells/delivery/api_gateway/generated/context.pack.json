@@ -1,0 +1,67 @@
+{
+  "id": "delivery.api_gateway",
+  "title": "API Gateway",
+  "kind": "capability",
+  "purpose": "Own inbound HTTP and WebSocket protocol translation and route dispatch.",
+  "summary": "Stateless delivery boundary that normalizes inbound transport traffic and delegates all stateful behavior to downstream cells.",
+  "owned_paths": [
+    "polaris/delivery/http/app_factory.py",
+    "polaris/delivery/http/dependencies.py",
+    "polaris/delivery/http/error_handlers.py",
+    "polaris/delivery/http/middleware/**",
+    "polaris/delivery/http/routers/**",
+    "polaris/delivery/http/v2/**",
+    "polaris/delivery/ws/**"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ApiCommandV1"
+    ],
+    "queries": [
+      "ApiQueryV1"
+    ],
+    "events": [
+      "ApiResponseEventV1"
+    ],
+    "results": [
+      "ApiResponseV1"
+    ],
+    "errors": [
+      "ApiGatewayErrorV1"
+    ]
+  },
+  "neighbors": [
+    "runtime.projection",
+    "policy.workspace_guard",
+    "compatibility.legacy_bridge"
+  ],
+  "state_owners": [],
+  "effects_allowed": [
+    "http.inbound:*",
+    "ws.inbound:*",
+    "fs.read:runtime/*",
+    "fs.read:workspace/history/*"
+  ],
+  "invariants": [
+    "delivery remains stateless",
+    "delivery does not write source-of-truth state",
+    "business writes are delegated downstream"
+  ],
+  "hotspots": [
+    "polaris/delivery/http/app_factory.py",
+    "polaris/delivery/http/routers/**"
+  ],
+  "test_targets": [
+    "tests/architecture/test_polaris_layout.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
+

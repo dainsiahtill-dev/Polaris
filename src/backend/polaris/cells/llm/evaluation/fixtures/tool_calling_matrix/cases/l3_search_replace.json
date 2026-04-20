@@ -1,0 +1,27 @@
+{
+  "case_id": "l3_search_replace",
+  "level": "L3",
+  "role": "director",
+  "title": "L3 Search and Replace",
+  "description": "验证模型能搜索并替换代码。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在 server.py 中查找所有 'localhost' 并替换为 '0.0.0.0'。",
+  "tags": ["l3", "search_replace", "refactor"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.85,
+    "stream": {
+      "required_tools": ["ripgrep", "search_replace"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 4
+    },
+    "non_stream": {
+      "required_tools": ["ripgrep", "search_replace"],
+      "min_tool_calls": 2
+    },
+    "parity": {
+      "required": true
+    }
+  }
+}

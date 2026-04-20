@@ -1,0 +1,9 @@
+{
+  "cell_id": "factory.pipeline",
+  "version": "1.0",
+  "summary": "Automated software manufacturing pipeline orchestration",
+  "depends_on": ["director.execution", "orchestration.pm_planning"],
+  "owned_paths": [
+    "polaris/application/factory"
+  ]
+}

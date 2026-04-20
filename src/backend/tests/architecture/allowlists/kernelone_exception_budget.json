@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-17T00:00:00Z",
+  "scope": "polaris/kernelone/**/*.py",
+  "max_total_except_exception": 250,
+  "max_total_bare_pass": 230,
+  "hotspot_trigger_except_exception": 8,
+  "hotspot_trigger_bare_pass": 5,
+  "hotspot_max_except_exception": {
+    "polaris/kernelone/llm/toolkit/executor.py": 21,
+    "polaris/kernelone/tools/runtime_executor.py": 10,
+    "polaris/kernelone/process/codex_adapter.py": 8,
+    "polaris/kernelone/process/async_contracts.py": 10,
+    "polaris/kernelone/context/cache.py": 10,
+    "polaris/kernelone/context/working_set.py": 8,
+    "polaris/kernelone/tool_execution/code_validator.py": 8,
+    "polaris/kernelone/traceability/internal/safety.py": 5
+  },
+  "hotspot_max_bare_pass": {
+    "polaris/kernelone/llm/toolkit/parsers.py": 11,
+    "polaris/kernelone/llm/providers/base_provider.py": 6,
+    "polaris/kernelone/llm/toolkit/integrations.py": 6,
+    "polaris/kernelone/fs/jsonl/locking.py": 5,
+    "polaris/kernelone/process/async_contracts.py": 16,
+    "polaris/kernelone/context/working_set.py": 7,
+    "polaris/kernelone/editing/tests/test_editblock_engine.py": 5,
+    "polaris/kernelone/events/tests/test_message_bus.py": 6,
+    "polaris/kernelone/events/typed/tests/test_registry.py": 12,
+    "polaris/kernelone/llm/providers/tests/test_stream_thinking_parser_json.py": 15,
+    "polaris/kernelone/workflow/tests/test_workflow_resume.py": 10
+  }
+}

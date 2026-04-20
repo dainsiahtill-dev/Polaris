@@ -1,0 +1,934 @@
+version: 1
+rules:
+  - id: manifest_schema_valid
+    severity: blocker
+    description: >
+      Every Cell catalog, Cell manifest, Subgraph manifest, and Context Pack
+      must validate against the corresponding schema.
+    evidence:
+      - docs/governance/schemas/cell.schema.yaml
+      - docs/governance/schemas/cell-catalog.schema.yaml
+      - docs/governance/schemas/subgraph.schema.yaml
+      - docs/governance/schemas/context-pack.schema.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - validate docs/graph/catalog/cells.yaml
+      - validate docs/graph/subgraphs/*.yaml
+      - validate generated context packs
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+  - id: migration_ledger_schema_valid
+    severity: blocker
+    description: >
+      The migration ledger must validate against its schema so that AI/Agent
+      migrations operate on a stable execution model instead of free-form prose.
+    evidence:
+      - docs/migration/ledger.yaml
+      - docs/governance/schemas/migration-ledger.schema.yaml
+    current_status: seeded
+    desired_automation:
+      - validate docs/migration/ledger.yaml
+      - fail if required unit fields or status enums drift
+
+  - id: no_cross_cell_internal_import
+    severity: blocker
+    description: >
+      Cross-Cell imports may only target a Cell's public surface. Direct imports
+      into another Cell's internal implementation are forbidden.
+    evidence:
+      - docs/ARCHITECTURE_SPEC.md
+      - docs/graph/catalog/cells.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - map file path to owning Cell
+      - parse imports
+      - fail if import crosses ownership without public contract allowance
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+  - id: declared_cell_dependencies_match_imports
+    severity: high
+    description: >
+      Every cross-Cell code dependency must be declared in the source Cell's
+      `depends_on`. The catalog is the governance truth; code imports may not
+      silently expand the dependency graph.
+    evidence:
+      - docs/graph/catalog/cells.yaml
+      - polaris/cells/**/cell.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - map python source files under polaris/cells/** to owning Cells
+      - parse absolute imports that target other Cells
+      - aggregate source Cell -> target Cell edges
+      - fail on any new edge missing from catalog `depends_on`
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+  - id: owned_paths_do_not_overlap
+    severity: blocker
+    description: >
+      `owned_paths` must not overlap across Cells unless an explicit temporary
+      migration exception is recorded.
+    evidence:
+      - docs/graph/catalog/cells.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - expand globs
+      - detect duplicate ownership
+      - report owning Cells and paths
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+  - id: single_state_owner
+    severity: blocker
+    description: >
+      Every source-of-truth state must have exactly one owner Cell.
+    evidence:
+      - docs/graph/catalog/cells.yaml
+      - docs/graph/subgraphs/*.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - aggregate `state_owners`
+      - fail on duplicate ownership
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+  - id: explicit_utf8_text_io
+    severity: blocker
+    description: >
+      All text file reads and writes must use explicit UTF-8.
+    evidence:
+      - AGENTS.md
+      - test_storage_layout.py
+      - test_imports.py
+    current_status: partially_enforced
+    desired_automation:
+      - static search for open() without encoding
+      - enforce `encoding="utf-8"` on text I/O
+
+  - id: opencode_canonical_entrypoint_non_regressive
+    severity: high
+    description: >
+      OpenCode-derived mechanisms (typed events, tool state, part types,
+      replacer chain) must be consumed through package-level canonical
+      entrypoints to prevent deep-module forks and parallel semantics.
+    evidence:
+      - docs/KERNELONE_OPENCODE_INTEGRATION_ARCHITECTURE.md
+      - polaris/kernelone/events/typed/__init__.py
+      - polaris/kernelone/tool/__init__.py
+      - polaris/kernelone/messages/__init__.py
+      - polaris/kernelone/editing/replacers/__init__.py
+    current_status: enforced
+    desired_automation:
+      - run docs/governance/ci/scripts/run_opencode_convergence_gate.py --workspace . --mode hard-fail
+
+  - id: undeclared_effects_forbidden
+    severity: blocker
+    description: >
+      File writes, network calls, process launches, and database writes must map
+      to a declared effect in the owning Cell.
+    evidence:
+      - docs/graph/catalog/cells.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - scan for subprocess, requests, socket, file write, db client usage
+      - compare against `effects_allowed`
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+  - id: context_pack_is_primary_ai_entry
+    severity: high
+    description: >
+      AI-facing work should start from catalog metadata and context packs rather
+      than full-repository scanning.
+    evidence:
+      - docs/ARCHITECTURE_SPEC.md
+      - docs/templates/context.pack.json
+    current_status: draft
+    desired_automation:
+      - ensure each public Cell has a generated context pack
+      - ensure context pack freshness timestamp is tracked
+
+  - id: semantic_descriptor_schema_valid
+    severity: blocker
+    description: >
+      context.catalog 生成的语义描述卡缓存必须满足 semantic descriptor schema，
+      并且结构字段完整可被机器消费。
+    evidence:
+      - docs/governance/schemas/semantic-descriptor.schema.yaml
+      - workspace/meta/context_catalog/descriptors.json
+    current_status: seeded
+    desired_automation:
+      - run docs/scripts/check_context_catalog_descriptor_cache.py
+      - validate descriptors.json against semantic-descriptor.schema.yaml
+
+  - id: semantic_descriptor_freshness
+    severity: blocker
+    description: >
+      若 Cell 资产发生变化，context.catalog 描述卡缓存必须被刷新，禁止使用过期索引。
+    evidence:
+      - polaris/cells/context/catalog/role_agent_service.py
+      - workspace/meta/context_catalog/index_state.json
+    current_status: seeded
+    desired_automation:
+      - compute source hash drift from graph/cell assets
+      - fail when check-freshness reports stale=true
+
+  - id: graph_constrained_semantic_retrieval
+    severity: high
+    description: >
+      语义检索必须先通过 Graph 约束过滤，再进行向量排序，避免向量结果覆盖架构边界事实。
+    evidence:
+      - docs/ACGA_2.0_PRINCIPLES.md
+      - cells/context/engine/providers.py
+      - polaris/cells/context/catalog/role_agent_service.py
+    current_status: draft
+    desired_automation:
+      - assert retrieval pipeline applies graph filter before semantic rank
+      - fail if retrieval path bypasses catalog/subgraph constraints
+
+  - id: contract_change_requires_review
+    severity: high
+    description: >
+      Any change to public contracts should trigger compatibility review and
+      targeted downstream regression selection.
+    evidence:
+      - docs/graph/catalog/cells.yaml
+    current_status: draft
+    desired_automation:
+      - detect changes under contract modules
+      - diff affected Cells via catalog
+      - select tests by subgraph and dependent Cells
+
+  - id: critical_subgraph_has_verify_targets
+    severity: high
+    description: >
+      Every critical subgraph must name concrete test targets and critical
+      contracts for regression.
+    evidence:
+      - docs/graph/subgraphs/director_pipeline.yaml
+      - docs/graph/subgraphs/pm_pipeline.yaml
+      - docs/graph/subgraphs/context_plane.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - validate non-empty `verify_targets`
+      - confirm referenced files exist
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+
+  - id: migration_gaps_are_explicit
+    severity: medium
+    description: >
+      During migration, every Cell must explicitly record unresolved gaps instead
+      of pretending the architecture is already complete.
+    evidence:
+      - docs/graph/catalog/cells.yaml
+    current_status: seeded
+    desired_automation:
+      - require `verification.gaps`
+      - fail if omitted on mapped legacy Cells
+
+  - id: migration_units_do_not_conflict
+    severity: blocker
+    description: >
+      Active migration units must not claim the same legacy path as `coverage:
+      full`, and target paths must not overlap unless the overlap is explicitly
+      marked as partial and justified.
+    evidence:
+      - docs/migration/ledger.yaml
+    current_status: draft
+    desired_automation:
+      - detect duplicate `source_refs` with `coverage: full`
+      - detect overlapping `target.target_paths`
+      - require partial-overlap justification notes
+
+  - id: catalog_missing_units_cannot_advance
+    severity: high
+    description: >
+      A migration unit whose target Cell is missing from the catalog may be
+      planned, in_progress, or blocked while graph work catches up, but it may
+      not advance as if the graph truth already existed.
+    evidence:
+      - docs/migration/ledger.yaml
+      - docs/graph/catalog/cells.yaml
+    current_status: draft
+    desired_automation:
+      - fail if `target.catalog_status = missing` and `status` is `code_moved` or beyond
+      - require matching catalog entry before `code_moved`
+
+  - id: shim_only_units_require_markers
+    severity: high
+    description: >
+      Once a migration unit reaches `imports_switched` or `shim_only`, legacy
+      files must carry explicit migration headers so later AI/Agent work does not
+      extend deprecated code paths.
+    evidence:
+      - docs/migration/tui_runtime.md
+      - docs/migration/ledger.yaml
+    current_status: draft
+    desired_automation:
+      - detect units at `imports_switched` or `shim_only`
+      - require MIGRATION-STATUS and MIGRATION-UNIT markers in legacy files
+      - run docs/migration/scripts/legacy_header_audit.py
+
+  - id: legacy_file_coverage_audit
+    severity: blocker
+    description: >
+      Legacy coverage must be audited at file granularity so directory-level
+      catch-all claims do not hide orphaned or partially ported code.
+    evidence:
+      - docs/migration/legacy_coverage_report.json
+      - docs/migration/legacy_coverage_report.md
+      - docs/migration/ledger.yaml
+    current_status: draft
+    desired_automation:
+      - run docs/migration/scripts/legacy_coverage_audit.py
+      - fail if `unclaimed > 0`
+      - fail if `ported_untracked > 0`
+      - report `directory_only_claimed` count trend and top offenders
+
+  - id: verified_or_retired_units_require_evidence
+    severity: high
+    description: >
+      No migration unit may be marked `verified` or `retired` without matching
+      graph updates, documentation updates, and at least one recorded validation
+      target or check.
+    evidence:
+      - docs/migration/ledger.yaml
+      - docs/MIGRATION_LEDGER.md
+    current_status: draft
+    desired_automation:
+      - require non-empty verification data for `verified` and `retired` units
+      - require referenced graph/doc paths to exist
+
+  - id: migration_preflight_required
+    severity: blocker
+    description: >
+      Formal migration writes must run through the preflight suite first. This
+      prevents direct execution of write scripts without fixture experiment,
+      UTF-8 checks, and consistency guards.
+    evidence:
+      - docs/migration/scripts/migration_preflight_suite.py
+      - docs/migration/preflight/preflight_report.json
+      - docs/migration/preflight/preflight_report.md
+    current_status: seeded
+    desired_automation:
+      - run docs/migration/scripts/migration_preflight_suite.py
+      - fail if preflight return code is non-zero
+      - require generated preflight report artifacts
+
+  - id: kernelone_release_collect_clean
+    severity: blocker
+    description: >
+      KernelOne release gate suite must be collectable without import errors.
+      This isolates kernelone baseline quality from unrelated migration churn.
+    evidence:
+      - docs/governance/ci/scripts/run_kernelone_release_gate.py
+      - tests/architecture/test_kernelone_release_gates.py
+    current_status: seeded
+    desired_automation:
+      - run python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode collect
+      - fail if collect stage returns non-zero
+
+  - id: kernelone_import_fence_clean
+    severity: blocker
+    description: >
+      KernelOne must not import delivery/application/domain/infrastructure/cells.
+      Reverse-layer imports break the Agent-OS boundary and testability.
+    evidence:
+      - tests/architecture/test_kernelone_release_gates.py
+      - tests/architecture/test_kernelone_boundary_clean_subsystems.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_kernelone_release_gates.py::test_kernelone_import_fence_blocks_reverse_layer_imports
+      - fail on any reverse-layer import finding
+
+  - id: kernelone_exception_budget_non_regressive
+    severity: high
+    description: >
+      `except Exception` and bare `pass` are allowed only under strict
+      non-regressive budgets until full typed error convergence is completed.
+    evidence:
+      - tests/architecture/allowlists/kernelone_exception_budget.json
+      - tests/architecture/test_kernelone_release_gates.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_kernelone_release_gates.py::test_kernelone_exception_budget_is_non_regressive
+      - fail when totals or hotspot budgets regress
+
+  - id: kernelone_release_suite_green
+    severity: blocker
+    description: >
+      KernelOne release suite must execute green after collect passes.
+      Collect-only alone does not prove behavior-level reliability.
+    evidence:
+      - docs/governance/ci/scripts/run_kernelone_release_gate.py
+      - tests/test_kernelone_*.py
+      - tests/architecture/test_kernelone_*.py
+    current_status: seeded
+    desired_automation:
+      - run python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode tests
+      - fail if any suite test fails
+
+  - id: agent_instruction_snapshot_consistent
+    severity: high
+    description: >
+      AGENTS.md / CLAUDE.md / GEMINI.md must expose the same architecture
+      snapshot facts to avoid prompt-truth split for multi-agent execution.
+    evidence:
+      - AGENTS.md
+      - CLAUDE.md
+      - GEMINI.md
+      - tests/architecture/test_kernelone_release_gates.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_kernelone_release_gates.py::test_agent_instruction_snapshot_is_consistent
+      - fail on any snapshot field mismatch
+
+  - id: manifest_catalog_consistency
+    severity: blocker
+    description: >
+      Cell manifests and catalog must not drift. Specifically: catalog depends_on
+      must be a superset of manifest depends_on; catalog owned_paths must contain
+      all manifest owned_paths; catalog state_owners must be a superset of manifest
+      state_owners; catalog effects_allowed must be a superset of manifest
+      effects_allowed. Existing mismatches are frozen via JSON Lines baseline and
+      do not cause gate failure. New mismatches are blocked in fail-on-new mode.
+    evidence:
+      - docs/governance/ci/scripts/run_catalog_governance_gate.py
+      - docs/graph/catalog/cells.yaml
+      - polaris/cells/*/*/cell.yaml
+    current_status: enforced_non_regressive
+    desired_automation:
+      - run python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --mismatch-baseline tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl
+      - fail if new mismatches introduced
+      - write: --write-mismatch-baseline tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl
+  - id: delivery_cli_import_hygiene
+    severity: high
+    description: >
+      Delivery CLI entrypoints must keep import hygiene: no legacy scripts/core
+      path injection and no heavy runtime-config side effects at import time.
+      This keeps bootstrap deterministic and prevents hidden path-coupling debt.
+    evidence:
+      - tests/architecture/test_delivery_cli_import_hygiene.py
+      - polaris/delivery/cli/pm/config.py
+      - polaris/delivery/cli/pm/cli.py
+      - polaris/delivery/cli/director/cli_thin.py
+      - polaris/delivery/http/adapters/scripts_pm.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_delivery_cli_import_hygiene.py
+      - fail on any regression in conditional bootstrap or import-time side-effect guards
+
+  - id: debt_register_schema_valid
+    severity: blocker
+    description: >
+      Governance debt must live in a machine-readable debt register with stable
+      ids, explicit residual risks, and linked evidence.
+    evidence:
+      - docs/governance/debt.register.yaml
+      - docs/governance/schemas/debt-register.schema.yaml
+      - tests/architecture/test_structural_bug_governance_assets.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py::test_debt_register_shape_and_links
+      - fail if any required debt field, linked asset, or debt id convention drifts
+
+  - id: verify_pack_schema_valid
+    severity: blocker
+    description: >
+      Cell verify packs must expose concrete regression targets, linked
+      governance artifacts, and open debt ids in a machine-readable format.
+    evidence:
+      - docs/governance/schemas/verify-pack.schema.yaml
+      - polaris/cells/roles/kernel/generated/verify.pack.json
+      - tests/architecture/test_structural_bug_governance_assets.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py::test_roles_kernel_verify_pack_shape_and_links
+      - fail if verify pack paths or debt links drift
+
+  - id: structural_bug_governance_assets_complete
+    severity: high
+    description: >
+      Structural bug fixes that touch runtime contracts must ship a verification
+      card, ADR, debt entry, verify pack update, and regression tests.
+    evidence:
+      - docs/governance/STRUCTURAL_BUG_PROTOCOL.md
+      - docs/governance/decisions/adr-0043-structural-bug-governance-loop.md
+      - docs/governance/templates/verification-cards/vc-20260325-turn-engine-tool-loop.yaml
+      - tests/architecture/test_structural_bug_governance_assets.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py::test_structural_bug_governance_chain_is_complete
+      - fail if linked governance assets are missing or inconsistent
+
+  - id: kernelone_llm_contract_reexport_parity
+    severity: blocker
+    description: >
+      Shared llm contracts re-exported through engine contracts must stay in
+      parity, and executor must import the required stream contract symbols.
+    evidence:
+      - polaris/kernelone/llm/shared_contracts.py
+      - polaris/kernelone/llm/engine/contracts.py
+      - polaris/kernelone/llm/engine/executor.py
+      - tests/architecture/test_kernelone_llm_contract_reexports.py
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q tests/architecture/test_kernelone_llm_contract_reexports.py
+      - fail on StreamEventType parity drift or missing executor imports
+
+  - id: roles_kernel_turn_stage_boundaries_non_regressive
+    severity: blocker
+    description: >
+      roles.kernel turn engine must preserve explicit raw/sanitized/native stage
+      boundaries so tool-call parsing never consumes sanitized content and
+      transcript persistence never stores wrapper-bearing content.
+    evidence:
+      - polaris/cells/roles/kernel/internal/turn_engine.py
+      - polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py
+      - polaris/cells/roles/kernel/generated/verify.pack.json
+    current_status: seeded
+    desired_automation:
+      - run python -m pytest -q polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py
+      - fail if raw_content or clean_content responsibilities drift
+
+  - id: tool_calling_canonical_identity_non_regressive
+    severity: blocker
+    description: >
+      Tool-calling benchmark must preserve raw canonical tool identity.
+      Gate must detect and fail when raw stream tool names differ from observed
+      tool names due to alias mapping or normalization drift.
+    evidence:
+      - docs/governance/AGENTIC_TOOL_CALLING_MATRIX_V2_STANDARD.md
+      - docs/governance/ci/scripts/run_tool_calling_canonical_gate.py
+      - tests/architecture/test_tool_calling_canonical_gate.py
+    current_status: seeded
+    desired_automation:
+      - run python -m polaris.delivery.cli agentic-eval --workspace . --suite tool_calling_matrix --role director --matrix-transport both --provider-id runtime_binding --model runtime_binding --format json
+      - run python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py --workspace . --role director --mode hard-fail --report workspace/meta/governance_reports/tool_calling_canonical_gate.json
+      - fail on any alias_tool_name_used/raw_observed_name_drift issue
+
+  - id: contextos_governance
+    severity: blocker
+    description: >
+      ContextOS governance gate validates ProviderFormatter Protocol existence,
+      EpisodeCard dataclass implementation, and SSOT constraint test coverage.
+      This ensures the State-First Context OS architecture is properly implemented
+      and all components are in place before promotion.
+    evidence:
+      - polaris/cells/roles/kernel/internal/llm_caller.py  # ProviderFormatter Protocol
+      - polaris/kernelone/context/context_os/models.py  # EpisodeCard
+      - polaris/tests/contextos/test_context_os_ssot_constraint.py  # SSOT constraint tests
+    current_status: seeded
+    desired_automation:
+      - run python docs/governance/ci/scripts/run_contextos_governance_gate.py --workspace .
+      - fail if ProviderFormatter Protocol is missing or incomplete
+      - fail if EpisodeCard is missing required fields
+      - fail if SSOT constraint tests do not pass
+
+  # ---------------------------------------------------------------------------
+  # Phase 5: Canonical Code Exploration Rules (2026-03-25)
+  # ADR: docs/governance/decisions/adr-013-canonical-code-exploration.md
+  # ---------------------------------------------------------------------------
+
+  - id: CE-001
+    severity: blocker
+    description: >
+      read_file must not be the first tool call in an exploration turn for files
+      >100 lines.  MAP phase (repo_map) must precede SEARCH and SLICE phases.
+      Enforced by WorkingSetAssembler phase tracking and E2E test.
+    evidence:
+      - polaris/kernelone/context/exploration_policy.py
+      - polaris/kernelone/context/working_set.py
+      - polaris/kernelone/context/tests/test_context_subsystem.py
+      - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
+    current_status: draft
+    desired_automation:
+      - run python -m pytest -q polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py::TestCanonicalCodeExploration::test_repo_map_before_full_read
+      - fail if MAP phase is not set before SLICE phase in tool call sequence
+
+  - id: CE-002
+    severity: blocker
+    description: >
+      Full-file read on files >2000 lines must require an explicit upgrade flag.
+      The canonical tool surface (repo_read_slice/around/head/tail) must be used
+      instead.  runtime_executor enforcement + E2E test verify this.
+    evidence:
+      - polaris/kernelone/context/exploration_policy.py
+      - polaris/kernelone/context/working_set.py
+      - polaris/kernelone/context/engine/utils.py  # _read_slice_spec
+      - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
+    current_status: draft
+    desired_automation:
+      - run python -m pytest -q polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py::TestCanonicalCodeExploration::test_large_file_uses_slice
+      - audit runtime_executor for read_file call patterns above 2000-line threshold
+
+  - id: CE-003
+    severity: warning
+    description: >
+      Context compaction must not trigger before 80% window utilization.
+      Budget gate fires proactively at 80% threshold (compaction_trigger_ratio=0.80).
+      Premature compaction would discard useful context unnecessarily.
+    evidence:
+      - polaris/kernelone/context/budget_gate.py
+      - polaris/kernelone/context/exploration_policy.py  # should_compact
+      - polaris/kernelone/context/tests/test_context_subsystem.py
+      - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
+    current_status: enforced_non_regressive
+    desired_automation:
+      - run python -m pytest -q polaris/kernelone/context/tests/test_context_subsystem.py::TestExplorationPolicy::test_should_compact_at_80_percent
+      - run python -m pytest -q polaris/kernelone/context/tests/test_context_subsystem.py::TestBudgetGate
+      - fail if compaction fires below 80% threshold
+
+  - id: CE-004
+    severity: high
+    description: >
+      Working-set assembler must track expansion history (seen_assets, denied_count,
+      deferred_assets) and update budget_used on every add_* call.
+      This ensures auditability of exploration decisions.
+    evidence:
+      - polaris/kernelone/context/working_set.py
+      - polaris/kernelone/context/tests/test_context_subsystem.py::TestWorkingSetAssembler
+    current_status: draft
+    desired_automation:
+      - run python -m pytest -q polaris/kernelone/context/tests/test_context_subsystem.py::TestWorkingSetAssembler
+      - verify budget_used reflects all add_* calls
+
+  - id: CE-005
+    severity: high
+    description: >
+      5-tier cache must distinguish session continuity (Tier 1) from code exploration
+      cache tiers (2-4).  Context kinds must not collide in merged prompts.
+      Separation verified by test_session_and_code_exploration_separate.
+    evidence:
+      - polaris/kernelone/context/session_continuity.py
+      - polaris/kernelone/context/engine/cache.py
+      - polaris/kernelone/context/tests/test_context_subsystem.py
+      - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
+    current_status: draft
+    desired_automation:
+      - run python -m pytest -q polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py::TestCanonicalCodeExploration::test_session_and_code_exploration_separate
+      - run python -m pytest -q polaris/kernelone/context/tests/test_context_subsystem.py::TestContextCache
+      - verify SessionContinuityPack and WorkingSet field sets are disjoint
+
+  - id: action-first-agent-architecture
+    severity: blocker
+    description: >
+      Action-First Agent System Prompt 架构完整性检查。验证 Prompt 模板包含
+      【行动优先】【EAFP豁免】【闭环交付】三条铁律，Parser 正确提取 Action 块，
+      Error Recovery 循环正常工作。
+    evidence:
+      - polaris/cells/roles/kernel/internal/prompt_templates.py
+      - polaris/cells/roles/kernel/internal/output/action_parser.py
+      - polaris/cells/roles/kernel/internal/error_recovery/retry_policy.py
+      - polaris/cells/roles/kernel/internal/error_recovery/context_injector.py
+      - polaris/cells/roles/kernel/internal/tests/test_action_first_integration.py
+    current_status: seeded
+    desired_automation:
+      - run python docs/governance/ci/scripts/run_action_first_gate.py --workspace . --mode all
+      - fail if any prompt rule, parser, or recovery component check fails
+
+  # ---------------------------------------------------------------------------
+  # Phase 6: Cells → KernelOne Integration Rules (2026-04-03)
+  # Blueprint: docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+  # ---------------------------------------------------------------------------
+
+  - id: CELL_KERNELONE_01
+    severity: blocker
+    description: >
+      director.execution must not have its own tools/ directory that duplicates
+      kernelone.tools. The canonical tool implementations live in polaris.kernelone.tools.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/cells/director/execution/internal/tools/chain.py
+      - polaris/kernelone/tools/chain.py
+    current_status: draft
+    desired_automation:
+      - fail if polaris/cells/director/execution/internal/tools/ directory exists
+      - grep -r "from polaris.cells.director.execution.internal.tools import" polaris/ --include="*.py"
+
+  - id: CELL_KERNELONE_02
+    severity: blocker
+    description: >
+      llm.provider_runtime must not create new ProviderManager instances.
+      It must delegate to the infrastructure singleton.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/cells/llm/provider_runtime/internal/providers.py
+      - polaris/infrastructure/llm/providers/provider_manager.py
+    current_status: draft
+    desired_automation:
+      - grep "return ProviderManager()" polaris/cells/llm/provider_runtime/
+      - verify get_provider_manager() returns singleton
+
+  - id: CELL_KERNELONE_03
+    severity: high
+    description: >
+      Dangerous command pattern detection must have a single canonical source
+      in polaris.kernelone.security.dangerous_patterns.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/security/dangerous_patterns.py
+      - polaris/cells/roles/kernel/internal/policy/layer/budget.py
+      - polaris/cells/roles/kernel/internal/policy/sandbox_policy.py
+    current_status: draft
+    desired_automation:
+      - _DANGEROUS_PATTERNS must only exist in kernelone/security/
+      - no duplicate pattern definitions in cells/
+
+  - id: CELL_KERNELONE_04
+    severity: high
+    description: >
+      Storage path resolution must have a single canonical source
+      in polaris.kernelone.storage.paths.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/storage/paths.py
+      - polaris/cells/roles/adapters/internal/base.py
+      - polaris/cells/roles/session/internal/storage_paths.py
+    current_status: draft
+    desired_automation:
+      - resolve_signal_path/resolve_artifact_path must only exist in kernelone/storage/
+      - grep -r "resolve_preferred_logical_prefix\|resolve_runtime_path" polaris/cells/
+
+  - id: CELL_KERNELONE_05
+    severity: high
+    description: >
+      Event publishing must use kernelone.events as canonical source.
+      Multiple parallel event emitters must be consolidated.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/events/fact_events.py
+      - polaris/kernelone/events/session_events.py
+      - polaris/cells/roles/kernel/internal/events.py
+      - polaris/cells/roles/session/internal/session_persistence.py
+    current_status: draft
+    desired_automation:
+      - emit_fact_event/emit_session_event must be primary interfaces
+      - no duplicate _emit_event patterns in cells/
+
+  - id: CELL_KERNELONE_06
+    severity: high
+    description: >
+      Budget infrastructure must use kernelone.context.budget_gate as canonical source.
+      TokenBudget in roles.kernel must delegate to ContextBudgetGate.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/context/budget_gate.py
+      - polaris/cells/roles/kernel/internal/token_budget.py
+      - polaris/cells/roles/kernel/internal/policy/budget_policy.py
+    current_status: draft
+    desired_automation:
+      - ContextBudgetGate must be used for token budget decisions
+      - no independent TokenBudget implementation in cells/
+
+  - id: CELL_KERNELONE_07
+    severity: medium
+    description: >
+      Tool loop compaction and safety policies must use kernelone.tool modules.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/tool/compaction.py
+      - polaris/kernelone/tool/safety.py
+      - polaris/kernelone/tool/transcript.py
+      - polaris/cells/roles/kernel/internal/context_event.py
+    current_status: draft
+    desired_automation:
+      - compact_result_payload must be in kernelone/tool/
+      - ToolLoopSafetyPolicy must be in kernelone/tool/
+
+  - id: CELL_KERNELONE_08
+    severity: medium
+    description: >
+      LLM call patterns must use kernelone.llm as canonical source.
+      No duplicate _call_role_llm implementations in cells.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/llm/
+      - polaris/cells/roles/adapters/internal/base.py
+      - polaris/cells/roles/adapters/internal/director/dialogue.py
+    current_status: draft
+    desired_automation:
+      - no _call_role_llm in cells/roles/adapters/
+      - no role_llm_invoke in cells/roles/adapters/
+
+  # ---------------------------------------------------------------------------
+  # Architecture Contract Rules (2026-04-13)
+  # ---------------------------------------------------------------------------
+
+  - id: cell_internal_import_fence
+    severity: blocker
+    description: >
+      No Cell may import from another Cell's internal namespace. All cross-Cell
+      communication must go through public contracts defined in the target Cell's
+      public/contracts.py. Direct imports into internal modules are forbidden.
+    evidence:
+      - polaris/cells/director/tasking/internal/worker_executor.py (cross-cell import)
+      - docs/governance/audit/log-audit-architecture-contracts-20260413.md
+    current_status: draft
+    desired_automation:
+      - parse Python imports in polaris/cells/**/
+      - map import paths to owning Cells via cells.yaml
+      - fail if import crosses Cell boundary without going through public contract
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
+
+  - id: canonical_dangerous_patterns
+    severity: high
+    description: >
+      Dangerous pattern detection must use polaris.kernelone.security.dangerous_patterns
+      as the single canonical source. Duplicate local definitions in Cells are forbidden.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/security/dangerous_patterns.py
+      - polaris/cells/roles/adapters/internal/schemas/director_schema.py
+      - polaris/cells/roles/kernel/internal/output_parser.py
+      - polaris/cells/roles/kernel/internal/tool_gateway.py
+      - polaris/cells/roles/kernel/internal/quality_checker.py
+      - polaris/cells/llm/dialogue/internal/role_dialogue.py
+    current_status: draft
+    desired_automation:
+      - grep -r "dangerous_patterns\s*=" polaris/cells/ --include="*.py" | grep -v kernelone
+      - fail if any local dangerous_patterns definition found outside kernelone
+      - grep -r "DANGEROUS_PATTERNS\s*=" polaris/cells/ --include="*.py"
+      - fail if any DANGEROUS_PATTERNS class attribute definition found
+
+  - id: canonical_path_resolution
+    severity: high
+    description: >
+      Storage path resolution must use polaris.kernelone.storage.io_paths as the
+      single canonical source. Duplicate local _resolve_artifact_path definitions
+      in Cells are forbidden.
+    evidence:
+      - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
+      - polaris/kernelone/storage/io_paths.py
+      - polaris/cells/docs/court_workflow/internal/docs_stage_service.py
+    current_status: draft
+    desired_automation:
+      - grep -r "def _resolve_artifact_path" polaris/cells/ --include="*.py"
+      - fail if any local _resolve_artifact_path definition found
+
+  - id: events_fact_stream_singleton_writer
+    severity: blocker
+    description: >
+      events.fact_stream is the sole owner of runtime/events/* state. Other Cells
+      must not write directly to runtime/events/* but must use the fact_stream
+      fanout interface. This ensures single-writer semantics for the event log.
+    evidence:
+      - polaris/cells/events/fact_stream/cell.yaml (state_owners: runtime/events/*)
+      - docs/governance/audit/log-audit-architecture-contracts-20260413.md
+      - Multiple cells claiming fs.write:runtime/events/* in their effects_allowed
+    current_status: draft
+    desired_automation:
+      - validate that only events.fact_stream declares state_owners: runtime/events/*
+      - grep effects_allowed for fs.write:runtime/events in non-fact_stream cells
+      - fail if any Cell other than events.fact_stream claims runtime/events/* write
+
+  - id: no_direct_role_call
+    severity: blocker
+    description: >
+      PM, ChiefEngineer, Director, and QA mainline collaboration must not rely on
+      direct role-to-role service or agent invocation. Business coordination must
+      flow through runtime.task_market contracts and state transitions.
+    evidence:
+      - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
+      - docs/graph/subgraphs/execution_governance_pipeline.yaml
+      - docs/graph/subgraphs/pm_pipeline.yaml
+    current_status: draft
+    desired_automation:
+      - grep mainline orchestration paths for direct imports of peer role public.service modules
+      - fail if PM/ChiefEngineer/Director/QA public services directly call each other outside approved adapters or tests
+
+  - id: task_market_is_single_business_broker
+    severity: blocker
+    description: >
+      runtime.task_market is the sole business broker for PM/ChiefEngineer/Director/QA
+      work-item publication, claim, ack, requeue, and dead-letter transitions.
+      runtime.execution_broker may execute processes but must not own business task routing.
+    evidence:
+      - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
+      - docs/graph/catalog/cells.yaml
+      - docs/graph/subgraphs/execution_governance_pipeline.yaml
+    current_status: draft
+    desired_automation:
+      - validate graph relations route PM/ChiefEngineer/Director/QA work-item transitions through runtime.task_market
+      - fail if runtime.execution_broker contracts are used for business task publication or claim semantics
+
+  - id: outbox_atomic
+    severity: blocker
+    description: >
+      runtime.task_market state transitions and downstream fact publication must
+      be bound by a durable outbox or equivalent transaction. Best-effort fact
+      emission is forbidden on the final mainline.
+    evidence:
+      - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
+      - docs/AGENT_COLLABORATION_EDA_IMPLEMENTATION_STATUS_2026-04-14.md
+      - polaris/cells/runtime/task_market/internal/service.py
+    current_status: seeded
+    desired_automation:
+      - fail if runtime.task_market mainline writes state and calls append_fact_event directly without an outbox relay path
+      - validate runtime.task_market owns an outbox persistence path or table and a relay worker contract
+    notes: >
+      _emit_fact no longer calls append_fact_event inline (PR-00 core fix).
+      Outbox record written as pending; relay_outbox_messages handles delivery
+      to fact_stream. State+outbox write atomicity implemented via
+      save_items_and_outbox_atomic (SQLite BEGIN IMMEDIATE transaction).
+      Mainline service methods (publish, claim, acknowledge, fail, requeue,
+      dead_letter, change_order, reconcile, saga register/commit) now use
+      atomic writes. Internal helpers (_compensate_task_no_lock,
+      _escalate_to_human_review_no_lock) still use auto-commit outbox
+      append — acceptable because outbox relay provides at-least-once delivery.
+
+  - id: director_requires_blueprint
+    severity: blocker
+    description: >
+      Director execution work items must carry blueprint_id or blueprint_ref.
+      Any execution task lacking blueprint evidence must be rejected or moved to
+      dead letter before execution begins.
+    evidence:
+      - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
+      - docs/AGENT_COLLABORATION_EDA_IMPLEMENTATION_STATUS_2026-04-14.md
+      - docs/graph/subgraphs/execution_governance_pipeline.yaml
+    current_status: draft
+    desired_automation:
+      - test that claiming or acknowledging execution without blueprint is rejected
+      - fail if director execution entrypoints contain fallback paths that bypass blueprint requirements
+
+  # ---------------------------------------------------------------------------
+  # Exception Handling Rules (2026-04-06)
+  # ---------------------------------------------------------------------------
+
+  - id: EXC-001
+    severity: blocker
+    description: >
+      Blind exception catching (except Exception: or except:) is forbidden in
+      critical paths. It catches everything including KeyboardInterrupt and
+      SystemExit, which prevents proper shutdown and error recovery.
+    evidence:
+      - polaris/kernelone/
+      - polaris/infrastructure/
+    current_status: seeded
+    desired_automation:
+      - python -m ruff check polaris/kernelone/ polaris/infrastructure/ --select=BLE --output-format=concise
+      - fail if any BLE001 blind exception found
+
+  - id: EXC-002
+    severity: warning
+    description: >
+      Silent exception handling (try-except-pass) swallows exceptions without
+      logging or recovery. Use contextlib.suppress() for intentional suppression,
+      or log the exception.
+    evidence:
+      - polaris/kernelone/
+      - polaris/infrastructure/
+    current_status: seeded
+    desired_automation:
+      - python -m ruff check polaris/kernelone/ polaris/infrastructure/ --select=SIM105 --output-format=concise
+      - fail if any try-except-pass found
+
+  - id: EXC-003
+    severity: warning
+    description: >
+      Exception logging must include exc_info=True to provide stack trace
+      context. Without it, log messages are incomplete and debugging is harder.
+    evidence:
+      - polaris/kernelone/
+      - polaris/infrastructure/
+    current_status: draft
+    desired_automation:
+      - grep -rP "logger\.(warning|error|info)\(['\"].*?['\"]\)" polaris/kernelone/ polaris/infrastructure/ --include="*.py" | grep -v exc_info
+      - fail if logger call without exc_info=True found in except blocks

@@ -1,0 +1,96 @@
+id: runtime.state_owner
+title: Runtime State Owner
+kind: capability
+visibility: public
+stateful: true
+owner: runtime
+
+purpose: >
+  Act as the single writer for runtime task, contract, run, and state files while
+  exposing controlled read queries for projection and archive-oriented cells.
+
+tags:
+  - template
+  - target
+  - storage-archive
+
+owned_paths:
+  - cells/runtime/state_owner/**
+
+inputs:
+  - name: persist_runtime_task_state
+    mode: command
+    contract: PersistRuntimeTaskStateCommandV1
+    returns: RuntimeStateWriteResultV1
+  - name: persist_runtime_contract
+    mode: command
+    contract: PersistRuntimeContractCommandV1
+    returns: RuntimeStateWriteResultV1
+  - name: persist_runtime_run
+    mode: command
+    contract: PersistRuntimeRunCommandV1
+    returns: RuntimeStateWriteResultV1
+  - name: get_runtime_snapshot
+    mode: query
+    contract: GetRuntimeSnapshotQueryV1
+    returns: RuntimeSnapshotResultV1
+  - name: get_runtime_run
+    mode: query
+    contract: GetRuntimeRunQueryV1
+    returns: RuntimeRunResultV1
+
+outputs:
+  - name: emit_runtime_state_changed
+    mode: event
+    target: runtime.projection
+    contract: RuntimeStateChangedEventV1
+  - name: append_runtime_write_audit
+    mode: event
+    target: audit.evidence
+    contract: RuntimeStateWrittenEventV1
+
+depends_on:
+  - storage.layout
+  - policy.workspace_guard
+  - audit.evidence
+  - runtime.projection
+
+state_owners:
+  - runtime_task_state
+  - runtime_contract_state
+  - runtime_run_state
+  - runtime_snapshot_state
+
+effects_allowed:
+  - fs.read:runtime/*
+  - fs.write:runtime/tasks/*
+  - fs.write:runtime/contracts/*
+  - fs.write:runtime/runs/*
+  - fs.write:runtime/state/*
+
+does_not:
+  - write_workspace_history
+  - bypass_storage_layout_resolution
+  - mutate_archive_indices
+
+invariants:
+  - runtime source-of-truth writes remain single-owner
+  - all runtime text file writes use explicit UTF-8
+  - history publication is delegated to archive cells
+
+verification:
+  tests:
+    - cells/runtime/state_owner/tests/test_behavior.py
+    - cells/runtime/state_owner/tests/test_contracts.py
+  contracts:
+    - PersistRuntimeTaskStateCommandV1
+    - PersistRuntimeContractCommandV1
+    - PersistRuntimeRunCommandV1
+    - GetRuntimeSnapshotQueryV1
+    - GetRuntimeRunQueryV1
+    - RuntimeStateChangedEventV1
+
+generated_artifacts:
+  - generated/context.pack.json
+
+template: true

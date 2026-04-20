@@ -1,0 +1,50 @@
+id: delivery.cli
+title: CLI Delivery
+kind: capability
+visibility: public
+stateful: false
+owner: delivery
+purpose: 'Canonical delivery entry for CLI command execution. Provides the ExecuteCliCommandV1
+  contract and CliExecutionService that dispatches MANAGEMENT commands (status, init,
+  requirement_*, task_*) directly and routes ROLE_EXECUTION commands (architect.analyze,
+  director.run) through RoleRuntimeService facade. This cell does NOT own the host-layer
+  entry points under polaris/delivery/cli/.
+
+  '
+current_modules:
+- polaris.cells.delivery.cli.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/delivery/cli/**/*.py
+public_contracts:
+  modules:
+  - polaris.cells.delivery.cli.public.contracts
+  commands:
+  - ExecuteCliCommandV1
+  queries:
+  - QueryCliStatusV1
+  events:
+  - CliCommandStartedEventV1
+  - CliCommandCompletedEventV1
+  results:
+  - CommandResultV1
+  errors:
+  - CommandErrorV1
+  - WorkspaceNotFoundError
+  - CommandNotFoundError
+  - CommandTimeoutError
+  - WorkspaceNotInitializedError
+depends_on:
+- roles.runtime
+subgraphs: []
+state_owners: []
+effects_allowed:
+- fs.read:workspace/*
+- fs.write:workspace/.polaris/*
+- role.execute:*
+verification:
+  gaps:
+  - DAEMON mode execution is a placeholder.
+  smoke_commands: []
+  tests: []
+generated_artifacts: []

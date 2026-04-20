@@ -1,0 +1,57 @@
+id: policy.permission
+title: Permission Policy
+kind: policy
+visibility: public
+stateful: true
+owner: policy
+purpose: 'Own role capability matrix evaluation and permission decisions for tool,
+  command, write, and execution actions. Also owns the Polaris Protocol (HP Protocol)
+  7-phase execution state machine.
+
+  '
+current_modules:
+- polaris.cells.policy.permission.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/policy/permission/internal/**
+- polaris/cells/policy/protocol/internal/**
+- polaris/cells/policy/protocol/public/**
+- polaris/domain/entities/capability.py
+- polaris/domain/entities/policy.py
+public_contracts:
+  modules:
+  - polaris.cells.policy.permission.public.contracts
+  - polaris.cells.policy.protocol.public.contracts
+  commands:
+  - EvaluatePermissionCommandV1
+  queries:
+  - QueryPermissionMatrixV1
+  events:
+  - PermissionDeniedEventV1
+  results:
+  - PermissionDecisionResultV1
+  errors:
+  - PermissionPolicyErrorV1
+depends_on:
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- workspace/policy/permission/*
+- workspace/policy/state_*.json
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:workspace/policy/permission/*
+- fs.write:workspace/policy/state_*.json
+verification:
+  tests:
+  - tests/test_permission_service.py
+  - tests/test_permission_role_inheritance.py
+  - tests/test_permission_conditions.py
+  - tests/test_permission_service_audit.py
+  - tests/test_kernelone_safety_regressions.py::test_policy_allow_implementation_requires_approval
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

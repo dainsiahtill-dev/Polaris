@@ -1,0 +1,3020 @@
+version: 1
+catalog_id: polaris-phase1-public-cells
+description: >
+  Phase-1 public cell catalog for boundary convergence. These entries declare
+  target capability ownership and migration gaps; they do not claim full
+  implementation completion unless explicitly verified.
+owners:
+  - architecture-team
+  - backend-engine
+migration_status: phase1_public_phase2_composite_phase3_business_cells_declared
+cells:
+  - id: context.catalog
+    title: Context Catalog
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: context
+    purpose: >
+      Builds deterministic descriptor cards from graph assets and serves
+      graph-backed lookup for AI context assembly.
+    current_modules:
+      - polaris.cells.context.catalog.service
+      - polaris.cells.context.catalog.internal.evolution_engine
+    owned_paths:
+      - polaris/cells/context/catalog/**
+    public_contracts:
+      modules:
+        - polaris.cells.context.catalog.public.contracts
+      commands: []
+      queries:
+        - SearchCellsQueryV1
+      events: []
+      results:
+        - SearchCellsResultV1
+        - CellDescriptorV1
+      errors: []
+    depends_on:
+      - roles.runtime
+    subgraphs: []
+    state_owners:
+      - workspace/meta/context_catalog/*
+    effects_allowed:
+      - fs.read:docs/graph/**
+      - fs.write:workspace/meta/context_catalog/*
+    verification:
+      tests:
+        - polaris/cells/context/catalog/tests/test_service.py
+        - polaris/cells/context/catalog/tests/test_descriptor_validation.py
+        - polaris/cells/context/catalog/tests/test_descriptor_cache_script.py
+      smoke_commands:
+        - python -m polaris.cells.context.catalog sync --workspace .
+        - python docs/scripts/check_context_catalog_descriptor_cache.py --workspace .
+      gaps:
+        - No public `storage.layout` cell is reintroduced yet.
+        - Vector rank and rerank are not wired yet.
+
+  - id: delivery.api_gateway
+    title: API Gateway
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: delivery
+    purpose: >
+      Own inbound HTTP and WebSocket protocol translation and route dispatch.
+      This cell must not become a runtime state owner.
+    current_modules:
+      - polaris.delivery.http.app_factory
+      - polaris.delivery.http.routers
+      - polaris.delivery.ws.runtime_endpoint
+    owned_paths:
+      - polaris/delivery/http/app_factory.py
+      - polaris/delivery/http/dependencies.py
+      - polaris/delivery/http/error_handlers.py
+      - polaris/delivery/http/middleware/**
+      - polaris/delivery/http/routers/__init__.py
+      - polaris/delivery/http/routers/_shared.py
+      - polaris/delivery/http/routers/sse_utils.py
+      - polaris/delivery/http/v2/__init__.py
+    public_contracts:
+      modules:
+        - polaris.cells.delivery.api_gateway.public.contracts
+      commands:
+        - ApiCommandV1
+      queries:
+        - ApiQueryV1
+      events:
+        - ApiResponseEventV1
+      results:
+        - ApiResponseV1
+      errors:
+        - ApiGatewayErrorV1
+    depends_on:
+      - runtime.projection
+      - policy.workspace_guard
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners: []
+    effects_allowed:
+      - http.inbound:*
+      - ws.inbound:*
+      - fs.read:runtime/*
+      - fs.read:workspace/history/*
+    verification:
+      tests:
+        - tests/architecture/test_polaris_layout.py
+      gaps:
+        - Router-to-cell alignment is still being decomposed.
+
+  - id: delivery.cli
+    title: CLI Delivery
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: delivery
+    purpose: >
+      Canonical delivery entry for CLI command execution. Provides the ExecuteCliCommandV1
+      contract and CliExecutionService that dispatches MANAGEMENT commands (status, init,
+      requirement_*, task_*) directly and routes ROLE_EXECUTION commands (architect.analyze,
+      director.run) through RoleRuntimeService facade. This cell does NOT own the host-layer
+      entry points under polaris/delivery/cli/.
+    owned_paths:
+      - polaris/cells/delivery/cli/**/*.py
+    public_contracts:
+      modules:
+        - polaris.cells.delivery.cli.public.contracts
+      commands:
+        - ExecuteCliCommandV1
+      queries:
+        - QueryCliStatusV1
+      events:
+        - CliCommandStartedEventV1
+        - CliCommandCompletedEventV1
+      results:
+        - CommandResultV1
+      errors:
+        - CommandErrorV1
+        - WorkspaceNotFoundError
+        - CommandNotFoundError
+        - CommandTimeoutError
+        - WorkspaceNotInitializedError
+    depends_on:
+      - roles.runtime
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/*
+      - fs.write:workspace/.polaris/*
+      - role.execute:*
+    verification:
+      gaps:
+        - Management handler registry is not yet wired to actual pm_cli.py / cli_thin.py.
+        - DAEMON mode execution is a placeholder.
+
+  - id: policy.workspace_guard
+    title: Workspace Guard
+    kind: policy
+    visibility: public
+    stateful: true
+    owner: policy
+    purpose: >
+      Enforce workspace path legality, scope constraints, and write-guard checks
+      for runtime and history operations.
+    current_modules:
+      - polaris.cells.policy.workspace_guard.service
+    owned_paths:
+      - polaris/cells/policy/workspace_guard/service.py
+    public_contracts:
+      modules:
+        - polaris.cells.policy.workspace_guard.public.contracts
+      commands: []
+      queries:
+        - WorkspaceWriteGuardQueryV1
+        - WorkspaceArchiveWriteGuardQueryV1
+      events:
+        - WorkspaceGuardViolationEventV1
+      results:
+        - WorkspaceGuardDecisionV1
+      errors:
+        - WorkspaceGuardErrorV1
+    depends_on:
+      - policy.permission
+      - storage.layout
+      - audit.evidence
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners:
+      - workspace/policy/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+    verification:
+      tests:
+        - tests/architecture/test_polaris_kernel_fs_guard.py
+      gaps:
+        - Guard checks still exist in scattered call sites and need full convergence.
+        - Permission matrix logic has been split to policy.permission and is still being rewired.
+
+  - id: workspace.integrity
+    title: Workspace Integrity
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: workspace
+    purpose: >
+      Provide workspace validation, docs bootstrap safety checks, code parser
+      access, and file-change tracking primitives for orchestration and
+      delivery flows.
+    current_modules:
+      - polaris.cells.workspace.integrity.public.service
+      - polaris.cells.workspace.integrity.internal.workspace_service
+      - polaris.cells.workspace.integrity.internal.fs_utils
+      - polaris.cells.workspace.integrity.internal.code_parser
+      - polaris.cells.workspace.integrity.internal.code_intel
+      - polaris.cells.workspace.integrity.internal.diff_tracker
+    owned_paths:
+      - polaris/cells/workspace/integrity/**
+    public_contracts:
+      modules:
+        - polaris.cells.workspace.integrity.public.contracts
+      commands:
+        - ValidateWorkspaceCommandV1
+        - EnsureDocsReadyCommandV1
+        - GenerateDocsTemplatesCommandV1
+      queries: []
+      events: []
+      results:
+        - DocsTemplatesResultV1
+      errors:
+        - WorkspaceIntegrityErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - runtime.execution_broker
+      - runtime.projection
+      - storage.layout
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - workspace/meta/workspace_status.json
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:workspace/meta/workspace_status.json
+      - fs.write:workspace/docs/**
+      - process.spawn:workspace/indexer
+    verification:
+      tests:
+        - tests/test_docs_template_quality.py
+        - tests/test_workspace_policy_guard.py
+        - tests/test_hyper_opt.py
+      gaps:
+        - Code intelligence indexing strategy still depends on infrastructure adapter maturity.
+
+  - id: runtime.state_owner
+    title: Runtime State Owner
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: runtime
+    purpose: >
+      Own runtime source-of-truth writes for contracts, runs, and runtime state
+      snapshots with explicit single-writer guarantees.
+    current_modules:
+      - polaris.cells.runtime.state_owner.internal.state
+      - polaris.cells.runtime.state_owner.internal.pm_contract_store
+      - polaris.cells.runtime.state_owner.internal.maintenance
+      - polaris.cells.runtime.state_owner.internal.runtime_state_registry
+    owned_paths:
+      - polaris/cells/runtime/state_owner/internal/**
+    public_contracts:
+      modules:
+        - polaris.cells.runtime.state_owner.public.contracts
+      commands:
+        - PersistRuntimeTaskStateCommandV1
+        - PersistRuntimeContractCommandV1
+        - PersistRuntimeRunCommandV1
+      queries:
+        - GetRuntimeSnapshotQueryV1
+        - GetRuntimeRunQueryV1
+      events:
+        - RuntimeStateChangedEventV1
+      results:
+        - RuntimeStateWriteResultV1
+      errors:
+        - RuntimeStateOwnerErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - audit.evidence
+      - docs.court_workflow
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners:
+      - runtime/contracts/*
+      - runtime/state/*
+      - runtime/runs/*
+    effects_allowed:
+      - fs.read:runtime/*
+      - fs.write:runtime/contracts/*
+      - fs.write:runtime/state/*
+      - fs.write:runtime/runs/*
+    verification:
+      tests:
+        - tests/architecture/test_architecture_invariants.py
+      gaps:
+        - Runtime task lifecycle ownership has moved to runtime.task_runtime and still needs broader call-site convergence.
+
+  - id: runtime.task_runtime
+    title: Runtime Task Runtime
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: runtime
+    purpose: >
+      Provide the single task lifecycle runtime for PM/Director/QA collaboration,
+      including create/claim/update/reopen transitions and canonical taskboard rows.
+    current_modules:
+      - polaris.cells.runtime.task_runtime.public.service
+      - polaris.cells.runtime.task_runtime.internal.service
+      - polaris.kernelone.task_graph.task_board
+    owned_paths:
+      - polaris/cells/runtime/task_runtime/**
+    public_contracts:
+      modules:
+        - polaris.cells.runtime.task_runtime.public.contracts
+      commands:
+        - CreateRuntimeTaskCommandV1
+        - UpdateRuntimeTaskCommandV1
+        - ReopenRuntimeTaskCommandV1
+      queries:
+        - ListRuntimeTasksQueryV1
+        - GetRuntimeTaskQueryV1
+      events:
+        - RuntimeTaskLifecycleEventV1
+      results:
+        - RuntimeTaskResultV1
+      errors:
+        - RuntimeTaskRuntimeErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - audit.evidence
+      - events.fact_stream
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/tasks/*
+      - runtime/tasks/sessions/*
+    effects_allowed:
+      - fs.read:runtime/tasks/*
+      - fs.write:runtime/tasks/*
+      - fs.write:runtime/events/taskboard.terminal.events.jsonl
+      - fs.read:runtime/tasks/sessions/*
+      - fs.write:runtime/tasks/sessions/*
+      - fs.write:runtime/events/task_runtime.execution.jsonl
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - polaris/cells/runtime/task_runtime/tests/test_service.py
+        - polaris/tests/test_runtime_projection_snapshot_tasks.py
+      gaps:
+        - Role-agent legacy entrypoints still need full migration to runtime.task_runtime contracts.
+
+  - id: runtime.task_market
+    title: Runtime Task Market
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: runtime
+    purpose: >
+      Provide asynchronous task-market collaboration primitives for PM/ChiefEngineer/Director/QA,
+      including publish/claim/lease/requeue/dead-letter lifecycle transitions.
+    current_modules:
+      - polaris.cells.runtime.task_market.public.service
+      - polaris.cells.runtime.task_market.internal.service
+    owned_paths:
+      - polaris/cells/runtime/task_market/**
+    public_contracts:
+      modules:
+        - polaris.cells.runtime.task_market.public.contracts
+      commands:
+        - PublishTaskWorkItemCommandV1
+        - ClaimTaskWorkItemCommandV1
+        - RenewTaskLeaseCommandV1
+        - AcknowledgeTaskStageCommandV1
+        - FailTaskStageCommandV1
+        - RequeueTaskCommandV1
+        - MoveTaskToDeadLetterCommandV1
+      queries:
+        - QueryTaskMarketStatusV1
+      events:
+        - TaskWorkItemPublishedEventV1
+        - TaskLeaseGrantedEventV1
+        - TaskStageAdvancedEventV1
+        - TaskDeadLetteredEventV1
+      results:
+        - TaskWorkItemResultV1
+        - TaskLeaseRenewResultV1
+        - TaskMarketStatusResultV1
+      errors:
+        - TaskMarketErrorV1
+    depends_on:
+      - runtime.task_runtime
+      - runtime.state_owner
+      - runtime.projection
+      - events.fact_stream
+      - policy.workspace_guard
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+      - pm_pipeline
+    state_owners:
+      - runtime/task_market/*
+    effects_allowed:
+      - fs.read:runtime/task_market/*
+      - fs.write:runtime/task_market/*
+      - fs.write:runtime/events/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - polaris/cells/runtime/task_market/tests/test_contracts.py
+        - polaris/cells/runtime/task_market/tests/test_service.py
+      gaps:
+        - PM/ChiefEngineer/Director/QA mainline migration to task_market claim/ack is staged.
+        - Outbox relay and durable Pull Consumer mainline are not fully wired yet.
+        - WAITING_HUMAN and HITL authority remain partially sidecar-mediated.
+
+  - id: runtime.execution_broker
+    title: Runtime Execution Broker
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: runtime
+    purpose: >
+      Provide unified process, async task, and blocking I/O execution submission
+      for business cells through one cell-level facade backed by KernelOne
+      execution runtime.
+    current_modules:
+      - polaris.cells.runtime.execution_broker.public.service
+      - polaris.cells.runtime.execution_broker.internal.service
+      - polaris.kernelone.runtime.execution_facade
+    owned_paths:
+      - polaris/cells/runtime/execution_broker/**
+    public_contracts:
+      modules:
+        - polaris.cells.runtime.execution_broker.public.contracts
+      commands:
+        - LaunchExecutionProcessCommandV1
+      queries:
+        - GetExecutionProcessStatusQueryV1
+      events: []
+      results:
+        - ExecutionProcessLaunchResultV1
+        - ExecutionProcessWaitResultV1
+      errors:
+        - ExecutionBrokerErrorV1
+    depends_on:
+      - runtime.state_owner
+      - policy.workspace_guard
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - process.spawn:runtime/*
+      - fs.write:runtime/logs/*
+      - fs.write:runtime/events/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - polaris/cells/runtime/execution_broker/tests/test_service.py
+      gaps:
+        - Legacy sync call sites are still converging to async-first broker contracts.
+
+  - id: runtime.projection
+    title: Runtime Projection
+    kind: projection
+    visibility: public
+    stateful: false
+    owner: runtime
+    purpose: >
+      Build read-only runtime status projections and transport payloads without
+      introducing hidden writes on query paths.
+    current_modules:
+      - polaris.cells.runtime.projection.internal.runtime_projection_service
+      - polaris.delivery.http.routers.runtime
+    owned_paths:
+      - polaris/cells/runtime/projection/internal/**
+      - polaris/delivery/http/routers/runtime.py
+      - polaris/delivery/ws/runtime_endpoint.py
+      - polaris/delivery/ws/runtime_event_query.py
+    public_contracts:
+      modules:
+        - polaris.cells.runtime.projection.public.contracts
+      commands: []
+      queries:
+        - RuntimeProjectionQueryV1
+      events:
+        - RuntimeProjectedEventV1
+        - RuntimeObserverEventV1
+      results:
+        - RuntimeProjectionResultV1
+      errors:
+        - RuntimeProjectionErrorV1
+    depends_on:
+      - runtime.task_runtime
+      - runtime.state_owner
+      - runtime.task_market
+      - audit.evidence
+      # Cross-cell read dependencies added 2026-03-22:
+      # llm_status.py reads llm.evaluation (load_llm_test_index) and llm.provider_runtime
+      # (is_role_runtime_supported) to build the LLM status section of the projection payload.
+      - llm.evaluation
+      - llm.provider_runtime
+      # workspace_runtime_context.py reads storage.layout (load_persisted_settings) to resolve
+      # the canonical workspace path before computing cache/runtime roots.
+      - storage.layout
+      # status_snapshot_builder.py and runtime_projection_service.py call
+      # docs.court_workflow.public.service.map_engine_to_court_state to map engine+PM+Director
+      # status into a court topology view included in the WebSocket status payload.
+      # This is a stateless aggregation mapping - no business logic is owned by projection.
+      - docs.court_workflow
+      - director.execution
+      - orchestration.pm_planning
+      - orchestration.workflow_runtime
+      - resident.autonomy
+      - runtime.artifact_store
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:runtime/*
+      - fs.read:workspace/history/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - tests/test_websocket_signal_hub.py
+        - tests/test_runtime_projection_observability.py
+      gaps:
+        - "Projection read paths still include legacy compatibility joins."
+        - >
+          Added missing cross-cell dependencies: "llm.evaluation", "llm.provider_runtime",
+          "storage.layout", "docs.court_workflow".
+
+
+  - id: audit.evidence
+    title: Evidence Audit
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: audit
+    purpose: >
+      Own runtime evidence events, audit chain verification, and evidence query
+      surfaces with append-only guarantees.
+    current_modules:
+      - polaris.cells.audit.evidence.task_service
+      - polaris.kernelone.audit
+      - polaris.infrastructure.audit
+    owned_paths:
+      - polaris/cells/audit/evidence/**
+      - polaris/kernelone/audit/**
+      - polaris/infrastructure/audit/**
+      - polaris/delivery/http/audit_router.py
+      - polaris/delivery/http/v2/audit.py
+    public_contracts:
+      modules:
+        - polaris.cells.audit.evidence.public.contracts
+      commands:
+        - AppendEvidenceEventCommandV1
+      queries:
+        - QueryEvidenceEventsV1
+        - VerifyEvidenceChainV1
+      events:
+        - EvidenceAppendedEventV1
+      results:
+        - EvidenceQueryResultV1
+        - EvidenceVerificationResultV1
+      errors:
+        - EvidenceAuditErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - llm.provider_runtime
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners:
+      - runtime/evidence/*
+    effects_allowed:
+      - fs.read:runtime/*
+      - fs.write:runtime/evidence/*
+      - process.exec:git
+    verification:
+      tests:
+        - tests/test_log_pipeline_storage_layout.py
+      gaps:
+        - Runtime event stream ownership is moving to events.fact_stream.
+        - Runtime event writers are not fully consolidated yet.
+
+  - id: audit.diagnosis
+    title: Audit Diagnosis
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: audit
+    purpose: >
+      Provide deterministic diagnosis and trace-query capabilities for runtime
+      audit failures, including websocket lifecycle audit writes.
+    current_modules:
+      - polaris.cells.audit.diagnosis.public.service
+      - polaris.cells.audit.diagnosis.internal.diagnosis_engine
+      - polaris.cells.audit.diagnosis.internal.toolkit.service
+      - polaris.cells.audit.diagnosis.internal.usecases.facade
+    owned_paths:
+      - polaris/cells/audit/diagnosis/**
+    public_contracts:
+      modules:
+        - polaris.cells.audit.diagnosis.public.contracts
+      commands:
+        - RunAuditDiagnosisCommandV1
+      queries:
+        - QueryAuditDiagnosisTrailV1
+      events:
+        - AuditDiagnosisCompletedEventV1
+      results:
+        - AuditDiagnosisResultV1
+      errors:
+        - AuditDiagnosisErrorV1
+    depends_on:
+      - audit.evidence
+      - storage.layout
+      - policy.workspace_guard
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/events/ws.connection.events.jsonl
+    effects_allowed:
+      - fs.read:runtime/events/*
+      - fs.write:runtime/events/ws.connection.events.jsonl
+      - fs.read:workspace/**
+      - network.http_outbound:audit/*
+      - process.exec:git
+    verification:
+      tests:
+        - tests/test_audit_llm_runtime.py
+        - tests/test_command_security.py
+      gaps:
+        - Audit toolkit command surface still carries legacy envelope compatibility payloads.
+        - Event diagnosis query facades still need typed adapters for all consumers.
+
+  - id: audit.verdict
+    title: Audit Verdict
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: audit
+    purpose: >
+      Provide review-gate verdict evaluation and runtime artifact access for QA
+      and audit pipelines through an explicit public boundary.
+    current_modules:
+      - polaris.cells.audit.verdict.public.service
+      - polaris.cells.audit.verdict.internal.review_gate
+      - polaris.cells.audit.verdict.internal.artifact_service
+    owned_paths:
+      - polaris/cells/audit/verdict/**
+    public_contracts:
+      modules:
+        - polaris.cells.audit.verdict.public.contracts
+      commands:
+        - RunAuditVerdictCommandV1
+      queries:
+        - QueryAuditVerdictV1
+      events:
+        - AuditVerdictIssuedEventV1
+      results:
+        - AuditVerdictResultV1
+      errors:
+        - AuditVerdictErrorV1
+    depends_on:
+      - audit.evidence
+      - runtime.projection
+      - policy.workspace_guard
+      - runtime.artifact_store
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/results/audit_verdicts/*
+    effects_allowed:
+      - fs.read:runtime/**
+      - fs.write:runtime/results/audit_verdicts/*
+      - fs.write:runtime/contracts/*
+      - fs.write:runtime/state/*
+      - fs.write:runtime/status/*
+      - fs.write:runtime/control/*
+      - fs.write:runtime/events/*
+    verification:
+      tests:
+        - tests/test_artifact_service.py
+        - tests/test_integration_qa_command.py
+        - tests/test_quality_checker_director_tool_calls.py
+      gaps:
+        - Runtime artifact state ownership still overlaps with adjacent runtime cells in transitional paths.
+
+  - id: archive.run_archive
+    title: Run Archive
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: archive
+    purpose: >
+      Archive terminal runtime run outputs into immutable workspace history run
+      records and run index entries.
+    current_modules:
+      - polaris.cells.archive.run_archive.internal.history_archive_service
+      - polaris.cells.archive.run_archive.internal.archive_hook
+      - polaris.delivery.http.routers.history
+    owned_paths:
+      - polaris/cells/archive/run_archive/internal/history_archive_service.py
+      - polaris/cells/archive/run_archive/internal/archive_hook.py
+      - polaris/cells/archive/run_archive/internal/history_manifest_repository.py
+      - polaris/delivery/http/routers/history.py
+    public_contracts:
+      modules:
+        - polaris.cells.archive.run_archive.public.contracts
+      commands:
+        - ArchiveRunCommandV1
+      queries:
+        - ListHistoryRunsQueryV1
+        - GetArchiveManifestQueryV1
+      events:
+        - RunArchivedEventV1
+      results:
+        - ArchiveManifestV1
+        - HistoryRunsResultV1
+      errors:
+        - RunArchiveErrorV1
+    depends_on:
+      - runtime.state_owner
+      - policy.workspace_guard
+      - audit.evidence
+      - storage.layout
+      - archive.factory_archive
+      - archive.task_snapshot_archive
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners:
+      - workspace/history/runs/*
+      - workspace/history/index/runs.index.jsonl
+    effects_allowed:
+      - fs.read:runtime/runs/*
+      - fs.write:workspace/history/runs/*
+      - fs.write:workspace/history/index/runs.index.jsonl
+    verification:
+      tests:
+        - tests/architecture/test_graph_reality.py
+      gaps:
+        - Run archive reads are converged; history router still needs full contract-only traversal for all run endpoints.
+
+  - id: archive.task_snapshot_archive
+    title: Task Snapshot Archive
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: archive
+    purpose: >
+      Archive terminal runtime task snapshots and related plan contracts into
+      immutable workspace history task records.
+    current_modules:
+      - polaris.cells.archive.task_snapshot_archive.internal.task_snapshot_archive_service
+      - polaris.cells.archive.task_snapshot_archive.public.service
+    owned_paths:
+      - polaris/cells/archive/task_snapshot_archive/internal/**
+      - polaris/cells/archive/task_snapshot_archive/public/**
+    public_contracts:
+      modules:
+        - polaris.cells.archive.task_snapshot_archive.public.contracts
+      commands:
+        - ArchiveTaskSnapshotCommandV1
+      queries:
+        - GetTaskSnapshotManifestQueryV1
+      events:
+        - TaskSnapshotArchivedEventV1
+      results:
+        - ArchiveManifestV1
+      errors:
+        - TaskSnapshotArchiveErrorV1
+    depends_on:
+      - runtime.state_owner
+      - policy.workspace_guard
+      - audit.evidence
+      - archive.run_archive
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners:
+      - workspace/history/tasks/*
+      - workspace/history/index/tasks.index.jsonl
+    effects_allowed:
+      - fs.read:runtime/tasks/*
+      - fs.write:workspace/history/tasks/*
+      - fs.write:workspace/history/index/tasks.index.jsonl
+    verification:
+      tests:
+        - tests/test_history_archive_service.py
+      gaps:
+        - Task snapshot archive API compatibility routes are still being standardized.
+
+  - id: archive.factory_archive
+    title: Factory Archive
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: archive
+    purpose: >
+      Archive terminal factory outputs into immutable workspace history factory
+      records while keeping runtime source-of-truth unchanged.
+    current_modules:
+      - polaris.cells.archive.factory_archive.internal.factory_archive_service
+      - polaris.cells.archive.factory_archive.public.service
+    owned_paths:
+      - polaris/cells/archive/factory_archive/internal/**
+      - polaris/cells/archive/factory_archive/public/**
+    public_contracts:
+      modules:
+        - polaris.cells.archive.factory_archive.public.contracts
+      commands:
+        - ArchiveFactoryRunCommandV1
+      queries:
+        - GetFactoryArchiveManifestQueryV1
+      events:
+        - FactoryArchivedEventV1
+      results:
+        - ArchiveManifestV1
+      errors:
+        - FactoryArchiveErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - audit.evidence
+      - archive.run_archive
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners:
+      - workspace/history/factory/*
+      - workspace/history/index/factory.index.jsonl
+    effects_allowed:
+      - fs.read:workspace/factory/*
+      - fs.write:workspace/history/factory/*
+      - fs.write:workspace/history/index/factory.index.jsonl
+    verification:
+      tests:
+        - tests/test_history_archive_service.py
+      gaps:
+        - Factory archive API compatibility routes are still being standardized.
+
+  - id: context.engine
+    title: Context Engine
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: context
+    purpose: >
+      Assemble role-facing execution context by consuming context.catalog and
+      graph constraints rather than allowing ad-hoc role-local context assembly.
+    current_modules:
+      - polaris.cells.context.engine.internal.search_gateway
+      - polaris.cells.context.engine.internal.precision_mode
+      - polaris.kernelone.context.context_os.models
+      - polaris.kernelone.context.context_os.models_v2
+      - polaris.kernelone.context.context_os.content_store
+      - polaris.kernelone.context.context_os.receipt_store
+      - polaris.kernelone.context.context_os.runtime
+      - polaris.kernelone.context.context_os.storage
+      - polaris.kernelone.context.context_os.snapshot
+      - polaris.kernelone.context.context_os.budget_optimizer
+      - polaris.kernelone.context.context_os.classifier
+      - polaris.kernelone.context.context_os.policies
+      - polaris.kernelone.context.context_os.ports
+    owned_paths:
+      - polaris/cells/context/engine/internal/search_gateway.py
+      - polaris/cells/context/engine/internal/precision_mode.py
+      - polaris/kernelone/context/context_os/models.py
+      - polaris/kernelone/context/context_os/models_v2.py
+      - polaris/kernelone/context/context_os/content_store.py
+      - polaris/kernelone/context/context_os/receipt_store.py
+      - polaris/kernelone/context/context_os/runtime.py
+      - polaris/kernelone/context/context_os/storage.py
+      - polaris/kernelone/context/context_os/snapshot.py
+      - polaris/kernelone/context/context_os/budget_optimizer.py
+      - polaris/kernelone/context/context_os/classifier.py
+      - polaris/kernelone/context/context_os/policies.py
+      - polaris/kernelone/context/context_os/ports.py
+    public_contracts:
+      modules:
+        - polaris.cells.context.engine.public.contracts
+      commands:
+        - BuildRoleContextCommandV1
+      queries:
+        - ResolveRoleContextQueryV1
+      events:
+        - ContextResolvedEventV1
+      results:
+        - RoleContextResultV1
+      errors:
+        - ContextEngineErrorV1
+    depends_on:
+      - context.catalog
+      - policy.workspace_guard
+      - roles.session
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.read:docs/graph/**
+    verification:
+      tests:
+        - tests/architecture/test_architecture_invariants.py
+      gaps:
+        - Context assembly logic is still distributed across role adapters.
+
+  - id: llm.control_plane
+    title: LLM Control Plane
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: llm
+    purpose: >
+      Composite LLM capability boundary covering configuration, provider runtime,
+      evaluation, and tool invocation orchestration.
+    tags:
+      - composite
+    current_modules:
+      - polaris.cells.llm.control_plane.internal
+      - polaris.kernelone.llm
+      - polaris.infrastructure.llm
+    owned_paths:
+      - polaris/cells/llm/control_plane/internal/**
+      - polaris/delivery/http/routers/llm.py
+      - polaris/delivery/http/routers/providers.py
+      - polaris/delivery/http/routers/interview.py
+      - polaris/delivery/http/routers/tests.py
+      - polaris/delivery/http/routers/llm_models.py
+    public_contracts:
+      modules:
+        - polaris.cells.llm.control_plane.public.contracts
+      commands:
+        - SaveLlmConfigCommandV1
+        - InvokeLlmRoleCommandV1
+      queries:
+        - GetLlmConfigQueryV1
+        - GetLlmRuntimeStatusQueryV1
+      events:
+        - LlmConfigChangedEventV1
+        - LlmInvocationCompletedEventV1
+      results:
+        - LlmConfigResultV1
+        - LlmInvocationResultV1
+      errors:
+        - LlmControlPlaneErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - policy.permission
+      - audit.evidence
+      - runtime.state_owner
+      - runtime.execution_broker
+      - context.engine
+      - finops.budget_guard
+      - roles.runtime
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - config/llm/*
+    effects_allowed:
+      - fs.read:config/llm/*
+      - fs.write:config/llm/*
+      - fs.read:workspace/.polaris/**
+      - network.http_outbound:llm/*
+      - process.spawn:llm/*
+    verification:
+      tests:
+        - tests/test_llm_phase0_regression.py
+        - tests/test_llm_provider_actions.py
+        - tests/test_llm_provider_request_context.py
+      gaps:
+        - Child-cell split for config/evaluation/provider_runtime is not completed.
+
+  - id: llm.dialogue
+    title: LLM Dialogue
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: llm
+    purpose: >
+      Provide role dialogue and docs dialogue prompt/response orchestration with
+      explicit output validation and typed public boundaries.
+    current_modules:
+      - polaris.cells.llm.dialogue.public.service
+      - polaris.cells.llm.dialogue.internal.role_dialogue
+      - polaris.cells.llm.dialogue.internal.docs_dialogue
+      - polaris.cells.llm.dialogue.internal.docs_suggest
+    owned_paths:
+      - polaris/cells/llm/dialogue/**
+    public_contracts:
+      modules:
+        - polaris.cells.llm.dialogue.public.contracts
+      commands:
+        - InvokeRoleDialogueCommandV1
+        - InvokeDocsDialogueCommandV1
+      queries:
+        - ValidateRoleOutputQueryV1
+      events:
+        - DialogueTurnCompletedEventV1
+      results:
+        - DialogueTurnResultV1
+      errors:
+        - LlmDialogueErrorV1
+    depends_on:
+      - context.engine
+      - llm.provider_runtime
+      - llm.tool_runtime
+      - policy.workspace_guard
+      - roles.runtime
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+      - llm.invoke:roles/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - tests/test_role_dialogue_validation_retry.py
+        - tests/test_docs_suggest.py
+        - tests/test_interactive_interview_streaming_fallback.py
+      gaps:
+        - Remaining direct imports to internal modules must be migrated to public service/contracts.
+
+  - id: llm.evaluation
+    title: LLM Evaluation
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: llm
+    purpose: >
+      Run LLM readiness/evaluation suites and maintain evaluation index
+      artifacts for provider/model/role qualification.
+    current_modules:
+      - polaris.cells.llm.evaluation.public.service
+      - polaris.cells.llm.evaluation.internal.runner
+      - polaris.cells.llm.evaluation.internal.agentic_benchmark
+      - polaris.cells.llm.evaluation.internal.deterministic_judge
+      - polaris.cells.llm.evaluation.internal.readiness_tests
+      - polaris.cells.llm.evaluation.internal.index
+    owned_paths:
+      - polaris/cells/llm/evaluation/**
+    public_contracts:
+      modules:
+        - polaris.cells.llm.evaluation.public.contracts
+      commands:
+        - RunLlmEvaluationCommandV1
+      queries:
+        - QueryLlmEvaluationIndexV1
+      events:
+        - LlmEvaluationCompletedEventV1
+      results:
+        - LlmEvaluationResultV1
+      errors:
+        - LlmEvaluationErrorV1
+    depends_on:
+      - llm.provider_runtime
+      - llm.provider_config
+      - policy.workspace_guard
+      - audit.evidence
+      - storage.layout
+      - kernelone.llm.embedding
+      - kernelone.fs
+      - kernelone.benchmark
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - workspace/.polaris/runtime/llm_evaluations/*
+      - workspace/.polaris/llm_test_index.evaluation.json
+    effects_allowed:
+      - fs.read:workspace/.polaris/**
+      - fs.write:workspace/.polaris/runtime/llm_evaluations/*
+      - fs.write:workspace/.polaris/llm_test_index.evaluation.json
+      - network.http_outbound:llm/*
+    verification:
+      tests:
+        - tests/test_llm_agentic_benchmark.py
+        - tests/test_llm_test_index_reconcile.py
+        - tests/test_llm_qualification_validators.py
+        - tests/test_llm_evaluation_runner_provider_cfg.py
+      gaps:
+        - Some evaluation callers still bypass contracts and call internal modules directly.
+        - EvaluationRunner still mirrors legacy readiness reports under runtime/llm_tests/reports for delivery compatibility.
+
+  - id: llm.provider_config
+    title: LLM Provider Config
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: llm
+    purpose: >
+      Resolve provider request/test contexts and synchronize process settings
+      from canonical LLM config with explicit contract boundaries.
+    current_modules:
+      - polaris.cells.llm.provider_config.public.service
+      - polaris.cells.llm.provider_config.internal.provider_context
+      - polaris.cells.llm.provider_config.internal.test_context
+      - polaris.cells.llm.provider_config.internal.settings_sync
+    owned_paths:
+      - polaris/cells/llm/provider_config/**
+    public_contracts:
+      modules:
+        - polaris.cells.llm.provider_config.public.contracts
+      commands:
+        - ResolveProviderContextCommandV1
+        - ResolveLlmTestExecutionContextCommandV1
+        - SyncSettingsFromLlmCommandV1
+      queries: []
+      events:
+        - ProviderConfigResolvedEventV1
+      results:
+        - ProviderConfigResultV1
+      errors:
+        - LlmProviderConfigErrorV1
+    depends_on:
+      - llm.control_plane
+      - storage.layout
+      - policy.workspace_guard
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:config/llm/*
+      - fs.read:workspace/.polaris/**
+    verification:
+      tests:
+        - tests/test_llm_provider_request_context.py
+        - tests/test_llm_test_context.py
+      gaps:
+        - Existing application imports still reference internal modules in a few callsites.
+
+  - id: llm.provider_runtime
+    title: LLM Provider Runtime
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: llm
+    purpose: >
+      Execute provider-level health/model actions and role-runtime provider
+      invokes via a stable contract boundary.
+    current_modules:
+      - polaris.cells.llm.provider_runtime.public.service
+      - polaris.cells.llm.provider_runtime.internal.provider_actions
+      - polaris.cells.llm.provider_runtime.internal.runtime_invoke
+      - polaris.cells.llm.provider_runtime.internal.runtime_support
+    owned_paths:
+      - polaris/cells/llm/provider_runtime/**
+    public_contracts:
+      modules:
+        - polaris.cells.llm.provider_runtime.public.contracts
+      commands:
+        - InvokeProviderActionCommandV1
+        - InvokeRoleProviderCommandV1
+      queries:
+        - QueryRoleRuntimeProviderSupportV1
+      events:
+        - ProviderInvocationCompletedEventV1
+      results:
+        - ProviderInvocationResultV1
+      errors:
+        - LlmProviderRuntimeErrorV1
+    depends_on:
+      - llm.provider_config
+      - policy.workspace_guard
+      - finops.budget_guard
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - network.http_outbound:llm/*
+      - llm.invoke:roles/*
+      - fs.read:config/llm/*
+    verification:
+      tests:
+        - tests/test_llm_provider_actions.py
+        - tests/test_provider_registry.py
+        - tests/test_enhanced_providers.py
+      gaps:
+        - Provider manager resolution still has transitional call paths in infrastructure adapters.
+
+  - id: llm.tool_runtime
+    title: LLM Tool Runtime
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: llm
+    purpose: >
+      Orchestrate role-tool call rounds between LLM outputs and KernelOne tool
+      runtime under explicit policy constraints.
+    current_modules:
+      - polaris.cells.llm.tool_runtime.public.service
+      - polaris.cells.llm.tool_runtime.internal.orchestrator
+    owned_paths:
+      - polaris/cells/llm/tool_runtime/**
+    public_contracts:
+      modules:
+        - polaris.cells.llm.tool_runtime.public.contracts
+      commands:
+        - ExecuteToolRoundCommandV1
+      queries:
+        - QueryToolRuntimePolicyV1
+      events:
+        - ToolRoundCompletedEventV1
+      results:
+        - ToolRoundResultV1
+      errors:
+        - LlmToolRuntimeErrorV1
+    depends_on:
+      - policy.permission
+      - policy.workspace_guard
+      - runtime.execution_broker
+      - events.fact_stream
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/events/runtime.events.jsonl
+      - process.spawn:tools/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - tests/test_quality_checker_director_tool_calls.py
+        - tests/test_command_security.py
+      gaps:
+        - Tool runtime still has some direct callers that bypass this public boundary.
+
+  - id: roles.runtime
+    title: Roles Runtime
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: orchestration
+    purpose: >
+      Composite runtime boundary for shared role kernel and role-session
+      lifecycle; PM/Director/QA/ChiefEngineer behavior is delegated to dedicated
+      business cells.
+    tags:
+      - composite
+    current_modules:
+      - polaris.cells.roles.runtime.internal
+      - polaris.delivery.http.routers.role_chat
+      - polaris.delivery.http.routers.role_session
+    owned_paths:
+      - polaris/cells/roles/runtime/internal/**
+      - polaris/delivery/http/routers/role_chat.py
+      - polaris/delivery/http/routers/role_session.py
+    public_contracts:
+      modules:
+        - polaris.cells.roles.runtime.public.contracts
+      commands:
+        - ExecuteRoleTaskCommandV1
+        - ExecuteRoleSessionCommandV1
+      queries:
+        - GetRoleRuntimeStatusQueryV1
+      events:
+        - RoleTaskStartedEventV1
+        - RoleTaskCompletedEventV1
+      results:
+        - RoleExecutionResultV1
+      errors:
+        - RoleRuntimeErrorV1
+    depends_on:
+      - llm.control_plane
+      - context.engine
+      - runtime.execution_broker
+      - runtime.state_owner
+      - audit.evidence
+      - policy.workspace_guard
+      - policy.permission
+      - orchestration.pm_planning
+      - orchestration.pm_dispatch
+      - chief_engineer.blueprint
+      - director.execution
+      - qa.audit_verdict
+      - roles.adapters
+      - roles.engine
+      - roles.kernel
+      - roles.profile
+      - roles.session
+      - factory.cognitive_runtime
+      - architect.design
+      - finops.budget_guard
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/roles/*
+    effects_allowed:
+      - fs.read:runtime/**
+      - fs.write:runtime/roles/*
+      - fs.write:runtime/tasks/*
+      - fs.write:runtime/state/*
+      - fs.write:runtime/events/*
+      - ws.outbound:runtime/*
+      - process.spawn:roles/*
+      - bus.publish:agent_messages/*
+      - bus.consume:agent_messages/*
+    verification:
+      tests:
+        - tests/test_roles_kernel.py
+        - tests/test_runtime_role_binding.py
+        - tests/test_roles_state_ownership.py
+        - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+      gaps:
+        - Role kernel is converged; business-role cell extraction still has remaining call-site rewiring.
+
+  - id: roles.adapters
+    title: Roles Adapters
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: roles
+    purpose: >
+      Provide role-specific adapters and schema bridges for PM, Director,
+      Architect, Chief Engineer, and QA flows, while Director's optional
+      projection execution backend still routes through this layer during
+      migration.
+    current_modules:
+      - polaris.cells.roles.adapters.public.service
+      - polaris.cells.roles.adapters.internal
+      - polaris.cells.roles.adapters.internal.schemas
+      - polaris.cells.roles.adapters.internal.pm_adapter
+      - polaris.cells.roles.adapters.internal.director_adapter
+      - polaris.cells.roles.adapters.internal.director_execution_backend
+      - polaris.cells.roles.adapters.internal.architect_adapter
+      - polaris.cells.roles.adapters.internal.qa_adapter
+      - polaris.cells.roles.adapters.internal.chief_engineer_adapter
+    owned_paths:
+      - polaris/cells/roles/adapters/**
+    public_contracts:
+      modules:
+        - polaris.cells.roles.adapters.public.contracts
+      commands:
+        - CreateRoleAdapterCommandV1
+      queries:
+        - ListSupportedRoleAdaptersQueryV1
+      events:
+        - RoleAdapterRegisteredEventV1
+      results:
+        - RoleAdapterResultV1
+      errors:
+        - RoleAdaptersErrorV1
+    depends_on:
+      - roles.kernel
+      - roles.profile
+      - roles.session
+      - context.engine
+      - llm.control_plane
+      - factory.pipeline
+      - runtime.task_runtime
+      - runtime.execution_broker
+      - policy.workspace_guard
+      - director.execution
+      - llm.dialogue
+      - orchestration.pm_planning
+      - orchestration.workflow_runtime
+      - roles.engine
+      - roles.runtime
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/signals/*
+      - fs.write:runtime/events/*
+      - llm.invoke:roles/*
+      - process.spawn:roles/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - tests/test_role_adapters_taskboard_alignment.py
+        - tests/test_director_adapter_sequential_config.py
+        - tests/test_architect_adapter_docs_extract.py
+      gaps:
+        - Director optional execution backends still route through roles.adapters while business-cell convergence into director.execution remains in progress.
+        - Adapter export boundary is still being normalized against the role kernel.
+
+  - id: roles.engine
+    title: Roles Engine
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: roles
+    purpose: >
+      Provide shared role-engine strategy selection, registry, and hybrid
+      orchestration primitives for role runtime.
+    current_modules:
+      - polaris.cells.roles.engine.public.service
+      - polaris.cells.roles.engine.internal.registry
+      - polaris.cells.roles.engine.internal.classifier
+      - polaris.cells.roles.engine.internal.base
+      - polaris.cells.roles.engine.internal.hybrid
+      - polaris.cells.roles.engine.internal.sequential_adapter
+    owned_paths:
+      - polaris/cells/roles/engine/**
+    public_contracts:
+      modules:
+        - polaris.cells.roles.engine.public.contracts
+      commands:
+        - SelectEngineCommandV1
+        - RegisterEngineCommandV1
+      queries:
+        - ClassifyTaskQueryV1
+        - EngineRegistrySnapshotQueryV1
+      events:
+        - EngineSelectedEventV1
+      results:
+        - EngineSelectionResultV1
+        - EngineExecutionResultV1
+        - EngineRegistrySnapshotResultV1
+      errors:
+        - RolesEngineErrorV1
+    depends_on:
+      - roles.kernel
+      - roles.profile
+      - llm.control_plane
+      - policy.permission
+      - context.engine
+      - policy.workspace_guard
+      - roles.runtime
+      - runtime.execution_broker
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - llm.invoke:roles/*
+      - process.spawn:roles/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - tests/test_sequential_engine.py
+        - tests/test_role_kernel_write_budget.py
+        - tests/test_director_adapter_sequential_config.py
+      gaps:
+        - Engine selection is still coupled to legacy adapter callsites in a few code paths.
+
+  - id: roles.host
+    title: Roles Host
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: roles
+    purpose: >
+      Unified host protocol core. Provides HostKind, HostCapabilityProfile,
+      and UnifiedHostAdapter so that role runtime can adapt execution strategy
+      (streaming, async tools, file write, audit export) based on the calling
+      host environment (workflow, electron_workbench, tui, cli, api_server,
+      headless).
+    current_modules:
+      - polaris.cells.roles.host.public.contracts
+      - polaris.cells.roles.host.internal.service
+    owned_paths:
+      - polaris/cells/roles/host/**
+    public_contracts:
+      modules:
+        - polaris.cells.roles.host.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - roles.session
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+    verification:
+      tests: []
+      gaps:
+        - Cell is newly created; full test coverage pending.
+        - EngineRegistry host_kind awareness (HybridEngine._select_strategy) not yet wired.
+        - ProtocolFSM atomic persistence (tmp+rename) not yet implemented.
+
+  - id: roles.kernel
+    title: Roles Kernel
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: roles
+    purpose: >
+      Provide the shared role execution kernel, prompt assembly, parser,
+      retry, budget, and tool-gateway primitives used by all role flows.
+    current_modules:
+      - polaris.cells.roles.kernel.internal
+      - polaris.cells.roles.kernel.internal.kernel
+      - polaris.cells.roles.kernel.internal.tool_gateway
+      - polaris.cells.roles.kernel.internal.context_gateway
+      - polaris.cells.roles.kernel.internal.constitution_rules
+      - polaris.cells.roles.kernel.internal.constitution_adaptor
+      - polaris.cells.roles.kernel.internal.transaction
+      - polaris.cells.roles.kernel.internal.transaction.stream_orchestrator
+      - polaris.cells.roles.kernel.internal.transaction.tool_batch_executor
+      - polaris.cells.roles.kernel.internal.transaction.cognitive_gateway
+      - polaris.cells.roles.kernel.internal.transaction.ledger
+      - polaris.cells.roles.kernel.internal.transaction.finalization
+      - polaris.cells.roles.kernel.internal.transaction.delivery_contract
+    owned_paths:
+      - polaris/cells/roles/kernel/**
+    public_contracts:
+      modules:
+        - polaris.cells.roles.kernel.public.contracts
+      commands:
+        - ExecuteRoleKernelCommandV1
+      queries:
+        - QueryRoleKernelStatusV1
+      events:
+        - RoleKernelEventV1
+      results:
+        - RoleKernelResultV1
+      errors:
+        - RoleKernelErrorV1
+    depends_on:
+      - context.engine
+      - llm.control_plane
+      - policy.permission
+      - audit.evidence
+      - director.execution
+      - llm.dialogue
+      - roles.adapters
+      - roles.profile
+      - roles.session
+      - runtime.execution_broker
+      - runtime.task_runtime
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/events/runtime.events.jsonl
+      - llm.invoke:roles/*
+      - process.spawn:roles/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - tests/test_roles_kernel.py
+        - tests/test_runtime_role_binding.py
+        - tests/test_role_kernel_write_budget.py
+        - polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py
+        - polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py
+        - polaris/cells/roles/kernel/internal/transaction/tests/test_cognitive_gateway.py
+        - polaris/cells/roles/kernel/internal/transaction/tests/test_protocol_canonicalization.py
+        - polaris/cells/roles/kernel/internal/transaction/tests/test_slm_coprocessor.py
+        - polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py
+        - polaris/cells/roles/kernel/tests/test_transaction_controller.py
+        - polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
+        - polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py
+        - polaris/cells/roles/kernel/tests/test_kernel_guard.py
+        - polaris/cells/roles/kernel/tests/test_turn_contracts_v2.py
+        - polaris/cells/roles/kernel/tests/test_transaction_kernel_handoff_contract.py
+        - polaris/cells/roles/kernel/tests/test_context_gateway_integration.py
+      gaps:
+        - Kernel public boundary still needs final routing cleanup for a few parser/helper exports.
+
+  - id: roles.profile
+    title: Roles Profile
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: roles
+    purpose: >
+      Own role profile schema, registry, and canonical role configuration
+      materialization.
+    current_modules:
+      - polaris.cells.roles.profile.internal
+      - polaris.cells.roles.profile.internal.registry
+      - polaris.cells.roles.profile.internal.schema
+      - polaris.cells.roles.profile.internal.builtin_profiles
+    owned_paths:
+      - polaris/cells/roles/profile/**
+    public_contracts:
+      modules:
+        - polaris.cells.roles.profile.public.contracts
+      commands:
+        - LoadRoleProfileCommandV1
+      queries:
+        - QueryRoleProfileRegistryV1
+      events:
+        - RoleProfileLoadedEventV1
+      results:
+        - RoleProfileResultV1
+      errors:
+        - RoleProfileErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - audit.evidence
+      - storage.layout
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - config/roles/*
+      - polaris/cells/roles/profile/internal/config/core_roles.yaml
+    effects_allowed:
+      - fs.read:config/roles/*
+      - fs.write:config/roles/*
+      - fs.read:workspace/**
+      - fs.write:workspace/**
+      - fs.read:polaris/cells/roles/profile/internal/config/*
+      - fs.write:polaris/cells/roles/profile/internal/config/*
+    verification:
+      tests:
+        - tests/test_roles_kernel.py
+        - tests/test_role_dialogue_validation_retry.py
+      gaps:
+        - Some role configuration sources are still mirrored from legacy role registries.
+
+  - id: roles.session
+    title: Roles Session
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: roles
+    purpose: >
+      Manage role session lifecycle, conversation rows, session-attached
+      data persistence for role hosts, and session-scoped Context OS memory
+      restore queries.
+    current_modules:
+      - polaris.cells.roles.session.public.service
+      - polaris.cells.roles.session.internal.conversation
+      - polaris.cells.roles.session.internal.role_session_service
+      - polaris.cells.roles.session.internal.context_memory_service
+      - polaris.cells.roles.session.internal.data_store
+      - polaris.cells.roles.session.internal.session_attachment
+    owned_paths:
+      - polaris/cells/roles/session/**
+    public_contracts:
+      modules:
+        - polaris.cells.roles.session.public.contracts
+      commands:
+        - CreateRoleSessionCommandV1
+        - UpdateRoleSessionCommandV1
+        - AttachRoleSessionCommandV1
+      queries:
+        - SearchRoleSessionMemoryQueryV1
+        - ReadRoleSessionArtifactQueryV1
+        - ReadRoleSessionEpisodeQueryV1
+        - GetRoleSessionStateQueryV1
+      events:
+        - RoleSessionLifecycleEventV1
+      results:
+        - RoleSessionResultV1
+        - RoleSessionContextQueryResultV1
+      errors:
+        - RoleSessionErrorV1
+    depends_on:
+      - storage.layout
+      - policy.workspace_guard
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/role_sessions/*
+      - runtime/conversations/*
+    effects_allowed:
+      - fs.read:runtime/**
+      - fs.write:runtime/role_sessions/*
+      - fs.write:runtime/conversations/*
+      - fs.write:runtime/session_attachments/*
+      - db.read_write:role_sessions
+    verification:
+      tests:
+        - polaris/cells/roles/session/tests/test_contracts.py
+        - polaris/cells/roles/session/tests/test_role_session_service.py
+        - polaris/cells/roles/session/tests/test_context_memory_service.py
+        - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+      gaps:
+        - Session persistence currently spans both DB-backed and file-backed paths.
+        - Session-scoped Context OS restore queries are available through the public session boundary, but non-CLI hosts do not yet expose dedicated UX affordances for memory recall.
+
+  - id: docs.court_workflow
+    title: Docs Court Workflow
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: product
+    purpose: >
+      Composite onboarding/court-doc workflow capability for dialogue, preview,
+      apply, and plan synchronization.
+    tags:
+      - composite
+    current_modules:
+      - polaris.delivery.http.routers.docs
+      - polaris.delivery.http.routers.court
+      - polaris.cells.docs.court_workflow.internal.docs_stage_service
+      - polaris.cells.docs.court_workflow.internal.plan_template
+      - polaris.cells.docs.court_workflow.internal.court_mapping
+    owned_paths:
+      - polaris/cells/docs/court_workflow/internal/**
+      - polaris/delivery/http/routers/docs.py
+      - polaris/delivery/http/routers/court.py
+    public_contracts:
+      modules:
+        - polaris.cells.docs.court_workflow.public.contracts
+      commands:
+        - GenerateCourtDocsCommandV1
+        - ApplyCourtDocsCommandV1
+      queries:
+        - PreviewCourtDocsQueryV1
+        - QueryCourtProjectionV1
+      events:
+        - CourtDocsGeneratedEventV1
+      results:
+        - CourtDocsResultV1
+      errors:
+        - CourtWorkflowErrorV1
+    depends_on:
+      - llm.control_plane
+      - runtime.state_owner
+      - runtime.projection
+      - policy.workspace_guard
+      - policy.permission
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - workspace/docs/*
+      - runtime/contracts/plan.md
+    effects_allowed:
+      - fs.read:workspace/docs/*
+      - fs.write:workspace/docs/*
+      - fs.write:runtime/contracts/plan.md
+      - fs.write:runtime/events/runtime.events.jsonl
+      - ws.outbound:court/*
+    verification:
+      tests:
+        - tests/test_plan_sync.py
+        - tests/test_court_mapping.py
+      gaps:
+        - Workflow extraction to dedicated application workflow module is pending.
+
+  - id: runtime.artifact_store
+    title: Runtime Artifact Store
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: runtime
+    purpose: >
+      Own runtime artifact naming, typed runtime_v2 artifact payloads, and
+      artifact persistence helpers for runtime projections.
+    current_modules:
+      - polaris.cells.runtime.artifact_store.public.service
+      - polaris.cells.runtime.artifact_store.internal.arrow_service
+    owned_paths:
+      - polaris/cells/runtime/artifact_store/**
+    public_contracts:
+      modules:
+        - polaris.cells.runtime.artifact_store.public.contracts
+      commands:
+        - SaveRuntimeArtifactCommandV1
+      queries:
+        - QueryRuntimeArtifactV1
+      events:
+        - RuntimeArtifactStoredEventV1
+      results:
+        - RuntimeArtifactResultV1
+      errors:
+        - RuntimeArtifactStoreErrorV1
+    depends_on:
+      - storage.layout
+      - runtime.state_owner
+      - audit.evidence
+      - policy.workspace_guard
+      - orchestration.pm_planning
+      - runtime.projection
+    subgraphs:
+      - storage_archive_pipeline
+    state_owners:
+      - runtime/artifacts/*
+    effects_allowed:
+      - fs.read:runtime/artifacts/*
+      - fs.write:runtime/artifacts/*
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+      - fs.write:runtime/events/runtime.events.jsonl
+    verification:
+      tests:
+        - tests/test_artifact_service.py
+        - tests/test_role_session_artifact_service_kfs.py
+        - tests/test_runtime_projection_snapshot_tasks.py
+      gaps:
+        - Runtime V2 typed exports now come from runtime.projection and still need governance freshness regeneration.
+
+  - id: factory.pipeline
+    title: Factory Pipeline
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: orchestration
+    purpose: >
+      Composite factory execution workflow boundary from delivery ingress to
+      run orchestration, controlled target-project projection experiments,
+      back-mapping refresh, selective reprojection, and archive trigger integration.
+    tags:
+      - composite
+    current_modules:
+      - polaris.delivery.http.routers.factory
+      - polaris.delivery.cli.factory.projection_lab
+      - polaris.delivery.cli.factory.projection_change_analysis
+      - polaris.delivery.cli.factory.projection_reproject
+      - polaris.cells.factory.pipeline.internal.factory_run_service
+      - polaris.cells.factory.pipeline.internal.factory_store
+      - polaris.cells.factory.pipeline.internal.resource_http_service_renderer
+      - polaris.cells.factory.pipeline.internal.projection_change_analysis
+      - polaris.cells.factory.pipeline.internal.projection_lab
+    owned_paths:
+      - polaris/delivery/http/routers/factory.py
+      - polaris/delivery/cli/factory/**
+      - polaris/cells/factory/pipeline/internal/**
+      - polaris/cells/factory/pipeline/tests/**
+    public_contracts:
+      modules:
+        - polaris.cells.factory.pipeline.public.contracts
+      commands:
+        - StartFactoryRunCommandV1
+        - CancelFactoryRunCommandV1
+        - RunProjectionExperimentCommandV1
+        - RefreshProjectionBackMappingCommandV1
+        - ReprojectProjectionExperimentCommandV1
+      queries:
+        - GetFactoryRunStatusQueryV1
+        - ListFactoryRunsQueryV1
+      events:
+        - FactoryRunStartedEventV1
+        - FactoryRunCompletedEventV1
+      results:
+        - FactoryRunResultV1
+        - ProjectionExperimentResultV1
+        - ProjectionBackMappingRefreshResultV1
+        - ProjectionReprojectionResultV1
+      errors:
+        - FactoryPipelineErrorV1
+    depends_on:
+      - orchestration.workflow_runtime
+      - roles.runtime
+      - runtime.task_runtime
+      - runtime.state_owner
+      - runtime.execution_broker
+      - archive.factory_archive
+      - audit.evidence
+      - policy.workspace_guard
+      - policy.permission
+      - llm.provider_runtime
+      - orchestration.pm_dispatch
+    subgraphs:
+      - storage_archive_pipeline
+      - execution_governance_pipeline
+    state_owners:
+      - workspace/factory/*
+      - runtime/factory/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:workspace/factory/*
+      - fs.write:workspace/experiments/*
+      - fs.write:runtime/runs/*
+      - fs.write:runtime/events/*
+      - process.spawn:factory/*
+      - process.spawn:workspace/experiments/*
+      - ws.outbound:factory/*
+      - process.exec:workspace/**
+    verification:
+      tests:
+        - tests/test_factory_router.py
+        - tests/test_factory_run_service.py
+        - polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py
+        - polaris/cells/factory/pipeline/tests/test_projection_lab.py
+        - polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py
+        - polaris/cells/factory/pipeline/tests/test_projection_http_resources.py
+        - polaris/cells/factory/pipeline/tests/test_projection_reproject.py
+      gaps:
+        - Workflow execution runtime has been split to orchestration.workflow_runtime and still requires call-site convergence.
+
+  - id: factory.cognitive_runtime
+    title: Cognitive Runtime
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: factory
+    purpose: >
+      Provide cross-role runtime authority on top of KernelOne State-First
+      Context OS without replacing raw session truth, context.engine, or
+      resident autonomy. This cell owns scope leases, change-set validation,
+      SQLite-backed runtime receipt persistence, typed handoff
+      export/rehydration, and rollout-gate evaluation.
+    current_modules:
+      - polaris.cells.factory.cognitive_runtime.public.service
+      - polaris.application.cognitive_runtime.service
+      - polaris.infrastructure.cognitive_runtime.sqlite_store
+      - polaris.delivery.http.routers.cognitive_runtime
+    owned_paths:
+      - polaris/domain/cognitive_runtime/**
+      - polaris/application/cognitive_runtime/**
+      - polaris/infrastructure/cognitive_runtime/**
+      - polaris/cells/factory/cognitive_runtime/**
+      - polaris/bootstrap/cognitive_runtime/**
+      - polaris/delivery/http/routers/cognitive_runtime.py
+    public_contracts:
+      modules:
+        - polaris.cells.factory.cognitive_runtime.public.contracts
+      commands:
+        - ResolveContextCommandV1
+        - LeaseEditScopeCommandV1
+        - ValidateChangeSetCommandV1
+        - RecordRuntimeReceiptCommandV1
+        - ExportHandoffPackCommandV1
+        - RehydrateHandoffPackCommandV1
+      queries:
+        - GetRuntimeReceiptQueryV1
+        - GetHandoffPackQueryV1
+      events:
+        - RuntimeReceiptIssuedEventV1
+        - HandoffPackExportedEventV1
+      results:
+        - ResolveContextResultV1
+        - LeaseEditScopeResultV1
+        - ValidateChangeSetResultV1
+        - RuntimeReceiptResultV1
+        - HandoffPackResultV1
+        - HandoffRehydrationResultV1
+      errors:
+        - CognitiveRuntimeErrorV1
+    depends_on:
+      - roles.session
+      - context.engine
+      - factory.pipeline
+      - policy.workspace_guard
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/cognitive_runtime/cognitive_runtime.sqlite
+    effects_allowed:
+      - fs.read:runtime/**
+      - fs.write:runtime/cognitive_runtime/*
+      - db.read_write:cognitive_runtime
+    verification:
+      tests:
+        - polaris/cells/factory/cognitive_runtime/tests/test_public_contracts.py
+        - polaris/cells/factory/cognitive_runtime/tests/test_public_service.py
+        - polaris/delivery/http/routers/test_cognitive_runtime_router.py
+        - polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py
+      gaps:
+        - This cell is only shadow-wired today; it can record receipts, export/rehydrate handoff packs, and evaluate rollout gates, but it does not yet gate production orchestration decisions.
+        - Projection-compile and promote/reject authority exist in the cell boundary but are not yet enforced as mainline runtime gates.
+
+  - id: orchestration.pm_planning
+    title: PM Planning
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: orchestration
+    purpose: >
+      Produce PM task contracts from project goals and docs, enforce planning
+      quality gates, and publish governed planning artifacts.
+    current_modules:
+      - polaris.cells.orchestration.pm_planning.service
+      - polaris.cells.orchestration.pm_planning.pipeline
+      - polaris.cells.orchestration.pm_planning.internal.task_quality_gate
+      - polaris.delivery.http.v2.pm
+    owned_paths:
+      - polaris/cells/orchestration/pm_planning/internal/**
+      - polaris/delivery/http/v2/pm.py
+    public_contracts:
+      modules:
+        - polaris.cells.orchestration.pm_planning.public.contracts
+      commands:
+        - GeneratePmTaskContractCommandV1
+      queries:
+        - GetPmPlanningStatusQueryV1
+      events:
+        - PmTaskContractGeneratedEventV1
+      results:
+        - PmTaskContractResultV1
+      errors:
+        - PmPlanningErrorV1
+    depends_on:
+      - context.engine
+      - llm.control_plane
+      - runtime.execution_broker
+      - policy.permission
+      - policy.workspace_guard
+      - runtime.state_owner
+      - audit.evidence
+      - finops.budget_guard
+      - roles.runtime
+      - runtime.task_runtime
+      - storage.layout
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/state/pm/*
+    effects_allowed:
+      - fs.read:workspace/docs/*
+      - fs.read:runtime/contracts/*
+      - fs.write:runtime/state/pm/*
+      - fs.write:runtime/events/pm.events.jsonl
+      - llm.invoke:pm/*
+    verification:
+      tests:
+        - tests/test_pm_task_quality_gate.py
+        - tests/test_pm_orchestration_api.py
+      gaps:
+        - Some PM planning reads still go through compatibility paths.
+
+  - id: orchestration.pm_dispatch
+    title: PM Dispatch
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: orchestration
+    purpose: >
+      Dispatch PM contracts into executable task iterations, drive task
+      assignment and lifecycle transitions, and record dispatch outcomes.
+    current_modules:
+      - polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline
+      - polaris.cells.orchestration.pm_dispatch.internal.iteration_state
+      - polaris.cells.orchestration.pm_dispatch.internal.error_classifier
+      - polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service
+      - polaris.cells.orchestration.pm_dispatch.internal.state_bridge
+      - polaris.delivery.http.v2.orchestration
+    owned_paths:
+      - polaris/cells/orchestration/pm_dispatch/internal/**
+      - polaris/delivery/http/v2/orchestration.py
+    public_contracts:
+      modules:
+        - polaris.cells.orchestration.pm_dispatch.public.contracts
+      commands:
+        - DispatchPmTasksCommandV1
+        - ResumePmIterationCommandV1
+      queries:
+        - GetPmDispatchStatusQueryV1
+      events:
+        - PmTaskDispatchedEventV1
+        - PmIterationAdvancedEventV1
+      results:
+        - PmDispatchResultV1
+      errors:
+        - PmDispatchErrorV1
+    depends_on:
+      - orchestration.pm_planning
+      - orchestration.workflow_runtime
+      - director.execution
+      - qa.audit_verdict
+      - runtime.state_owner
+      - runtime.task_market
+      - audit.evidence
+      - policy.permission
+      - policy.workspace_guard
+      - archive.task_snapshot_archive
+      - chief_engineer.blueprint
+      - roles.adapters
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/state/dispatch/*
+    effects_allowed:
+      - fs.read:runtime/contracts/*
+      - fs.write:runtime/state/dispatch/*
+      - fs.write:runtime/events/runtime.events.jsonl
+      - fs.write:runtime/snapshots/*
+      - ws.outbound:runtime/*
+    verification:
+      tests:
+        - tests/test_dispatch_pipeline_engine_dispatch.py
+        - tests/test_orchestration_command_service.py
+      gaps:
+        - Legacy dispatch entrypoints still exist and are not fully removed.
+
+  - id: chief_engineer.blueprint
+    title: Chief Engineer Blueprint
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: engineering
+    purpose: >
+      Generate task-level implementation blueprints and dependency analysis for
+      Director execution without performing code write operations.
+    current_modules:
+      - polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight
+      - polaris.cells.chief_engineer.blueprint.internal.chief_engineer_agent
+      - polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli
+      - polaris.cells.chief_engineer.blueprint.internal.director_pool
+      - polaris.cells.chief_engineer.blueprint.internal.rollback_guard
+      - polaris.cells.chief_engineer.blueprint.internal.event_bus
+      - polaris.cells.chief_engineer.blueprint.internal.adr_store
+      - polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence
+      - polaris.infrastructure.code_intelligence
+    owned_paths:
+      - polaris/cells/chief_engineer/blueprint/internal/**
+      - polaris/cells/chief_engineer/blueprint/public/**
+      - polaris/cells/chief_engineer/blueprint/tests/**
+      - polaris/infrastructure/code_intelligence/**
+    public_contracts:
+      modules:
+        - polaris.cells.chief_engineer.blueprint.public.contracts
+        - polaris.cells.chief_engineer.blueprint.public.service
+      commands:
+        - GenerateTaskBlueprintCommandV1
+      queries:
+        - GetBlueprintStatusQueryV1
+      events:
+        - TaskBlueprintGeneratedEventV1
+      results:
+        - TaskBlueprintResultV1
+      errors:
+        - ChiefEngineerBlueprintErrorV1
+    depends_on:
+      - context.engine
+      - llm.control_plane
+      - policy.permission
+      - policy.workspace_guard
+      - finops.budget_guard
+      - audit.evidence
+      - roles.runtime
+      - runtime.task_market
+      - runtime.artifact_store
+      - orchestration.workflow_runtime
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/state/blueprints/*
+      - runtime/blueprints/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/state/blueprints/*
+      - fs.write:runtime/blueprints/*
+      - fs.write:runtime/events/runtime.events.jsonl
+      - llm.invoke:chief_engineer/*
+      - process.spawn:git/*
+    verification:
+      tests:
+        - tests/test_chief_engineer_preflight.py
+      gaps:
+        - Blueprint adapter convergence with roles adapters is not complete.
+
+  - id: architect.design
+    title: Architect Design
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: engineering
+    purpose: >
+      Produce architecture-level design recommendations and implementation
+      guidance for complex tasks, without directly performing workspace writes.
+    current_modules:
+      - polaris.cells.architect.design.internal.architect_service
+      - polaris.cells.architect.design.internal.architect_agent
+      - polaris.cells.architect.design.internal.architect_cli
+    owned_paths:
+      - polaris/cells/architect/design/internal/**
+    public_contracts:
+      modules:
+        - polaris.cells.architect.design.public.contracts
+      commands:
+        - GenerateArchitectureDesignCommandV1
+      queries:
+        - QueryArchitectureDesignStatusV1
+      events:
+        - ArchitectureDesignGeneratedEventV1
+      results:
+        - ArchitectureDesignResultV1
+      errors:
+        - ArchitectDesignErrorV1
+    depends_on:
+      - context.engine
+      - llm.control_plane
+      - policy.permission
+      - policy.workspace_guard
+      - finops.budget_guard
+      - audit.evidence
+      - roles.runtime
+    subgraphs: []
+    state_owners:
+      - runtime/state/architect/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/state/architect/*
+      - fs.write:runtime/events/runtime.events.jsonl
+      - llm.invoke:architect/*
+    verification:
+      tests:
+        - tests/test_architect_adapter_docs_extract.py
+      gaps:
+        - Architect output routing into downstream execution cells is being consolidated.
+
+  - id: director.execution
+    title: Director Execution
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: engineering
+    purpose: >
+      Execute Director task workflows from claim to verification based on
+      approved blueprints with strict policy and audit controls, including
+      optional projection-oriented execution backends selected by explicit task
+      contracts.
+    current_modules:
+      - polaris.cells.director.execution.service
+      - polaris.cells.director.execution.logic
+      - polaris.cells.director.execution.internal.task_lifecycle_service
+      - polaris.cells.director.execution.internal.worker_pool_service
+      - polaris.cells.director.execution.internal.worker_executor
+      - polaris.cells.director.execution.internal.code_generation_engine
+      - polaris.cells.director.execution.internal.file_apply_service
+      - polaris.cells.director.execution.internal.patch_apply_engine
+      - polaris.cells.director.execution.internal.bootstrap_template_catalog
+      - polaris.cells.director.execution.internal.repair_service
+      - polaris.cells.director.execution.internal.tools
+      - polaris.delivery.cli.director.cli_thin
+      - polaris.delivery.http.v2.director
+    owned_paths:
+      - polaris/cells/director/execution/**
+      - polaris/cells/director/execution/internal/tools/**
+      - polaris/delivery/http/v2/director.py
+    public_contracts:
+      modules:
+        - polaris.cells.director.execution.public.contracts
+      commands:
+        - ExecuteDirectorTaskCommandV1
+        - RetryDirectorTaskCommandV1
+      queries:
+        - GetDirectorTaskStatusQueryV1
+      events:
+        - DirectorTaskStartedEventV1
+        - DirectorTaskCompletedEventV1
+      results:
+        - DirectorExecutionResultV1
+      errors:
+        - DirectorExecutionErrorV1
+    depends_on:
+      - chief_engineer.blueprint
+      - factory.pipeline
+      - factory.cognitive_runtime
+      - policy.permission
+      - policy.workspace_guard
+      - runtime.execution_broker
+      - runtime.state_owner
+      - audit.evidence
+      - finops.budget_guard
+      - events.fact_stream
+      - llm.control_plane
+      - audit.verdict
+      - llm.provider_runtime
+      - roles.runtime
+      - runtime.task_runtime
+      - workspace.integrity
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/state/director/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/tasks/*
+      - fs.write:runtime/state/director/*
+      - fs.write:runtime/events/director.llm.events.jsonl
+      - process.spawn:director/*
+      - llm.invoke:director/*
+    verification:
+      tests:
+        - tests/test_director_logic.py
+        - tests/test_director_service_convergence.py
+        - polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py
+      gaps:
+        - Optional projection execution backends are currently routed through roles.adapters/internal/director_adapter while implementation convergence remains in progress.
+        - Director CLI console transport is being consolidated under polaris/delivery/cli/director/**; legacy script entrypoints remain compatibility surfaces.
+        - Some role adapter call paths still invoke Director via compatibility routes.
+
+  - id: director.planning
+    title: Director Planning
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: engineering
+    purpose: >
+      Director task planning, main execution loop, risk/quality tracking, and
+      context gathering. Owns DirectorAgent, execution rules, and logic utilities
+      (parse_acceptance, extract_defect_ticket, write_gate_check).
+    owned_paths:
+      - polaris/cells/director/planning/**
+    public_contracts:
+      modules:
+        - polaris.cells.director.planning.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - chief_engineer.blueprint
+      - factory.pipeline
+      - policy.permission
+      - runtime.execution_broker
+      - runtime.state_owner
+      - runtime.task_runtime
+      - audit.evidence
+      - audit.verdict
+      - llm.control_plane
+      - llm.provider_runtime
+      - roles.runtime
+      - workspace.integrity
+    subgraphs: []
+    state_owners:
+      - runtime/state/director/planning/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/tasks/*
+      - fs.write:runtime/state/director/planning/*
+      - process.spawn:director/planning/*
+      - llm.invoke:director/planning/*
+    verification:
+      gaps:
+        - 'Phase 2 complete: implementation migrated to director.planning/internal. Remaining:
+          (a) add director.planning tests, (b) cutover Facade to import from director.planning.public
+          instead of director.execution.internal, (c) update director.execution/internal
+          star re-exports once Facade is cut over.'
+
+  - id: director.tasking
+    title: Director Tasking
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: engineering
+    purpose: >
+      Task lifecycle management, worker pool orchestration, and worker executor
+      for Director tasks. Owns TaskService, WorkerService, WorkerExecutor, and bootstrap
+      template catalog.
+    owned_paths:
+      - polaris/cells/director/tasking/**
+    public_contracts:
+      modules:
+        - polaris.cells.director.tasking.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - runtime.execution_broker
+      - runtime.task_runtime
+      - audit.evidence
+      - llm.control_plane
+      - llm.provider_runtime
+      - policy.workspace_guard
+    subgraphs: []
+    state_owners:
+      - runtime/state/director/tasking/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:runtime/tasks/*
+      - fs.write:runtime/state/director/tasking/*
+      - process.spawn:director/task/*
+      - llm.invoke:director/task/*
+    verification:
+      gaps:
+        - 'Phase 3 complete: implementation migrated to director.tasking/internal. Implementation
+          files migrated: bootstrap_template_catalog, worker_executor, worker_pool_service,
+          task_lifecycle_service. Phase 4 deps (CodeGenerationEngine, FileApplyService,
+          RepairService) deferred via lazy import.'
+
+  - id: director.runtime
+    title: Director Runtime
+    kind: workflow
+    visibility: public
+    stateful: false
+    owner: engineering
+    purpose: >
+      Code/patch application, file application, existence gate, and repair loop
+      for Director tasks. Owns PatchApplyEngine, FileApplyService, ExistenceGate, RepairService,
+      and the KernelOne tool chain execution capability.
+    owned_paths:
+      - polaris/cells/director/runtime/**
+      - polaris/kernelone/tools/**
+    public_contracts:
+      modules:
+        - polaris.cells.director.runtime.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - kernelone.tools
+      - audit.evidence
+      - policy.workspace_guard
+      - workspace.integrity
+      - events.fact_stream
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:workspace/**
+    verification:
+      gaps:
+        - 'Migration in progress: implementation resides in director.execution/internal
+          and polaris/kernelone/tools/ pending Cell extraction.'
+
+  - id: director.delivery
+    title: Director Delivery
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: engineering
+    purpose: >
+      Director CLI and terminal console transport surface. Owns the standalone
+      Director CLI entry point under polaris/delivery/cli/director/**.
+    owned_paths:
+      - polaris/cells/director/delivery/**
+      - polaris/delivery/cli/director/**
+    public_contracts:
+      modules:
+        - polaris.cells.director.delivery.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - director.planning
+      - director.tasking
+      - director.execution
+      - roles.runtime
+      - runtime.execution_broker
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - process.spawn:director/delivery/*
+    verification:
+      gaps:
+        - 'Migration in progress: implementation resides in director.execution/internal/director_cli.py
+          pending Cell extraction.'
+
+  - id: qa.audit_verdict
+    title: QA Audit Verdict
+    kind: workflow
+    visibility: public
+    stateful: true
+    owner: qa
+    purpose: >
+      Run independent QA/Auditor validation and emit structured acceptance
+      verdicts for Director outputs.
+    current_modules:
+      - polaris.cells.qa.audit_verdict.internal.qa_service
+      - polaris.cells.qa.audit_verdict.internal.quality_service
+      - polaris.cells.qa.audit_verdict.internal.qa_agent
+    owned_paths:
+      - polaris/cells/qa/audit_verdict/internal/**
+    public_contracts:
+      modules:
+        - polaris.cells.qa.audit_verdict.public.contracts
+      commands:
+        - RunQaAuditCommandV1
+      queries:
+        - GetQaVerdictQueryV1
+      events:
+        - QaVerdictIssuedEventV1
+      results:
+        - QaAuditResultV1
+      errors:
+        - QaAuditErrorV1
+    depends_on:
+      - director.execution
+      - policy.permission
+      - policy.workspace_guard
+      - runtime.execution_broker
+      - runtime.task_market
+      - runtime.projection
+      - audit.evidence
+      - events.fact_stream
+      - audit.verdict
+      - roles.runtime
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/state/qa/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+      - fs.write:runtime/state/qa/*
+      - fs.write:runtime/events/runtime.events.jsonl
+      - process.spawn:qa/*
+    verification:
+      tests:
+        - tests/test_integration_qa_command.py
+        - tests/test_quality_checker_director_tool_calls.py
+      gaps:
+        - QA acceptance is still partially coupled with legacy integration_qa entrypoints.
+
+  - id: resident.autonomy
+    title: Resident Autonomy
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: resident
+    purpose: >
+      Provide long-running resident autonomy capability including goal
+      governance, decision traceability, evidence assembly, and
+      self-improvement loops.
+    current_modules:
+      - polaris.cells.resident.autonomy.internal.resident_runtime_service
+      - polaris.cells.resident.autonomy.internal.goal_governor
+      - polaris.cells.resident.autonomy.internal.decision_trace
+      - polaris.cells.resident.autonomy.internal.self_improvement_lab
+      - polaris.delivery.http.v2.resident
+    owned_paths:
+      - polaris/cells/resident/autonomy/internal/**
+      - polaris/delivery/http/v2/resident.py
+    public_contracts:
+      modules:
+        - polaris.cells.resident.autonomy.public.contracts
+      commands:
+        - RunResidentCycleCommandV1
+        - RecordResidentEvidenceCommandV1
+      queries:
+        - QueryResidentStatusV1
+      events:
+        - ResidentCycleCompletedEventV1
+      results:
+        - ResidentAutonomyResultV1
+      errors:
+        - ResidentAutonomyErrorV1
+    depends_on:
+      - context.engine
+      - llm.control_plane
+      - policy.permission
+      - policy.workspace_guard
+      - runtime.execution_broker
+      - runtime.state_owner
+      - runtime.projection
+      - audit.evidence
+      - audit.verdict
+      - orchestration.pm_dispatch
+    subgraphs: []
+    state_owners:
+      - runtime/state/resident/*
+      - runtime/resident/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+      - fs.write:runtime/state/resident/*
+      - fs.write:runtime/events/runtime.events.jsonl
+      - process.spawn:resident/*
+      - ws.outbound:resident/*
+    verification:
+      tests:
+        - tests/test_resident_api.py
+        - tests/test_resident_service.py
+        - tests/test_resident_evidence_integration.py
+        - tests/test_resident_pm_bridge.py
+      gaps:
+        - Resident capability graph and autonomous loop policies are still being tuned for production hardening.
+
+  - id: policy.permission
+    title: Permission Policy
+    kind: policy
+    visibility: public
+    stateful: true
+    owner: policy
+    purpose: >
+      Own role capability matrix evaluation and permission decisions for tool, command, write,
+      and execution actions. Also owns the Polaris Protocol (HP Protocol) 7-phase
+      execution state machine (start_run, blueprint, approval, snapshot, implementation,
+      verify, finalize).
+    current_modules:
+      - polaris.cells.policy.permission.internal.permission_service
+      - polaris.cells.policy.permission.internal.role_graph
+      - polaris.cells.policy.permission.internal.condition_evaluator
+      - polaris.cells.policy.permission.internal.non_llm_gates
+      - polaris.domain.entities.capability
+      - polaris.domain.entities.policy
+    owned_paths:
+      - polaris/cells/policy/permission/internal/**
+      - polaris/cells/policy/protocol/internal/**
+      - polaris/cells/policy/protocol/public/**
+      - polaris/domain/entities/capability.py
+      - polaris/domain/entities/policy.py
+    public_contracts:
+      modules:
+        - polaris.cells.policy.permission.public.contracts
+        - polaris.cells.policy.protocol.public.contracts
+      commands:
+        - EvaluatePermissionCommandV1
+      queries:
+        - QueryPermissionMatrixV1
+      events:
+        - PermissionDeniedEventV1
+      results:
+        - PermissionDecisionResultV1
+      errors:
+        - PermissionPolicyErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - audit.evidence
+      - roles.kernel
+      - roles.profile
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - workspace/policy/permission/*
+      - workspace/policy/state_*.json
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:workspace/policy/permission/*
+      - fs.write:workspace/policy/state_*.json
+    verification:
+      tests:
+        - tests/test_permission_service.py
+        - tests/test_permission_role_inheritance.py
+        - tests/test_permission_conditions.py
+      gaps:
+        - Some policy checks are still executed directly in service call-sites.
+
+  - id: finops.budget_guard
+    title: FinOps Budget Guard
+    kind: policy
+    visibility: public
+    stateful: true
+    owner: finops
+    purpose: >
+      Enforce token and execution budget controls with explicit reserve/consume
+      accounting and threshold signals.
+    current_modules:
+      - polaris.kernelone.runtime.usage_metrics
+      - polaris.domain.services.token_service
+      - polaris.infrastructure.accel.query.adaptive_budget
+      - polaris.infrastructure.accel.token_estimator
+    owned_paths:
+      - polaris/kernelone/runtime/usage_metrics.py
+      - polaris/domain/services/token_service.py
+      - polaris/infrastructure/accel/query/adaptive_budget.py
+      - polaris/infrastructure/accel/token_estimator.py
+    public_contracts:
+      modules:
+        - polaris.cells.finops.budget_guard.public.contracts
+      commands:
+        - ReserveBudgetCommandV1
+        - RecordUsageCommandV1
+      queries:
+        - GetBudgetStatusQueryV1
+      events:
+        - BudgetThresholdExceededEventV1
+      results:
+        - BudgetDecisionResultV1
+      errors:
+        - FinOpsBudgetErrorV1
+    depends_on:
+      - policy.permission
+      - audit.evidence
+      - roles.runtime
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/state/budget/*
+    effects_allowed:
+      - fs.read:runtime/**
+      - fs.write:runtime/state/budget/*
+      - fs.write:runtime/events/runtime.events.jsonl
+    verification:
+      tests:
+        - tests/test_llm_token_budget.py
+        - tests/test_token_estimator.py
+      gaps:
+        - Per-role budget partitioning is not fully unified yet.
+
+  - id: events.fact_stream
+    title: Events Fact Stream
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: observability
+    purpose: >
+      Provide append-only runtime fact stream ingestion, fanout, and query
+      infrastructure for PM/Director/QA and realtime projection consumers.
+    current_modules:
+      - polaris.kernelone.events
+      - polaris.infrastructure.log_pipeline
+      - polaris.infrastructure.realtime.process_local.message_event_fanout
+      - polaris.infrastructure.realtime.process_local.log_fanout
+    owned_paths:
+      - polaris/kernelone/events/**
+      - polaris/infrastructure/log_pipeline/**
+      - polaris/infrastructure/realtime/process_local/message_event_fanout.py
+      - polaris/infrastructure/realtime/process_local/log_fanout.py
+    public_contracts:
+      modules:
+        - polaris.cells.events.fact_stream.public.contracts
+      commands:
+        - AppendFactEventCommandV1
+      queries:
+        - QueryFactEventsV1
+      events:
+        - FactEventAppendedV1
+      results:
+        - FactStreamQueryResultV1
+      errors:
+        - FactStreamErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - audit.evidence
+      - runtime.projection
+    subgraphs:
+      - execution_governance_pipeline
+      - storage_archive_pipeline
+    state_owners:
+      - runtime/events/*
+    effects_allowed:
+      - fs.read:runtime/events/*
+      - fs.write:runtime/events/*
+      - ws.outbound:runtime/*
+      - network.http_outbound:*
+      - process.exec:*
+    verification:
+      tests:
+        - tests/test_runtime_event_fanout.py
+        - tests/test_realtime_hub_v2.py
+        - tests/test_websocket_signal_hub.py
+      gaps:
+        - Some emitters still write event files directly and need unified writer routing.
+
+  - id: orchestration.workflow_runtime
+    title: Workflow Runtime
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: orchestration
+    purpose: >
+      Own workflow engine runtime, activity/workflow registration, and workflow
+      state persistence for PM/Director/QA execution orchestration.
+    current_modules:
+      - polaris.cells.orchestration.workflow_runtime.internal
+      - polaris.infrastructure.db.repositories.workflow_runtime_store
+    owned_paths:
+      - polaris/cells/orchestration/workflow_runtime/internal/**
+      - polaris/infrastructure/db/repositories/workflow_runtime_store.py
+    public_contracts:
+      modules:
+        - polaris.cells.orchestration.workflow_runtime.public.contracts
+      commands:
+        - StartWorkflowCommandV1
+        - CancelWorkflowCommandV1
+      queries:
+        - QueryWorkflowStatusV1
+        - QueryWorkflowEventsV1
+      events:
+        - WorkflowExecutionStartedEventV1
+        - WorkflowExecutionCompletedEventV1
+      results:
+        - WorkflowExecutionResultV1
+      errors:
+        - WorkflowRuntimeErrorV1
+    depends_on:
+      - runtime.state_owner
+      - runtime.execution_broker
+      - policy.workspace_guard
+      - policy.permission
+      - audit.evidence
+      - events.fact_stream
+      - archive.run_archive
+      - orchestration.workflow_engine
+      - orchestration.pm_planning
+      - resident.autonomy
+      - roles.adapters
+      - workspace.integrity
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/workflows/*
+      - runtime/state/workflow/*
+    effects_allowed:
+      - fs.read:runtime/**
+      - fs.write:runtime/workflows/*
+      - fs.write:runtime/state/workflow/*
+      - fs.write:runtime/events/runtime.events.jsonl
+      - fs.write:workspace/brain/*
+      - db.read_write:workflow_runtime
+      - process.spawn:workflow/*
+    verification:
+      tests:
+        - tests/orchestration/test_workflow_runtime.py
+        - tests/test_embedded_orchestration_dag.py
+      gaps:
+        - This cell is being downgraded to a thin facade. Real ownership is split across
+          orchestration.workflow_engine, orchestration.workflow_activity, and
+          orchestration.workflow_orchestration (Phase 3 of ACGA 2.0 split).
+        - Workflow runtime APIs still expose mixed embedded and legacy control paths.
+
+  - id: orchestration.workflow_engine
+    title: Workflow Engine
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: orchestration
+    purpose: >
+      Owns the KernelOne WorkflowEngine — a self-hosted DAG/sequential workflow executor
+      with retry, fail-fast, pause/resume, and signal support.  Provides the HandlerRegistry
+      protocol for Cell-internal registry injection.  This cell owns the engine runtime
+      and is the only cell that may modify kernelone/workflow/engine.py.
+    owned_paths:
+      - polaris/kernelone/workflow/engine.py
+    public_contracts:
+      modules:
+        - polaris.cells.orchestration.workflow_engine.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - kernelone.process
+      - kernelone.trace
+      - infrastructure.db
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:runtime/**
+      - db.read_write:workflow_runtime
+    verification:
+      tests:
+        - polaris/kernelone/workflow/tests/test_activity_execution.py
+        - polaris/kernelone/workflow/tests/test_kernelone_c_fixes.py
+        - polaris/tests/orchestration/test_workflow_engine.py
+      gaps:
+        - HandlerRegistry protocol integration tests pending.
+        - Activity registry injection path coverage pending.
+
+  - id: orchestration.workflow_activity
+    title: Workflow Activity Definitions
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: orchestration
+    purpose: >
+      Owns the Activity and Workflow definition public contracts and DI port for injecting
+      HandlerRegistry implementations (ActivityRegistry, WorkflowRegistry) into the WorkflowEngine.
+      All concrete implementations live in workflow_runtime; this cell defines only the port
+      contracts and the registry abstractions.
+    owned_paths:
+      - polaris/cells/orchestration/workflow_activity/**
+    public_contracts:
+      modules:
+        - polaris.cells.orchestration.workflow_activity.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - orchestration.workflow_engine
+      - orchestration.workflow_runtime
+      - chief_engineer.blueprint
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed: []
+    verification:
+      tests:
+        - polaris/tests/orchestration/test_workflow_engine.py
+      gaps:
+        - Activity definition unit tests not yet separated from integration tests.
+        - Workflow definition coverage pending.
+
+  - id: orchestration.workflow_orchestration
+    title: Workflow Orchestration Service
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: orchestration
+    purpose: >
+      Owns the OrchestrationService public contract, RuntimeOrchestrator port, ProcessLauncher port,
+      and EventStream port.  Depends on workflow_runtime for the WorkflowEngine instance and
+      workflow_activity for concrete workflow/activity definitions.  Coordinates workflow submission,
+      signals, cancellation, and progress tracking.
+    owned_paths:
+      - polaris/cells/orchestration/workflow_orchestration/**
+    public_contracts:
+      modules:
+        - polaris.cells.orchestration.workflow_orchestration.public.contracts
+        - polaris.cells.orchestration.workflow_runtime.public.contracts
+      commands:
+        - StartWorkflowCommandV1
+        - CancelWorkflowCommandV1
+      queries:
+        - QueryWorkflowStatusV1
+        - QueryWorkflowEventsV1
+      events:
+        - WorkflowExecutionStartedEventV1
+        - WorkflowExecutionCompletedEventV1
+      results:
+        - WorkflowExecutionResultV1
+      errors:
+        - WorkflowRuntimeError
+    depends_on:
+      - orchestration.workflow_engine
+      - orchestration.workflow_runtime
+      - orchestration.workflow_activity
+      - runtime.execution_broker
+      - runtime.state_owner
+      - policy.workspace_guard
+      - audit.evidence
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/state/orchestration/*
+    effects_allowed:
+      - fs.read:runtime/**
+      - fs.write:runtime/state/orchestration/*
+      - process.spawn:workflow/*
+    verification:
+      tests:
+        - polaris/tests/orchestration/test_workflow_engine.py
+      gaps:
+        - Orchestration service unit tests not yet separated from integration tests.
+        - RuntimeOrchestrator subprocess lifecycle coverage pending.
+
+  - id: storage.layout
+    title: Storage Layout
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: storage
+    purpose: >
+      Resolve global/workspace/runtime persistence layout and path policies as a
+      single canonical storage contract for all cells.
+    current_modules:
+      - polaris.cells.storage.layout.internal.settings_utils
+      - polaris.kernelone.storage.layout
+      - polaris.kernelone.storage.io_paths
+      - polaris.kernelone.storage.policy
+    owned_paths:
+      - polaris/cells/storage/layout/internal/**
+      - polaris/kernelone/storage/layout.py
+      - polaris/kernelone/storage/io_paths.py
+      - polaris/kernelone/storage/policy.py
+    public_contracts:
+      modules:
+        - polaris.cells.storage.layout.public.contracts
+      commands:
+        - RefreshStorageLayoutCommandV1
+      queries:
+        - ResolveStorageLayoutQueryV1
+        - ResolveRuntimePathQueryV1
+        - ResolveWorkspacePathQueryV1
+      events:
+        - StorageLayoutResolvedEventV1
+      results:
+        - StorageLayoutResultV1
+      errors:
+        - StorageLayoutErrorV1
+    depends_on:
+      - policy.workspace_guard
+      - audit.evidence
+    subgraphs:
+      - storage_archive_pipeline
+      - execution_governance_pipeline
+    state_owners:
+      - workspace/meta/storage_layout/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+      - fs.write:workspace/meta/storage_layout/*
+    verification:
+      tests:
+        - polaris/kernelone/storage/tests/test_storage_layout.py
+        - tests/test_storage_layout_v4.py
+      gaps:
+        - Some runtime path lookups still bypass storage.layout contracts.
+
+  - id: kernelone.traceability
+    title: Traceability Kernel
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: kernelone
+    purpose: >
+      Platform-level traceability service for registering execution nodes,
+      linking artifacts, and persisting immutable traceability matrices.
+      Must not depend on any application-level cell.
+    current_modules:
+      - polaris.kernelone.traceability.public.contracts
+      - polaris.kernelone.traceability.public.service
+      - polaris.kernelone.traceability.internal.service_impl
+      - polaris.kernelone.traceability.internal.safety
+    owned_paths:
+      - polaris/kernelone/traceability/**
+    public_contracts:
+      modules:
+        - polaris.kernelone.traceability.public.contracts
+        - polaris.kernelone.traceability.public.service
+      commands: []
+      queries:
+        - QueryTraceabilityMatrixV1
+      events: []
+      results:
+        - TraceabilityMatrixV1
+        - TraceNodeV1
+        - TraceLinkV1
+      errors:
+        - TraceabilityErrorV1
+    depends_on: []
+    subgraphs: []
+    state_owners:
+      - runtime/traceability/*
+    effects_allowed:
+      - fs.read:runtime/traceability/*
+      - fs.write:runtime/traceability/*
+    verification:
+      tests:
+        - polaris/kernelone/traceability/tests/test_traceability.py
+        - polaris/kernelone/traceability/tests/test_safety.py
+      gaps:
+        - Vector/graph query backend not yet implemented.

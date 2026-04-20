@@ -1,0 +1,15 @@
+{
+  "cell_id": "llm.provider_config",
+  "version": 1,
+  "read_order": [
+    "cell.yaml",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/provider_context.py",
+    "internal/test_context.py",
+    "internal/settings_sync.py"
+  ],
+  "notes": [
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline."
+  ]
+}

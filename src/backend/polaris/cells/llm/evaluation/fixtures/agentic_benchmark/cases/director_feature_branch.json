@@ -1,0 +1,33 @@
+{
+  "case_id": "director_feature_branch",
+  "role": "director",
+  "title": "Director Implements Feature with Branch Strategy",
+  "description": "The Director must implement a new feature using proper git branching workflow.",
+  "workspace_fixture": "director_safe_scope_plan",
+  "prompt": "Create a new feature branch and implement a simple logging utility in src/utils/logger.py. The logger should support INFO, WARN, ERROR levels. Follow existing code patterns. Return JSON: {branch_name, files_created, files_modified, tests_added}.",
+  "tags": [
+    "director",
+    "git",
+    "feature"
+  ],
+  "judge": {
+    "score_threshold": 0.78,
+    "required_tools": [
+      "execute_command",
+      "read_file",
+      "append_to_file"
+    ],
+    "required_output_substrings": [
+      "branch_name",
+      "files_created"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "director_feature_branch"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 8
+  }
+}

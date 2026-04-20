@@ -1,0 +1,1131 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.554539Z",
+  "source_hash": "6e3a468bc2546bf1",
+  "cell_id": "chief_engineer.blueprint",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "BlueprintADR",
+      "description": "An incremental architecture decision record for a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_store.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BlueprintBase",
+      "description": "Immutable base schema for a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_store.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ADRStore",
+      "description": "Storage, compilation, and query engine for blueprint ADRs.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the ADR store bound to a workspace."
+        },
+        {
+          "name": "_load_all_from_disk",
+          "doc": "Hydrate the in-memory cache from disk."
+        },
+        {
+          "name": "_persist_blueprint",
+          "doc": "Serialize and save a blueprint to disk."
+        },
+        {
+          "name": "_serialize_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "_deserialize_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "create_blueprint",
+          "doc": "Create a new blueprint base schema."
+        },
+        {
+          "name": "propose_adr",
+          "doc": "Propose a new ADR for an existing blueprint."
+        },
+        {
+          "name": "compile",
+          "doc": "Compile the base schema and all approved ADRs into the latest plan."
+        },
+        {
+          "name": "get_blueprint_history",
+          "doc": "Return the evolution history of a blueprint."
+        },
+        {
+          "name": "revert_adr",
+          "doc": "Revert an ADR so it is skipped in future compilations."
+        },
+        {
+          "name": "get_compiled_plan",
+          "doc": "Return the last compiled plan without mutating store state."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_now_epoch_ms",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_delta",
+      "description": "Apply a single structured delta to a blueprint schema.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_store.py"
+    },
+    {
+      "type": "class",
+      "name": "BlueprintPersistence",
+      "description": "Atomic file-based persistence for blueprint JSON documents.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/blueprint_persistence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize persistence for the given workspace."
+        },
+        {
+          "name": "save",
+          "doc": "Atomically persist a blueprint dictionary to disk."
+        },
+        {
+          "name": "load",
+          "doc": "Load a blueprint dictionary from disk."
+        },
+        {
+          "name": "delete",
+          "doc": "Remove a persisted blueprint from disk."
+        },
+        {
+          "name": "list_all",
+          "doc": "Return a list of all persisted blueprint IDs."
+        },
+        {
+          "name": "load_all",
+          "doc": "Load and return every persisted blueprint."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CEConsumer",
+      "description": "ChiefEngineer consumer for PENDING_DESIGN tasks.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "poll_once",
+          "doc": "Poll once for PENDING_DESIGN tasks."
+        },
+        {
+          "name": "_claim_and_process_one",
+          "doc": "Attempt to claim one PENDING_DESIGN task and process it."
+        },
+        {
+          "name": "_run_ce_preflight",
+          "doc": "Run CE preflight and return blueprint result dict."
+        },
+        {
+          "name": "run",
+          "doc": "Continuously poll and process PENDING_DESIGN tasks until stop() is called."
+        },
+        {
+          "name": "stop",
+          "doc": "Signal the consumer to stop after the current poll cycle."
+        },
+        {
+          "name": "_start_async_loop",
+          "doc": "Start a background daemon thread running an asyncio event loop."
+        },
+        {
+          "name": "_loop_runner",
+          "doc": ""
+        },
+        {
+          "name": "_stop_async_loop",
+          "doc": "Stop the background event loop and join the thread."
+        },
+        {
+          "name": "_run_async",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_TaskStub",
+      "description": "Minimal task stub for DirectorPool assignment.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_BlueprintStub",
+      "description": "Minimal blueprint stub for DirectorPool assignment.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace",
+      "description": "Resolve workspace from CLI arg or environment.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer_cli.py"
+    },
+    {
+      "type": "function",
+      "name": "run_consumer",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer_cli.py"
+    },
+    {
+      "type": "class",
+      "name": "ConstructionBlueprint",
+      "description": "In-memory construction blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_agent.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ConstructionStore",
+      "description": "Thread-safe construction store with optional disk persistence.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the store."
+        },
+        {
+          "name": "_from_dict",
+          "doc": "Deserialize a blueprint dictionary into a ConstructionBlueprint."
+        },
+        {
+          "name": "save",
+          "doc": ""
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "list_all",
+          "doc": ""
+        },
+        {
+          "name": "list_by_task",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerAgent",
+      "description": "Chief Engineer role agent (`工部尚书`).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": ""
+        },
+        {
+          "name": "_next_blueprint_id",
+          "doc": ""
+        },
+        {
+          "name": "_tool_create_construction_plan",
+          "doc": ""
+        },
+        {
+          "name": "_tool_update_scope_for_apply",
+          "doc": ""
+        },
+        {
+          "name": "_tool_set_constraints",
+          "doc": ""
+        },
+        {
+          "name": "_tool_set_flexible_zone",
+          "doc": ""
+        },
+        {
+          "name": "_tool_set_escalation_triggers",
+          "doc": ""
+        },
+        {
+          "name": "_tool_get_construction_plan",
+          "doc": ""
+        },
+        {
+          "name": "_tool_list_construction_plans",
+          "doc": ""
+        },
+        {
+          "name": "handle_message",
+          "doc": ""
+        },
+        {
+          "name": "run_cycle",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EventEmitter",
+      "description": "Protocol for emitting audit events. Injected to allow mocking.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
+      "methods": [
+        {
+          "name": "emit_event",
+          "doc": ""
+        },
+        {
+          "name": "emit_dialogue",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_NullEventEmitter",
+      "description": "No-op emitter used when kernelone.tool_execution.io_utils is unavailable.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
+      "methods": [
+        {
+          "name": "emit_event",
+          "doc": ""
+        },
+        {
+          "name": "emit_dialogue",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_KernelOneEmitter",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
+      "methods": [
+        {
+          "name": "emit_event",
+          "doc": ""
+        },
+        {
+          "name": "emit_dialogue",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PreflightContext",
+      "description": "All inputs needed by run_pre_dispatch_chief_engineer.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py",
+      "methods": [
+        {
+          "name": "effective_emitter",
+          "doc": ""
+        },
+        {
+          "name": "effective_runner",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_load_kernelone_emitter",
+      "description": "Load the real event emitter, fall back to no-op on ImportError.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_failure_result",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_success_result",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_preflight",
+      "description": "Run Chief Engineer analysis using the context's runner.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_preflight_events",
+      "description": "Emit audit events after preflight completes. Side-effect only.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "run_pre_dispatch_chief_engineer_ctx",
+      "description": "Execute Chief Engineer preflight from a PreflightContext.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "run_pre_dispatch_chief_engineer",
+      "description": "Execute Chief Engineer preflight using the canonical analysis pipeline.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_focused_chief_engineer_payload",
+      "description": "Build Chief Engineer payload focused on specific task.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "inject_chief_engineer_constraints",
+      "description": "Inject constraints into Chief Engineer payload.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "chief_engineer_auto_decision",
+      "description": "Make automatic decision for Chief Engineer.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path_list",
+      "description": "Normalize path list from various input formats.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_file_plan_entry",
+      "description": "Normalize a file plan entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_trim_str_list",
+      "description": "Trim and limit string list.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_key_from_path",
+      "description": "Extract module key from file path.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_tail_non_empty_lines",
+      "description": "Get non-empty tail lines from text.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_task_scope_modules",
+      "description": "Collect module keys from task scope.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_slice_blueprint_for_task",
+      "description": "Slice blueprint data for specific task scope.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_payload_digest",
+      "description": "Generate a safe digest from payload for caching/logging.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_preflight.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorPoolConflictError",
+      "description": "Raised when a task cannot be assigned without file conflicts.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorPhase",
+      "description": "Lifecycle phases of a single Director task execution.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorStatus",
+      "description": "Real-time snapshot of one Director's state.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorPoolStatus",
+      "description": "Aggregate snapshot of the entire Director pool.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecoveryDecision",
+      "description": "Recovery action chosen after a Director failure.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ScopeConflictDetector",
+      "description": "Pool-level global file conflict detector.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "detect",
+          "doc": "Return files that conflict with another active Director."
+        },
+        {
+          "name": "acquire",
+          "doc": "Register file ownership for a Director."
+        },
+        {
+          "name": "release",
+          "doc": "Release all file ownerships held by a Director."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorPool",
+      "description": "Chief Engineer's directly-managed Director instance pool.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "initialize_directors",
+          "doc": "Initialize the Director pool. If all initializations fail,"
+        },
+        {
+          "name": "get_live_dashboard",
+          "doc": "Return a real-time snapshot of the pool."
+        },
+        {
+          "name": "get_director_for_task",
+          "doc": "Return the Director ID currently assigned to a task."
+        },
+        {
+          "name": "handle_failure",
+          "doc": "Decide how to recover when a Director fails a task."
+        },
+        {
+          "name": "mark_completed",
+          "doc": "Release a Director after task completion."
+        },
+        {
+          "name": "update_progress",
+          "doc": "Update the progress of an active Director."
+        },
+        {
+          "name": "event_bus",
+          "doc": "Return the internal event bus for external subscribers."
+        },
+        {
+          "name": "_select_best_director",
+          "doc": "Choose the best Director according to the assignment policy."
+        },
+        {
+          "name": "_find_conflict_free_director",
+          "doc": ""
+        },
+        {
+          "name": "_find_idle_director",
+          "doc": ""
+        },
+        {
+          "name": "_current_global_conflicts",
+          "doc": ""
+        },
+        {
+          "name": "_estimate_remaining_time",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_now_epoch_ms",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_files",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_title",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_goal",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/director_pool.py"
+    },
+    {
+      "type": "class",
+      "name": "EventBus",
+      "description": "Synchronous pub/sub event bus.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/event_bus.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize an empty event bus."
+        },
+        {
+          "name": "publish",
+          "doc": "Publish an event to all subscribers of ``event_type``."
+        },
+        {
+          "name": "subscribe",
+          "doc": "Register a handler for the given event type."
+        },
+        {
+          "name": "unsubscribe",
+          "doc": "Remove a previously registered handler."
+        },
+        {
+          "name": "clear",
+          "doc": "Remove all subscribers."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RollbackGuard",
+      "description": "Director-level memory snapshot (parallel mode).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "discard_snapshot",
+          "doc": "Remove the snapshot entry without restoring."
+        },
+        {
+          "name": "has_snapshot",
+          "doc": "Check whether a snapshot exists for the given director."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "GitStashRollbackGuard",
+      "description": "Git stash fallback (serial degrade mode).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_run_git",
+          "doc": ""
+        },
+        {
+          "name": "_find_stash_index",
+          "doc": ""
+        },
+        {
+          "name": "create_snapshot",
+          "doc": "Run git stash push for the given task."
+        },
+        {
+          "name": "rollback",
+          "doc": "Find stash by message and pop it."
+        },
+        {
+          "name": "discard_snapshot",
+          "doc": "Find stash by message and drop it."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_resolve_safe_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "create_rollback_guard",
+      "description": "Factory function to create the appropriate rollback guard.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py"
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerInit",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/__init__.py",
+      "methods": [
+        {
+          "name": "test_valid_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_params",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_worker_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_stop_event_initial_state",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerPollOnce",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/__init__.py",
+      "methods": [
+        {
+          "name": "test_no_claimable_tasks_returns_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_successful_claim_and_ack",
+          "doc": "Verify claim/ack flow by patching _run_ce_preflight at class level."
+        },
+        {
+          "name": "test_claim_then_preflight_failure_requeues",
+          "doc": "Verify failure path requeues to pending_design."
+        },
+        {
+          "name": "raise_runner",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerStop",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/__init__.py",
+      "methods": [
+        {
+          "name": "test_stop_sets_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerInit",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
+      "methods": [
+        {
+          "name": "test_valid_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_params",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_worker_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_stop_event_initial_state",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerPollOnce",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
+      "methods": [
+        {
+          "name": "test_no_claimable_tasks_returns_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_successful_claim_and_ack",
+          "doc": "Verify claim/ack flow by patching _run_ce_preflight to avoid actual CE analysis."
+        },
+        {
+          "name": "test_claim_then_preflight_failure_requeues",
+          "doc": "Verify failure path requeues to pending_design."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerStop",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
+      "methods": [
+        {
+          "name": "test_stop_sets_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CodeIntelligenceService",
+      "description": "代码智能服务 - ChiefEngineer 和 Director 的代码分析基础设施.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "config",
+          "doc": "懒加载配置."
+        },
+        {
+          "name": "ensure_index",
+          "doc": "确保索引已构建，返回 manifest."
+        },
+        {
+          "name": "get_context_for_task",
+          "doc": "为任务生成代码上下文."
+        },
+        {
+          "name": "verify_changes",
+          "doc": "运行增量验证."
+        },
+        {
+          "name": "get_relevant_files",
+          "doc": "获取与任务最相关的文件列表 (用于 ChiefEngineer 分析范围确定)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CacheEntry",
+      "description": "缓存条目.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "is_expired",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MultiLevelCache",
+      "description": "多级缓存系统：内存 L1 -> SQLite L2 -> 文件 L3.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_init_sqlite",
+          "doc": "初始化 SQLite 缓存表."
+        },
+        {
+          "name": "_connect",
+          "doc": ""
+        },
+        {
+          "name": "_get_key",
+          "doc": "生成缓存键."
+        },
+        {
+          "name": "get",
+          "doc": "获取缓存，按 L1 -> L2 -> L3 顺序查找."
+        },
+        {
+          "name": "set",
+          "doc": "设置缓存（写入 L1 和 L2）."
+        },
+        {
+          "name": "_set_memory",
+          "doc": "设置内存缓存（带 LRU 淘汰）."
+        },
+        {
+          "name": "invalidate",
+          "doc": "使缓存失效."
+        },
+        {
+          "name": "get_stats",
+          "doc": "获取缓存统计."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AsyncIndexManager",
+      "description": "异步索引管理器 - 支持后台构建和共享索引.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "config",
+          "doc": "懒加载配置."
+        },
+        {
+          "name": "get_index_status",
+          "doc": "获取索引状态."
+        },
+        {
+          "name": "_build",
+          "doc": ""
+        },
+        {
+          "name": "shutdown",
+          "doc": "关闭索引管理器."
+        },
+        {
+          "name": "reset_for_testing",
+          "doc": "Reset singleton state for test isolation."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AsyncCodeIntelligenceService",
+      "description": "异步代码智能服务 - 支持后台索引、共享索引和多级缓存.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "config",
+          "doc": ""
+        },
+        {
+          "name": "_compile",
+          "doc": ""
+        },
+        {
+          "name": "_verify",
+          "doc": ""
+        },
+        {
+          "name": "get_cache_stats",
+          "doc": "获取缓存统计."
+        },
+        {
+          "name": "invalidate_cache",
+          "doc": "使缓存失效."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FileChangeInfo",
+      "description": "文件变更信息.",
+      "defined_in": "polaris/infrastructure/code_intelligence/incremental_analyzer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IncrementalSemanticAnalyzer",
+      "description": "增量语义分析器.",
+      "defined_in": "polaris/infrastructure/code_intelligence/incremental_analyzer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_connect",
+          "doc": ""
+        },
+        {
+          "name": "_init_db",
+          "doc": "初始化数据库表."
+        },
+        {
+          "name": "_db_get",
+          "doc": "从数据库获取值."
+        },
+        {
+          "name": "_db_set",
+          "doc": "设置数据库值."
+        },
+        {
+          "name": "config",
+          "doc": ""
+        },
+        {
+          "name": "detect_changes",
+          "doc": "检测文件变更."
+        },
+        {
+          "name": "analyze_incremental",
+          "doc": "增量分析变更文件."
+        },
+        {
+          "name": "_load_known_files",
+          "doc": "加载已知文件校验和."
+        },
+        {
+          "name": "_save_known_files",
+          "doc": "保存当前文件校验和."
+        },
+        {
+          "name": "close",
+          "doc": "释放可回收状态，避免长会话保留不必要缓存."
+        },
+        {
+          "name": "_should_index",
+          "doc": "判断文件是否应该被索引."
+        },
+        {
+          "name": "_compute_checksum",
+          "doc": "计算文件校验和."
+        },
+        {
+          "name": "_update_index_for_files",
+          "doc": "只更新指定文件的索引（增量更新）."
+        },
+        {
+          "name": "_build_partial_graph",
+          "doc": "构建局部语义关系图."
+        },
+        {
+          "name": "_find_semantic_neighbors",
+          "doc": "查找语义邻居文件."
+        },
+        {
+          "name": "_analyze_impact",
+          "doc": "分析变更影响范围."
+        },
+        {
+          "name": "_is_critical_file",
+          "doc": "判断是否为关键文件."
+        },
+        {
+          "name": "_find_affected_upstream",
+          "doc": "查找受影响的上游文件."
+        },
+        {
+          "name": "_find_related_tests",
+          "doc": "查找相关的测试文件."
+        },
+        {
+          "name": "_calculate_risk",
+          "doc": "计算变更风险等级."
+        },
+        {
+          "name": "_generate_recommendations",
+          "doc": "生成建议."
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

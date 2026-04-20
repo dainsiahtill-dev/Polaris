@@ -1,0 +1,21 @@
+{
+  "case_id": "perf_consistency_across_runs",
+  "title": "Performance Consistency Across Runs",
+  "description": "Measures consistency of results across multiple identical requests",
+  "role": "director",
+  "prompt": "统计 src/ 目录下所有 Python 文件的行数。",
+  "tags": ["performance", "consistency", "stability"],
+  "weight": 1.0,
+  "critical": false,
+  "metadata": {
+    "metric": "variance_percentage",
+    "target_variance": 5,
+    "measurement": "3_runs",
+    "runs": 3
+  },
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": ["repo_tree"],
+    "min_tool_calls": 1
+  }
+}

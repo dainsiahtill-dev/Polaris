@@ -1,0 +1,61 @@
+id: orchestration.pm_dispatch
+title: PM Dispatch
+kind: workflow
+visibility: public
+stateful: true
+owner: orchestration
+purpose: 'Dispatch PM contracts into executable task iterations, drive task assignment
+  and lifecycle transitions, and record dispatch outcomes.
+
+  '
+current_modules:
+- polaris.cells.orchestration.pm_dispatch.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/orchestration/pm_dispatch/internal/**
+- polaris/delivery/http/v2/orchestration.py
+public_contracts:
+  modules:
+  - polaris.cells.orchestration.pm_dispatch.public.contracts
+  commands:
+  - DispatchPmTasksCommandV1
+  - ResumePmIterationCommandV1
+  queries:
+  - GetPmDispatchStatusQueryV1
+  events:
+  - PmTaskDispatchedEventV1
+  - PmIterationAdvancedEventV1
+  results:
+  - PmDispatchResultV1
+  errors:
+  - PmDispatchErrorV1
+depends_on:
+- orchestration.pm_planning
+- orchestration.workflow_runtime
+- director.execution
+- archive.task_snapshot_archive
+- chief_engineer.blueprint
+- roles.adapters
+- qa.audit_verdict
+- runtime.state_owner
+- runtime.task_market
+- audit.evidence
+- policy.permission
+- policy.workspace_guard
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/state/dispatch/*
+effects_allowed:
+- fs.read:runtime/contracts/*
+- fs.write:runtime/state/dispatch/*
+- fs.write:runtime/events/runtime.events.jsonl
+- ws.outbound:runtime/*
+verification:
+  tests:
+  - tests/test_dispatch_pipeline_engine_dispatch.py
+  - tests/test_orchestration_command_service.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

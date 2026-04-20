@@ -1,0 +1,19 @@
+{
+  "case_id": "l7_context_switch_language",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Context Switch - Language Confusion",
+  "description": "测试 Agent 在语言混淆后能否切换回正确上下文。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 列出 frontend/ 目录结构 2. 用中文回答：frontend 目录有哪些文件 3. 现在用英文回答：backend/api.py 属于哪种语言",
+  "tags": ["l7", "context", "switch", "language"],
+  "weight": 1.0,
+  "critical": false,
+  "judge": {
+    "score_threshold": 0.7,
+    "required_tools": ["repo_tree"],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_output_substrings": ["frontend", "app.ts"]
+  }
+}

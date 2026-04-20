@@ -1,0 +1,66 @@
+{
+  "template": true,
+  "id": "archive.factory_archive",
+  "title": "Factory Archive",
+  "kind": "capability",
+  "purpose": "Publish terminal factory outputs into immutable workspace history artifacts while separating factory history retention from runtime state ownership.",
+  "summary": "Target blueprint for the factory archive cell. It materializes immutable factory history artifacts, preserves lineage metadata, and keeps archive responsibilities separate from both runtime state and factory execution flows.",
+  "owned_paths": [
+    "cells/archive/factory_archive/**"
+  ],
+  "public_contracts": {
+    "commands": [
+      "ArchiveFactoryRunCommandV1"
+    ],
+    "queries": [
+      "GetFactoryArchiveManifestQueryV1"
+    ],
+    "events": [
+      "FactoryArchivedEventV1"
+    ],
+    "results": [
+      "ArchiveManifestV1"
+    ],
+    "errors": [
+      "FactoryArchiveErrorV1"
+    ]
+  },
+  "neighbors": [
+    "storage.layout",
+    "policy.workspace_guard",
+    "audit.evidence"
+  ],
+  "state_owners": [
+    "history_factory_archive"
+  ],
+  "effects_allowed": [
+    "fs.read:workspace/factory/*",
+    "fs.write:workspace/history/factory/*"
+  ],
+  "invariants": [
+    "factory archives are immutable once published",
+    "factory archive manifests preserve artifact lineage",
+    "all archive text writes use explicit UTF-8"
+  ],
+  "hotspots": [
+    "cells/archive/factory_archive/internal/application/service.py",
+    "polaris/application/app/services/archive_hook.py",
+    "polaris/application/app/services/factory_run_service.py",
+    "polaris/application/app/services/factory_store.py"
+  ],
+  "test_targets": [
+    "cells/archive/factory_archive/tests/test_contracts.py",
+    "cells/archive/factory_archive/tests/test_behavior.py",
+    "tests/integration/test_storage_archive_pipeline.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts/*",
+      "current factory archive related implementations"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

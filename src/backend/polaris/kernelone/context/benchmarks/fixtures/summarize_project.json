@@ -1,0 +1,20 @@
+{
+  "case_id": "summarize_project",
+  "description": "Summarize the structure and purpose of the project codebase, including key modules and their relationships.",
+  "user_prompt": "Give me a concise summary of this project's structure and the main purpose of each top-level module.",
+  "workspace_fixture": "The Polaris backend polaris/ workspace with approximately 40 cells across bootstrap/delivery/application/domain/kernelone/infrastructure layers.",
+  "expected_evidence_path": [
+    "polaris/kernelone/context/strategy_contracts.py",
+    "polaris/kernelone/context/strategy_profiles.py",
+    "polaris/kernelone/context/budget_gate.py",
+    "polaris/kernelone/context/exploration_policy.py"
+  ],
+  "expected_answer_shape": "summary",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 120.0
+  },
+  "canonical_profile": "canonical_balanced",
+  "score_threshold": 0.70
+}

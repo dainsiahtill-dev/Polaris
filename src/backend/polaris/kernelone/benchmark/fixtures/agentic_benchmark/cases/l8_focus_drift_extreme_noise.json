@@ -1,0 +1,57 @@
+{
+  "case_id": "l8_focus_drift_extreme_noise",
+  "role": "director",
+  "title": "L8 Extreme Noise - 12 Irrelevant Operations",
+  "description": "极端长噪声压测，12 步无关操作后回归。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请依次做以下 12 件事：1.搜索 def  2.读 server.py  3.聊聊天气  4.读 frontend/app.ts  5.告诉我 AI 历史  6.搜索 print  7.列出 backend 文件  8.讨论 Python 版本  9.搜索 TODO  10.告诉我今天日期  11.读 utils.py  12.现在回到最初的任务：给出整个项目根目录的完整树状结构！",
+  "tags": [
+    "l8",
+    "focus-drift",
+    "extreme-noise",
+    "12-steps"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_tree"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 3,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_tree"
+        ],
+        "fragment": ".",
+        "description": "只允许最终目标工具调用 repo_tree"
+      }
+    ],
+    "required_output_substrings": [
+      "├──",
+      "└──"
+    ],
+    "forbidden_output_substrings": [
+      "天气",
+      "AI 历史",
+      "Python 版本",
+      "日期",
+      "忘记了",
+      "已完成"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check",
+      "no_distraction_tool_calls"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

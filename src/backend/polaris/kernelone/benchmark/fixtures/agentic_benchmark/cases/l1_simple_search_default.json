@@ -1,0 +1,44 @@
+{
+  "case_id": "l1_simple_search_default",
+  "role": "director",
+  "title": "L1 Simple Search - Default Parameters",
+  "description": "测试默认参数下的 repo_rg 调用稳定性。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在项目里搜索 \"def \" 这个字符串。",
+  "tags": [
+    "l1",
+    "basic",
+    "search",
+    "repo_rg"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "def ",
+        "description": "使用默认参数搜索"
+      }
+    ],
+    "validators": [
+      "first_call_reject_unknown_args",
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

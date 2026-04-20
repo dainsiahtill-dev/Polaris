@@ -1,0 +1,46 @@
+{
+  "case_id": "l4_cross_language_sync",
+  "role": "director",
+  "title": "L4 Cross-Language Sync Edit",
+  "description": "在 frontend/app.ts 中新增一个常量 API_BASE_URL，值必须和 config.py 中的 API_HOST + API_PORT 保持一致。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "在 frontend/app.ts 中新增一个常量 API_BASE_URL，值必须和 config.py 中的 API_HOST + API_PORT 保持一致。",
+  "tags": [
+    "l4",
+    "cross-language",
+    "sync",
+    "config"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head",
+      "search_replace"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 4,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_read_head"
+        ],
+        "fragment": "config.py",
+        "description": "读取配置值"
+      },
+      {
+        "tools": [
+          "search_replace"
+        ],
+        "fragment": "API_BASE_URL",
+        "description": "在 TS 文件中插入常量"
+      }
+    ],
+    "required_output_substrings": [
+      "API_BASE_URL",
+      "frontend/app.ts"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

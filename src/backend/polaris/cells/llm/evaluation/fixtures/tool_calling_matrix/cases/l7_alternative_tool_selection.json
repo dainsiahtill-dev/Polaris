@@ -1,0 +1,36 @@
+{
+  "case_id": "l7_alternative_tool_selection",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Alternative Tool Selection",
+  "description": "测试 Agent 能否在首选工具失败后选择替代工具。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "用 repo_read_head 读取一个不存在的文件 nonexistent.py。如果失败，换用其他读取工具尝试读取 config.py。",
+  "tags": ["l7", "alternative", "tool-selection", "fallback"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.7,
+    "stream": {
+      "required_any_tools": [
+        ["repo_read_head", "read_file", "repo_read_slice"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 4,
+      "required_output_substrings": ["DEBUG", "API_HOST"]
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["repo_read_head", "read_file", "repo_read_slice"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 4
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,73 @@
+"""Polaris AI Agent 专项压测框架
+
+覆盖 Polaris 当前 Factory 主链的自动化多项目压测系统。
+
+当前事实基线：
+- 入口是 `python -m tests.agent_stress.runner`
+- 主执行链由 Polaris 当前 Factory 编排决定，通常为 `Architect/Court -> PM -> Director -> QA`
+- `Chief Engineer` 仅在 Polaris 当前运行路径按需插入
+- 压测框架只通过 Polaris 对外 HTTP API 驱动，不直接调用内部 CLI
+
+Usage:
+    # 运行完整压测
+    python -m tests.agent_stress.runner --workspace C:/Temp/agent-stress-workspace --rounds 20
+
+    # 仅运行角色探针（独立入口）
+    python -m tests.agent_stress.probe
+
+    # 默认自动启用人类观测窗口
+    python -m tests.agent_stress.runner --workspace C:/Temp/agent-stress-workspace --rounds 20
+
+    # 从指定轮次恢复
+    python -m tests.agent_stress.runner --resume-from 5
+"""
+
+from importlib import import_module
+from typing import Any
+
+__version__ = "1.0.0"
+__all__ = [
+    "AgentStressRunner",
+    "RoleAvailabilityProbe",
+    "ProbeStatus",
+    "StressEngine",
+    "RoundResult",
+    "PROJECT_POOL",
+    "ProjectCategory",
+    "ProjectDefinition",
+    "Enhancement",
+    "select_stress_rounds",
+    "validate_round_sequence",
+    "BackendPreflightProbe",
+    "BackendPreflightStatus",
+]
+
+_EXPORT_MAP = {
+    "AgentStressRunner": ("tests.agent_stress.runner", "AgentStressRunner"),
+    "RoleAvailabilityProbe": ("tests.agent_stress.probe", "RoleAvailabilityProbe"),
+    "ProbeStatus": ("tests.agent_stress.probe", "ProbeStatus"),
+    "StressEngine": ("tests.agent_stress.engine", "StressEngine"),
+    "RoundResult": ("tests.agent_stress.engine", "RoundResult"),
+    "PROJECT_POOL": ("tests.agent_stress.project_pool", "PROJECT_POOL"),
+    "ProjectCategory": ("tests.agent_stress.project_pool", "ProjectCategory"),
+    "ProjectDefinition": ("tests.agent_stress.project_pool", "ProjectDefinition"),
+    "Enhancement": ("tests.agent_stress.project_pool", "Enhancement"),
+    "select_stress_rounds": ("tests.agent_stress.project_pool", "select_stress_rounds"),
+    "validate_round_sequence": ("tests.agent_stress.project_pool", "validate_round_sequence"),
+    "BackendPreflightProbe": ("tests.agent_stress.preflight", "BackendPreflightProbe"),
+    "BackendPreflightStatus": ("tests.agent_stress.preflight", "BackendPreflightStatus"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _EXPORT_MAP:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = _EXPORT_MAP[name]
+    module = import_module(module_name)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

@@ -1,0 +1,333 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.420398Z",
+  "source_hash": "5ee18778645792f7",
+  "cell_id": "qa.audit_verdict",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ReviewStatus",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_agent.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReviewPriority",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_agent.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReviewRecord",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_agent.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QAAgent",
+      "description": "QA role agent compatible with the current RoleAgent runtime.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "protocol_fsm",
+          "doc": ""
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": ""
+        },
+        {
+          "name": "_new_review_id",
+          "doc": ""
+        },
+        {
+          "name": "_persist_reviews_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_mark_review",
+          "doc": "Mark a review with a new status."
+        },
+        {
+          "name": "_tool_submit_review",
+          "doc": "Submit a new review request."
+        },
+        {
+          "name": "_tool_approve_review",
+          "doc": "Approve a review by ID."
+        },
+        {
+          "name": "_tool_reject_review",
+          "doc": "Reject a review by ID."
+        },
+        {
+          "name": "_tool_request_revision",
+          "doc": "Request revision for a review."
+        },
+        {
+          "name": "_tool_get_review",
+          "doc": "Get review details by ID."
+        },
+        {
+          "name": "_tool_list_pending_reviews",
+          "doc": "List all pending reviews."
+        },
+        {
+          "name": "_tool_list_pending_approvals",
+          "doc": "List pending protocol approvals for QA."
+        },
+        {
+          "name": "_tool_approve_request",
+          "doc": "Approve a protocol request."
+        },
+        {
+          "name": "_tool_reject_request",
+          "doc": "Reject a protocol request."
+        },
+        {
+          "name": "handle_message",
+          "doc": "Handle incoming messages from other agents."
+        },
+        {
+          "name": "run_cycle",
+          "doc": "Run one processing cycle."
+        },
+        {
+          "name": "_load_snapshot",
+          "doc": "Load state from snapshot."
+        },
+        {
+          "name": "get_status",
+          "doc": "Get agent status."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReviewStore",
+      "description": "Compatibility wrapper around in-memory ReviewRecord storage.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "save",
+          "doc": "Save a review record."
+        },
+        {
+          "name": "get",
+          "doc": "Get a review by ID."
+        },
+        {
+          "name": "get_by_task",
+          "doc": "Get all reviews for a task."
+        },
+        {
+          "name": "get_pending",
+          "doc": "Get all pending reviews."
+        },
+        {
+          "name": "list_all",
+          "doc": "List all reviews."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QAConsumer",
+      "description": "QA consumer for PENDING_QA tasks.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "poll_once",
+          "doc": "Poll once for PENDING_QA tasks."
+        },
+        {
+          "name": "run",
+          "doc": "Run the consumer continuously until stop() is called."
+        },
+        {
+          "name": "stop",
+          "doc": "Signal the consumer to stop after the current cycle."
+        },
+        {
+          "name": "_claim_and_process_one",
+          "doc": "Attempt to claim one PENDING_QA task and process it."
+        },
+        {
+          "name": "_run_qa_audit",
+          "doc": "Synchronous wrapper for QA audit."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_resolve_qa_route",
+      "description": "Resolve QA route from audit result.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workspace",
+      "description": "Resolve workspace from CLI arg or environment.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer_cli.py"
+    },
+    {
+      "type": "function",
+      "name": "run_once",
+      "description": "Run a single poll cycle and exit.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer_cli.py"
+    },
+    {
+      "type": "function",
+      "name": "run_continuous",
+      "description": "Run the consumer continuously until interrupted.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer_cli.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer_cli.py"
+    },
+    {
+      "type": "class",
+      "name": "QAConfig",
+      "description": "Configuration for QA Service.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditResult",
+      "description": "Result of a quality audit.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PathSecurityError",
+      "description": "Raised when a path security violation is detected.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QAService",
+      "description": "QA Service - audits code and ensures quality standards.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_validate_path",
+          "doc": "Validate and sanitize a file path to prevent directory traversal attacks."
+        },
+        {
+          "name": "_is_safe_filename",
+          "doc": "Check if a filename is safe (no path separators)."
+        },
+        {
+          "name": "_check_python_file",
+          "doc": "Check Python file for common issues."
+        },
+        {
+          "name": "get_status",
+          "doc": "Get QA Service status."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QualityService",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/quality_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "lint_code",
+          "doc": "Runs Ruff on the provided code."
+        },
+        {
+          "name": "get_status",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_quality_service",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/quality_service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestResolveQARoute",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
+      "methods": [
+        {
+          "name": "test_pass_maps_to_resolved_terminal",
+          "doc": ""
+        },
+        {
+          "name": "test_requeue_exec_maps_to_pending_exec",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit_next_stage_overrides_verdict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQAConsumerPollOnce",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
+      "methods": [
+        {
+          "name": "test_pass_verdict_acks_resolved",
+          "doc": ""
+        },
+        {
+          "name": "test_requeue_exec_verdict_routes_to_pending_exec",
+          "doc": ""
+        },
+        {
+          "name": "test_audit_exception_requeues_pending_qa",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

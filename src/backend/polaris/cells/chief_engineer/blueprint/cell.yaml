@@ -1,0 +1,53 @@
+id: chief_engineer.blueprint
+title: Chief Engineer Blueprint
+kind: capability
+visibility: public
+stateful: true
+owner: engineering
+purpose: 'Generate task-level implementation blueprints and dependency analysis for
+  Director execution without performing code write operations.
+
+  '
+current_modules:
+- polaris.cells.chief_engineer.blueprint.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/chief_engineer/blueprint/internal/**
+- polaris/infrastructure/code_intelligence/**
+public_contracts:
+  modules:
+  - polaris.cells.chief_engineer.blueprint.public.contracts
+  commands:
+  - GenerateTaskBlueprintCommandV1
+  queries:
+  - GetBlueprintStatusQueryV1
+  events:
+  - TaskBlueprintGeneratedEventV1
+  results:
+  - TaskBlueprintResultV1
+  errors:
+  - ChiefEngineerBlueprintErrorV1
+depends_on:
+- context.engine
+- llm.control_plane
+- policy.permission
+- policy.workspace_guard
+- finops.budget_guard
+- audit.evidence
+- runtime.task_market
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/state/blueprints/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.write:runtime/state/blueprints/*
+- fs.write:runtime/events/runtime.events.jsonl
+- llm.invoke:chief_engineer/*
+verification:
+  tests:
+  - tests/test_chief_engineer_preflight.py
+  gaps:
+  - Initial business-cell declaration; implementation convergence is in progress.
+  smoke_commands: []
+generated_artifacts: []

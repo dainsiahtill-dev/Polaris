@@ -1,0 +1,34 @@
+{
+  "case_id": "l5_content_based_branch",
+  "level": "L5",
+  "role": "director",
+  "title": "L5 Content-Based Branch Execution",
+  "description": "验证模型能根据文件内容条件分支执行：如果 config.py 的 API_PORT 是 49977 则追加一行注释。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先读取 config.py，如果其中 API_PORT 的值是 49977，就在文件末尾追加一行 '# Port verified'。",
+  "tags": ["l5", "conditional", "branch", "content_based"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_tools": ["read_file", "append_to_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 4,
+      "ordered_tool_groups": [["read_file"], ["append_to_file"]],
+      "forbidden_tools": ["execute_command"],
+      "required_output_substrings": ["49977", "Port verified"]
+    },
+    "non_stream": {
+      "required_tools": ["read_file", "append_to_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 4,
+      "ordered_tool_groups": [["read_file"], ["append_to_file"]],
+      "forbidden_tools": ["execute_command"]
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "ordered"
+    }
+  }
+}

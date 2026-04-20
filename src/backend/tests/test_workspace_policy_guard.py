@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from polaris.bootstrap.config import Settings, SettingsUpdate
+from fastapi import HTTPException
+from polaris.cells.policy.workspace_guard.service import (
+    SELF_UPGRADE_MODE_ENV,
+    get_meta_project_root,
+    is_meta_project_target,
+)
+from polaris.cells.storage.layout.internal.settings_utils import sync_process_settings_environment
+from polaris.cells.workspace.integrity.public.service import validate_workspace
+from polaris.domain.exceptions import ValidationError
+
+
+def test_validate_workspace_rejects_meta_project_without_self_upgrade() -> None:
+    project_root = get_meta_project_root()
+
+    with pytest.raises((HTTPException, ValidationError)) as exc_info:
+        validate_workspace(str(project_root))
+
+    exc = exc_info.value
+    detail = str(getattr(exc, "detail", None) or getattr(exc, "message", ""))
+    assert "self_upgrade_mode" in detail
+
+
+def test_validate_workspace_rejects_meta_project_child_without_self_upgrade() -> None:
+    protected_child = get_meta_project_root() / "docs"
+    assert protected_child.is_dir()
+    assert is_meta_project_target(protected_child) is True
+
+    with pytest.raises((HTTPException, ValidationError)):
+        validate_workspace(str(protected_child))
+
+
+def test_validate_workspace_allows_meta_project_when_self_upgrade_enabled() -> None:
+    project_root = get_meta_project_root()
+
+    resolved = validate_workspace(str(project_root), self_upgrade_mode=True)
+
+    assert Path(resolved).resolve() == project_root.resolve()
+
+
+def test_settings_from_env_rejects_meta_project_without_self_upgrade(monkeypatch) -> None:
+    monkeypatch.setenv("POLARIS_WORKSPACE", str(get_meta_project_root()))
+    monkeypatch.delenv(SELF_UPGRADE_MODE_ENV, raising=False)
+
+    with pytest.raises(ValueError):
+        Settings.from_env()
+
+
+def test_settings_apply_update_requires_self_upgrade_for_meta_project(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    project_root = get_meta_project_root()
+
+    settings = Settings(workspace=str(workspace))
+
+    with pytest.raises(ValueError):
+        settings.apply_update(SettingsUpdate(workspace=str(project_root)))
+
+    settings.apply_update(
+        SettingsUpdate(
+            self_upgrade_mode=True,
+            workspace=str(project_root),
+        )
+    )
+
+    assert settings.self_upgrade_mode is True
+    assert Path(settings.workspace).resolve() == project_root.resolve()
+
+
+def test_settings_apply_update_rejects_disabling_self_upgrade_on_meta_project(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    project_root = get_meta_project_root()
+
+    settings = Settings(workspace=str(workspace))
+    settings.apply_update(
+        SettingsUpdate(
+            self_upgrade_mode=True,
+            workspace=str(project_root),
+        )
+    )
+
+    with pytest.raises(ValueError):
+        settings.apply_update(SettingsUpdate(self_upgrade_mode=False))
+
+
+def test_sync_process_settings_environment_tracks_self_upgrade_mode(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=str(workspace), self_upgrade_mode=True)
+    sync_process_settings_environment(settings)
+    assert os.environ.get(SELF_UPGRADE_MODE_ENV) == "1"
+
+    settings.self_upgrade_mode = False
+    sync_process_settings_environment(settings)
+    assert SELF_UPGRADE_MODE_ENV not in os.environ
+    os.environ.pop("POLARIS_WORKSPACE", None)
+
+
+def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(
+        workspace=str(workspace),
+        nats={
+            "enabled": False,
+            "required": False,
+            "url": "nats://127.0.0.1:4555",
+            "user": "demo",
+            "password": "secret",
+            "connect_timeout_sec": 4.5,
+            "reconnect_wait_sec": 2.0,
+            "max_reconnect_attempts": 7,
+            "stream_name": "HP_RUNTIME",
+        },
+    )
+    sync_process_settings_environment(settings)
+
+    assert os.environ.get("POLARIS_NATS_ENABLED") == "0"
+    assert os.environ.get("POLARIS_NATS_REQUIRED") == "0"
+    assert os.environ.get("POLARIS_NATS_URL") == "nats://127.0.0.1:4555"
+    assert os.environ.get("POLARIS_NATS_USER") == "demo"
+    assert os.environ.get("POLARIS_NATS_PASSWORD") == "secret"
+    assert os.environ.get("POLARIS_NATS_CONNECT_TIMEOUT") == "4.5"
+    assert os.environ.get("POLARIS_NATS_RECONNECT_WAIT") == "2.0"
+    assert os.environ.get("POLARIS_NATS_MAX_RECONNECT") == "7"
+    assert os.environ.get("POLARIS_NATS_STREAM_NAME") == "HP_RUNTIME"
+
+    for name in (
+        "POLARIS_WORKSPACE",
+        "POLARIS_NATS_ENABLED",
+        "POLARIS_NATS_REQUIRED",
+        "POLARIS_NATS_URL",
+        "POLARIS_NATS_USER",
+        "POLARIS_NATS_PASSWORD",
+        "POLARIS_NATS_CONNECT_TIMEOUT",
+        "POLARIS_NATS_RECONNECT_WAIT",
+        "POLARIS_NATS_MAX_RECONNECT",
+        "POLARIS_NATS_STREAM_NAME",
+    ):
+        os.environ.pop(name, None)
+

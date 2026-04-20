@@ -1,0 +1,27 @@
+{
+  "case_id": "l7_context_switch",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Context Switch Recovery",
+  "description": "验证模型能在上下文切换后恢复状态。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 config.py 2. 读取 server.py 3. 总结两个文件的共同点",
+  "tags": ["l7", "context", "switch"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.82,
+    "stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 3
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "min_tool_calls": 2
+    },
+    "parity": {
+      "required": true
+    }
+  }
+}

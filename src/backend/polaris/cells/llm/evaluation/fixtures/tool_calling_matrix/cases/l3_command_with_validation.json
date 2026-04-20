@@ -1,0 +1,39 @@
+{
+  "case_id": "l3_command_with_validation",
+  "level": "L3",
+  "role": "director",
+  "title": "L3 Command Execution with Validation",
+  "description": "测试 Agent 能否执行命令并验证结果。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "运行 python --version 命令，然后报告 Python 版本。",
+  "tags": ["l3", "command", "validation", "result-interpretation"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.8,
+    "stream": {
+      "required_tools": ["execute_command"],
+      "forbidden_tools": ["search_replace", "edit_file", "append_to_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "execute_command",
+      "first_call_arg_contains": {
+        "command": "python --version"
+      },
+      "required_output_patterns": [
+        "Python 3",
+        "python 3"
+      ]
+    },
+    "non_stream": {
+      "required_tools": ["execute_command"],
+      "forbidden_tools": ["search_replace", "edit_file", "append_to_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

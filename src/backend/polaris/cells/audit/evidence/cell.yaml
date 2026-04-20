@@ -1,0 +1,52 @@
+id: audit.evidence
+title: Evidence Audit
+kind: capability
+visibility: public
+stateful: true
+owner: audit
+purpose: 'Append-only evidence event ownership, integrity verification, and evidence
+  query/export boundary for runtime audit trails.
+
+  '
+current_modules:
+- polaris.cells.audit.evidence.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/audit/evidence/**
+- polaris/kernelone/audit/**
+- polaris/infrastructure/audit/**
+- polaris/delivery/http/audit_router.py
+- polaris/delivery/http/v2/audit.py
+public_contracts:
+  modules:
+  - polaris.cells.audit.evidence.public.contracts
+  commands:
+  - AppendEvidenceEventCommandV1
+  queries:
+  - QueryEvidenceEventsV1
+  - VerifyEvidenceChainV1
+  events:
+  - EvidenceAppendedEventV1
+  results:
+  - EvidenceQueryResultV1
+  - EvidenceVerificationResultV1
+  errors:
+  - EvidenceAuditErrorV1
+depends_on:
+- policy.workspace_guard
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- runtime/evidence/*
+effects_allowed:
+- fs.read:runtime/*
+- fs.write:runtime/evidence/*
+- process.exec:git
+verification:
+  tests:
+  - tests/test_log_pipeline_storage_layout.py
+  gaps:
+  - Runtime event writers are not fully funneled through this boundary yet.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

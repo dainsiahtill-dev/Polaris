@@ -1,0 +1,297 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.907988Z",
+  "source_hash": "3563fca87a7c46a4",
+  "cell_id": "llm.tool_runtime",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "RoleToolRoundResult",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/orchestrator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleToolRoundOrchestrator",
+      "description": "Application-level bridge for role dialogue and KernelOne tool runtime.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/orchestrator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "run_round",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_preparsed_calls",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerToolIntegration",
+      "description": "ChiefEngineer 工具集成.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": "关闭执行器并释放资源."
+        },
+        {
+          "name": "get_system_prompt",
+          "doc": "获取带有工具说明的系统提示."
+        },
+        {
+          "name": "process_llm_response",
+          "doc": "处理 LLM 响应，执行其中的工具调用."
+        },
+        {
+          "name": "build_tool_results_prompt",
+          "doc": "构建工具结果提示，发送给 LLM."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorToolIntegration",
+      "description": "Director 工具集成.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": "关闭执行器并释放资源."
+        },
+        {
+          "name": "get_system_prompt",
+          "doc": "获取带有工具说明的系统提示."
+        },
+        {
+          "name": "process_llm_response",
+          "doc": "处理 LLM 响应，执行工具调用."
+        },
+        {
+          "name": "format_tools_for_native_calling",
+          "doc": "格式化为原生 Function Calling 格式."
+        },
+        {
+          "name": "build_tool_results_prompt",
+          "doc": "构建工具结果提示，发送给 LLM."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMToolIntegration",
+      "description": "PM 工具集成.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": "关闭执行器并释放资源."
+        },
+        {
+          "name": "get_system_prompt",
+          "doc": "获取带有工具说明的系统提示."
+        },
+        {
+          "name": "process_llm_response",
+          "doc": "处理 LLM 响应，执行工具调用."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArchitectToolIntegration",
+      "description": "Architect 工具集成.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": "关闭执行器并释放资源."
+        },
+        {
+          "name": "get_system_prompt",
+          "doc": "获取带有工具说明的系统提示."
+        },
+        {
+          "name": "process_llm_response",
+          "doc": "处理 LLM 响应，执行工具调用."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QAToolIntegration",
+      "description": "QA 工具集成.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": "关闭执行器并释放资源."
+        },
+        {
+          "name": "get_system_prompt",
+          "doc": "获取带有工具说明的系统提示."
+        },
+        {
+          "name": "process_llm_response",
+          "doc": "处理 LLM 响应，执行工具调用."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ScoutToolIntegration",
+      "description": "Scout 工具集成 (只读辅助角色).",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": "关闭执行器并释放资源."
+        },
+        {
+          "name": "get_system_prompt",
+          "doc": "获取带有工具说明的系统提示."
+        },
+        {
+          "name": "process_llm_response",
+          "doc": "处理 LLM 响应，执行工具调用."
+        },
+        {
+          "name": "build_tool_results_prompt",
+          "doc": "构建工具结果提示."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolEnabledLLMClient",
+      "description": "支持工具调用的 LLM 客户端包装器.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_disabled_text_tool_protocol_result",
+      "description": "Fail closed for legacy text tool protocols.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py"
+    },
+    {
+      "type": "function",
+      "name": "enhance_chief_engineer_prompt",
+      "description": "增强 ChiefEngineer 提示，添加工具说明.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py"
+    },
+    {
+      "type": "function",
+      "name": "enhance_director_prompt",
+      "description": "增强 Director 提示，添加工具说明.",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_tool_integration",
+      "description": "获取角色工具集成的工厂函数。",
+      "defined_in": "polaris/cells/llm/tool_runtime/internal/role_integrations.py"
+    },
+    {
+      "type": "class",
+      "name": "ExecuteToolRoundCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryToolRuntimePolicyV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ToolRoundCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ToolRoundResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmToolRuntimeError",
+      "description": "Structured contract error for `llm.tool_runtime`.",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ILlmToolRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "execute_round",
+          "doc": "Execute one tool round."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

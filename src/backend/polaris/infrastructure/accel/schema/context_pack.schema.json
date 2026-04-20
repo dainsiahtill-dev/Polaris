@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-accel.local/schema/context_pack/v1",
+  "title": "AgentAccel Context Pack",
+  "type": "object",
+  "required": [
+    "version",
+    "task",
+    "generated_at",
+    "budget",
+    "top_files",
+    "snippets",
+    "verify_plan"
+  ],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "task": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "budget": {
+      "type": "object",
+      "required": ["max_chars", "max_snippets", "top_n_files"],
+      "properties": {
+        "max_chars": { "type": "integer", "minimum": 1 },
+        "max_snippets": { "type": "integer", "minimum": 1 },
+        "top_n_files": { "type": "integer", "minimum": 1 },
+        "snippet_radius": { "type": "integer", "minimum": 1 },
+        "per_snippet_max_chars": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "top_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "score", "reasons", "signals"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "score": { "type": "number", "minimum": 0 },
+          "reasons": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["signal_name", "score"],
+              "properties": {
+                "signal_name": { "type": "string", "minLength": 1 },
+                "score": { "type": "number", "minimum": 0 }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "snippets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "start_line", "end_line", "symbol", "content"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "start_line": { "type": "integer", "minimum": 1 },
+          "end_line": { "type": "integer", "minimum": 1 },
+          "symbol": { "type": "string" },
+          "reason": { "type": "string" },
+          "content": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "verify_plan": {
+      "type": "object",
+      "required": ["target_tests", "target_checks"],
+      "properties": {
+        "target_tests": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "target_checks": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": true
+    },
+    "previous_attempt_feedback": { "type": "object" },
+    "meta": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,115 @@
+# 默认路由规则集
+
+rules:
+  # Python 新项目开发
+  - id: python_new_code
+    name: Python新项目开发
+    priority: 100
+    match:
+      task_type: new_crate
+      domain: python
+    recommendation:
+      anchor: harbor_pilot_director
+      profession: python_principal_architect
+      persona: null
+
+  # Python Bug 修复
+  - id: python_bug_fix
+    name: Python Bug修复
+    priority: 90
+    match:
+      task_type: bug_fix
+      domain: python
+    recommendation:
+      anchor: harbor_pilot_director
+      profession: software_engineer
+      persona: null
+
+  # 安全审查
+  - id: security_review
+    name: 安全审查
+    priority: 95
+    match:
+      task_type: security_review
+    recommendation:
+      anchor: harbor_pilot_qa
+      profession: security_auditor
+      persona: mentu_xiaozhong
+
+  # 架构设计
+  - id: architecture_design
+    name: 架构设计
+    priority: 85
+    match:
+      task_type: architecture_design
+    recommendation:
+      anchor: harbor_pilot_director
+      profession: python_principal_architect
+      persona: null
+
+  # 性能优化
+  - id: performance_optimization
+    name: 性能优化
+    priority: 80
+    match:
+      task_type: performance_critical
+    recommendation:
+      anchor: harbor_pilot_director
+      profession: python_principal_architect
+      persona: null
+
+  # TypeScript 前端
+  - id: typescript_frontend
+    name: TypeScript前端开发
+    priority: 75
+    match:
+      task_type: new_code
+      domain: typescript
+    recommendation:
+      anchor: harbor_pilot_director
+      profession: typescript_frontend_architect
+      persona: null
+
+  # 代码审查
+  - id: code_review
+    name: 代码审查
+    priority: 70
+    match:
+      task_type: code_review
+    recommendation:
+      anchor: harbor_pilot_qa
+      profession: quality_engineer
+      persona: null
+
+  # DevOps 部署
+  - id: devops_deploy
+    name: DevOps部署
+    priority: 65
+    match:
+      task_type: deployment
+      domain: devops
+    recommendation:
+      anchor: harbor_pilot_director
+      profession: devops_engineer
+      persona: null
+
+  # 随性风格用户
+  - id: casual_style
+    name: 随性风格用户
+    priority: 50
+    match:
+      user_preference:
+        formality: casual
+    recommendation:
+      persona: cyberpunk_hacker
+
+  # 默认安全审查
+  - id: default_security
+    name: 默认安全审查
+    priority: 1
+    match:
+      task_type: security_review
+    recommendation:
+      anchor: harbor_pilot_qa
+      profession: security_auditor
+      persona: mentu_xiaozhong

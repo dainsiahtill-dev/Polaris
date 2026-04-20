@@ -1,0 +1,1939 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.317404Z",
+  "source_hash": "ba9a7fd19d04ef1d",
+  "cell_id": "director.delivery",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "_audit_event_payload",
+      "description": "Build a structured audit event payload from a stream_turn event.",
+      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_stream_turn",
+      "description": "Decorator factory: wraps ``stream_turn`` with full audit trail.",
+      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
+    },
+    {
+      "type": "function",
+      "name": "decorator",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_global_bus",
+      "description": "Look up the globally registered bus, logging resolution status.",
+      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
+    },
+    {
+      "type": "function",
+      "name": "register_audit_bus",
+      "description": "Allow callers to inject the bus before the first stream call.",
+      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_archive_id",
+      "description": "Patch archive_id into the first event for traceability.",
+      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_audit_decorator",
+      "description": "Apply ``@audit_stream_turn`` to the ``stream_turn`` method of a host instance.",
+      "defined_in": "polaris/delivery/cli/director/audit_decorator.py"
+    },
+    {
+      "type": "function",
+      "name": "_bootstrap_backend_import_path",
+      "description": "Lazy import of polaris modules after path bootstrap.",
+      "defined_in": "polaris/delivery/cli/director/cli_compat.py"
+    },
+    {
+      "type": "function",
+      "name": "create_parser",
+      "description": "Create thin argument parser.",
+      "defined_in": "polaris/delivery/cli/director/cli_compat.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/cli_compat.py"
+    },
+    {
+      "type": "function",
+      "name": "_bootstrap_backend_import_path",
+      "description": "Lazy import of polaris modules after path bootstrap.",
+      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
+    },
+    {
+      "type": "function",
+      "name": "create_parser",
+      "description": "Create thin argument parser.",
+      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
+    },
+    {
+      "type": "function",
+      "name": "run_director_agent_console",
+      "description": "Launch the Director console using the unified terminal host.",
+      "defined_in": "polaris/delivery/cli/director/console_director_agent.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleConsoleHostError",
+      "description": "Structured error for the role console host layer.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleSessionNotFoundError",
+      "description": "Raised when a requested role session does not exist.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleConsoleHostConfig",
+      "description": "Configuration for the role console host.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleConsoleHost",
+      "description": "Service/controller layer for a canonical role CLI client.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "add_role_host_kind",
+          "doc": "Register an additional role host kind at runtime."
+        },
+        {
+          "name": "_get_task_service",
+          "doc": ""
+        },
+        {
+          "name": "_get_cognitive_middleware",
+          "doc": "Get or create the CognitiveMiddleware instance."
+        },
+        {
+          "name": "_session_service",
+          "doc": ""
+        },
+        {
+          "name": "_session_query_kwargs",
+          "doc": ""
+        },
+        {
+          "name": "_session_query_kwargs_for_role",
+          "doc": ""
+        },
+        {
+          "name": "_use_orchestrator",
+          "doc": "Check whether session orchestrator should be used."
+        },
+        {
+          "name": "_normalize_orchestrator_event",
+          "doc": "Normalize a TurnEvent from the orchestrator into console_host dict format."
+        },
+        {
+          "name": "_get_session_event_log_path",
+          "doc": "Return the session-isolated event log path."
+        },
+        {
+          "name": "_write_session_event",
+          "doc": "Append a normalized event to the session-isolated event log."
+        },
+        {
+          "name": "_resolve_workspace_file_path",
+          "doc": ""
+        },
+        {
+          "name": "_read_text_file",
+          "doc": ""
+        },
+        {
+          "name": "_snapshot_tool_call",
+          "doc": ""
+        },
+        {
+          "name": "_enrich_tool_call_payload",
+          "doc": ""
+        },
+        {
+          "name": "_enrich_tool_result_payload",
+          "doc": ""
+        },
+        {
+          "name": "_load_session_payload",
+          "doc": ""
+        },
+        {
+          "name": "_persist_message",
+          "doc": ""
+        },
+        {
+          "name": "_persist_context_config",
+          "doc": ""
+        },
+        {
+          "name": "_build_runtime_history",
+          "doc": ""
+        },
+        {
+          "name": "_trim_current_user_from_recent_messages",
+          "doc": "Drop the trailing current user turn from history passed to runtime."
+        },
+        {
+          "name": "_append_current_user_message",
+          "doc": ""
+        },
+        {
+          "name": "_build_projection_messages_with_current_user",
+          "doc": ""
+        },
+        {
+          "name": "create_session",
+          "doc": ""
+        },
+        {
+          "name": "ensure_session",
+          "doc": ""
+        },
+        {
+          "name": "list_sessions",
+          "doc": ""
+        },
+        {
+          "name": "load_session",
+          "doc": ""
+        },
+        {
+          "name": "load_session_history",
+          "doc": ""
+        },
+        {
+          "name": "get_status",
+          "doc": ""
+        },
+        {
+          "name": "list_tasks",
+          "doc": ""
+        },
+        {
+          "name": "create_task",
+          "doc": ""
+        },
+        {
+          "name": "select_next_task",
+          "doc": ""
+        },
+        {
+          "name": "_persist_user_message_once",
+          "doc": ""
+        },
+        {
+          "name": "_drain_debug_events",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_stream_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorConsoleError",
+      "description": "Backward-compatible Director console error.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorSessionNotFoundError",
+      "description": "Backward-compatible Director session lookup error.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorConsoleHostConfig",
+      "description": "Director-specific console host configuration.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorConsoleHost",
+      "description": "Director-specific alias for the shared role console host.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_copy_mapping",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_bool",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_user_message_token",
+      "description": "Normalize user message text for duplicate detection across transports.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_message_history",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_session_summary",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_args",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_name",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_path_token",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_success",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_error_text",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_minimal_runtime_bindings",
+      "description": "Install the minimal KernelOne bindings required by standalone CLI hosts.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "class",
+      "name": "MessageArtifact",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ConsoleMessage",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "with_content",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ConsoleSession",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py",
+      "methods": [
+        {
+          "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StreamingState",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py",
+      "methods": [
+        {
+          "name": "idle",
+          "doc": ""
+        },
+        {
+          "name": "mark_chunk",
+          "doc": ""
+        },
+        {
+          "name": "finish",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArtifactPanelState",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py",
+      "methods": [
+        {
+          "name": "with_markdown",
+          "doc": ""
+        },
+        {
+          "name": "with_code",
+          "doc": ""
+        },
+        {
+          "name": "with_diff",
+          "doc": ""
+        },
+        {
+          "name": "hide",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_safe_text",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_mapping",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_timestamp",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_artifact_kind",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_payloads",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "message_from_dict",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "messages_from_dicts",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "session_from_dict",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "session_from_view",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "artifact_from_dict",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "streaming_state_from_message",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "function",
+      "name": "build_artifact_panel_state",
+      "description": "Factory: build ArtifactPanelState from a sequence of MessageArtifacts.",
+      "defined_in": "polaris/delivery/cli/director/console_models.py"
+    },
+    {
+      "type": "class",
+      "name": "StreamEventType",
+      "description": "Canonical stream event types for the console protocol boundary.",
+      "defined_in": "polaris/delivery/cli/director/console_protocol.py",
+      "methods": [
+        {
+          "name": "from_string",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StandardStreamEvent",
+      "description": "Canonical streaming event for the Director CLI layer.",
+      "defined_in": "polaris/delivery/cli/director/console_protocol.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialise the event to a plain dict for streaming / JSON serialisation."
+        },
+        {
+          "name": "from_dict",
+          "doc": "Reconstruct a StandardStreamEvent from a plain dict (e.g. from JSON)."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_from_string",
+      "description": "Convert a string to a StreamEventType.",
+      "defined_in": "polaris/delivery/cli/director/console_protocol.py"
+    },
+    {
+      "type": "function",
+      "name": "to_standard_event",
+      "description": "Normalise any upstream event format into a StandardStreamEvent.",
+      "defined_in": "polaris/delivery/cli/director/console_protocol.py"
+    },
+    {
+      "type": "function",
+      "name": "from_kernel_event",
+      "description": "Convert a ``RoleExecutionKernel`` raw event dict to a StandardStreamEvent.",
+      "defined_in": "polaris/delivery/cli/director/console_protocol.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_text",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_mapping",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_text",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_name",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_file_path",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_error_text",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_patch_text",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_success",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_detail_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tool_overlay_message",
+      "description": "Build a structured tool message for overlay rendering.",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_diff_markup_lines",
+      "description": "Render diff text with Claude-style syntax highlighting.",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "render_message_markup",
+      "description": "Render a single message with Claude-style Rich markup.",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "render_message_plain_text",
+      "description": "Render a single message as plain text (no markup).",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "conversation_markup",
+      "description": "Render a conversation as Claude-style markup.",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "function",
+      "name": "conversation_plain_text",
+      "description": "Render a conversation as plain text.",
+      "defined_in": "polaris/delivery/cli/director/console_render.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorLLMClient",
+      "description": "支持工具调用的 Director LLM 客户端.",
+      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_invoke_plain",
+          "doc": "普通 LLM 调用（无工具）."
+        },
+        {
+          "name": "_invoke_messages",
+          "doc": "使用消息列表调用 LLM."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorToolEnabledImplementation",
+      "description": "支持 LLM 工具的 Director 实现.",
+      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorToolsV2WithAgentAccel",
+      "description": "扩展 DirectorToolsV2，集成 Standard Toolkit 工具.",
+      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "execute",
+          "doc": "执行 Standard Toolkit 工具."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "enhance_director_with_llm_tools",
+      "description": "创建支持 LLM 工具的 Director 客户端.",
+      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py"
+    },
+    {
+      "type": "function",
+      "name": "create_enhanced_director_tools",
+      "description": "创建增强的 Director 工具.",
+      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py"
+    },
+    {
+      "type": "function",
+      "name": "patch_director_runtime",
+      "description": "初始化 Director 工具增强（当前无需 legacy monkey patch）.",
+      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorRole",
+      "description": "Director Role - 工部侍郎",
+      "defined_in": "polaris/delivery/cli/director/director_role.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_bootstrap_backend_import_path",
+      "description": "Lazy import of polaris modules after path bootstrap.",
+      "defined_in": "polaris/delivery/cli/director/director_role.py"
+    },
+    {
+      "type": "class",
+      "name": "DirectorService",
+      "description": "Director 服务实现 — 通过 RoleRuntimeService facade 执行角色会话。",
+      "defined_in": "polaris/delivery/cli/director/director_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_ready_tasks",
+          "doc": "获取就绪状态的任务"
+        },
+        {
+          "name": "_normalize_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_extract_response_text",
+          "doc": "从 RoleRuntimeService 返回的 payload 中提取纯文本响应。"
+        },
+        {
+          "name": "_build_director_message",
+          "doc": "构建 Director 角色消息。"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_bootstrap_backend_import_path",
+      "description": "Ensure backend package path when running file directly.",
+      "defined_in": "polaris/delivery/cli/director/director_service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_parser",
+      "description": "创建参数解析器",
+      "defined_in": "polaris/delivery/cli/director/director_service.py"
+    },
+    {
+      "type": "class",
+      "name": "WidgetUpdate",
+      "description": "A structured widget update produced by the projection layer.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "append",
+          "doc": "Factory: create an append action."
+        },
+        {
+          "name": "update",
+          "doc": "Factory: create an update action targeting a specific item."
+        },
+        {
+          "name": "clear",
+          "doc": "Factory: create a clear action."
+        },
+        {
+          "name": "flush",
+          "doc": "Factory: create a flush action."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_StubRenderer",
+      "description": "Minimal stub base — replace with real ProjectionRenderer implementations.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "render",
+          "doc": "Implement ProjectionRenderer protocol."
+        },
+        {
+          "name": "project",
+          "doc": ""
+        },
+        {
+          "name": "flush",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ContentChunkRenderer",
+      "description": "Stub: renders content_chunk events to the detail pane.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ThinkingChunkRenderer",
+      "description": "Stub: renders thinking_chunk events (collapsible thinking block).",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolCallRenderer",
+      "description": "Stub: renders tool_call events.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolResultRenderer",
+      "description": "Stub: renders tool_result events.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MessageCompleteRenderer",
+      "description": "Stub: renders message complete events.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ErrorRenderer",
+      "description": "Stub: renders error events.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectionRenderer",
+      "description": "Protocol for projectors that transform a Director event dict into a WidgetUpdate.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": "Transform an event into a widget update. Return None to skip."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolProjectionRenderer",
+      "description": "Renders tool_call and tool_result events into WidgetUpdates.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": "Project a tool event into a WidgetUpdate."
+        },
+        {
+          "name": "_render_tool_call",
+          "doc": ""
+        },
+        {
+          "name": "_render_tool_result",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArtifactProjectionRenderer",
+      "description": "Renders artifact events for the TUI artifact panel.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "summarize_artifact",
+          "doc": "Build a one-line summary of an artifact."
+        },
+        {
+          "name": "render_full_artifact",
+          "doc": "Render full artifact content (possibly truncated)."
+        },
+        {
+          "name": "render",
+          "doc": "Project an artifact event into a WidgetUpdate."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DiffProjectionRenderer",
+      "description": "Renders diff events with summarization and full diff rendering.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "summarize_diff",
+          "doc": "Build a one-line summary of a diff (additions/removals)."
+        },
+        {
+          "name": "render_full_diff",
+          "doc": "Render a full diff (possibly truncated)."
+        },
+        {
+          "name": "render",
+          "doc": "Project a diff event into a WidgetUpdate."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ThinkingRenderer",
+      "description": "Renders thinking_chunk events, filtering noise.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "filter_noise",
+          "doc": "Remove noisy Offset/Region/Size/Spacing/Point tokens."
+        },
+        {
+          "name": "render_thinking",
+          "doc": "Render thinking text, possibly truncated."
+        },
+        {
+          "name": "render",
+          "doc": "Project a thinking_chunk event into a WidgetUpdate."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RendererRegistry",
+      "description": "Map from event type (str) to ProjectionRenderer.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "Register a renderer for a given event type."
+        },
+        {
+          "name": "render",
+          "doc": "Dispatch a single event to its registered renderer."
+        },
+        {
+          "name": "render_batch",
+          "doc": "Dispatch a batch of events, collecting all non-None results."
+        },
+        {
+          "name": "get",
+          "doc": "Return the renderer registered for this kind, or None."
+        },
+        {
+          "name": "dispatch",
+          "doc": "Dispatch an event to the correct renderer; returns a list of WidgetUpdate."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectionLayer",
+      "description": "Transforms Director console events into WidgetUpdate objects.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "registry",
+          "doc": "Alias _registry as registry for compatibility."
+        },
+        {
+          "name": "render",
+          "doc": "Render a single event synchronously (no throttling)."
+        },
+        {
+          "name": "project_event",
+          "doc": "Alias for render(); returns a list for compatibility."
+        },
+        {
+          "name": "project_stream",
+          "doc": "Render a batch of events, returning all WidgetUpdates."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_filter_noise",
+      "description": "Remove noisy token patterns (Offset, Region, Size, etc.) from text.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py"
+    },
+    {
+      "type": "function",
+      "name": "create_default_projection_layer",
+      "description": "Create a ProjectionLayer with all standard renderers pre-registered.",
+      "defined_in": "polaris/delivery/cli/director/projection/projection_layer.py"
+    },
+    {
+      "type": "class",
+      "name": "RendererRegistry",
+      "description": "Map from event kind (str) to ProjectionRenderer.",
+      "defined_in": "polaris/delivery/cli/director/projection/registry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "Register a renderer for a given event kind."
+        },
+        {
+          "name": "get",
+          "doc": "Return the renderer for this kind, or None if not registered."
+        },
+        {
+          "name": "dispatch",
+          "doc": "Dispatch an event to all matching renderers."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "WidgetUpdate",
+      "description": "Neutral rendering payload for a Textual widget.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "append",
+          "doc": ""
+        },
+        {
+          "name": "update",
+          "doc": ""
+        },
+        {
+          "name": "clear",
+          "doc": ""
+        },
+        {
+          "name": "flush",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Renderer",
+      "description": "Protocol for stream-event renderers.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": "Render a single projection event. Returns None to skip."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolProjectionRenderer",
+      "description": "Renders tool_call and tool_result events into WidgetUpdate payloads.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": ""
+        },
+        {
+          "name": "_render_tool_call",
+          "doc": ""
+        },
+        {
+          "name": "_render_tool_result",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DiffProjectionRenderer",
+      "description": "Renders unified diff text into structured WidgetUpdate payloads.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": ""
+        },
+        {
+          "name": "summarize_diff",
+          "doc": "Compute a single-line summary of a unified diff."
+        },
+        {
+          "name": "render_full_diff",
+          "doc": "Render a complete diff, truncated to max_lines lines."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArtifactProjectionRenderer",
+      "description": "Renders code / markdown / diff artifacts into WidgetUpdate payloads.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": ""
+        },
+        {
+          "name": "summarize_artifact",
+          "doc": "Return a one-line summary string for an artifact."
+        },
+        {
+          "name": "render_full_artifact",
+          "doc": "Return the full artifact content, truncated to max_lines lines."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ThinkingRenderer",
+      "description": "Renders thinking / reasoning content with noise filtering.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "render",
+          "doc": ""
+        },
+        {
+          "name": "filter_noise",
+          "doc": "Strip Offset/Region/Size/Spacing/Point tokens from thinking text."
+        },
+        {
+          "name": "render_thinking",
+          "doc": "Filter thinking text and return a preview of at most max_preview chars."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RendererRegistry",
+      "description": "Maps event types to renderer instances.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": "Register (or replace) a renderer for the given event type."
+        },
+        {
+          "name": "render",
+          "doc": "Dispatch a single event to the appropriate renderer."
+        },
+        {
+          "name": "render_batch",
+          "doc": "Render a batch of events (non-streaming path)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_PendingChunk",
+      "description": "Accumulator for throttled content/thinking chunks.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectionLayer",
+      "description": "Unified projection layer between the stream bus and Textual widgets.",
+      "defined_in": "polaris/delivery/cli/director/projection.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "render",
+          "doc": "Render a single event immediately (no throttling)."
+        },
+        {
+          "name": "_maybe_flush",
+          "doc": "Flush pending chunks if throttle interval has elapsed."
+        },
+        {
+          "name": "_flush_pending",
+          "doc": "Emit a pending chunk flush and reset the accumulator."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_name",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_file_path",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_error_text",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_success",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_detail_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_pretty",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/projection.py"
+    },
+    {
+      "type": "function",
+      "name": "create_default_projection_layer",
+      "description": "Create a ProjectionLayer with all standard renderers pre-registered.",
+      "defined_in": "polaris/delivery/cli/director/projection.py"
+    },
+    {
+      "type": "class",
+      "name": "FakeTxController",
+      "description": "A fake transaction controller that yields events per turn.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_e2e_smoke.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConsoleHostE2ESmoke",
+      "description": "Full-stack smoke test with real filesystem side effects.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_e2e_smoke.py",
+      "methods": [
+        {
+          "name": "mock_host",
+          "doc": ""
+        },
+        {
+          "name": "test_orchestrator_multi_turn_writes_checkpoint_and_events",
+          "doc": "Simulate a 2-turn session via the orchestrator path and verify:"
+        },
+        {
+          "name": "_make_controller",
+          "doc": ""
+        },
+        {
+          "name": "_patched_build",
+          "doc": ""
+        },
+        {
+          "name": "test_orchestrator_handoff_development_writes_events_and_exits",
+          "doc": "Simulate a single turn that hands off to DevelopmentWorkflowRuntime."
+        },
+        {
+          "name": "_patched_build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUseOrchestrator",
+      "description": "Tests for _use_orchestrator feature flag logic.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_orchestrator.py",
+      "methods": [
+        {
+          "name": "test_env_var_true_enables",
+          "doc": ""
+        },
+        {
+          "name": "test_env_var_false_disables",
+          "doc": ""
+        },
+        {
+          "name": "test_capability_profile_true_enables",
+          "doc": ""
+        },
+        {
+          "name": "test_capability_profile_false_disables",
+          "doc": ""
+        },
+        {
+          "name": "test_default_is_false",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeOrchestratorEvent",
+      "description": "Tests for _normalize_orchestrator_event.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_orchestrator.py",
+      "methods": [
+        {
+          "name": "test_content_chunk",
+          "doc": ""
+        },
+        {
+          "name": "test_tool_batch_started",
+          "doc": ""
+        },
+        {
+          "name": "test_tool_batch_success",
+          "doc": ""
+        },
+        {
+          "name": "test_tool_batch_error",
+          "doc": ""
+        },
+        {
+          "name": "test_completion_event",
+          "doc": ""
+        },
+        {
+          "name": "test_error_event",
+          "doc": ""
+        },
+        {
+          "name": "test_session_started",
+          "doc": ""
+        },
+        {
+          "name": "test_session_completed",
+          "doc": ""
+        },
+        {
+          "name": "test_session_waiting_human",
+          "doc": ""
+        },
+        {
+          "name": "test_runtime_started",
+          "doc": ""
+        },
+        {
+          "name": "test_runtime_completed",
+          "doc": ""
+        },
+        {
+          "name": "test_turn_phase",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_event_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_dict_fallback",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSessionEventLog",
+      "description": "Tests for session-isolated event logging.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_orchestrator.py",
+      "methods": [
+        {
+          "name": "test_get_session_event_log_path",
+          "doc": ""
+        },
+        {
+          "name": "test_write_session_event",
+          "doc": ""
+        },
+        {
+          "name": "test_write_multiple_events_to_same_session",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeTxController",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_orchestrator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FakeTxController",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_orchestrator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestStreamTurnOrchestratorPath",
+      "description": "End-to-end tests for stream_turn using the orchestrator path.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_console_host_orchestrator.py",
+      "methods": [
+        {
+          "name": "mock_host",
+          "doc": ""
+        },
+        {
+          "name": "test_stream_turn_uses_orchestrator_when_flag_enabled",
+          "doc": ""
+        },
+        {
+          "name": "test_stream_turn_falls_back_to_legacy_on_controller_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_session_events_written_to_isolated_log",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeTxController",
+      "description": "Deterministic fake transaction controller.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAnalysisOnlyPath",
+      "description": "Scenario: User asks 'summarize code'. LLM reads, summarizes, should end.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py",
+      "methods": [
+        {
+          "name": "mock_host",
+          "doc": ""
+        },
+        {
+          "name": "test_analysis_only_ends_after_summary",
+          "doc": "Turn 1: repo_tree. Turn 2: summary visible_content. Should END_SESSION."
+        },
+        {
+          "name": "_patched_build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWritePath",
+      "description": "Scenario: User asks 'split server.py'. LLM reads, then writes.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py",
+      "methods": [
+        {
+          "name": "mock_host",
+          "doc": ""
+        },
+        {
+          "name": "test_write_path_mutation_satisfied",
+          "doc": "Turn 1: repo_tree. Turn 2: write_file. Should END_SESSION."
+        },
+        {
+          "name": "_patched_build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContextSwitch",
+      "description": "Scenario: User first asks 'summarize', then 'split server.py'.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py",
+      "methods": [
+        {
+          "name": "mock_host",
+          "doc": ""
+        },
+        {
+          "name": "test_context_switch_updates_goal",
+          "doc": "First turn: summarize. Second turn: split server.py."
+        },
+        {
+          "name": "_patched_build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_envelope",
+      "description": "Build a realistic TurnOutcomeEnvelope for testing.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py"
+    },
+    {
+      "type": "class",
+      "name": "TestStreamTurnOptions",
+      "description": "Tests for StreamTurnOptions dataclass.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_values",
+          "doc": ""
+        },
+        {
+          "name": "test_immutable",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStandardStreamEvent",
+      "description": "Tests for StandardStreamEvent dict subclass.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_dict_subclass_behaviour",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteRoleSessionCommandV1StreamOptions",
+      "description": "Tests for ExecuteRoleSessionCommandV1 with stream_options field.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_stream_options_field_exists",
+          "doc": ""
+        },
+        {
+          "name": "test_stream_options_defaults_to_none",
+          "doc": ""
+        },
+        {
+          "name": "test_stream_options_type_validation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIRoleRuntimeStreamChatTurn",
+      "description": "Tests that IRoleRuntime interface includes stream_chat_turn with options.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_interface_has_stream_chat_turn",
+          "doc": ""
+        },
+        {
+          "name": "test_role_runtime_service_has_stream_chat_turn",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStreamEventType",
+      "description": "Tests for StreamEventType enum.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_all_event_types_present",
+          "doc": ""
+        },
+        {
+          "name": "test_from_string_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_from_string_unknown_returns_error",
+          "doc": ""
+        },
+        {
+          "name": "test_is_str_enum",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProtocolStandardStreamEvent",
+      "description": "Tests for StandardStreamEvent in console_protocol.py.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_roundtrip",
+          "doc": ""
+        },
+        {
+          "name": "test_from_dict_roundtrip",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToStandardEvent",
+      "description": "Tests for to_standard_event() converter.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_passthrough_standard_stream_event",
+          "doc": ""
+        },
+        {
+          "name": "test_kernel_dict_form",
+          "doc": ""
+        },
+        {
+          "name": "test_serialised_form",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_type_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_type_returns_error_event",
+          "doc": ""
+        },
+        {
+          "name": "test_none_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_non_dict_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFromKernelEvent",
+      "description": "Tests for from_kernel_event() converter.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_valid_kernel_event",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_type_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_non_dict_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleConsoleHostAllowedRoles",
+      "description": "Tests for _ALLOWED_ROLES set.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_default_allowed_roles",
+          "doc": ""
+        },
+        {
+          "name": "test_director_console_host_inherits_allowed_roles",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleConsoleHostConstruction",
+      "description": "Tests for RoleConsoleHost construction with different roles.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_constructs_with_director_role",
+          "doc": ""
+        },
+        {
+          "name": "test_constructs_with_pm_role",
+          "doc": ""
+        },
+        {
+          "name": "test_constructs_with_qa_role",
+          "doc": ""
+        },
+        {
+          "name": "test_constructs_with_architect_role",
+          "doc": ""
+        },
+        {
+          "name": "test_constructs_with_chief_engineer_role",
+          "doc": ""
+        },
+        {
+          "name": "test_workspace_required",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAddRoleHostKind",
+      "description": "Tests for add_role_host_kind() dynamic role registration.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_registers_custom_role",
+          "doc": ""
+        },
+        {
+          "name": "test_add_role_host_kind_normalises_to_lowercase",
+          "doc": ""
+        },
+        {
+          "name": "test_add_role_host_kind_empty_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorConsoleHostAlias",
+      "description": "Tests for DirectorConsoleHost backward-compatible alias.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_is_subclass_of_role_console_host",
+          "doc": ""
+        },
+        {
+          "name": "test_default_role_is_director",
+          "doc": ""
+        },
+        {
+          "name": "test_accepts_custom_config",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStreamTurnRoleRouting",
+      "description": "Tests for stream_turn() role routing precedence.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "mock_host",
+          "doc": "A RoleConsoleHost with all dependencies mocked."
+        },
+        {
+          "name": "mock_runtime_service",
+          "doc": "Return the mocked runtime service on the host."
+        },
+        {
+          "name": "test_role_precedence_1_explicit_param",
+          "doc": "Explicit role= parameter takes highest precedence."
+        },
+        {
+          "name": "test_role_precedence_2_context_dict",
+          "doc": "Context dict role is used when no explicit role= parameter."
+        },
+        {
+          "name": "test_stream_turn_without_session_id_creates_fresh_session",
+          "doc": ""
+        },
+        {
+          "name": "test_project_session_continuity_filters_reserved_context_and_omits_stale_meta",
+          "doc": ""
+        },
+        {
+          "name": "test_trim_current_user_from_recent_messages_removes_tail_match",
+          "doc": ""
+        },
+        {
+          "name": "test_trim_current_user_from_recent_messages_normalizes_bom_and_newline",
+          "doc": ""
+        },
+        {
+          "name": "test_trim_current_user_from_recent_messages_respects_drop_flag",
+          "doc": ""
+        },
+        {
+          "name": "test_append_current_user_message_skips_duplicate_tail",
+          "doc": ""
+        },
+        {
+          "name": "test_append_current_user_message_collapses_trailing_duplicate_user_turns",
+          "doc": ""
+        },
+        {
+          "name": "test_stream_turn_projects_current_user_without_duplicate_history",
+          "doc": ""
+        },
+        {
+          "name": "test_stream_turn_trims_duplicate_tail_when_current_user_not_injected",
+          "doc": ""
+        },
+        {
+          "name": "test_stream_turn_debug_event_includes_context_os_summary",
+          "doc": ""
+        },
+        {
+          "name": "_capture",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestModuleExports",
+      "description": "Sanity checks that all public exports are present.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_stream_protocol.py",
+      "methods": [
+        {
+          "name": "test_contracts_exports",
+          "doc": ""
+        },
+        {
+          "name": "test_console_protocol_exports",
+          "doc": ""
+        },
+        {
+          "name": "test_console_host_exports",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

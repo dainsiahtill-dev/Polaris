@@ -1,0 +1,56 @@
+type: object
+required: [matrix_id, run_id, iteration, nodes, links, created_at_ms]
+properties:
+  matrix_id:
+    type: string
+    format: uuid
+  run_id:
+    type: string
+  iteration:
+    type: integer
+    minimum: 0
+  nodes:
+    type: array
+    items:
+      type: object
+      required: [node_id, kind, role, external_id, content_hash, timestamp_ms]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [doc, blueprint, task, commit, qa_verdict]
+        role:
+          type: string
+          enum: [pm, chief_engineer, director, qa]
+        external_id:
+          type: string
+        content_hash:
+          type: string
+        timestamp_ms:
+          type: integer
+        metadata:
+          type: object
+  links:
+    type: array
+    items:
+      type: object
+      required: [link_id, source, target, kind, timestamp_ms]
+      properties:
+        link_id:
+          type: string
+          format: uuid
+        source:
+          type: string
+          format: uuid
+        target:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [derives_from, implements, verifies, evolves_from]
+        timestamp_ms:
+          type: integer
+  created_at_ms:
+    type: integer

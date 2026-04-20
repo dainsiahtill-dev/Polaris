@@ -1,0 +1,36 @@
+{
+  "case_id": "l1_directory_navigation",
+  "level": "L1",
+  "role": "director",
+  "title": "L1 Directory Navigation",
+  "description": "测试 Agent 能否正确导航目录结构。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "列出 backend 目录的内容。",
+  "tags": ["l1", "directory", "navigation", "list"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.9,
+    "stream": {
+      "required_tools": ["list_directory"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "list_directory",
+      "first_call_arg_equals": {
+        "path": "backend"
+      },
+      "required_output_substrings": ["api.py"]
+    },
+    "non_stream": {
+      "required_tools": ["list_directory"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

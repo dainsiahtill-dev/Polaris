@@ -1,0 +1,757 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.200887Z",
+  "source_hash": "0e58a15d846141a2",
+  "cell_id": "workspace.integrity",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "DirectorCodeIntelMixin",
+      "description": "为 DirectorService 提供的代码智能 Mixin.",
+      "defined_in": "polaris/cells/workspace/integrity/internal/code_intel.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "compile_task_context",
+          "doc": "为 Director 任务编译代码上下文."
+        },
+        {
+          "name": "verify_task_changes",
+          "doc": "验证任务变更."
+        },
+        {
+          "name": "get_relevant_symbols",
+          "doc": "获取与任务相关的符号."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CodeParser",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/code_parser.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_parser",
+          "doc": ""
+        },
+        {
+          "name": "parse_file",
+          "doc": "Parses code content and returns AST-based metadata."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_code_parser",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/code_parser.py"
+    },
+    {
+      "type": "class",
+      "name": "FileChange",
+      "description": "单个文件变更",
+      "defined_in": "polaris/cells/workspace/integrity/internal/diff_tracker.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FileChangeSnapshot",
+      "description": "文件变更快照",
+      "defined_in": "polaris/cells/workspace/integrity/internal/diff_tracker.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FileChangeTracker",
+      "description": "文件变更追踪器",
+      "defined_in": "polaris/cells/workspace/integrity/internal/diff_tracker.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_check_git_repo",
+          "doc": "检查是否为 git 仓库"
+        },
+        {
+          "name": "capture_baseline",
+          "doc": "捕获基线状态"
+        },
+        {
+          "name": "_capture_git_baseline",
+          "doc": "使用 git 捕获基线"
+        },
+        {
+          "name": "_capture_filesystem_baseline",
+          "doc": "使用文件系统捕获基线"
+        },
+        {
+          "name": "get_changes",
+          "doc": "获取相对于基线的变更"
+        },
+        {
+          "name": "_get_git_changes",
+          "doc": "使用 git diff 获取变更"
+        },
+        {
+          "name": "_get_deleted_files",
+          "doc": "Get set of deleted files in a single git command."
+        },
+        {
+          "name": "_get_new_files",
+          "doc": "Get set of new (untracked) files in a single git command."
+        },
+        {
+          "name": "_get_tracked_files",
+          "doc": "Get set of tracked files in a single git command."
+        },
+        {
+          "name": "_classify_change_from_sets",
+          "doc": "Classify file change type using pre-fetched sets."
+        },
+        {
+          "name": "_classify_change",
+          "doc": "分类文件变更类型 (legacy method, kept for compatibility)."
+        },
+        {
+          "name": "_get_filesystem_changes",
+          "doc": "使用文件系统比较获取变更"
+        },
+        {
+          "name": "reset",
+          "doc": "重置基线"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskFileChangeTracker",
+      "description": "任务级别的文件变更追踪器",
+      "defined_in": "polaris/cells/workspace/integrity/internal/diff_tracker.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": "开始追踪"
+        },
+        {
+          "name": "get_progress",
+          "doc": "获取当前进度"
+        },
+        {
+          "name": "finish",
+          "doc": "结束追踪并返回最终变更"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "workspace_status_path",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/fs_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_workspace",
+      "description": "Validate and resolve a workspace path.",
+      "defined_in": "polaris/cells/workspace/integrity/internal/fs_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_abs_path",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/fs_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "workspace_has_docs",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/fs_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_rel_path",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/fs_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_items",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_list",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_profile_from_hint",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_keep_order",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_project_profile",
+      "description": "Detect coarse project profile from workspace files.",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_exists",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "default_qa_commands",
+      "description": "Build default QA commands from explicit profile plus textual hints.",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_effective_qa_commands",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "read_workspace_status",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "write_workspace_status",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_workspace_status",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_docs_ready_or_raise",
+      "description": "Ensure docs/ exists in workspace; raise ConflictError if missing.",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "is_safe_docs_path",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "select_docs_target_root",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_interface_contract_markdown",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_docs_templates",
+      "description": "Build docs-init template map for product and legacy paths.",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "class",
+      "name": "ValidateWorkspaceCommandV1",
+      "description": "Validate and normalize workspace path.",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EnsureDocsReadyCommandV1",
+      "description": "Ensure docs root exists, otherwise raise conflict.",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GenerateDocsTemplatesCommandV1",
+      "description": "Build docs-init template files.",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DocsTemplatesResultV1",
+      "description": "Generated docs templates and project profile.",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceIntegrityError",
+      "description": "Structured workspace-integrity contract error.",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IWorkspaceIntegrity",
+      "description": "Public interface for workspace integrity checks and docs bootstrap.",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py",
+      "methods": [
+        {
+          "name": "validate_workspace",
+          "doc": "Validate and normalize workspace path."
+        },
+        {
+          "name": "ensure_docs_ready",
+          "doc": "Ensure docs root exists."
+        },
+        {
+          "name": "generate_docs_templates",
+          "doc": "Generate docs template files."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_required_text",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_dict",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceIntegrityService",
+      "description": "Contract-first facade for workspace integrity operations.",
+      "defined_in": "polaris/cells/workspace/integrity/public/service.py",
+      "methods": [
+        {
+          "name": "validate_workspace",
+          "doc": ""
+        },
+        {
+          "name": "ensure_docs_ready",
+          "doc": ""
+        },
+        {
+          "name": "generate_docs_templates",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_workspace_integrity_service",
+      "description": "Factory function: create a new WorkspaceIntegrityService instance.",
+      "defined_in": "polaris/cells/workspace/integrity/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_workspace_command",
+      "description": "Convenience wrapper: create instance on-demand, avoid module-level singleton.",
+      "defined_in": "polaris/cells/workspace/integrity/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_docs_ready_command",
+      "description": "Convenience wrapper: create instance on-demand, avoid module-level singleton.",
+      "defined_in": "polaris/cells/workspace/integrity/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_docs_templates_command",
+      "description": "Convenience wrapper: create instance on-demand, avoid module-level singleton.",
+      "defined_in": "polaris/cells/workspace/integrity/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestDetectProjectProfile",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_empty_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_python_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_node_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_go_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_rust_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_package_manager_pnpm",
+          "doc": ""
+        },
+        {
+          "name": "test_package_manager_yarn",
+          "doc": ""
+        },
+        {
+          "name": "test_package_manager_npm_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDefaultQACommands",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_python_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_node_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_go_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_rust_commands",
+          "doc": ""
+        },
+        {
+          "name": "test_hint_inference",
+          "doc": ""
+        },
+        {
+          "name": "test_fallback_when_no_profile",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestInferProfileFromHint",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_python_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_node_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_go_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_rust_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_hint",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSplitItems",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_comma_separated",
+          "doc": ""
+        },
+        {
+          "name": "test_newline_separated",
+          "doc": ""
+        },
+        {
+          "name": "test_dash_prefix_stripped",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_trimmed",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFormatList",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_non_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_list_uses_placeholder",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_placeholder",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDedupeKeepOrder",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_removes_duplicates_case_insensitive",
+          "doc": ""
+        },
+        {
+          "name": "test_preserves_order",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_input",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveEffectiveQACommands",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_uses_explicit_commands_when_provided",
+          "doc": ""
+        },
+        {
+          "name": "test_falls_back_to_default_when_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_filters_placeholder",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIsSafeDocsPath",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_valid_docs_path",
+          "doc": ""
+        },
+        {
+          "name": "test_valid_docs_dir",
+          "doc": ""
+        },
+        {
+          "name": "test_valid_workspace_docs_path",
+          "doc": ""
+        },
+        {
+          "name": "test_rejects_parent_traversal",
+          "doc": ""
+        },
+        {
+          "name": "test_rejects_non_docs_path",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_path_rejected",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSelectDocsTargetRoot",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_uses_legacy_docs_when_exists",
+          "doc": ""
+        },
+        {
+          "name": "test_uses_workspace_docs_when_no_legacy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildDocsTemplates",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_builds_product_templates",
+          "doc": ""
+        },
+        {
+          "name": "test_builds_legacy_templates",
+          "doc": ""
+        },
+        {
+          "name": "test_includes_polaris_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_goal_from_readme_in_import_mode",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceStatusLifecycle",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_write_and_read_roundtrip",
+          "doc": ""
+        },
+        {
+          "name": "test_read_returns_none_when_no_file",
+          "doc": ""
+        },
+        {
+          "name": "test_write_empty_workspace_is_noop",
+          "doc": ""
+        },
+        {
+          "name": "test_clear_workspace_status",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceStatusPath",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_empty_workspace_returns_empty_string",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_non_empty_for_valid_workspace",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceHasDocs",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_false_for_empty_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_true_when_docs_dir_exists",
+          "doc": ""
+        },
+        {
+          "name": "test_false_when_no_docs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeRelPath",
+      "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
+      "methods": [
+        {
+          "name": "test_forward_slash_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_leading_slash_stripped",
+          "doc": ""
+        },
+        {
+          "name": "test_dot_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_returns_dot",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

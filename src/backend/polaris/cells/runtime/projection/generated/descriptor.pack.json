@@ -1,0 +1,833 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.310905Z",
+  "source_hash": "638ebbe968230ff4",
+  "cell_id": "runtime.projection",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "build_memory_payload",
+      "description": "Build memory payload from canonical artifact store implementation.",
+      "defined_in": "polaris/cells/runtime/projection/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_success_stats_payload",
+      "description": "Build success statistics payload from canonical artifact store implementation.",
+      "defined_in": "polaris/cells/runtime/projection/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_director_service_status_sync",
+      "description": "Read DirectorService status in sync context.",
+      "defined_in": "polaris/cells/runtime/projection/internal/director_runtime_status.py"
+    },
+    {
+      "type": "function",
+      "name": "build_director_runtime_status",
+      "description": "Build Director runtime status from DirectorService only.",
+      "defined_in": "polaris/cells/runtime/projection/internal/director_runtime_status.py"
+    },
+    {
+      "type": "function",
+      "name": "read_json",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "decode_bytes",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "read_file_tail",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "read_file_head",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "read_incremental",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "format_mtime",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "build_file_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "write_text_atomic",
+      "description": "Delegate to KernelOne atomic write for consistency and durability.",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "read_readme_title",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_artifact_path",
+      "description": "Proxy to artifact_store.public.service.resolve_artifact_path (lazy load).",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "select_latest_artifact",
+      "description": "Proxy to artifact_store.public.service.select_latest_artifact (lazy load).",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "get_git_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "get_lancedb_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/io_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "load_interview_history_summary",
+      "description": "加载面试历史摘要（简化实现）",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "build_llm_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_supported",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_key",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/memos_query_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_index_records",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/memos_query_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_scan_memo_dir",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/memos_query_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_memo_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/memos_query_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_sort_key",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/memos_query_service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_memos",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/memos_query_service.py"
+    },
+    {
+      "type": "class",
+      "name": "PMRealtimeState",
+      "description": "PM 实时状态",
+      "defined_in": "polaris/cells/runtime/projection/internal/pm_realtime_state.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PMRealtimeProvider",
+      "description": "PM 实时状态提供者",
+      "defined_in": "polaris/cells/runtime/projection/internal/pm_realtime_state.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_convert_tasks",
+          "doc": "将 Workflow 任务转换为 PM 任务节点"
+        },
+        {
+          "name": "_map_priority",
+          "doc": "映射优先级"
+        },
+        {
+          "name": "_parse_datetime",
+          "doc": "解析日期时间"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "QARealtimeState",
+      "description": "QA 实时状态",
+      "defined_in": "polaris/cells/runtime/projection/internal/qa_realtime_state.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QARealtimeProvider",
+      "description": "QA 实时状态提供者",
+      "defined_in": "polaris/cells/runtime/projection/internal/qa_realtime_state.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_load_audit_summary",
+          "doc": "从状态文件加载审计摘要"
+        },
+        {
+          "name": "_convert_audits",
+          "doc": "将审计结果转换为 QA 任务节点"
+        },
+        {
+          "name": "_parse_datetime",
+          "doc": "解析日期时间"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskSource",
+      "description": "Task list source selection.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeProjection",
+      "description": "Unified runtime projection container.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectionCache",
+      "description": "投影缓存，封装 workspace -> projection 映射及 TTL 控制。",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get",
+          "doc": "获取有效缓存，过期则返回 None。"
+        },
+        {
+          "name": "set",
+          "doc": "写入缓存并打上时间戳。"
+        },
+        {
+          "name": "invalidate",
+          "doc": "使指定 workspace 的缓存失效。"
+        },
+        {
+          "name": "clear",
+          "doc": "清空所有缓存（测试 teardown 用）。"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RuntimeProjectionService",
+      "description": "Service for building runtime projections.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+      "methods": [
+        {
+          "name": "build",
+          "doc": "Build runtime projection synchronously."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "Safely convert value to non-negative integer.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_state_token",
+      "description": "Extract state token from payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_totals",
+      "description": "Get (total, active) task counts from payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_has_live_rows",
+      "description": "Check if workflow has live task rows.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_engine_updated_at",
+      "description": "Parse engine status updated_at to epoch timestamp.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_director_status_sync",
+      "description": "Get Director status from workflow archive (sync version).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_director_status",
+      "description": "Merge Director status with single source of truth logic.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "select_task_rows",
+      "description": "Select task rows following \"二选一，不做跨源混拼\" rule.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_engine_status",
+      "description": "Build engine status from engine.status.json (fallback only).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_anthro_state",
+      "description": "Build memory state (memory, reflection).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_resident_state",
+      "description": "Build resident state snapshot when the resident subsystem is available.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_cached_projection",
+      "description": "Get cached projection if still valid (向后兼容包装).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_cached_projection",
+      "description": "Cache projection with timestamp (向后兼容包装).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "invalidate_projection_cache",
+      "description": "Invalidate projection cache for workspace.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_runtime_projection_sync",
+      "description": "Synchronous wrapper for build_runtime_projection.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_projection",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_snapshot_payload_from_projection",
+      "description": "从 projection 生成 /state/snapshot 兼容载荷",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_compat_fields",
+      "description": "Derive snapshot metadata fields from the current projection.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "select_task_rows_from_projection",
+      "description": "Select task rows using priority rules:",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "load_runtime_task_rows",
+      "description": "Load canonical runtime task rows from runtime.state_owner storage.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleType",
+      "description": "角色类型枚举",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleState",
+      "description": "角色状态枚举",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkerState",
+      "description": "Worker 状态枚举",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskState",
+      "description": "任务状态枚举",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PMTaskState",
+      "description": "PM 任务状态枚举",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QATaskState",
+      "description": "QA 审计状态枚举",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EventSeverity",
+      "description": "事件严重程度",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CodeChangeStatus",
+      "description": "代码变更状态",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReviewVerdict",
+      "description": "评审结论",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeRoleState",
+      "description": "角色运行时状态",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeWorkerState",
+      "description": "Worker 运行时状态",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeTaskNode",
+      "description": "任务节点",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PMTaskNode",
+      "description": "PM 任务节点",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QATaskNode",
+      "description": "QA 审计任务节点",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeSummary",
+      "description": "运行摘要",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DiffHunk",
+      "description": "Diff 内容块",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CodeChangeState",
+      "description": "代码变更状态",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReviewComment",
+      "description": "评审评论",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReviewState",
+      "description": "评审状态",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeSnapshotV2",
+      "description": "运行时快照 V2 - 主数据源",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeEventV2",
+      "description": "运行时事件 V2 - 增量事件流",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "get_runtime_snapshot_v2_schema",
+      "description": "获取 RuntimeSnapshotV2 的 JSON Schema",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py"
+    },
+    {
+      "type": "function",
+      "name": "get_runtime_event_v2_schema",
+      "description": "获取 RuntimeEventV2 的 JSON Schema",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_v2.py"
+    },
+    {
+      "type": "function",
+      "name": "build_pm_status",
+      "description": "Build PM status synchronously by running the async version in a thread.",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "run_in_loop",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_engine_updated_at",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_engine_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_anthro_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "build_snapshot",
+      "description": "Lazy proxy to artifact_store build_snapshot.",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "build_memory_payload",
+      "description": "Lazy proxy to artifact_store build_memory_payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "build_success_stats_payload",
+      "description": "Lazy proxy to artifact_store build_success_stats_payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "build_status_payload_sync",
+      "description": "Build websocket status payload in a worker thread-safe context.",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "describe_workflow_sync",
+      "description": "Module-level wrapper kept patchable for tests and adapters.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "query_workflow_sync",
+      "description": "Module-level wrapper kept patchable for tests and adapters.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "workflow_state_path",
+      "description": "Resolve the canonical runtime path for workflow state.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "write_workflow_state",
+      "description": "Persist the latest workflow submission metadata and trigger realtime update.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_trigger_realtime_update",
+      "description": "Trigger a realtime signal to notify listeners of state changes.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "load_workflow_state",
+      "description": "Load the latest workflow submission metadata.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_terminal_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_payload",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_snapshot_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_cached_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_db_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_runtime_environment",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_run_id_from_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_workflow_chain_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "canonicalize_workflow_task_state",
+      "description": "Map workflow-internal states to the canonical UI contract.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_task_snapshot",
+      "description": "Return the richest task snapshot available for a workflow.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_stage",
+      "description": "Return the best available current stage token for a workflow.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "load_workflow_base_tasks",
+      "description": "Load the canonical PM task contract used to render workflow task titles/details.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_workflow_tasks",
+      "description": "Merge live workflow task states onto the persisted PM task contract.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_file_list",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_workflow_tasks",
+      "description": "Return aggregate task counts for the current workflow state.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "workflow_task_status",
+      "description": "Map canonical workflow task state to Director API task status tokens.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "build_workflow_task_rows",
+      "description": "Project merged workflow task state into the Director API/WebSocket task schema.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "build_workflow_status_payload",
+      "description": "Project merged workflow task state into the Director status schema.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "should_prefer_workflow_status",
+      "description": "Return whether workflow-backed Director state should be treated as authoritative.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_state_token",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_totals",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_is_running",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "get_workflow_runtime_status",
+      "description": "Return best-effort status for the latest submitted workflow.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceRuntimeContext",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workspace_runtime_context.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_normalize_existing_dir",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workspace_runtime_context.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_workspace_runtime_context",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workspace_runtime_context.py"
+    },
+    {
+      "type": "class",
+      "name": "RuntimeClearPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py",
+      "methods": []
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

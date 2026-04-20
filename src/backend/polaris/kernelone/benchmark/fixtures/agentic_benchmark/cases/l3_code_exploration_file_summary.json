@@ -1,0 +1,40 @@
+{
+  "case_id": "l3_code_exploration_file_summary",
+  "role": "director",
+  "title": "L3 Multi-File Smart Summary",
+  "description": "给我一份整个项目中所有 .py 文件的简要概览，包括每个文件的主要功能和导出的函数/变量。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "给我一份整个项目中所有 .py 文件的简要概览，包括每个文件的主要功能和导出的函数/变量。",
+  "tags": [
+    "l3",
+    "exploration",
+    "summary",
+    "multi-file"
+  ],
+  "judge": {
+    "score_threshold": 0.75,
+    "required_tools": [
+      "repo_tree",
+      "repo_read_head"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 6,
+    "required_output_substrings": [
+      ".py",
+      "def ",
+      "class "
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

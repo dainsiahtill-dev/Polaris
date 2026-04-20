@@ -1,0 +1,43 @@
+id: roles.host
+title: Roles Host
+kind: capability
+visibility: public
+stateful: false
+owner: roles
+purpose: 'Unified host protocol core. Provides HostKind, HostCapabilityProfile, and
+  UnifiedHostAdapter so that role runtime can adapt execution strategy (streaming,
+  async tools, file write, audit export) based on the calling host environment (workflow,
+  electron_workbench, tui, cli, api_server, headless).
+
+  '
+current_modules:
+- polaris.cells.roles.host.public.contracts
+- polaris.cells.roles.host.internal.service
+tags: []
+owned_paths:
+- polaris/cells/roles/host/**
+public_contracts:
+  modules:
+  - polaris.cells.roles.host.public.contracts
+  commands: []
+  queries:
+  - get_capability_profile
+  events: []
+  results:
+  - HostCapabilityProfile
+  errors: []
+depends_on:
+- roles.session
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+verification:
+  tests: []
+  gaps:
+  - Cell is newly created; full test coverage pending.
+  - EngineRegistry host_kind awareness (HybridEngine._select_strategy) not yet wired.
+  - ProtocolFSM atomic persistence (tmp+rename) not yet implemented.
+  smoke_commands: []
+generated_artifacts: []

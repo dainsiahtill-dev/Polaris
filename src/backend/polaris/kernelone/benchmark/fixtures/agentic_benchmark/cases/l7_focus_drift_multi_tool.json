@@ -1,0 +1,54 @@
+{
+  "case_id": "l7_focus_drift_multi_tool",
+  "role": "director",
+  "title": "L7 Focus Drift - Multi-Tool Noise",
+  "description": "连续 3 个无关工具调用后回归原始目标。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "先搜索 \"def \"，再读取 config.py，再读取 server.py，然后告诉我 python 版本。现在回到最初的任务：列出 src/ 目录下所有 .py 文件。",
+  "tags": [
+    "l7",
+    "focus-drift",
+    "multi-tool",
+    "distraction"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree",
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_tree",
+          "repo_rg"
+        ],
+        "fragment": "src",
+        "description": "最终目标必须针对 src 目录"
+      }
+    ],
+    "required_output_substrings": [
+      ".py",
+      "src"
+    ],
+    "forbidden_output_substrings": [
+      "python 版本",
+      "忘记了"
+    ],
+    "validators": [
+      "stream_nonstream_parity",
+      "focus_recovery_check"
+    ],
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

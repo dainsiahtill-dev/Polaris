@@ -1,0 +1,279 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:29.790429Z",
+  "source_hash": "e128bd49cdf043e5",
+  "cell_id": "archive.task_snapshot_archive",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "TaskSnapshotArchiveManifest",
+      "description": "Manifest for one archived task snapshot.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskSnapshotArchiveService",
+      "description": "Cell-local archival service for runtime task snapshots.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/internal/task_snapshot_archive_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "archive_task_snapshot",
+          "doc": "Archive task snapshot files into ``workspace/history/tasks``."
+        },
+        {
+          "name": "get_manifest",
+          "doc": "Load task snapshot manifest by snapshot ID."
+        },
+        {
+          "name": "list_task_snapshots",
+          "doc": "List archived task snapshots from canonical index."
+        },
+        {
+          "name": "_workspace_rel",
+          "doc": ""
+        },
+        {
+          "name": "_safe_rel",
+          "doc": ""
+        },
+        {
+          "name": "_copy_directory",
+          "doc": ""
+        },
+        {
+          "name": "_calculate_checksums",
+          "doc": ""
+        },
+        {
+          "name": "_create_empty_manifest",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ArchiveTaskSnapshotCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetTaskSnapshotManifestQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchiveManifestV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskSnapshotArchivedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskSnapshotArchiveError",
+      "description": "Raised when task snapshot archive publication fails.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskSnapshotArchiveManifest",
+      "description": "Manifest for one archived task snapshot.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskSnapshotArchiveService",
+      "description": "Cell-local archival service for runtime task snapshots.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "archive_task_snapshot",
+          "doc": "Archive task snapshot files into ``workspace/history/tasks``."
+        },
+        {
+          "name": "get_manifest",
+          "doc": "Load task snapshot manifest by snapshot ID."
+        },
+        {
+          "name": "list_task_snapshots",
+          "doc": "List archived task snapshots from canonical index."
+        },
+        {
+          "name": "_workspace_rel",
+          "doc": ""
+        },
+        {
+          "name": "_safe_rel",
+          "doc": ""
+        },
+        {
+          "name": "_copy_directory",
+          "doc": ""
+        },
+        {
+          "name": "_calculate_checksums",
+          "doc": ""
+        },
+        {
+          "name": "_create_empty_manifest",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_run_background",
+      "description": "Run a coroutine in background, handling both running loop and no-loop contexts.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_task_snapshot_archive_service",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "archive_task_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "trigger_task_snapshot_archive",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_task_snapshot_manifest",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_task_snapshots",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestArchiveTaskSnapshotCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestArchiveTaskSnapshotCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_strings_accepted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetTaskSnapshotManifestQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestArchiveManifestV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskSnapshotArchivedEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskSnapshotArchiveError",
+      "description": "",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

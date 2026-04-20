@@ -1,0 +1,112 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Task Contract
+description: >
+  PM-authored task contract consumed by task_market publish pipeline.
+type: object
+additionalProperties: false
+required:
+  - version
+  - workspace
+  - trace_id
+  - run_id
+  - task_id
+  - title
+  - goal
+  - stage
+  - source_role
+  - acceptance_criteria
+
+properties:
+  version:
+    type: integer
+    minimum: 1
+  workspace:
+    type: string
+    minLength: 1
+  trace_id:
+    type: string
+    minLength: 1
+  run_id:
+    type: string
+    minLength: 1
+  task_id:
+    type: string
+    minLength: 1
+  plan_id:
+    type: string
+  plan_revision_id:
+    type: string
+  root_task_id:
+    type: string
+  parent_task_id:
+    type: string
+  depends_on:
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true
+  title:
+    type: string
+    minLength: 1
+  goal:
+    type: string
+    minLength: 1
+  summary:
+    type: string
+  stage:
+    type: string
+    enum:
+      - pending_design
+      - pending_exec
+      - pending_qa
+      - waiting_human
+  source_role:
+    type: string
+    minLength: 1
+  scope_paths:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  target_files:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  acceptance_criteria:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      minLength: 1
+  constraints:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  guardrails:
+    type: object
+    additionalProperties: true
+  priority:
+    type: string
+    enum:
+      - low
+      - medium
+      - high
+      - critical
+  max_attempts:
+    type: integer
+    minimum: 1
+  requirement_digest:
+    type: string
+  constraint_digest:
+    type: string
+  summary_ref:
+    type: string
+  payload:
+    type: object
+    additionalProperties: true
+  metadata:
+    type: object
+    additionalProperties: true

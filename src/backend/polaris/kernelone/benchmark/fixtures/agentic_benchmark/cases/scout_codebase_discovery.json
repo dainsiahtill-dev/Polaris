@@ -1,0 +1,43 @@
+{
+  "case_id": "scout_codebase_discovery",
+  "role": "scout",
+  "title": "Scout Discovers Codebase Structure",
+  "description": "The Scout role must quickly understand and document the codebase structure.",
+  "workspace_fixture": "director_safe_scope_plan",
+  "prompt": "Explore the codebase and create a comprehensive map. Return JSON: {architecture: string, modules: [{name, purpose, dependencies: [string]}], entry_points: [string], data_flow: string}. Be thorough but concise.",
+  "tags": [
+    "scout",
+    "discovery",
+    "documentation"
+  ],
+  "judge": {
+    "score_threshold": 0.85,
+    "required_tools": [
+      "repo_tree",
+      "ripgrep",
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "architecture",
+      "modules",
+      "entry_points"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "scout_codebase_map"
+    ],
+    "min_tool_calls": 5,
+    "max_tool_calls": 15,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

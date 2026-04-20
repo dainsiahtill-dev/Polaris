@@ -1,0 +1,33 @@
+version: 1
+generated_at: "YYYY-MM-DD"
+scope: "src/backend governance debt register"
+debts:
+  - id: "DEBT-YYYYMMDD-short-slug"
+    title: "One-line debt title"
+    classification: structural
+    status: active
+    severity: high
+    scope_refs:
+      - "cell.id"
+      - "path/to/runtime_boundary.py"
+    summary: >
+      What remains risky after the mitigation lands.
+    root_cause: >
+      What hidden assumption, ownership ambiguity, or contract drift created the debt.
+    trigger_conditions:
+      - "Which edits would reactivate this debt"
+    mitigations:
+      - "What already landed to contain the risk"
+    residual_risks:
+      - "What is still not guaranteed"
+    linked_assets:
+      adrs:
+        - "docs/governance/decisions/adr-xxxx-sample.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-YYYYMMDD-sample.yaml"
+      verify_packs:
+        - "polaris/cells/sample/example/generated/verify.pack.json"
+      tests:
+        - "tests/architecture/test_sample_boundary.py"
+    next_actions:
+      - "What would retire this debt"

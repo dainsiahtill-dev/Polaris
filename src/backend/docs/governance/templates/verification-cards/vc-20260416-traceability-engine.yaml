@@ -1,0 +1,42 @@
+verification_card:
+  card_id: vc-20260416-traceability-engine
+  title: Traceability Engine Core Implementation
+  classification: structural
+  assumptions:
+    - id: A1
+      statement: "TraceabilityService can be initialized safely in orchestration_engine.run_once() without affecting existing iterations"
+      status: verified
+    - id: A2
+      statement: "PM output schema extension (doc_id, blueprint_id default=null) is backward compatible"
+      status: verified
+    - id: A3
+      statement: "ChiefEngineer blueprint output contains a stable blueprint_id field"
+      status: verified
+    - id: A4
+      statement: "Traceability bypass wrappers suppress all exceptions and never block main flow"
+      status: verified
+  pre_mortem:
+    most_likely_failure: "Director commit traceability misses fine-grained file hashes because we integrate at the orchestration layer rather than inside each Director activity"
+    risk_zones:
+      - polaris/delivery/cli/pm/orchestration_engine.py
+      - polaris/cells/orchestration/pm_planning/pipeline.py
+      - polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py
+  verification_plan:
+    unit_tests:
+      - test_traceability_service_register_node
+      - test_traceability_service_build_matrix
+      - test_traceability_service_persist_and_load
+      - test_traceability_service_find_node
+      - test_traceability_gate_consistency_check
+      - test_blueprint_persistence_save_load_delete
+      - test_adr_store_create_propose_compile
+      - test_adr_store_persistence_roundtrip
+      - test_safety_wrapper_suppresses_exceptions
+    integration_tests:
+      - test_full_pm_iteration_produces_traceability_matrix
+    manual_checks:
+      - Verify runtime/traceability/*.matrix.json is valid JSON and conforms to schema
+      - Verify run_traceability_gate.py exits 0 on a successful iteration
+  sign_off:
+    architect: "Approved"
+    qa: "Pending"

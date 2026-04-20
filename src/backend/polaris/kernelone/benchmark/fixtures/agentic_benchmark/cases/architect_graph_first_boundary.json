@@ -1,0 +1,63 @@
+{
+  "case_id": "architect_graph_first_boundary",
+  "role": "architect",
+  "title": "Architect Uses Graph-First Boundary Evidence",
+  "description": "The architect role must inspect the local graph and cell manifest before deciding the canonical placement for new benchmark code.",
+  "workspace_fixture": "architect_graph_first_boundary",
+  "prompt": "Determine the canonical location for a new role benchmark implementation. You must inspect the local graph catalog and the local llm.evaluation cell manifest before answering. Reply with short numbered steps and name the canonical path explicitly.",
+  "tags": [
+    "architect",
+    "graph-first",
+    "boundary"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "read_file"
+    ],
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "search_code",
+          "grep",
+          "glob"
+        ],
+        "fragment": "llm.evaluation",
+        "description": "must search for llm.evaluation boundary"
+      },
+      {
+        "tools": [
+          "read_file"
+        ],
+        "fragment": "docs/graph/catalog/cells.yaml",
+        "description": "must inspect graph catalog"
+      },
+      {
+        "tools": [
+          "read_file"
+        ],
+        "fragment": "polaris/cells/llm/evaluation/cell.yaml",
+        "description": "must inspect llm.evaluation manifest"
+      }
+    ],
+    "required_output_substrings": [
+      "polaris/cells/llm/evaluation",
+      "llm.evaluation"
+    ],
+    "validators": [
+      "structured_steps",
+      "no_prompt_leakage"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 6,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

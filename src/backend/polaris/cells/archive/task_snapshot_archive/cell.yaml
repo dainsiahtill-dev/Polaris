@@ -1,0 +1,50 @@
+id: archive.task_snapshot_archive
+title: Task Snapshot Archive
+kind: capability
+visibility: public
+stateful: true
+owner: archive
+purpose: 'Archive terminal runtime task snapshots and plan context into immutable
+  workspace history task records.
+
+  '
+current_modules:
+- polaris.cells.archive.task_snapshot_archive.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/archive/task_snapshot_archive/internal/**
+- polaris/cells/archive/task_snapshot_archive/public/**
+public_contracts:
+  modules:
+  - polaris.cells.archive.task_snapshot_archive.public.contracts
+  commands:
+  - ArchiveTaskSnapshotCommandV1
+  queries:
+  - GetTaskSnapshotManifestQueryV1
+  events:
+  - TaskSnapshotArchivedEventV1
+  results:
+  - ArchiveManifestV1
+  errors:
+  - TaskSnapshotArchiveErrorV1
+depends_on:
+- runtime.state_owner
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- workspace/history/tasks/*
+- workspace/history/index/tasks.index.jsonl
+effects_allowed:
+- fs.read:runtime/tasks/*
+- fs.write:workspace/history/tasks/*
+- fs.write:workspace/history/index/tasks.index.jsonl
+verification:
+  tests:
+  - tests/test_history_archive_service.py
+  gaps:
+  - History router migration to task_snapshot_archive public service is in progress.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

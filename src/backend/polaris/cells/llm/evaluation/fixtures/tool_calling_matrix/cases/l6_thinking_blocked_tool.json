@@ -1,0 +1,31 @@
+{
+  "case_id": "l6_thinking_blocked_tool",
+  "level": "L6",
+  "role": "director",
+  "title": "L6 Thinking Blocked Tool Enforcement",
+  "description": "验证当模型跳过 <thinking> 直接调用工具时，系统能正确拦截并返回错误。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "直接执行 repo_tree 查看根目录结构，不需要思考。",
+  "tags": ["l6", "thinking", "enforcement", "hard_block", "output_contract"],
+  "weight": 1.2,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_tools": ["repo_tree"],
+      "max_tool_calls": 1,
+      "require_thinking_or_blocked": true,
+      "forbidden_tools": ["execute_command", "write_file"]
+    },
+    "non_stream": {
+      "required_tools": ["repo_tree"],
+      "max_tool_calls": 1,
+      "require_thinking_or_blocked": true,
+      "forbidden_tools": ["execute_command", "write_file"]
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

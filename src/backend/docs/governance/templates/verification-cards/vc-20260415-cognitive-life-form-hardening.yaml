@@ -1,0 +1,218 @@
+# Verification Card: Cognitive Life Form Hardening
+# Date: 2026-04-15
+# Blueprint: COGNITIVE_LIFE_FORM_HARDENING_BLUEPRINT_20260415.md
+
+vc_id: vc-20260415-cognitive-life-form-hardening
+title: "认知生命体加固验证卡"
+status: active
+created: "2026-04-15"
+
+work_packages:
+  wp1_orchestrator_slim:
+    description: "Orchestrator 瘦身与 MagicMock 清除"
+    checks:
+      - id: "WP1-C1"
+        description: "orchestrator.py 不包含 from unittest.mock import MagicMock"
+        type: grep_absent
+        pattern: "from unittest.mock import MagicMock"
+        file: "polaris/kernelone/cognitive/orchestrator.py"
+
+      - id: "WP1-C2"
+        description: "orchestrator.py 不包含 isinstance(..., MagicMock)"
+        type: grep_absent
+        pattern: "MagicMock"
+        file: "polaris/kernelone/cognitive/orchestrator.py"
+
+      - id: "WP1-C3"
+        description: "_build_blocked_response 方法存在"
+        type: grep_present
+        pattern: "def _build_blocked_response"
+        file: "polaris/kernelone/cognitive/orchestrator.py"
+
+      - id: "WP1-C4"
+        description: "blocked_turn 构建代码不超过 2 处（应为 1 处定义 + 调用点）"
+        type: count_lt
+        pattern: "blocked_turn = ConversationTurn"
+        file: "polaris/kernelone/cognitive/orchestrator.py"
+        max_count: 2
+
+      - id: "WP1-C5"
+        description: "hasattr 防御性检查不超过 3 处"
+        type: count_lt
+        pattern: "hasattr("
+        file: "polaris/kernelone/cognitive/orchestrator.py"
+        max_count: 3
+
+      - id: "WP1-C6"
+        description: "所有现有测试通过"
+        type: pytest
+        path: "polaris/kernelone/cognitive/tests/"
+
+  wp2_governance_enhance:
+    description: "Governance 门控实质性校验"
+    checks:
+      - id: "WP2-C1"
+        description: "GovernanceState 类存在"
+        type: grep_present
+        pattern: "class GovernanceState"
+        file: "polaris/kernelone/cognitive/governance/state_tracker.py"
+
+      - id: "WP2-C2"
+        description: "verify_reasoning_consistency 方法存在"
+        type: grep_present
+        pattern: "def verify_reasoning_consistency"
+        file: "polaris/kernelone/cognitive/governance/verification.py"
+
+      - id: "WP2-C3"
+        description: "3次 WARN 自动升级逻辑"
+        type: grep_present
+        pattern: "should_escalate|warn_count >= 3"
+        file: "polaris/kernelone/cognitive/governance/state_tracker.py"
+
+      - id: "WP2-C4"
+        description: "verify_post_reasoning 包含至少 4 条校验规则"
+        type: count_gt
+        pattern: "if "
+        in_function: "verify_post_reasoning"
+        file: "polaris/kernelone/cognitive/governance/verification.py"
+        min_count: 4
+
+      - id: "WP2-C5"
+        description: "Governance 门控测试通过"
+        type: pytest
+        path: "polaris/kernelone/cognitive/tests/"
+
+  wp3_turnengine_integration:
+    description: "认知管道与 TurnEngine 集成"
+    checks:
+      - id: "WP3-C1"
+        description: "CognitivePipelinePort Protocol 定义存在"
+        type: grep_present
+        pattern: "class CognitivePipelinePort"
+        file: "polaris/kernelone/cognitive/contracts.py"
+
+      - id: "WP3-C2"
+        description: "CognitivePreCheckResult 数据类存在"
+        type: grep_present
+        pattern: "class CognitivePreCheckResult"
+        file: "polaris/kernelone/cognitive/contracts.py"
+
+      - id: "WP3-C3"
+        description: "CognitivePipelineAdapter 类存在"
+        type: grep_present
+        pattern: "class CognitivePipelineAdapter"
+        file: "polaris/kernelone/cognitive/pipeline_adapter.py"
+
+      - id: "WP3-C4"
+        description: "TurnEngine 构造函数包含 cognitive_pipeline 参数"
+        type: grep_present
+        pattern: "cognitive_pipeline"
+        file: "polaris/cells/roles/kernel/internal/turn_engine/engine.py"
+
+      - id: "WP3-C5"
+        description: "认知管道关闭时 TurnEngine 行为不变"
+        type: pytest
+        path: "polaris/cells/roles/kernel/internal/turn_engine/tests/"
+
+      - id: "WP3-C6"
+        description: "认知管道打开时 Governance FAIL 阻断 TurnEngine"
+        type: pytest
+        path: "polaris/kernelone/cognitive/tests/"
+
+  wp4_metacognition_merge:
+    description: "双重 MetaCognitionEngine 合并"
+    checks:
+      - id: "WP4-C1"
+        description: "autonomy 模块不再有 MetaCognitionEngine 类名"
+        type: grep_absent
+        pattern: "class MetaCognitionEngine"
+        file: "polaris/cells/resident/autonomy/internal/meta_cognition.py"
+
+      - id: "WP4-C2"
+        description: "StrategyInsightEngine 类存在"
+        type: grep_present
+        pattern: "class StrategyInsightEngine"
+        file: "polaris/cells/resident/autonomy/internal/meta_cognition.py"
+
+      - id: "WP4-C3"
+        description: "公共导出使用新名称"
+        type: grep_present
+        pattern: "StrategyInsightEngine"
+        file: "polaris/cells/resident/autonomy/public/service.py"
+
+      - id: "WP4-C4"
+        description: "认知层 MetaCognitionEngine 保持不变"
+        type: grep_present
+        pattern: "class MetaCognitionEngine"
+        file: "polaris/kernelone/cognitive/reasoning/meta_cognition.py"
+
+  wp5_belief_decay_hmac:
+    description: "信念衰退与进化记录 HMAC"
+    checks:
+      - id: "WP5-C1"
+        description: "BeliefDecayEngine 类存在"
+        type: grep_present
+        pattern: "class BeliefDecayEngine"
+        file: "polaris/kernelone/cognitive/evolution/belief_decay.py"
+
+      - id: "WP5-C2"
+        description: "DecayPolicy 数据类存在"
+        type: grep_present
+        pattern: "class DecayPolicy"
+        file: "polaris/kernelone/cognitive/evolution/belief_decay.py"
+
+      - id: "WP5-C3"
+        description: "EvolutionIntegrityGuard 类存在"
+        type: grep_present
+        pattern: "class EvolutionIntegrityGuard"
+        file: "polaris/kernelone/cognitive/evolution/integrity.py"
+
+      - id: "WP5-C4"
+        description: "EvolutionStore 集成签名"
+        type: grep_present
+        pattern: "sign_record|integrity"
+        file: "polaris/kernelone/cognitive/evolution/store.py"
+
+      - id: "WP5-C5"
+        description: "信念衰退单元测试通过"
+        type: pytest
+        path: "polaris/kernelone/cognitive/evolution/tests/"
+
+  wp6_integration_tests:
+    description: "集成测试 + CognitiveMaturityScore 修复"
+    checks:
+      - id: "WP6-C1"
+        description: "集成测试文件存在"
+        type: file_exists
+        path: "polaris/kernelone/cognitive/tests/test_integration.py"
+
+      - id: "WP6-C2"
+        description: "至少 9 个集成测试"
+        type: count_gt
+        pattern: "async def test_"
+        file: "polaris/kernelone/cognitive/tests/test_integration.py"
+        min_count: 9
+
+      - id: "WP6-C3"
+        description: "CognitiveMaturityScore.default() 返回 0"
+        type: grep_present
+        pattern: "truthfulness_score=0.0"
+        in_function: "default"
+        file: "polaris/kernelone/cognitive/governance/maturity_score.py"
+
+      - id: "WP6-C4"
+        description: "is_calibrated 属性存在"
+        type: grep_present
+        pattern: "is_calibrated"
+        file: "polaris/kernelone/cognitive/governance/maturity_score.py"
+
+      - id: "WP6-C5"
+        description: "UncertaintyQuantifier 包含 record_outcome"
+        type: grep_present
+        pattern: "def record_outcome"
+        file: "polaris/kernelone/cognitive/perception/uncertainty.py"
+
+      - id: "WP6-C6"
+        description: "全量 pytest 通过"
+        type: pytest
+        path: "polaris/kernelone/cognitive/tests/"

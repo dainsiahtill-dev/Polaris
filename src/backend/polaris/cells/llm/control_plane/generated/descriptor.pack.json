@@ -1,0 +1,628 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.706215Z",
+  "source_hash": "e24ced27582f86f3",
+  "cell_id": "llm.control_plane",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "InferenceEngineNotConfiguredError",
+      "description": "No local inference backend is configured or reachable.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/inference_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InferenceEngine",
+      "description": "Optional local inference stack; defaults to fail-fast (no silent stubs).",
+      "defined_in": "polaris/cells/llm/control_plane/internal/inference_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "initialize",
+          "doc": "Returns ``True`` only when a real backend is wired (currently none)."
+        },
+        {
+          "name": "generate_structured",
+          "doc": ""
+        },
+        {
+          "name": "generate_chat",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_inference_engine",
+      "description": "Return a new inference engine instance (no shared mutable singleton).",
+      "defined_in": "polaris/cells/llm/control_plane/internal/inference_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "get_inference_engine",
+      "description": "Backward-compatible lazy singleton (prefer create_inference_engine + DI).",
+      "defined_in": "polaris/cells/llm/control_plane/internal/inference_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "LLMConfig",
+      "description": "LLM configuration for a role.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMConfigStore",
+      "description": "Thread-safe config store backed by KernelFileSystem.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_load_all_unlocked",
+          "doc": ""
+        },
+        {
+          "name": "_save_all_unlocked",
+          "doc": ""
+        },
+        {
+          "name": "save",
+          "doc": ""
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "get_all",
+          "doc": ""
+        },
+        {
+          "name": "delete",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HRAgent",
+      "description": "HR role agent (`吏部尚书`) for role/provider config operations.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_provider_kind",
+          "doc": ""
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": ""
+        },
+        {
+          "name": "_tool_set_llm_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_get_llm_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_list_all_configs",
+          "doc": ""
+        },
+        {
+          "name": "_tool_update_llm_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_deactivate_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_activate_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_delete_config",
+          "doc": ""
+        },
+        {
+          "name": "handle_message",
+          "doc": ""
+        },
+        {
+          "name": "run_cycle",
+          "doc": ""
+        },
+        {
+          "name": "get_config",
+          "doc": ""
+        },
+        {
+          "name": "get_all_configs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_polaris_home",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_workspace_from_storage_path",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_root",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/providers/ollama.py"
+    },
+    {
+      "type": "function",
+      "name": "list_ollama_models",
+      "description": "List available Ollama models via `ollama ps`.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/providers/ollama.py"
+    },
+    {
+      "type": "function",
+      "name": "ollama_stop",
+      "description": "Stop all running Ollama models via `ollama stop`.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/providers/ollama.py"
+    },
+    {
+      "type": "class",
+      "name": "TagState",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tag_parser.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TagEvent",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tag_parser.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StreamingTagParser",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tag_parser.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_compile_patterns",
+          "doc": ""
+        },
+        {
+          "name": "detect_tag_mode",
+          "doc": ""
+        },
+        {
+          "name": "process_chunk",
+          "doc": ""
+        },
+        {
+          "name": "_handle_idle_state",
+          "doc": ""
+        },
+        {
+          "name": "_handle_thinking_state",
+          "doc": ""
+        },
+        {
+          "name": "_handle_answer_state",
+          "doc": ""
+        },
+        {
+          "name": "_handle_final_state",
+          "doc": ""
+        },
+        {
+          "name": "_reset_thinking_state",
+          "doc": ""
+        },
+        {
+          "name": "_reset_answer_state",
+          "doc": ""
+        },
+        {
+          "name": "_drain_safe_content",
+          "doc": "Flush buffered plain content while preserving possible partial XML tags."
+        },
+        {
+          "name": "flush",
+          "doc": ""
+        },
+        {
+          "name": "reset",
+          "doc": ""
+        },
+        {
+          "name": "_utc_now",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_tag_parser",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tag_parser.py"
+    },
+    {
+      "type": "class",
+      "name": "StreamEventType",
+      "description": "流式事件类型枚举.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tui_llm_client.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AIRequest",
+      "description": "Cell 定义的 AI 请求 DTO (替代 kernelone.tool_statekit.contracts.AIRequest).",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tui_llm_client.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LLMMessage",
+      "description": "LLM 对话消息.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tui_llm_client.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TUILLMClient",
+      "description": "TUI 专用 LLM 客户端.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tui_llm_client.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_provider_config",
+          "doc": "通过 provider_config 公共服务获取角色配置."
+        },
+        {
+          "name": "_get_provider",
+          "doc": "获取 Provider 实例 (向后兼容)."
+        },
+        {
+          "name": "_build_prompt",
+          "doc": ""
+        },
+        {
+          "name": "_build_request",
+          "doc": ""
+        },
+        {
+          "name": "is_configured",
+          "doc": "通过 Cell 公共服务检查角色是否已配置."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_role_system_prompt",
+      "description": "获取角色的系统提示词.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/tui_llm_client.py"
+    },
+    {
+      "type": "class",
+      "name": "VisionNotAvailableError",
+      "description": "Raised when advanced vision support is requested but unavailable.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/vision_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VisionService",
+      "description": "Multi-backend vision analysis service.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/vision_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "load_model",
+          "doc": "Load an advanced vision model into GPU memory."
+        },
+        {
+          "name": "unload_model",
+          "doc": "Unload model to free VRAM."
+        },
+        {
+          "name": "get_status",
+          "doc": "Return current service status."
+        },
+        {
+          "name": "_get_capabilities",
+          "doc": ""
+        },
+        {
+          "name": "analyze_image",
+          "doc": "Analyze an image."
+        },
+        {
+          "name": "_analyze_basic",
+          "doc": ""
+        },
+        {
+          "name": "_analyze_advanced",
+          "doc": ""
+        },
+        {
+          "name": "extract_text",
+          "doc": "Extract text from an image."
+        },
+        {
+          "name": "describe_image",
+          "doc": "Generate a caption/description for an image."
+        },
+        {
+          "name": "detect_objects",
+          "doc": "Detect objects in an image."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_trust_remote_code_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/vision_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_vision_service",
+      "description": "Get the singleton VisionService instance lazily.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/vision_service.py"
+    },
+    {
+      "type": "function",
+      "name": "save_interactive_interview_report",
+      "description": "兼容旧接口的保存报告函数（简化实现）",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "cancel_interactive_interview_stream",
+      "description": "兼容旧接口的取消函数（简化实现）",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_interview_save",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_interview_cancel",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_runtime_role_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_json_file",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_role_runtime_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_llm_config",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "save_llm_config",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "migrate_config",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_runtime_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_runtime_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "class",
+      "name": "LlmTestPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm_models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProviderActionPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm_models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InterviewAskPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm_models.py",
+      "methods": [
+        {
+          "name": "normalize_session_id",
+          "doc": "将空字符串或None统一处理为None"
+        },
+        {
+          "name": "normalize_context",
+          "doc": "确保context是列表或None"
+        },
+        {
+          "name": "normalize_criteria",
+          "doc": "确保criteria是字符串列表或None"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "InterviewCancelPayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm_models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InterviewSavePayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm_models.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_map_provider_config_error",
+      "description": "Map domain config errors to HTTP status codes.",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "_map_provider_runtime_error",
+      "description": "Map domain runtime errors to HTTP status codes.",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "provider_health",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "provider_models",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "list_providers",
+      "description": "List all available providers with their information",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "get_provider_info",
+      "description": "Get detailed information about a specific provider",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "get_provider_default_config",
+      "description": "Get default configuration for a provider",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_provider_config",
+      "description": "Validate provider configuration",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "health_check_all",
+      "description": "Perform health checks on all configured providers",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "_map_provider_config_error",
+      "description": "Map domain config errors to HTTP status codes.",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_test_report",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_test_transcript",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_test_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_report_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

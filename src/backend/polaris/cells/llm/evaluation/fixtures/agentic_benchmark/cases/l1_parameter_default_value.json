@@ -1,0 +1,28 @@
+{
+  "case_id": "l1_parameter_default_value",
+  "role": "director",
+  "title": "L1 Parameter Default Value Handling",
+  "description": "测试当 n 参数未指定时是否使用合理默认值。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取 tests/test_api_real.py 的前几行。",
+  "tags": [
+    "l1",
+    "basic",
+    "default-value",
+    "repo_read_head"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_read_head"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 1,
+    "required_output_substrings": [
+      "tests/test_api_real.py"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "case_id": "l3_code_exploration_todo_priority",
+  "role": "director",
+  "title": "L3 TODO Priority Exploration",
+  "description": "扫描整个项目所有 TODO 注释，按文件分组，并按出现次数从高到低排序。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "扫描整个项目所有 TODO 注释，按文件分组，并按出现次数从高到低排序。",
+  "tags": [
+    "l3",
+    "exploration",
+    "todo",
+    "priority"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_rg"
+    ],
+    "min_tool_calls": 1,
+    "max_tool_calls": 2,
+    "required_tool_arguments": [
+      {
+        "tools": [
+          "repo_rg"
+        ],
+        "fragment": "TODO",
+        "description": "搜索 TODO 注释"
+      }
+    ],
+    "required_output_substrings": [
+      "TODO",
+      "|"
+    ],
+    "validators": [
+      "stream_nonstream_parity"
+    ]
+  }
+}

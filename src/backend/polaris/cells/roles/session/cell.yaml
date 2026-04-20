@@ -1,0 +1,69 @@
+id: roles.session
+title: Roles Session
+kind: capability
+visibility: public
+stateful: true
+owner: roles
+purpose: 'Own role session lifecycle, attachment management, persistent transcript
+  storage, session-level data access boundaries, and persisted Context OS memory restore
+  queries.
+
+  '
+current_modules:
+- polaris.cells.roles.session.public.service
+- polaris.cells.roles.session.internal.role_session_service
+- polaris.cells.roles.session.internal.context_memory_service
+- polaris.cells.roles.session.internal.conversation
+- polaris.cells.roles.session.internal.session_attachment
+- polaris.cells.roles.session.internal.data_store
+tags: []
+owned_paths:
+- polaris/cells/roles/session/**
+public_contracts:
+  modules:
+  - polaris.cells.roles.session.public.contracts
+  commands:
+  - CreateRoleSessionCommandV1
+  - UpdateRoleSessionCommandV1
+  - AttachRoleSessionCommandV1
+  queries:
+  - SearchRoleSessionMemoryQueryV1
+  - ReadRoleSessionArtifactQueryV1
+  - ReadRoleSessionEpisodeQueryV1
+  - GetRoleSessionStateQueryV1
+  events:
+  - RoleSessionLifecycleEventV1
+  results:
+  - RoleSessionResultV1
+  - RoleSessionContextQueryResultV1
+  errors:
+  - RoleSessionErrorV1
+depends_on:
+- policy.workspace_guard
+- storage.layout
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners:
+- runtime/role_sessions/*
+- runtime/conversations/*
+effects_allowed:
+- fs.read:runtime/**
+- fs.write:runtime/role_sessions/*
+- fs.write:runtime/conversations/*
+- fs.write:runtime/session_attachments/*
+- db.read_write:role_sessions
+verification:
+  tests:
+  - polaris/cells/roles/session/tests/test_contracts.py
+  - polaris/cells/roles/session/tests/test_role_session_service.py
+  - polaris/cells/roles/session/tests/test_context_memory_service.py
+  - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+  gaps:
+  - Session lifecycle still uses ORM models directly and needs typed command/query
+    adapters at the delivery edge.
+  - Session-scoped Context OS restore queries are available through the public session
+    boundary, but non-CLI hosts do not yet expose dedicated UX affordances for memory
+    recall.
+  smoke_commands: []
+generated_artifacts: []

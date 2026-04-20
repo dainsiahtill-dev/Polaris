@@ -1,0 +1,46 @@
+{
+  "case_id": "director_code_refactor",
+  "role": "director",
+  "title": "Director Refactors Legacy Code",
+  "description": "The Director must identify code smells and propose safe, incremental refactoring without breaking functionality.",
+  "workspace_fixture": "director_safe_scope_plan",
+  "prompt": "Analyze the code in src/ directory. Identify top 3 code smells and create a refactoring plan. Return JSON: {smells: [{location, type, risk}], plan: [{step, files, risk_level}], tests_needed: [string]}. Prioritize low-risk, high-impact changes.",
+  "tags": [
+    "director",
+    "refactor",
+    "code_quality"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_tree",
+      "ripgrep",
+      "read_file"
+    ],
+    "required_output_substrings": [
+      "smells",
+      "plan",
+      "risk"
+    ],
+    "forbidden_tools": [
+      "execute_command"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "director_refactor_plan"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 8,
+    "mode": "agentic"
+  },
+  "expected_evidence_path": [],
+  "expected_answer_shape": "answer",
+  "budget_conditions": {
+    "max_tokens": 200000,
+    "max_turns": 10,
+    "max_wall_time_seconds": 300.0
+  },
+  "canonical_profile": "canonical_balanced"
+}

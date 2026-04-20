@@ -1,0 +1,1990 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:27.572788Z",
+  "source_hash": "56da26c3ed13e1cc",
+  "cell_id": "roles.engine",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "EngineStrategy",
+      "description": "推理引擎策略类型",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EngineStatus",
+      "description": "引擎执行状态",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EngineBudget",
+      "description": "引擎预算配置",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py",
+      "methods": [
+        {
+          "name": "from_dict",
+          "doc": "从字典创建预算配置"
+        },
+        {
+          "name": "to_dict",
+          "doc": "转换为字典"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StepResult",
+      "description": "单步执行结果",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EngineResult",
+      "description": "引擎执行结果",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EngineContext",
+      "description": "引擎执行上下文",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py",
+      "methods": [
+        {
+          "name": "get",
+          "doc": "获取上下文变量"
+        },
+        {
+          "name": "set",
+          "doc": "设置上下文变量"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BaseEngine",
+      "description": "推理引擎基类",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化引擎"
+        },
+        {
+          "name": "strategy",
+          "doc": "引擎策略类型（子类必须实现）"
+        },
+        {
+          "name": "status",
+          "doc": "当前执行状态"
+        },
+        {
+          "name": "current_step",
+          "doc": "当前步骤索引"
+        },
+        {
+          "name": "can_continue",
+          "doc": "检查是否继续执行"
+        },
+        {
+          "name": "reset",
+          "doc": "重置引擎状态"
+        },
+        {
+          "name": "_check_budget",
+          "doc": "检查预算是否耗尽"
+        },
+        {
+          "name": "_update_progress",
+          "doc": "更新进度跟踪状态"
+        },
+        {
+          "name": "_create_result",
+          "doc": "创建执行结果"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_engine_budget",
+      "description": "创建预算配置的便捷函数",
+      "defined_in": "polaris/cells/roles/engine/internal/base.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskClassifier",
+      "description": "任务分类器",
+      "defined_in": "polaris/cells/roles/engine/internal/classifier.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化任务分类器"
+        },
+        {
+          "name": "classify",
+          "doc": "分类任务并返回推荐的引擎策略"
+        },
+        {
+          "name": "_calculate_scores",
+          "doc": "计算各策略的得分"
+        },
+        {
+          "name": "_match_patterns",
+          "doc": "计算文本与模式的匹配得分"
+        },
+        {
+          "name": "_adjust_by_context",
+          "doc": "根据上下文调整得分"
+        },
+        {
+          "name": "get_reason",
+          "doc": "获取分类原因"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_task_classifier",
+      "description": "获取全局任务分类器",
+      "defined_in": "polaris/cells/roles/engine/internal/classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_task",
+      "description": "对任务进行分类",
+      "defined_in": "polaris/cells/roles/engine/internal/classifier.py"
+    },
+    {
+      "type": "class",
+      "name": "HybridEngine",
+      "description": "混合推理引擎",
+      "defined_in": "polaris/cells/roles/engine/internal/hybrid.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化混合引擎"
+        },
+        {
+          "name": "_register_default_engines",
+          "doc": "注册默认引擎"
+        },
+        {
+          "name": "_select_strategy",
+          "doc": "选择策略"
+        },
+        {
+          "name": "_get_engine",
+          "doc": "获取引擎实例"
+        },
+        {
+          "name": "_should_switch",
+          "doc": "判断是否需要切换策略"
+        },
+        {
+          "name": "_get_alternative_strategies",
+          "doc": "获取备选策略列表"
+        },
+        {
+          "name": "get_execution_history",
+          "doc": "获取执行历史"
+        },
+        {
+          "name": "get_current_strategy",
+          "doc": "获取当前策略"
+        },
+        {
+          "name": "register_engine",
+          "doc": "注册自定义引擎"
+        },
+        {
+          "name": "set_strategy",
+          "doc": "设置策略（禁用自动选择）"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_hybrid_engine",
+      "description": "获取全局混合引擎实例",
+      "defined_in": "polaris/cells/roles/engine/internal/hybrid.py"
+    },
+    {
+      "type": "class",
+      "name": "PlanSolveEngine",
+      "description": "Plan-and-Solve 推理引擎",
+      "defined_in": "polaris/cells/roles/engine/internal/plan_solve.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化 Plan-Solve 引擎"
+        },
+        {
+          "name": "strategy",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": "检查是否继续执行"
+        },
+        {
+          "name": "_validate_plan",
+          "doc": "Validate the current plan using the structural validator."
+        },
+        {
+          "name": "_parse_plan_response",
+          "doc": "解析计划响应"
+        },
+        {
+          "name": "_parse_exec_response",
+          "doc": "解析执行响应"
+        },
+        {
+          "name": "_find_json_object",
+          "doc": "查找 JSON 对象（支持嵌套）"
+        },
+        {
+          "name": "_extract_balanced_json",
+          "doc": "使用括号平衡算法提取 JSON"
+        },
+        {
+          "name": "_find_matching_bracket",
+          "doc": "找到匹配的括号位置"
+        },
+        {
+          "name": "_build_partial_answer",
+          "doc": "构建部分答案"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ReActEngine",
+      "description": "ReAct 推理引擎",
+      "defined_in": "polaris/cells/roles/engine/internal/react.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化 ReAct 引擎"
+        },
+        {
+          "name": "strategy",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": "检查是否继续执行"
+        },
+        {
+          "name": "_build_prompt",
+          "doc": "构建 ReAct 提示词"
+        },
+        {
+          "name": "_parse_response",
+          "doc": "解析 LLM 响应"
+        },
+        {
+          "name": "_find_json_object",
+          "doc": "查找 JSON 对象（支持嵌套）"
+        },
+        {
+          "name": "_extract_balanced_json",
+          "doc": "使用括号平衡算法提取 JSON"
+        },
+        {
+          "name": "_find_matching_bracket",
+          "doc": "找到匹配的括号位置"
+        },
+        {
+          "name": "_format_observation",
+          "doc": "格式化观察结果"
+        },
+        {
+          "name": "_prune_history",
+          "doc": "修剪历史记录"
+        },
+        {
+          "name": "_build_partial_answer",
+          "doc": "构建部分答案"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EngineRegistry",
+      "description": "引擎注册表",
+      "defined_in": "polaris/cells/roles/engine/internal/registry.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化引擎注册表"
+        },
+        {
+          "name": "register",
+          "doc": "注册引擎类"
+        },
+        {
+          "name": "register_instance",
+          "doc": "注册引擎实例"
+        },
+        {
+          "name": "get",
+          "doc": "获取指定策略的引擎实例"
+        },
+        {
+          "name": "get_or_create",
+          "doc": "获取或创建引擎实例"
+        },
+        {
+          "name": "unregister",
+          "doc": "注销引擎"
+        },
+        {
+          "name": "list_strategies",
+          "doc": "列出所有已注册的策略"
+        },
+        {
+          "name": "clear",
+          "doc": "清空所有注册"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_engine_registry",
+      "description": "获取全局引擎注册表（线程安全）",
+      "defined_in": "polaris/cells/roles/engine/internal/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "register_engine",
+      "description": "注册引擎到全局注册表",
+      "defined_in": "polaris/cells/roles/engine/internal/registry.py"
+    },
+    {
+      "type": "function",
+      "name": "get_engine",
+      "description": "从全局注册表获取引擎",
+      "defined_in": "polaris/cells/roles/engine/internal/registry.py"
+    },
+    {
+      "type": "class",
+      "name": "SequentialEngineAdapter",
+      "description": "SequentialEngine compatibility shim.",
+      "defined_in": "polaris/cells/roles/engine/internal/sequential_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "strategy",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": "Continue while the current budget allows it."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_sequential_adapter",
+      "description": "Create a sequential compatibility shim with a bounded budget.",
+      "defined_in": "polaris/cells/roles/engine/internal/sequential_adapter.py"
+    },
+    {
+      "type": "class",
+      "name": "BranchStatus",
+      "description": "分支状态",
+      "defined_in": "polaris/cells/roles/engine/internal/tot.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ThoughtBranch",
+      "description": "思维分支",
+      "defined_in": "polaris/cells/roles/engine/internal/tot.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToTEngine",
+      "description": "Tree of Thoughts 推理引擎",
+      "defined_in": "polaris/cells/roles/engine/internal/tot.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化 ToT 引擎"
+        },
+        {
+          "name": "strategy",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": "检查是否继续执行"
+        },
+        {
+          "name": "_prune_branches",
+          "doc": "剪枝低分分支"
+        },
+        {
+          "name": "_get_branch_path",
+          "doc": "获取分支路径"
+        },
+        {
+          "name": "_get_max_depth",
+          "doc": "获取最大深度"
+        },
+        {
+          "name": "_parse_thoughts_response",
+          "doc": "解析思考生成响应"
+        },
+        {
+          "name": "_parse_evaluation_response",
+          "doc": "解析评估响应"
+        },
+        {
+          "name": "_parse_finish_response",
+          "doc": "解析完成响应"
+        },
+        {
+          "name": "_extract_balanced_json",
+          "doc": "使用括号平衡算法提取 JSON"
+        },
+        {
+          "name": "_find_matching_bracket",
+          "doc": "查找匹配的闭合括号位置"
+        },
+        {
+          "name": "_build_partial_answer",
+          "doc": "构建部分答案"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ClassifyTaskQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SelectEngineCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RegisterEngineCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EngineRegistrySnapshotQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EngineSelectedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EngineSelectionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EngineExecutionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EngineRegistrySnapshotResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RolesEngineError",
+      "description": "Structured contract error for `roles.engine`.",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRoleEngineService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py",
+      "methods": [
+        {
+          "name": "classify_task",
+          "doc": "Classify one task and return a strategy name."
+        },
+        {
+          "name": "select_engine",
+          "doc": "Select one engine for execution."
+        },
+        {
+          "name": "get_registry_snapshot",
+          "doc": "Inspect registry state."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_cell_top_level_imports_without_error",
+      "description": "The cell top-level __init__ must import without raising.",
+      "defined_in": "polaris/cells/roles/engine/tests/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "test_cell_entry_exposes_public_contracts",
+      "description": "Public contracts must be reachable from the cell entry.",
+      "defined_in": "polaris/cells/roles/engine/tests/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "test_internal_modules_import_without_error",
+      "description": "Internal sub-modules must import without raising.",
+      "defined_in": "polaris/cells/roles/engine/tests/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_singleton_accessible",
+      "description": "EngineRegistry must be reachable from internal.",
+      "defined_in": "polaris/cells/roles/engine/tests/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_classifier_singleton_accessible",
+      "description": "TaskClassifier must be reachable from internal.",
+      "defined_in": "polaris/cells/roles/engine/tests/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "test_hybrid_engine_factory_accessible",
+      "description": "get_hybrid_engine must be importable.",
+      "defined_in": "polaris/cells/roles/engine/tests/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_query_v1_valid",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_query_v1_with_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_query_v1_with_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_query_v1_strips_whitespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_query_v1_rejects_empty_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_query_v1_rejects_empty_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_query_v1_is_frozen",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_select_engine_command_v1_valid",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_select_engine_command_v1_with_options",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_select_engine_command_v1_rejects_empty_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_select_engine_command_v1_rejects_empty_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_select_engine_command_v1_rejects_empty_preferred_strategy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_select_engine_command_v1_is_frozen",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_register_engine_command_v1_valid",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_register_engine_command_v1_with_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_register_engine_command_v1_rejects_empty_strategy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_register_engine_command_v1_rejects_empty_engine_class",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_register_engine_command_v1_is_frozen",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_snapshot_query_v1_defaults",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_snapshot_query_v1_with_flag",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selected_event_v1_valid",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selected_event_v1_with_task",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selected_event_v1_rejects_empty_event_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selected_event_v1_rejects_empty_strategy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selection_result_v1_ok",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selection_result_v1_failure_requires_error",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selection_result_v1_failure_with_error_code",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selection_result_v1_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selection_result_v1_is_frozen",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selection_result_v1_engine_class_none_is_ok",
+      "description": "engine_class=None is allowed (optional field).",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_selection_result_v1_engine_class_empty_rejected",
+      "description": "engine_class='' is rejected by __post_init__.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_execution_result_v1_success",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_execution_result_v1_with_counters",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_execution_result_v1_failure_requires_error",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_execution_result_v1_failure_with_errors",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_execution_result_v1_negative_counters_rejected",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_execution_result_v1_termination_reason",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_execution_result_v1_is_frozen",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_snapshot_result_v1_valid",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_snapshot_result_v1_normalises_whitespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_snapshot_result_v1_filters_empty",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_snapshot_result_v1_negative_counts_rejected",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_roles_engine_error_default",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_roles_engine_error_with_code_and_details",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_roles_engine_error_rejects_empty_message",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_roles_engine_error_rejects_empty_code",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_irole_engine_service_protocol",
+      "description": "Protocol defines the required methods.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "_DummyEngine",
+      "description": "Minimal concrete subclass for testing.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py",
+      "methods": [
+        {
+          "name": "strategy",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "test_engine_status_values",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_strategy_values",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_budget_defaults",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_budget_from_dict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_budget_from_dict_partial",
+      "description": "Partial dict should fill in defaults for missing keys.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_budget_from_dict_rejects_wrong_type",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_budget_from_dict_rejects_negative",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_budget_from_dict_rejects_wrong_bool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_budget_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_create_engine_budget_convenience",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_context_requires_workspace_role_task",
+      "description": "All three required fields must be provided.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_context_state_defaults_to_empty_dict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_context_get_set",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_step_result_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_step_result_defaults",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_result_requires_strategy",
+      "description": "EngineResult.strategy is a required field.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_result_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_result_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_default_budget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_custom_budget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_status_starts_idle",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_reset",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_check_budget_allows_few_errors",
+      "description": "_check_budget returns True when consecutive errors < threshold.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_check_budget_blocks_many_errors",
+      "description": "_check_budget returns False when consecutive errors >= threshold.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_check_budget_blocks_at_max_steps",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_check_budget_blocks_at_max_tool_calls",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_check_budget_blocks_at_max_no_progress",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_update_progress_resets_no_progress_on_success",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_update_progress_increments_no_progress_on_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_update_progress_tracks_error_fingerprint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_update_progress_same_fingerprint_increments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_update_progress_different_fingerprint_resets",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_create_result_success",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_create_result_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_create_result_includes_steps",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_call_llm_returns_empty_when_no_caller",
+      "description": "_call_llm returns empty string when no llm_caller injected (testability).",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_can_continue_respects_budget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "function",
+      "name": "test_base_engine_current_step_property",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_base.py"
+    },
+    {
+      "type": "class",
+      "name": "_DummyEngine",
+      "description": "Minimal concrete BaseEngine for testing registry.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py",
+      "methods": [
+        {
+          "name": "strategy",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_PlanSolveDummy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py",
+      "methods": [
+        {
+          "name": "strategy",
+          "doc": ""
+        },
+        {
+          "name": "can_continue",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "NotAnEngine",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_starts_empty",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_register_stores_strategy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_register_same_strategy_twice",
+      "description": "Re-registering the same strategy should be idempotent (not raise).",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_register_requires_base_engine_subclass",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_get_returns_instance",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_get_unknown_returns_none",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_get_returns_cached_instance",
+      "description": "Multiple calls to get() should return the same object.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_unregister",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_unregister_unknown_is_noop",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_clear",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_register_with_kwargs",
+      "description": "register() passes kwargs to the engine constructor.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_register_instance",
+      "description": "register_instance() stores an existing instance.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_get_or_create",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_get_or_create_unknown_raises",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_engine_registry_get_or_create_with_override_kwargs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_register_engine_convenience",
+      "description": "register_engine() convenience function should register on global registry.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_engine_convenience",
+      "description": "get_engine() convenience function should retrieve from global registry.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_engine_unknown_returns_none",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_engine_registry_is_singleton",
+      "description": "Two calls return the same registry object.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "function",
+      "name": "test_global_registry_cleared_between_tests",
+      "description": "Each test should work with a clean global registry.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_engine_registry.py"
+    },
+    {
+      "type": "class",
+      "name": "TestHybridEngineDefaults",
+      "description": "Engine initialisation and defaults.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_hybrid_engine.py",
+      "methods": [
+        {
+          "name": "test_engine_starts_with_default_engines",
+          "doc": ""
+        },
+        {
+          "name": "test_engine_strategy_property_not_present",
+          "doc": "HybridEngine does not inherit from BaseEngine; it orchestrates them."
+        },
+        {
+          "name": "test_execution_history_starts_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHybridEngineStrategySelection",
+      "description": "_select_strategy and auto-selection.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_hybrid_engine.py",
+      "methods": [
+        {
+          "name": "test_select_strategy_returns_valid_strategy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHybridEngineStrategySwitching",
+      "description": "_should_switch and _get_alternative_strategies.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_hybrid_engine.py",
+      "methods": [
+        {
+          "name": "test_should_switch_on_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_should_switch_at_high_step_count",
+          "doc": "Results near budget limit should trigger switching."
+        },
+        {
+          "name": "test_should_not_switch_when_under_budget",
+          "doc": "Good results should not trigger switching."
+        },
+        {
+          "name": "test_get_alternative_strategies_returns_two",
+          "doc": ""
+        },
+        {
+          "name": "test_get_alternative_strategies_unknown_returns_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHybridEngineRun",
+      "description": "run() with auto-selection.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_hybrid_engine.py",
+      "methods": [
+        {
+          "name": "test_run_returns_engine_result",
+          "doc": ""
+        },
+        {
+          "name": "test_run_creates_context_when_none_provided",
+          "doc": "run() should create EngineContext when context=None."
+        },
+        {
+          "name": "test_run_with_explicit_strategy",
+          "doc": "run() should use the explicitly provided strategy."
+        },
+        {
+          "name": "test_run_populates_execution_history",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHybridEngineHelpers",
+      "description": "register_engine, set_strategy, get_current_strategy, get_execution_history.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_hybrid_engine.py",
+      "methods": [
+        {
+          "name": "test_register_engine_adds_to_registry",
+          "doc": ""
+        },
+        {
+          "name": "test_set_strategy_disables_auto_select",
+          "doc": ""
+        },
+        {
+          "name": "test_get_current_strategy_initially_none",
+          "doc": ""
+        },
+        {
+          "name": "test_get_execution_history_initially_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetHybridEngine",
+      "description": "Global singleton.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_hybrid_engine.py",
+      "methods": [
+        {
+          "name": "test_get_hybrid_engine_returns_engine",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_engine",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_hybrid_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "TestPlanSolvePhaseTransitions",
+      "description": "Plan-then-execute phase transitions.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_plan_solve_engine.py",
+      "methods": [
+        {
+          "name": "test_engine_starts_in_planning_phase",
+          "doc": "Engine init should set _phase to 'planning'."
+        },
+        {
+          "name": "test_engine_strategy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPlanSolveCanContinue",
+      "description": "can_continue guards.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_plan_solve_engine.py",
+      "methods": [
+        {
+          "name": "test_can_continue_stops_at_max_steps",
+          "doc": ""
+        },
+        {
+          "name": "test_can_continue_stops_when_plan_exhausted_in_executing",
+          "doc": "When in executing phase and plan index >= plan length, cannot continue."
+        },
+        {
+          "name": "test_can_continue_stops_on_completed_status",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPlanSolveParsing",
+      "description": "_parse_plan_response and _parse_exec_response.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_plan_solve_engine.py",
+      "methods": [
+        {
+          "name": "test_parse_plan_response_valid_json",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_plan_response_fallback_to_numbered_lines",
+          "doc": "Non-JSON plan text should fall back to line-based extraction."
+        },
+        {
+          "name": "test_parse_plan_response_totally_invalid_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_exec_response_valid_json",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_exec_response_invalid_returns_default_finish",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPlanSolveExecutePhase",
+      "description": "_executing_step edge case: empty plan immediately returns COMPLETED.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_plan_solve_engine.py",
+      "methods": [
+        {
+          "name": "test_executing_step_returns_completed_when_plan_empty",
+          "doc": "When _current_plan_index >= len(_plan), returns COMPLETED status."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPlanSolveBuildPartialAnswer",
+      "description": "_build_partial_answer.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_plan_solve_engine.py",
+      "methods": [
+        {
+          "name": "test_build_partial_answer_with_plan",
+          "doc": ""
+        },
+        {
+          "name": "test_build_partial_answer_empty_plan",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_engine",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_plan_solve_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_ctx",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_plan_solve_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "TestReActJSONParsing",
+      "description": "4-pass JSON parsing — tested in isolation via _parse_response.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_react_engine.py",
+      "methods": [
+        {
+          "name": "test_parse_direct_json",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_json_with_thought_action_only",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_response_with_preamble",
+          "doc": "Parsing should succeed even with text before the JSON."
+        },
+        {
+          "name": "test_parse_malformed_json_falls_back_to_partial",
+          "doc": "Invalid JSON should fall back to partial regex extraction."
+        },
+        {
+          "name": "test_parse_totally_invalid_returns_default",
+          "doc": "Completely unparseable input should return a default finish response."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReActFindMatchingBracket",
+      "description": "Bracket matching for balanced JSON extraction.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_react_engine.py",
+      "methods": [
+        {
+          "name": "test_find_matching_brace_simple",
+          "doc": ""
+        },
+        {
+          "name": "test_find_matching_brace_nested",
+          "doc": ""
+        },
+        {
+          "name": "test_find_matching_brace_with_strings",
+          "doc": ""
+        },
+        {
+          "name": "test_find_matching_brace_escaped_quote",
+          "doc": ""
+        },
+        {
+          "name": "test_find_matching_brace_unmatched",
+          "doc": ""
+        },
+        {
+          "name": "test_find_matching_bracket_array",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReActExtractBalancedJSON",
+      "description": "Balanced-bracket JSON extraction fallback.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_react_engine.py",
+      "methods": [
+        {
+          "name": "test_extract_balanced_object",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_balanced_array",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_balanced_nested",
+          "doc": "Balanced-bracket extraction finds the outermost matching braces."
+        },
+        {
+          "name": "test_extract_balanced_no_json",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReActFindJSONObject",
+      "description": "First/last brace JSON object extraction.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_react_engine.py",
+      "methods": [
+        {
+          "name": "test_find_json_object_simple",
+          "doc": ""
+        },
+        {
+          "name": "test_find_json_object_no_brace",
+          "doc": ""
+        },
+        {
+          "name": "test_find_json_object_only_open",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReActStepLogic",
+      "description": "ReAct step() action dispatch.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_react_engine.py",
+      "methods": [
+        {
+          "name": "test_finish_action_returns_completed_status",
+          "doc": "'finish' action should set status COMPLETED."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReActEngineLifecycle",
+      "description": "Engine lifecycle — init, can_continue, _build_prompt, _format_observation.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_react_engine.py",
+      "methods": [
+        {
+          "name": "test_max_iterations_capped_at_100",
+          "doc": ""
+        },
+        {
+          "name": "test_max_iterations_minimum_1",
+          "doc": ""
+        },
+        {
+          "name": "test_strategy_property",
+          "doc": ""
+        },
+        {
+          "name": "test_build_prompt_contains_task",
+          "doc": ""
+        },
+        {
+          "name": "test_format_observation_with_content_key",
+          "doc": ""
+        },
+        {
+          "name": "test_format_observation_with_output_key",
+          "doc": ""
+        },
+        {
+          "name": "test_format_observation_with_error_key",
+          "doc": ""
+        },
+        {
+          "name": "test_format_observation_with_none",
+          "doc": ""
+        },
+        {
+          "name": "test_format_observation_truncates_long_output",
+          "doc": ""
+        },
+        {
+          "name": "test_prune_history",
+          "doc": ""
+        },
+        {
+          "name": "test_build_partial_answer_with_history",
+          "doc": ""
+        },
+        {
+          "name": "test_build_partial_answer_empty_history",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_engine",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_react_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialAdapterDefaults",
+      "description": "Adapter initialisation.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_sequential_adapter.py",
+      "methods": [
+        {
+          "name": "test_adapter_has_sequential_strategy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialAdapterExecute",
+      "description": "execute() single-shot LLM call.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_sequential_adapter.py",
+      "methods": [
+        {
+          "name": "test_execute_returns_engine_result",
+          "doc": ""
+        },
+        {
+          "name": "test_execute_nonempty_task_succeeds",
+          "doc": "Non-empty task should always succeed (single-shot, no failure path)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialAdapterPromptBuilding",
+      "description": "Sequential adapter prompt building via execute path.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_sequential_adapter.py",
+      "methods": [
+        {
+          "name": "test_adapter_has_strategy",
+          "doc": "Adapter should expose its strategy."
+        },
+        {
+          "name": "test_adapter_can_continue_respects_budget",
+          "doc": "can_continue should check budget limits."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_sequential_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_assigns_react_to_explore_task",
+      "description": "ReAct patterns like '分析' should boost REACT score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_assigns_plan_solve_to_implement_task",
+      "description": "'实现' keyword should boost Plan-Solve score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_assigns_tot_to_design_task",
+      "description": "'设计' in '设计系统架构' should boost ToT score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_assigns_sequential_to_execute_task",
+      "description": "'运行' keyword should boost Sequential score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_all_strategies_get_minimum_score",
+      "description": "Every strategy should receive at least 0.1 even without matching keywords.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_context_can_boost_score",
+      "description": "Context dict can influence scoring via _adjust_by_context.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_classify_returns_engine_strategy",
+      "description": "classify() returns the EngineStrategy enum, not a string.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_classify_with_context",
+      "description": "Context dict should be passed through.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_classify_empty_task",
+      "description": "Empty task should still return a valid strategy, not raise.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_adjust_by_context_role_director",
+      "description": "role=director should boost SEQUENTIAL score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_adjust_by_context_role_architect",
+      "description": "role=architect should boost ToT score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_adjust_by_context_complexity_high",
+      "description": "complexity=high should boost ToT and REACT scores.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_adjust_by_context_complexity_low",
+      "description": "complexity=low should boost SEQUENTIAL score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_match_patterns_returns_float",
+      "description": "_match_patterns should return a float score.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_match_patterns_case_insensitive",
+      "description": "Pattern matching should be case-insensitive (re.IGNORECASE).",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classify_task_convenience",
+      "description": "classify_task() function should delegate to classifier.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_task_classifier_returns_classifier",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_task_classifier_is_same_instance",
+      "description": "Calling twice returns the same object (module-level singleton).",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_get_reason_returns_string",
+      "description": "get_reason should return a non-empty explanation.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "function",
+      "name": "test_classifier_get_reason_reflects_task",
+      "description": "Different tasks should produce potentially different reasons.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_task_classifier.py"
+    },
+    {
+      "type": "class",
+      "name": "TestThoughtBranch",
+      "description": "ThoughtBranch dataclass — requires `id` as first positional arg.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_tot_engine.py",
+      "methods": [
+        {
+          "name": "test_thought_branch_requires_id",
+          "doc": ""
+        },
+        {
+          "name": "test_thought_branch_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_thought_branch_with_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_thought_branch_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBranchStatus",
+      "description": "BranchStatus enum values.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_tot_engine.py",
+      "methods": [
+        {
+          "name": "test_branch_status_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToTEngineDefaults",
+      "description": "Engine initialization.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_tot_engine.py",
+      "methods": [
+        {
+          "name": "test_engine_has_empty_branches_dict",
+          "doc": "Branches are stored as a dict[str, ThoughtBranch]."
+        },
+        {
+          "name": "test_engine_strategy",
+          "doc": ""
+        },
+        {
+          "name": "test_engine_max_branches_capped_at_10",
+          "doc": "max_branches is capped at 10 to prevent resource exhaustion."
+        },
+        {
+          "name": "test_engine_max_depth_capped_at_20",
+          "doc": ""
+        },
+        {
+          "name": "test_pruning_threshold_clamped_to_0_1",
+          "doc": "pruning_threshold is clamped to [0.0, 1.0]."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToTPruning",
+      "description": "_prune_branches — takes no arguments, uses instance pruning_threshold.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_tot_engine.py",
+      "methods": [
+        {
+          "name": "test_prune_branches_prunes_below_threshold",
+          "doc": "Branches with score below threshold get PRUNED status."
+        },
+        {
+          "name": "test_prune_branches_keeps_high_scoring",
+          "doc": "Highest-scoring branch survives pruning."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToTEngineLifecycle",
+      "description": "End-to-end lifecycle via step() and _initialize_root.",
+      "defined_in": "polaris/cells/roles/engine/tests/test_tot_engine.py",
+      "methods": [
+        {
+          "name": "test_initialize_root_sets_root_id",
+          "doc": "_initialize_root (async) sets _root_id and populates _branches."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_engine",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_tot_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_ctx",
+      "description": "",
+      "defined_in": "polaris/cells/roles/engine/tests/test_tot_engine.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

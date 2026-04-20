@@ -1,0 +1,32 @@
+{
+  "case_id": "l1_read_tail",
+  "level": "L1",
+  "role": "director",
+  "title": "L1 Read File Tail",
+  "description": "验证模型能正确读取文件尾部。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "请读取 server.py 的最后 10 行。",
+  "tags": ["l1", "read", "tail"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.90,
+    "stream": {
+      "required_tools": ["repo_read_tail"],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1,
+      "first_tool": "repo_read_tail"
+    },
+    "non_stream": {
+      "required_tools": ["repo_read_tail"],
+      "forbidden_tools": ["execute_command"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 1
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+version: 1
+runtime_mode_promotion:
+  source_mode: shadow
+  target_mode: mainline
+  minimum_cases: 4
+  thresholds:
+    exact_fact_recovery: 0.85
+    decision_preservation: 0.85
+    open_loop_continuity: 0.85
+    artifact_restore_precision: 0.80
+    temporal_update_correctness: 0.80
+    abstention: 0.90
+    compaction_regret_max: 0.20
+notes:
+  - Context OS rollout must be metrics-gated, not confidence-gated.
+  - Failing any threshold keeps runtime mode in shadow.

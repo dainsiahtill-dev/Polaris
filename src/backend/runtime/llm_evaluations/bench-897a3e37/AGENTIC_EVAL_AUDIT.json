@@ -1,0 +1,3613 @@
+{
+  "status": "FAIL",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "generated_at": "2026-04-13T13:16:46.948439+00:00",
+  "benchmark": {
+    "suite": "agentic_benchmark",
+    "run_id": "bench-897a3e37",
+    "role_scope": "director",
+    "provider_id": "runtime_binding",
+    "model": "runtime_binding",
+    "transport_mode": "stream"
+  },
+  "score": {
+    "overall_percent": 48.27,
+    "average_score": 0.4827,
+    "pass_rate": 0.0,
+    "total_cases": 73,
+    "passed_cases": 0,
+    "failed_cases": 73
+  },
+  "failures": [
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    },
+    {
+      "case_id": "",
+      "role": "",
+      "title": "",
+      "score_percent": 0.0,
+      "threshold_percent": 0.0,
+      "summary": "",
+      "root_cause": {},
+      "failed_checks": [],
+      "repair_suggestions": [],
+      "expected_contract": {
+        "prompt_preview": "",
+        "tags": [],
+        "judge": {}
+      },
+      "observed_trace": {
+        "tool_call_count": 0,
+        "tool_names": [],
+        "tool_calls_preview": [],
+        "output_preview": "",
+        "thinking_preview": "",
+        "error": "",
+        "duration_ms": 0,
+        "event_count": 0,
+        "event_type_histogram": {},
+        "raw_event_samples": [],
+        "workspace_files_sample": [],
+        "fingerprint": {},
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [],
+        "textual_tool_protocol_markers": [],
+        "has_native_tool_trace": false,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "",
+        "raw_event_count": 0,
+        "raw_event_types": {},
+        "tool_call_count": 0,
+        "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json"
+      }
+    }
+  ],
+  "tool_audit": {
+    "total_calls": 0,
+    "by_tool": {},
+    "critical_failures": 0,
+    "safety_violations": []
+  },
+  "repair_plan": [],
+  "errors": [],
+  "evidence_paths": {
+    "benchmark_artifact": "X:\\.polaris\\projects\\bench-897a3e37-3be6ada37f9b\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_BENCHMARK_REPORT.json",
+    "audit_package": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\runtime\\llm_evaluations\\bench-897a3e37\\AGENTIC_EVAL_AUDIT.json",
+    "case_sandboxes": []
+  }
+}

@@ -1,0 +1,339 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-20T20:34:28.738949Z",
+  "source_hash": "d82c40e2d3ef1af9",
+  "cell_id": "llm.dialogue",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "split_lines",
+      "description": "分割为行列表",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_desktop_app_keywords",
+      "description": "获取桌面应用检测关键词列表。",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_desktop_app_in_scope_defaults",
+      "description": "获取桌面应用项目的默认范围定义。",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_desktop_app_constraint_defaults",
+      "description": "获取桌面应用项目的默认约束定义。",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_dialogue_fields",
+      "description": "生成默认对话字段",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_slot_answer",
+      "description": "从文本中提取槽位答案",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "build_dialogue_state",
+      "description": "构建对话状态",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "build_dialogue_prompt",
+      "description": "构建对话提示词",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "finalize_dialogue_payload",
+      "description": "最终化对话载荷",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_dialogue_fallback",
+      "description": "生成对话降级响应",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "build_docs_prompt",
+      "description": "构建文档生成提示词",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_field_items",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "_append",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_default_docs_fields",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_docs_fields",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_repair_prompt",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleOutputParser",
+      "description": "角色输出解析器",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py",
+      "methods": [
+        {
+          "name": "extract_json",
+          "doc": "从文本中提取JSON对象"
+        },
+        {
+          "name": "extract_patch_blocks",
+          "doc": "提取代码补丁块"
+        },
+        {
+          "name": "validate_role_output",
+          "doc": "验证角色输出"
+        },
+        {
+          "name": "_validate_schema",
+          "doc": "简单schema验证"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleOutputQualityChecker",
+      "description": "角色输出质量检查器",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py",
+      "methods": [
+        {
+          "name": "check_output",
+          "doc": "检查输出质量，返回得分和建议"
+        },
+        {
+          "name": "_check_pm_output",
+          "doc": ""
+        },
+        {
+          "name": "_check_architect_output",
+          "doc": ""
+        },
+        {
+          "name": "_check_ce_output",
+          "doc": ""
+        },
+        {
+          "name": "_check_director_output",
+          "doc": ""
+        },
+        {
+          "name": "_check_qa_output",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_resolve_role_tool_rounds",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_tool_results",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_role_provider_model",
+      "description": "通过 Cell 公共服务解析角色的 provider 和 model.",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_pending_tool_turn",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_tool_feedback",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_missing_read_paths",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_tool_call_signatures",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_redundant_exploration_loop",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_execute_pending_tool_calls_via_orchestrator",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_role_prompt",
+      "description": "构建角色对话的prompt",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "register_role_template",
+      "description": "注册新的角色提示词模板",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "get_registered_roles",
+      "description": "获取所有已注册的角色列表",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_and_parse_role_output",
+      "description": "验证并解析角色输出的便捷函数",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "class",
+      "name": "InvokeRoleDialogueCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InvokeDocsDialogueCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidateRoleOutputQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DialogueTurnCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DialogueTurnResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmDialogueError",
+      "description": "Structured contract error for `llm.dialogue`.",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ILlmDialogueService",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py",
+      "methods": [
+        {
+          "name": "validate_role_output",
+          "doc": "Validate role output format."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "LlmDialogueService",
+      "description": "Contract-first dialogue facade.",
+      "defined_in": "polaris/cells/llm/dialogue/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "validate_role_output",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGenerateRoleResponseStreamingSessionResolution",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_dialogue_session_continuity.py",
+      "methods": [
+        {
+          "name": "test_missing_session_id_creates_fresh_ad_hoc_session",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

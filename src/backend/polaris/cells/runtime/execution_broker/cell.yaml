@@ -1,0 +1,51 @@
+id: runtime.execution_broker
+title: Runtime Execution Broker
+kind: capability
+visibility: public
+stateful: false
+owner: runtime
+purpose: 'Provide a unified cell-level execution facade for subprocess, async task,
+  and blocking I/O submissions. This cell standardizes lifecycle control, timeout/cancel
+  semantics, and process log streaming on top of KernelOne execution runtime.
+
+  '
+current_modules:
+- polaris.cells.runtime.execution_broker.public.service
+- polaris.cells.runtime.execution_broker.internal.service
+- polaris.kernelone.runtime.execution_facade
+tags: []
+owned_paths:
+- polaris/cells/runtime/execution_broker/**
+public_contracts:
+  modules:
+  - polaris.cells.runtime.execution_broker.public.contracts
+  commands:
+  - LaunchExecutionProcessCommandV1
+  queries:
+  - GetExecutionProcessStatusQueryV1
+  events: []
+  results:
+  - ExecutionProcessLaunchResultV1
+  - ExecutionProcessWaitResultV1
+  errors:
+  - ExecutionBrokerError
+depends_on:
+- runtime.state_owner
+- policy.workspace_guard
+- audit.evidence
+subgraphs:
+- execution_governance_pipeline
+state_owners: []
+effects_allowed:
+- process.spawn:runtime/*
+- fs.write:runtime/logs/*
+- fs.write:runtime/events/*
+- ws.outbound:runtime/*
+verification:
+  tests:
+  - polaris/cells/runtime/execution_broker/tests/test_service.py
+  gaps:
+  - Legacy sync process callers still need full call-site migration to async-first
+    broker contracts.
+  smoke_commands: []
+generated_artifacts: []

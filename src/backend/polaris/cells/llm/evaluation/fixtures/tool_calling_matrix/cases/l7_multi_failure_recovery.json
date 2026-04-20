@@ -1,0 +1,40 @@
+{
+  "case_id": "l7_multi_failure_recovery",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Multi-Failure Recovery",
+  "description": "测试 Agent 能否在多次失败后找到正确的解决方案。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "依次尝试读取以下文件：main.py、app.py、index.py。如果都不存在，用搜索工具找到实际存在的 Python 文件并读取其中一个。",
+  "tags": ["l7", "multi-failure", "recovery", "fallback", "search"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.65,
+    "stream": {
+      "required_tools": ["read_file"],
+      "required_any_tools": [
+        ["glob", "search_code", "list_directory", "repo_tree"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 8,
+      "validators": [
+        "eventual_success_after_failures"
+      ]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "required_any_tools": [
+        ["glob", "search_code", "list_directory", "repo_tree"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 8
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

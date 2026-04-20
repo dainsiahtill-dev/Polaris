@@ -1,0 +1,59 @@
+id: sample.example
+title: Sample Example
+kind: capability
+visibility: public
+stateful: false
+owner: team-name
+
+purpose: >
+  Replace this sample with a real capability description.
+
+tags:
+  - template
+
+owned_paths:
+  - cells/sample/example/**
+
+inputs:
+  - name: execute_sample
+    mode: command
+    contract: SampleCommand
+    returns: SampleResult
+
+outputs:
+  - name: append_audit
+    mode: event
+    target: audit.evidence
+    contract: SampleCompletedEvent
+
+depends_on:
+  - audit.evidence
+
+state_owners: []
+
+effects_allowed: []
+
+does_not:
+  - access_http_transport
+  - write_outside_workspace
+  - mutate_foreign_state
+
+invariants:
+  - all state changes must be represented by explicit contracts
+  - all text file writes must use UTF-8
+
+verification:
+  tests:
+    - cells/sample/example/tests/test_behavior.py
+    - cells/sample/example/tests/test_contracts.py
+  contracts:
+    - SampleCommand
+    - SampleResult
+    - SampleCompletedEvent
+
+generated_artifacts:
+  - generated/context.pack.json
+  - generated/impact.pack.json
+  - generated/verify.pack.json
+
+template: true

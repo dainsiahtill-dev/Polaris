@@ -1,0 +1,41 @@
+{
+  "case_id": "l7_partial_success_handling",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Partial Success Handling",
+  "description": "测试 Agent 能否处理部分成功的情况（部分文件存在，部分不存在）。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "读取以下三个文件：config.py、missing_file.py、server.py。对于存在的文件报告内容，对于不存在的文件说明情况。",
+  "tags": ["l7", "partial-success", "mixed-results", "graceful-handling"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.7,
+    "stream": {
+      "required_tools": ["read_file"],
+      "required_tool_call_counts": {
+        "read_file": 3
+      },
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 4,
+      "required_output_patterns": [
+        "不存在",
+        "未找到",
+        "not found",
+        "DEBUG",
+        "server"
+      ]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 3,
+      "max_tool_calls": 4
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "case_id": "l7_context_memory",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Context Memory Retention",
+  "description": "测试 Agent 能否在多轮对话中记住之前读取的内容。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "1. 读取 config.py 并记住其中的 API_PORT 值 2. 读取 server.py 3. 比较 server.py 中使用的端口与 config.py 中定义的端口是否一致",
+  "tags": ["l7", "memory", "context", "multi-file", "comparison"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.75,
+    "stream": {
+      "required_tools": ["read_file"],
+      "required_tool_call_counts": {
+        "read_file": 2
+      },
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 3,
+      "required_output_substrings": ["49977", "端口"]
+    },
+    "non_stream": {
+      "required_tools": ["read_file"],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 2,
+      "max_tool_calls": 3
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

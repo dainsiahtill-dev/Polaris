@@ -1,0 +1,86 @@
+version: 1
+generated_at: "2026-03-25"
+scope: "src/backend governance debt register"
+debts:
+  - id: "DEBT-20260325-roles-kernel-turn-stage-contract"
+    title: "roles.kernel turn semantic stages remain runtime-enforced"
+    classification: structural
+    status: active
+    severity: high
+    scope_refs:
+      - "roles.kernel"
+      - "polaris/cells/roles/kernel/internal/turn_engine.py"
+    summary: >
+      roles.kernel now separates raw_content, clean_content, and native_tool_calls
+      through AssistantTurnArtifacts, but the parser/transcript contract is still
+      enforced by runtime conventions rather than compile-time types.
+    root_cause: >
+      The original turn engine passed ambiguous strings between parsing, UI output,
+      and transcript persistence. That allowed [TOOL_CALL] wrappers to leak into
+      session history and broke fallback parsing when sanitized text was reused.
+    trigger_conditions:
+      - "Changing turn_engine run() or run_stream() content handling"
+      - "Changing transcript append behavior or sanitizer logic"
+      - "Changing tool-call parsing fallbacks when native_tool_calls are absent"
+    mitigations:
+      - "AssistantTurnArtifacts makes raw/sanitized/native data explicit"
+      - "Semantic stage regression tests protect parser and transcript boundaries"
+      - "verify.pack.json records current guarantees and residual risks"
+    residual_risks:
+      - "The parser still accepts raw_content as plain str instead of a dedicated typed wrapper"
+      - "Downstream stream consumers can still regress if they reintroduce wrapper-bearing chunk contracts"
+    linked_assets:
+      adrs:
+        - "docs/governance/decisions/adr-0042-turn-engine-triple-responsibility.md"
+        - "docs/governance/decisions/adr-0043-structural-bug-governance-loop.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260325-turn-engine-tool-loop.yaml"
+      verify_packs:
+        - "polaris/cells/roles/kernel/generated/verify.pack.json"
+      tests:
+        - "polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py"
+        - "polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py"
+        - "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+    next_actions:
+      - "Introduce stronger parser input types for raw vs sanitized assistant content"
+      - "Extend transcript/write-path audits to host adapters that persist assistant chunks"
+
+  - id: "DEBT-20260325-kernelone-llm-reexport-parity"
+    title: "KernelOne llm shared contract re-export chain can drift"
+    classification: structural
+    status: monitoring
+    severity: high
+    scope_refs:
+      - "polaris/kernelone/llm/shared_contracts.py"
+      - "polaris/kernelone/llm/engine/contracts.py"
+      - "polaris/kernelone/llm/engine/executor.py"
+    summary: >
+      StreamEventType lives in shared_contracts and is re-exported through engine
+      contracts before executor imports it. The architectural risk is reduced by
+      parity tests, but the re-export layer still requires disciplined maintenance.
+    root_cause: >
+      Consumers relied on a manual re-export chain without an automated parity gate.
+      One missing import in executor.py was enough to crash the runtime at import time.
+    trigger_conditions:
+      - "Editing StreamEventType or other shared llm contracts"
+      - "Editing engine/contracts.py re-exports"
+      - "Editing executor.py contract imports or stream event handling"
+    mitigations:
+      - "Architecture tests now assert StreamEventType identity across source and re-export"
+      - "Architecture tests parse executor.py to require importing StreamEventType from contracts"
+    residual_risks:
+      - "The re-export layer still exists, so parity remains a governance concern"
+      - "Future shared contract additions can drift if parity tests are not extended"
+    linked_assets:
+      adrs:
+        - "docs/governance/decisions/adr-0042-turn-engine-triple-responsibility.md"
+        - "docs/governance/decisions/adr-0043-structural-bug-governance-loop.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260325-turn-engine-tool-loop.yaml"
+      verify_packs:
+        - "polaris/cells/roles/kernel/generated/verify.pack.json"
+      tests:
+        - "tests/architecture/test_kernelone_llm_contract_reexports.py"
+    next_actions:
+      - "Prefer canonical source imports for new consumers where re-export is not required"
+      - "Extend parity coverage when additional shared contracts are added to the engine surface"

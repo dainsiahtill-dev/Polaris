@@ -1,0 +1,20 @@
+{
+  "cell_id": "llm.evaluation",
+  "version": 1,
+  "read_order": [
+    "cell.yaml",
+    "public/contracts.py",
+    "public/service.py",
+    "internal/agentic_benchmark.py",
+    "internal/tool_calling_matrix.py",
+    "internal/deterministic_judge.py",
+    "internal/benchmark_loader.py",
+    "internal/runner.py",
+    "internal/readiness_tests.py",
+    "internal/index.py"
+  ],
+  "notes": [
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline.",
+    "Read the benchmark fixtures under fixtures/agentic_benchmark/ before editing deterministic judge or sandbox execution rules."
+  ]
+}

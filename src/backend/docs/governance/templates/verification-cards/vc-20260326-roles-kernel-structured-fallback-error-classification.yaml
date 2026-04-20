@@ -1,0 +1,58 @@
+card_id: "vc-20260326-roles-kernel-structured-fallback-error-classification"
+bug_summary: >
+  roles.kernel 的 call_structured 在 text fallback 执行失败时未先检查 response.ok，
+  会把 provider 失败误判为 validation_fail，削弱错误归因与审计准确性。
+
+classification: one_off
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/llm_caller.py"
+  method: "call_structured"
+  symptom: "provider 调用失败时返回 validation_fail，而不是 rate_limit/provider/auth 等真实类别。"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设 call_structured 的 fallback 分支缺少 response.ok 检查。"
+    status: verified_true
+    evidence: >
+      在 fallback AIExecutor.invoke 之后直接进入 content/JSON parse 路径，
+      未像 call() 一样先判断 ok/error 字段。
+  - id: "A2"
+    statement: "我假设该缺口会把 provider 错误误归类为 validation_fail。"
+    status: verified_true
+    evidence: >
+      当 output 为空且 error 非空时会触发 JSON 提取异常，
+      最终进入 parse_error 分支并返回 validation_fail。
+
+pre_mortem:
+  failure_point: >
+    若修复不当，可能把原本可回退的 structured 路径提前终止，导致 structured 成功率下降。
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/llm_caller.py"
+    - "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "新增 structured fallback 非 OK 响应分类测试。"
+      expected: "error_category 保留为 rate_limit/provider 等真实分类，不出现 validation_fail 误判。"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "新增 stream prepare 失败时 error event metadata 完整性测试。"
+      expected: "error 事件携带 native_tool_mode/tool_protocol，满足统一事件结构。"
+      status: new
+  integration_tests:
+    - description: "roles.kernel stream/tool loop 回归"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      status: existing_pass
+  manual_check:
+    - "确认 call_structured fallback 在 response.ok=False 时发射 CALL_ERROR。"
+    - "确认 call_stream 所有异常 error yield 都附带 metadata。"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-03-26"
+  verified_by: "codex"
+  verified_at: "2026-03-26"

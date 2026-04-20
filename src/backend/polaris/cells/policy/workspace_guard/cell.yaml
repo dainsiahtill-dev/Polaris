@@ -1,0 +1,45 @@
+id: policy.workspace_guard
+title: Workspace Guard
+kind: policy
+visibility: public
+stateful: true
+owner: policy
+purpose: 'Enforce workspace/path/scope checks for runtime and archive operations to
+  prevent out-of-bound writes and unsafe path access.
+
+  '
+current_modules:
+- polaris.cells.policy.workspace_guard.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/policy/workspace_guard/service.py
+public_contracts:
+  modules:
+  - polaris.cells.policy.workspace_guard.public.contracts
+  commands: []
+  queries:
+  - WorkspaceWriteGuardQueryV1
+  - WorkspaceArchiveWriteGuardQueryV1
+  events:
+  - WorkspaceGuardViolationEventV1
+  results:
+  - WorkspaceGuardDecisionV1
+  errors:
+  - WorkspaceGuardErrorV1
+depends_on:
+- audit.evidence
+subgraphs:
+- storage_archive_pipeline
+state_owners:
+- workspace/policy/*
+effects_allowed:
+- fs.read:workspace/**
+- fs.read:runtime/**
+verification:
+  tests:
+  - tests/architecture/test_polaris_kernel_fs_guard.py
+  gaps:
+  - Some guard checks still live in call sites instead of a unified policy port.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

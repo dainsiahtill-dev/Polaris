@@ -1,0 +1,9 @@
+cells:
+  - id: llm.evaluation
+    owned_paths:
+      - polaris/cells/llm/evaluation/**
+    purpose: Run evaluation suites and maintain evaluation artifacts.
+  - id: roles.runtime
+    owned_paths:
+      - polaris/cells/roles/runtime/**
+    purpose: Shared role runtime boundary.

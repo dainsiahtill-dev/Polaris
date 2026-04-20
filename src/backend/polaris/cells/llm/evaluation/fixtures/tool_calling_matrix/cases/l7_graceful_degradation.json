@@ -1,0 +1,41 @@
+{
+  "case_id": "l7_graceful_degradation",
+  "level": "L7",
+  "role": "director",
+  "title": "L7 Graceful Degradation",
+  "description": "测试 Agent 能否在资源受限时优雅降级。",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "尝试读取以下 10 个文件：file1.py, file2.py, file3.py, file4.py, file5.py, file6.py, file7.py, file8.py, file9.py, file10.py。如果大部分不存在，找到实际存在的文件并读取。",
+  "tags": ["l7", "degradation", "fallback", "efficiency"],
+  "weight": 1.0,
+  "critical": true,
+  "judge": {
+    "score_threshold": 0.55,
+    "stream": {
+      "required_any_tools": [
+        ["read_file"],
+        ["glob", "list_directory", "search_code"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 12,
+      "validators": [
+        "graceful_degradation",
+        "eventual_success"
+      ]
+    },
+    "non_stream": {
+      "required_any_tools": [
+        ["read_file"],
+        ["glob", "list_directory", "search_code"]
+      ],
+      "forbidden_tools": ["execute_command", "search_replace", "edit_file"],
+      "min_tool_calls": 1,
+      "max_tool_calls": 12
+    },
+    "parity": {
+      "required": true,
+      "compare_mode": "set"
+    }
+  }
+}

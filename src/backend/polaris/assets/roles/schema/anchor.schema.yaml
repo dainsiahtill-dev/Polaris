@@ -1,0 +1,149 @@
+# YAML Schema: Anchor (系统基座)
+# X-Axis: System Anchor 配置验证 Schema
+
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: "anchor.schema.yaml"
+
+type: object
+
+required:
+  - id
+  - type
+  - version
+  - name
+  - capabilities
+  - macro_workflow
+  - output_constraint
+
+properties:
+  id:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+    description: Anchor 唯一标识符
+
+  type:
+    const: "system_anchor"
+    description: 必须为 system_anchor
+
+  version:
+    type: string
+    pattern: "^\\d+\\.\\d+$"
+    description: 版本号
+
+  name:
+    type: string
+    description: 显示名称
+
+  description:
+    type: string
+    description: 详细描述
+
+  capabilities:
+    type: array
+    items:
+      type: string
+    minItems: 1
+    description: 能力列表
+
+  macro_workflow:
+    type: object
+    required:
+      - type
+      - stages
+    properties:
+      type:
+        type: string
+        enum:
+          - sequential
+          - parallel
+          - blueprint_then_execute
+          - review_then_verify
+      stages:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+            - name
+            - description
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            description:
+              type: string
+      transitions:
+        type: array
+        items:
+          type: object
+          required:
+            - from
+            - to
+            - condition
+          properties:
+            from:
+              type: string
+            to:
+              type: string
+            condition:
+              type: string
+            max_loop:
+              type: integer
+              minimum: 1
+
+  output_constraint:
+    type: object
+    required:
+      - thinking_tag
+      - thinking_max_tokens
+      - required_order
+    properties:
+      thinking_tag:
+        type: string
+      thinking_max_tokens:
+        type: integer
+        minimum: 50
+        maximum: 1000
+      required_order:
+        type: array
+        items:
+          type: string
+      mandatory_sequence:
+        type: string
+      prohibited:
+        type: array
+        items:
+          type: string
+
+  tool_whitelist:
+    type: object
+    properties:
+      read_only:
+        type: array
+        items:
+          type: string
+      write:
+        type: array
+        items:
+          type: string
+      execute:
+        type: array
+        items:
+          type: string
+
+  inter_anchor_protocol:
+    type: object
+    properties:
+      upstream:
+        type: array
+        items:
+          type: string
+      downstream:
+        type: array
+        items:
+          type: string
+      message_format:
+        type: string
+
+additionalProperties: false

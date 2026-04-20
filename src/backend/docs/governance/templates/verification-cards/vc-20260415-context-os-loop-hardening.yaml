@@ -1,0 +1,95 @@
+card_id: "vc-20260415-context-os-loop-hardening"
+bug_summary: >
+  Director 执行链路在 ContextOS / Session Continuity / Tool Loop 交界处出现结构性失配：
+  旧快照 transcript 无法恢复、tool/system 控制面噪音被提升成状态、read-only stagnation 在代码执行场景下不能被准确终止。
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/context/session_continuity.py"
+  method: "SessionContinuityEngine.project"
+  symptom: "跨轮 transcript 丢失、open_loops/stable_facts 被 tool/system 噪音污染、Director 在只读循环中失败收敛"
+
+assumptions:
+  - id: "A1"
+    statement: "我假设当前仓库虽然已恢复 transcript_log 持久化，但旧会话快照仍缺少兼容再水合逻辑。"
+    status: verified_true
+    evidence: >
+      session_continuity.py 已恢复 transcript_log 持久化；但 role_session_service.py、
+      runtime/public/context_adapter.py 与 session_continuity.py 读取旧快照时都未使用
+      transcript_log_index + session_turn_events 做兼容恢复。
+
+  - id: "A2"
+    statement: "我假设仅收紧 HIGH_SIGNAL_TERMS 还不够，因为 generic/code state hints 仍会从 tool/system 事件提取状态。"
+    status: verified_true
+    evidence: >
+      context_os/domain_adapters/generic.py 的 extract_state_hints 未跳过 tool/system；
+      code.py 在 super() 之后仍继续提取 code entities/open loops。
+
+  - id: "A3"
+    statement: "我假设把 HARD 全部改成 raise 是过度修复，会破坏既有 same-tool 渐进式恢复约束。"
+    status: verified_true
+    evidence: >
+      现有 test_circuit_breaker.py::test_hard_level_injects_warning_but_does_not_raise 明确要求
+      HARD 只警告不抛错；当前修改后该测试实际失败。
+
+  - id: "A4"
+    statement: "我假设真正需要强制终止的是 read-only stagnation 在代码执行场景中的 HARD，而不是所有 HARD。"
+    status: verified_true
+    evidence: >
+      circuit_breaker.py 已区分 semantic/no-gain/read-only 三种路径；
+      当前灾难性失败来自跨文件 read-only stagnation，而非每一种 HARD 都必须终止。
+
+pre_mortem:
+  failure_point: >
+    如果我只修兼容恢复而不清理历史污染状态，旧 session 的 open_loops/stable_facts
+    仍会通过 persisted snapshot/continuity pack 继续回灌 prompt。
+  risk_zone:
+    - "polaris/kernelone/context/session_continuity.py"
+    - "polaris/kernelone/context/compaction.py"
+    - "polaris/kernelone/context/context_os/domain_adapters/generic.py"
+    - "polaris/cells/roles/kernel/internal/tool_loop_controller.py"
+    - "polaris/cells/roles/runtime/public/context_adapter.py"
+    - "polaris/cells/roles/session/internal/role_session_service.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/session/tests/test_role_session_service.py"
+      description: "旧格式 state_first_context_os 通过 transcript_log_index + session_turn_events 恢复 transcript_log"
+      expected: "get_context_os_snapshot 返回包含完整 transcript_log 的快照"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_continuity.py"
+      description: "旧格式快照恢复并清理 control-plane 污染项"
+      expected: "transcript_log 恢复成功，污染的 open_loops 被剔除"
+      status: new
+    - file: "polaris/kernelone/context/tests/test_context_os_domain_adapters.py"
+      description: "tool/system 事件不再被提取为 state hints"
+      expected: "generic/code adapter 对 control-plane 输入返回空状态补丁"
+      status: new
+    - file: "polaris/cells/roles/kernel/internal/tests/test_circuit_breaker.py"
+      description: "same-tool HARD 仍不抛错，但代码执行场景的 read-only HARD 会终止"
+      expected: "保留渐进式恢复，同时阻断真正的 read-only stagnation"
+      status: existing_fix
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "streaming call_end 事件携带 prompt_tokens"
+      expected: "_emit_call_end_event 收到 prompt_tokens"
+      status: new
+  integration_tests:
+    - description: "Context/Kernel 回归"
+      command: "python -m pytest polaris/kernelone/context/tests/test_continuity.py polaris/kernelone/context/tests/test_context_os_domain_adapters.py polaris/cells/roles/session/tests/test_role_session_service.py polaris/cells/roles/kernel/internal/tests/test_circuit_breaker.py polaris/cells/roles/kernel/tests/test_llm_caller.py -q"
+      status: new
+  manual_check:
+    - "复查旧 runtime session snapshot 中 transcript_log_index 格式是否可被当前代码恢复"
+    - "复查 system warning / tool result 不再出现在 stable_facts/open_loops 中"
+    - "复查 read-only stagnation 在代码执行场景被终止，但 same-tool HARD 仍仅警告"
+
+related_adrs:
+  - "ADR-0053"
+  - "ADR-0063"
+  - "ADR-0068"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-04-15"
+  verified_by: "pending"
+  verified_at: "2026-04-15"

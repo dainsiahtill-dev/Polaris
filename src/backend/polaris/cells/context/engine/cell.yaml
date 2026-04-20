@@ -1,0 +1,46 @@
+id: context.engine
+title: Context Engine
+kind: capability
+visibility: public
+stateful: false
+owner: context
+purpose: 'Assemble role-facing execution context through graph-constrained context
+  lookup, with context.catalog as the canonical upstream source.
+
+  '
+current_modules:
+- polaris.cells.context.engine.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/context/engine/internal/search_gateway.py
+- polaris/cells/context/engine/internal/precision_mode.py
+public_contracts:
+  modules:
+  - polaris.cells.context.engine.public.contracts
+  commands:
+  - BuildRoleContextCommandV1
+  queries:
+  - ResolveRoleContextQueryV1
+  events:
+  - ContextResolvedEventV1
+  results:
+  - RoleContextResultV1
+  errors:
+  - ContextEngineErrorV1
+depends_on:
+- context.catalog
+- policy.workspace_guard
+- roles.session
+subgraphs: []
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- fs.read:docs/graph/**
+verification:
+  tests:
+  - tests/architecture/test_architecture_invariants.py
+  gaps:
+  - Context assembly currently remains partially distributed in role adapters.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

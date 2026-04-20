@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Intervention Hub Schema",
+  "description": "Schema for the INTERVENTIONS.json file used by the Intervention Hub",
+  "type": "object",
+  "examples": [
+    {
+      "version": 1,
+      "interventions": [
+        {
+          "id": "c3fce34a-22f4-4bde-8db5-8a7c43c63f1f",
+          "type": "manual_approval",
+          "status": "pending",
+          "title": "Approve dependency install",
+          "description": "Approve installing npm dependencies for UI build.",
+          "created_at": "2026-02-02T12:05:00Z",
+          "context": {
+            "workspace": "C:/repo/Polaris"
+          },
+          "actions": [
+            {
+              "label": "Approve",
+              "value": "approve",
+              "style": "primary"
+            },
+            {
+              "label": "Reject",
+              "value": "reject",
+              "style": "danger"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Schema version",
+      "default": 1
+    },
+    "interventions": {
+      "type": "array",
+      "description": "List of intervention items",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the intervention",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "description": "Type of intervention",
+            "enum": [
+              "agent_confirmation",
+              "plan_change",
+              "dependency_missing",
+              "policy_block",
+              "manual_approval"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "Current status of the intervention",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "ignored"
+            ],
+            "default": "pending"
+          },
+          "title": {
+            "type": "string",
+            "description": "Short title of the intervention"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description of the intervention"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when the intervention was created",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Timestamp when the intervention was last updated",
+            "format": "date-time"
+          },
+          "context": {
+            "type": "object",
+            "description": "Additional context data for the intervention",
+            "additionalProperties": true
+          },
+          "actions": {
+            "type": "array",
+            "description": "Available actions for this intervention",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "Label for the action button"
+                },
+                "value": {
+                  "type": "string",
+                  "description": "Value to be submitted when action is taken"
+                },
+                "style": {
+                  "type": "string",
+                  "description": "Visual style of the action button",
+                  "enum": [
+                    "primary",
+                    "secondary",
+                    "danger",
+                    "ghost"
+                  ]
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "status",
+          "title",
+          "created_at"
+        ]
+      }
+    }
+  },
+  "required": [
+    "version",
+    "interventions"
+  ]
+}

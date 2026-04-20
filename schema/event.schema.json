@@ -1,0 +1,178 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Action/Observation Event",
+  "description": "Append-only event record for actions or observations (event sourcing).",
+  "type": "object",
+  "examples": [
+    {
+      "schema_version": 1,
+      "ts": "2026-02-02T12:00:10Z",
+      "ts_epoch": 1738497610.0,
+      "seq": 123,
+      "event_id": "6b3df42e-5d70-4b3b-8b40-2b6f1a7a91e1",
+      "kind": "observation",
+      "actor": "Director",
+      "name": "tool.exec",
+      "summary": "Ran ripgrep to locate invariant references",
+      "refs": {
+        "task_id": "task-001",
+        "run_id": "pm-2026-02-02-0001",
+        "phase": "execute",
+        "files": ["docs/agent/invariants.md"]
+      },
+      "ok": true,
+      "output": {
+        "exit_code": 0
+      }
+    }
+  ],
+  "required": [
+    "schema_version",
+    "ts",
+    "ts_epoch",
+    "seq",
+    "event_id",
+    "kind",
+    "actor",
+    "name"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version (fixed)."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp for the event."
+    },
+    "ts_epoch": {
+      "type": "number",
+      "description": "Epoch seconds for quick sorting."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic sequence id within events.jsonl."
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique event identifier."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "action",
+        "observation"
+      ],
+      "description": "Action emits input; observation emits output/ok."
+    },
+    "actor": {
+      "type": "string",
+      "enum": [
+        "PM",
+        "Director",
+        "Reviewer",
+        "QA",
+        "System",
+        "Tooling"
+      ],
+      "description": "Originating role or subsystem."
+    },
+    "name": {
+      "type": "string",
+      "description": "Event name or tool identifier.",
+      "examples": ["tool.exec", "invariant.check"]
+    },
+    "refs": {
+      "type": "object",
+      "description": "Cross-links to tasks, runs, phases, and evidence.",
+      "properties": {
+        "task_id": {
+          "type": ["string", "null"]
+        },
+        "task_fingerprint": {
+          "type": ["string", "null"]
+        },
+        "run_id": {
+          "type": ["string", "null"]
+        },
+        "pm_iteration": {
+          "type": ["integer", "null"]
+        },
+        "director_iteration": {
+          "type": ["integer", "null"]
+        },
+        "phase": {
+          "type": ["string", "null"]
+        },
+        "files": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_path": {
+          "type": ["string", "null"]
+        },
+        "trajectory_path": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "description": "Short human-readable summary."
+    },
+    "meta": {
+      "type": "object",
+      "description": "Additional metadata for diagnostics or UI."
+    },
+    "input": {
+      "type": "object",
+      "description": "Present only if kind=action"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "Present only if kind=observation"
+    },
+    "output": {
+      "type": "object",
+      "description": "Present only if kind=observation"
+    },
+    "truncation": {
+      "type": "object",
+      "description": "Truncation metadata when payloads are trimmed.",
+      "properties": {
+        "truncated": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "original_bytes": {
+          "type": ["integer", "null"]
+        },
+        "kept_bytes": {
+          "type": ["integer", "null"]
+        },
+        "original_lines": {
+          "type": ["integer", "null"]
+        },
+        "kept_lines": {
+          "type": ["integer", "null"]
+        }
+      }
+    },
+    "duration_ms": {
+      "type": ["integer", "null"],
+      "description": "Duration in milliseconds, if applicable."
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Error message if ok=false or exception occurred."
+    }
+  }
+}

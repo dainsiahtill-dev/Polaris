@@ -1,0 +1,60 @@
+card_id: vc-20260327-tool-calling-strictness-gap
+bug_summary: "tool_calling_matrix 在工具身份与参数判定上存在误判/漏报风险：参数别名未归一，且等价工具判定可能掩盖缺失的 canonical 工具调用能力。"
+classification: structural
+
+bug_path:
+  file: polaris/cells/llm/evaluation/internal/tool_calling_matrix.py
+  method: _normalize_tool_calls / _check_mode / _check_parity
+  symptom: "stream/non_stream 评测可能出现误判，或将工具缺失问题被等价匹配掩盖。"
+
+assumptions:
+  - id: A1
+    statement: "我假设工具参数别名（如 lines）未归一时，会导致 first_call_arg_one_of/required_any 误判。"
+    status: verified_true
+    evidence: "原 _normalize_tool_calls 仅 canonicalize tool，不调用 normalize_tool_args；新增测试验证 lines->n 后通过。"
+
+  - id: A2
+    statement: "我假设如果 required_tools/parity 默认按等价工具放宽，会掩盖 canonical 工具缺失。"
+    status: verified_true
+    evidence: "根据 L1 实跑，模型调用 read_file 但用例要求 repo_read_head；若默认放宽会漏报缺失。"
+
+  - id: A3
+    statement: "我假设需要独立输出 tool_coverage，才能及时反馈‘评测覆盖缺口/能力缺口’给后续 Agent。"
+    status: verified_true
+    evidence: "在 AGENTIC_EVAL_AUDIT 中新增 tool_coverage 后，可直接看到 required_but_not_observed 与 registry_not_covered_by_suite。"
+
+pre_mortem:
+  failure_point: "若严格策略切换不一致，可能导致某些历史用例分数波动且难以解释。"
+  risk_zone:
+    - polaris/cells/llm/evaluation/internal/tool_calling_matrix.py
+    - polaris/delivery/cli/agentic_eval.py
+    - tests/test_llm_tool_calling_matrix.py
+
+verification_plan:
+  unit_tests:
+    - file: tests/test_llm_tool_calling_matrix.py
+      description: "新增参数别名归一、严格匹配默认行为、等价匹配显式开启三类测试"
+      expected: "新测试全部通过"
+      status: existing_fix
+    - file: polaris/delivery/cli/tests/test_agentic_eval_cli.py
+      description: "新增 tool_coverage 缺口检测测试"
+      expected: "缺口场景被标记 coverage_gap_detected=true"
+      status: existing_fix
+
+  integration_tests:
+    - description: "真实运行 L1 stream 模式，验证 required_but_not_observed 输出"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace . --suite tool_calling_matrix --role all --case-id l1_single_tool_accuracy --matrix-transport stream"
+      status: existing_fix
+
+  manual_check:
+    - "确认 human 输出出现 tool_coverage、required_but_not_observed、registry_not_covered_by_suite。"
+    - "确认严格策略下 read_file 不会被当作 repo_read_head 自动通过。"
+
+related_adrs:
+  - ADR-0064
+
+sign_off:
+  completed_by: codex
+  completed_at: 2026-03-27
+  verified_by: codex
+  verified_at: 2026-03-27

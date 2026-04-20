@@ -1,0 +1,94 @@
+card_id: "vc-20260325-session-continuity-engine-kernelone"
+bug_summary: >
+  session continuity 的核心策略仍分散在 role host 和 kernel context gateway 中，
+  导致 summary/compaction/context layering 语义重复实现，难以统一演进。
+  本次要把 continuity 抽成 KernelOne canonical capability，并把剩余 host
+  入口的默认 session / history 投影语义收口，而不是继续在 roles 层硬编码。
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/context/session_continuity.py"
+  method: "SessionContinuityEngine.project() + build_session_continuity_pack()"
+  symptom: >
+    continuity 逻辑若继续散落在 console_host 和 context_gateway，后续任何入口
+    都可能重新出现 session/history/context layering 偏差，导致旧话题回流和策略漂移。
+
+assumptions:
+  - id: "A1"
+    statement: "Session continuity 是 Agent runtime 通用能力，归属 KernelOne 比归属 CLI/Director 更合理。"
+    status: verified_true
+    evidence: >
+      AGENTS.md 与 AGENT_ARCHITECTURE_STANDARD.md 明确要求
+      reuse-first + KernelOne foundation；continuity/compaction/prompt layering
+      属于技术运行时能力，不拥有 Polaris 业务状态。
+
+  - id: "A2"
+    statement: "现有 continuity 逻辑仍然分散在多个实现点，包含 CLI 以外的 host 入口。"
+    status: verified_true
+    evidence: >
+      console_host.py 旧实现直接决定 continuity summary/persisted context；
+      roles.kernel/internal/context_gateway.py 也直接调用 continuity helper 生成摘要消息；
+      tui_console.py、role_session.py、role_dialogue.py、roles.runtime public helper
+      仍存在各自的 session/history 处理路径。
+
+  - id: "A3"
+    statement: "只移动文件位置而不建立结构化 continuity pack，无法解决后续扩展问题。"
+    status: verified_true
+    evidence: >
+      旧 session_continuity 仅是 ad-hoc dict + summary string；
+      无 stable_facts/open_loops/noise decay 这类显式字段，难以做智能演进与统一测试。
+
+pre_mortem:
+  failure_point: >
+    如果只是把 console_host 的 summary 代码搬到 KernelOne，但 roles.kernel 继续自己拼摘要，
+    仓内仍然会保留双实现，未来调一个入口、漏一个入口，问题会再次变成结构性回归。
+  risk_zone:
+    - "polaris/kernelone/context/session_continuity.py"
+    - "polaris/delivery/cli/director/console_host.py"
+    - "polaris/cells/roles/kernel/internal/context_gateway.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/tests/test_session_continuity_engine.py"
+      description: "验证 continuity pack、reserved key 过滤、旧 pack 清理、事实/待办合并"
+      expected: "KernelOne continuity engine 作为独立能力可直接单测"
+      status: added_pass
+    - file: "polaris/cells/roles/runtime/tests/test_host_session_continuity.py"
+      description: "验证 runtime helper host 入口也会走 continuity projection"
+      expected: "本地 history 被裁剪为 recent window，并生成 continuity pack"
+      status: added_pass
+    - file: "polaris/cells/llm/dialogue/tests/test_role_dialogue_session_continuity.py"
+      description: "验证 legacy role dialogue 缺省时创建 fresh ad-hoc session"
+      expected: "不再走 find_or_create_ad_hoc 的旧复用语义"
+      status: added_pass
+    - file: "polaris/cells/roles/session/tests/test_role_session_service.py"
+      description: "验证 create_ad_hoc_session 总是新建 standalone session"
+      expected: "默认新 session，不复用旧 active ad-hoc session"
+      status: pass
+    - file: "polaris/delivery/cli/director/tests/test_stream_protocol.py"
+      description: "RoleConsoleHost 继续通过 continuity projection 工作"
+      expected: "fresh session / continuity summary / stable facts / open loops 语义保持正确"
+      status: pass
+    - file: "polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py"
+      description: "roles.kernel summarize 路径复用 canonical continuity pack"
+      expected: "旧历史仍被摘要而不是原样回灌"
+      status: pass
+  regression_tests:
+    - file: "tests/architecture/test_structural_bug_governance_assets.py"
+      description: "治理资产引用完整"
+      expected: "Verification Card / ADR / verify pack 引用均有效"
+      status: pending
+    - file: "tests/architecture/test_kernelone_release_gates.py"
+      description: "KernelOne 基线门禁"
+      expected: "本次 capability 不破坏 KernelOne release gate"
+      status: pending
+
+related_adrs:
+  - "ADR-0045"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-03-25"
+  verified_by: "self (targeted pytest)"
+  verified_at: "2026-03-25"
