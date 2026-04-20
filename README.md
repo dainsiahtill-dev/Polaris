@@ -221,6 +221,32 @@ python -m polaris.delivery.cli.director.cli --workspace . --iterations 1
 
 <div align="center">
 
+## ☕ 请作者喝杯咖啡
+
+如果 Polaris 对你有所帮助，欢迎请作者喝杯咖啡，持续支持项目迭代！
+
+*If Polaris has been helpful to you, feel free to buy the author a coffee to support continued development!*
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/images/coffee/alipay.jpg" width="200" alt="Alipay 支付宝" /><br/>
+      <strong>支付宝 Alipay</strong>
+    </td>
+    <td width="60"></td>
+    <td align="center">
+      <img src="docs/assets/images/coffee/wechat.jpg" width="200" alt="WeChat Pay 微信支付" /><br/>
+      <strong>微信支付 WeChat Pay</strong>
+    </td>
+  </tr>
+</table>
+
+</div>
+
+---
+
+<div align="center">
+
 ## 许可协议
 
 MIT License
