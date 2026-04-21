@@ -6,6 +6,12 @@ from polaris.kernelone.cognitive.context import (
     ConversationTurn,
     get_session_manager,
 )
+from polaris.kernelone.cognitive.design_quality import (
+    DesignQualityDials,
+    LayoutMode,
+    MotionPresetKey,
+    SpacingTier,
+)
 from polaris.kernelone.cognitive.governance import CognitiveGovernance, VCResult
 from polaris.kernelone.cognitive.governance_gate import CognitiveGovernanceGate
 from polaris.kernelone.cognitive.middleware import (
@@ -17,33 +23,45 @@ from polaris.kernelone.cognitive.orchestrator import CognitiveOrchestrator, Cogn
 from polaris.kernelone.cognitive.personality.integrator import PersonalityIntegrator
 from polaris.kernelone.cognitive.pipeline_coordinator import CognitivePipelineCoordinator
 from polaris.kernelone.cognitive.types import ActingOutput, ClarityLevel, ExecutionPath, RiskLevel, ThinkingOutput
+from polaris.kernelone.cognitive.validators import (
+    CognitiveValidatorDispatcher,
+    GenerationDomain,
+    ValidationConfig,
+    ValidationSeverity,
+    ValidationViolation,
+    get_validator_dispatcher,
+    reset_validator_dispatcher,
+)
 
 __all__ = [
-    # Core types
-    "ClarityLevel",
-    "RiskLevel",
-    "ExecutionPath",
-    "ThinkingOutput",
     "ActingOutput",
-    # Orchestrator
-    "CognitiveOrchestrator",
-    "CognitiveResponse",
-    # Pipeline Coordinator
-    "CognitivePipelineCoordinator",
-    # Governance Gate
-    "CognitiveGovernanceGate",
-    # Context
+    "ClarityLevel",
     "CognitiveContext",
-    "CognitiveSessionManager",
-    "ConversationTurn",
-    "get_session_manager",
-    # Governance
     "CognitiveGovernance",
-    "VCResult",
-    # Personality
-    "PersonalityIntegrator",
-    # Middleware
+    "CognitiveGovernanceGate",
     "CognitiveMiddleware",
+    "CognitiveOrchestrator",
+    "CognitivePipelineCoordinator",
+    "CognitiveResponse",
+    "CognitiveSessionManager",
+    "CognitiveValidatorDispatcher",
+    "ConversationTurn",
+    "DesignQualityDials",
+    "ExecutionPath",
+    "GenerationDomain",
+    "LayoutMode",
+    "MotionPresetKey",
+    "PersonalityIntegrator",
+    "RiskLevel",
+    "SpacingTier",
+    "ThinkingOutput",
+    "VCResult",
+    "ValidationConfig",
+    "ValidationSeverity",
+    "ValidationViolation",
     "get_cognitive_middleware",
+    "get_session_manager",
+    "get_validator_dispatcher",
     "reset_cognitive_middleware",
+    "reset_validator_dispatcher",
 ]

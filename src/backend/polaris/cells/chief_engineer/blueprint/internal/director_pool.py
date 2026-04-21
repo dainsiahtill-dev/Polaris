@@ -40,19 +40,29 @@ class DirectorPoolConflictError(Exception):
 
 
 class DirectorPhase(str, Enum):
-    """Lifecycle phases of a single Director task execution."""
+    """Lifecycle phases of a single Director task execution.
+
+    Extended with two-phase review from Superpowers integration (Phase 2).
+    Separation of concerns: execution (SubagentSpawner) vs orchestration (DirectorPool).
+    """
 
     IDLE = "idle"
     PREPARE = "prepare"
     VALIDATE = "validate"
     IMPLEMENT = "implement"
+    # Phase 2 Extension: Two-phase review states (Superpowers essence)
+    SPEC_REVIEW = "spec_review"          # Spec compliance review
+    QUALITY_REVIEW = "quality_review"    # Code quality review
     VERIFY = "verify"
     REPORT = "report"
 
 
 @dataclass
 class DirectorStatus:
-    """Real-time snapshot of one Director's state."""
+    """Real-time snapshot of one Director's state.
+
+    Extended with review metrics from Superpowers integration (Phase 2).
+    """
 
     director_id: str
     phase: DirectorPhase
@@ -62,6 +72,11 @@ class DirectorStatus:
     progress_pct: float = 0.0
     last_heartbeat_ms: int = 0
     capabilities: list[str] = field(default_factory=list)
+    # Phase 2 Extension: Two-phase review metrics (Superpowers essence)
+    review_status: str | None = None           # "pending" | "in_spec_review" | "in_quality_review" | "approved"
+    spec_compliance_score: float = 0.0         # 0.0-1.0, spec compliance rating
+    code_quality_score: float = 0.0            # 0.0-1.0, code quality rating
+    review_iterations: int = 0                 # Number of review-fix cycles
 
 
 @dataclass
@@ -370,6 +385,122 @@ class DirectorPool:
     # Completion
     # ------------------------------------------------------------------
 
+    async def transition_to_review(
+        self,
+        task_id: str,
+        review_type: str,  # "spec" | "quality"
+        reviewer_config: dict[str, Any] | None = None,
+    ) -> str:
+        """Transition a Director to review phase.
+
+        Phase 2 Extension: Two-phase review orchestration (Superpowers essence).
+        DirectorPool orchestrates the review workflow using SubagentSpawner
+        with ModelSelectionStrategy.PREMIUM for high-quality review.
+
+        Args:
+            task_id: The task to review
+            review_type: "spec" for spec compliance, "quality" for code quality
+            reviewer_config: Optional configuration for the reviewer subagent
+
+        Returns:
+            reviewer_director_id: The Director assigned to perform review
+        """
+        director_id = self._task_assignments.get(task_id)
+        if not director_id:
+            raise ValueError(f"Task {task_id} not found in pool")
+
+        status = self._directors.get(director_id)
+        if not status:
+            raise ValueError(f"Director {director_id} not found")
+
+        # Determine review phase
+        review_phase = (
+            DirectorPhase.SPEC_REVIEW
+            if review_type == "spec"
+            else DirectorPhase.QUALITY_REVIEW
+        )
+
+        async with self._lock:
+            now = _now_epoch_ms()
+            self._director_phase_start_ms[director_id] = now
+            self._directors[director_id] = DirectorStatus(
+                director_id=director_id,
+                phase=review_phase,
+                current_task_id=task_id,
+                active_files=list(status.active_files),
+                started_at_ms=now,
+                progress_pct=status.progress_pct,
+                last_heartbeat_ms=now,
+                capabilities=list(status.capabilities),
+                review_status="in_review",
+                review_iterations=status.review_iterations + 1,
+            )
+
+        self._event_bus.publish(
+            f"director.review_{review_type}.started",
+            {
+                "task_id": task_id,
+                "director_id": director_id,
+                "review_config": reviewer_config,
+            },
+        )
+
+        return director_id
+
+    async def submit_review_result(
+        self,
+        task_id: str,
+        review_type: str,
+        score: float,
+        passed: bool,
+        feedback: str,
+    ) -> None:
+        """Submit review result and update metrics.
+
+        Args:
+            task_id: The reviewed task
+            review_type: "spec" | "quality"
+            score: 0.0-1.0 score
+            passed: Whether review passed
+            feedback: Review feedback text
+        """
+        director_id = self._task_assignments.get(task_id)
+        if not director_id:
+            return
+
+        status = self._directors.get(director_id)
+        if not status:
+            return
+
+        async with self._lock:
+            now = _now_epoch_ms()
+            new_status = DirectorStatus(
+                director_id=director_id,
+                phase=DirectorPhase.VERIFY if passed else DirectorPhase.IMPLEMENT,
+                current_task_id=task_id,
+                active_files=list(status.active_files),
+                started_at_ms=status.started_at_ms,
+                progress_pct=status.progress_pct,
+                last_heartbeat_ms=now,
+                capabilities=list(status.capabilities),
+                review_status="approved" if passed else "needs_revision",
+                spec_compliance_score=score if review_type == "spec" else status.spec_compliance_score,
+                code_quality_score=score if review_type == "quality" else status.code_quality_score,
+                review_iterations=status.review_iterations,
+            )
+            self._directors[director_id] = new_status
+
+        self._event_bus.publish(
+            f"director.review_{review_type}.completed",
+            {
+                "task_id": task_id,
+                "director_id": director_id,
+                "score": score,
+                "passed": passed,
+                "feedback": feedback,
+            },
+        )
+
     def mark_completed(self, task_id: str, success: bool) -> None:
         """Release a Director after task completion."""
         director_id = self._task_assignments.pop(task_id, None)
@@ -390,6 +521,10 @@ class DirectorPool:
                 progress_pct=1.0 if success else 0.0,
                 last_heartbeat_ms=_now_epoch_ms(),
                 capabilities=list(status.capabilities),
+                review_status=None,
+                spec_compliance_score=0.0,
+                code_quality_score=0.0,
+                review_iterations=0,
             )
 
         self._event_bus.publish(

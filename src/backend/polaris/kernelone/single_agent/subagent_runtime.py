@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,17 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+
+class ModelSelectionStrategy(str, Enum):
+    """Model selection strategy based on task complexity.
+
+    Extracted from Superpowers dispatching-parallel-agents skill.
+    Allows runtime adaptation of model capability to task requirements.
+    """
+    FAST = "fast"           # Low-latency model for simple tasks (regex, pattern matching)
+    STANDARD = "standard"   # Default model for general tasks
+    PREMIUM = "premium"     # High-capability model for complex reasoning
 
 
 @dataclass
@@ -45,13 +57,23 @@ class SubagentResult:
 
 @dataclass
 class SubagentConfig:
-    """Configuration for subagent spawning."""
+    """Configuration for subagent spawning.
+
+    Extended with ModelSelectionStrategy from Superpowers integration.
+    Keeps execution layer clean - business logic (reviews) handled by DirectorPool.
+    """
 
     max_iterations: int = 50
     timeout_seconds: int = 600
     inherit_tools: bool = True
     allowed_tools: list[str] | None = None  # None = all
     isolated_workspace: bool = False  # Create temp workspace
+    # Phase 2 Extension: Model selection strategy (Superpowers essence)
+    model_strategy: ModelSelectionStrategy = field(
+        default=ModelSelectionStrategy.STANDARD
+    )
+    # Optional: explicit model override (takes precedence over strategy)
+    model_override: str | None = None
 
 
 class SubagentSpawner:
@@ -81,6 +103,31 @@ class SubagentSpawner:
 
         self._active_subagents: dict[str, Any] = {}
 
+    def _resolve_model(self, config: SubagentConfig) -> str:
+        """Resolve model based on selection strategy.
+
+        Priority: model_override > strategy mapping > default model
+        """
+        # Priority 1: explicit model override
+        if config.model_override:
+            return config.model_override
+
+        # Priority 2: strategy-based model selection
+        # Model mappings can be configured via environment variables
+        strategy_map = {
+            ModelSelectionStrategy.FAST: os.environ.get(
+                "KERNELONE_SUBAGENT_MODEL_FAST", "gpt-4o-mini"
+            ),
+            ModelSelectionStrategy.STANDARD: os.environ.get(
+                "KERNELONE_SUBAGENT_MODEL_STANDARD", self.model or "gpt-4o"
+            ),
+            ModelSelectionStrategy.PREMIUM: os.environ.get(
+                "KERNELONE_SUBAGENT_MODEL_PREMIUM", "claude-3-5-sonnet-20241022"
+            ),
+        }
+
+        return strategy_map.get(config.model_strategy, self.model or "gpt-4o")
+
     def spawn(
         self,
         task_description: str,
@@ -102,6 +149,15 @@ class SubagentSpawner:
 
         start_time = time.monotonic()
 
+        # Resolve model based on strategy
+        selected_model = self._resolve_model(config)
+        logger.debug(
+            "Subagent %s using model %s (strategy: %s)",
+            subagent_id,
+            selected_model,
+            config.model_strategy.value,
+        )
+
         # Create isolated workspace if requested
         work_dir = self._create_workspace(subagent_id, config.isolated_workspace)
 
@@ -115,6 +171,7 @@ class SubagentSpawner:
                 system_prompt=system_prompt,
                 work_dir=work_dir,
                 config=config,
+                model=selected_model,
             )
 
             duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -192,6 +249,7 @@ Your response will be passed back to the parent agent. Be concise and actionable
         system_prompt: str,
         work_dir: Path,
         config: SubagentConfig,
+        model: str,
     ) -> dict[str, Any]:
         """Run the subagent loop with fresh context."""
 
@@ -220,6 +278,7 @@ Your response will be passed back to the parent agent. Be concise and actionable
                 system_prompt=system_prompt,
                 messages=messages,
                 timeout_seconds=remaining_seconds,
+                model=model,
             )
 
             # Extract content
@@ -287,6 +346,7 @@ Your response will be passed back to the parent agent. Be concise and actionable
         system_prompt: str,
         messages: list[dict[str, Any]],
         timeout_seconds: float,
+        model: str,
     ) -> Any:
         """Call the underlying LLM client with an enforced wall-clock deadline."""
         if self.llm_client is None or not hasattr(self.llm_client, "messages"):
@@ -301,7 +361,7 @@ Your response will be passed back to the parent agent. Be concise and actionable
         def _worker() -> None:
             try:
                 response_holder["response"] = self.llm_client.messages.create(
-                    model=self.model,
+                    model=model,
                     system=system_prompt,
                     messages=messages,
                     max_tokens=4000,

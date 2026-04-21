@@ -211,18 +211,50 @@ Phase 3 (中优先级):
 - ✅ MyPy --strict: Success, no issues found
 - ✅ pytest: 127 passed (46 + 81)
 
-### Phase 2 (待实施)
+### Phase 2 (已完成 ✅) - 架构重构后
 
-| 组件 | 预计工时 | 依赖 |
-|------|----------|------|
-| SubagentTaskDispatcher Cell | 3天 | VerificationGuard |
-| ParallelTaskExecutor | 2天 | StreamShadowEngine扩展 |
+**⚠️ 重要架构决策**: 经过审计发现 **SubagentTaskDispatcher Cell 与现有代码高度重复** (85%+)，已取消独立建设计划，改为**增量扩展现有系统**。
+
+**采用的混合架构方案**（用户@dains 的高级架构洞见）：
+
+| 层级 | 组件 | 扩展内容 | 状态 |
+|------|------|----------|------|
+| **执行层 (KernelOne)** | `SubagentSpawner` | 新增 `ModelSelectionStrategy` 枚举和模型选择逻辑 | ✅ 完成 |
+| **编排层 (Cells)** | `DirectorPool` | 新增两阶段审查状态机和审查指标 | ✅ 完成 |
+
+**具体修改**:
+
+1. **SubagentSpawner 扩展** (`kernelone/single_agent/subagent_runtime.py`):
+   - ✅ 新增 `ModelSelectionStrategy` 枚举 (FAST/STANDARD/PREMIUM)
+   - ✅ 在 `SubagentConfig` 中新增 `model_strategy` 和 `model_override` 字段
+   - ✅ 新增 `_resolve_model()` 方法，支持环境变量配置模型映射
+   - ✅ 修改 `spawn()` 和 `_run_subagent_loop()` 传递模型参数
+   - ✅ 所有修改向后兼容（默认行为不变）
+
+2. **DirectorPool 扩展** (`cells/chief_engineer/blueprint/internal/director_pool.py`):
+   - ✅ 在 `DirectorPhase` 中新增 `SPEC_REVIEW` 和 `QUALITY_REVIEW` 状态
+   - ✅ 在 `DirectorStatus` 中新增审查指标字段 (spec_compliance_score, code_quality_score, review_iterations)
+   - ✅ 新增 `transition_to_review()` 方法，编排审查阶段转换
+   - ✅ 新增 `submit_review_result()` 方法，收集审查结果
+   - ✅ 所有修改向后兼容（新增字段有默认值）
+
+**测试验证**:
+- ✅ `test_kernelone_context_and_subagent.py`: 2 passed
+- ✅ `test_ce_consumer_integration.py`: 2 passed  
+- ✅ `test_director_pool_chaos.py`: 3 passed
+- ✅ 向后兼容：不传新参数时行为完全一致
 
 ### Phase 3 (待实施)
 
 | 组件 | 预计工时 | 依赖 |
 |------|----------|------|
 | SkillValidationFramework | 2天 | CI/CD管道 |
+
+**架构优势**:
+- 工作量从 3-5 天降至 1-2 天
+- 零重复代码，DRY原则
+- 职责分离清晰：执行层 vs 编排层
+- 向后兼容，无破坏性变更
 
 ---
 
