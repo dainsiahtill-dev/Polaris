@@ -342,18 +342,36 @@ class ToolBatchExecutor:
         _has_write = tool_batch_has_write_invocation(invocations)
 
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
-            # FIX-20250421: Hard block — remove blocked tools instead of marking them
-            filtered_invocations = [
-                inv for inv in invocations if extract_invocation_tool_name(inv) not in _broad_exploration_tools
-            ]
-            if filtered_invocations:
-                invocations = filtered_invocations
-            else:
-                # All tools were broad exploration — raise to force write tool
-                raise RuntimeError(
-                    "implementing-phase-block: in implementing phase, broad exploration tools "
-                    "(glob/repo_tree/repo_rg) are not allowed. Use write_file/edit_file to materialize changes."
-                )
+            # FIX-20250421: Soft block with clear guidance — return error receipts instead of raising
+            # This prevents session crash while still enforcing the implementing phase constraint.
+            _blocked_tools = [extract_invocation_tool_name(inv) for inv in invocations
+                              if extract_invocation_tool_name(inv) in _broad_exploration_tools]
+            _error_msg = (
+                f"[Implementing Phase Block] Tools {_blocked_tools} were blocked. "
+                f"In implementing phase, broad exploration (glob/repo_tree/repo_rg) is not allowed. "
+                f"You have already gathered context in previous turns. "
+                f"MANDATORY: Call write_file or edit_file NOW to materialize changes. "
+                f"If you don't know what to write, call final_answer to end the session."
+            )
+            logger.warning(_error_msg + " turn_id=%s", turn_id)
+
+            # Replace blocked invocations with error receipts that will be shown to LLM
+            modified_invocations = []
+            for inv in invocations:
+                tname = extract_invocation_tool_name(inv)
+                if tname in _broad_exploration_tools:
+                    # Create a synthetic error result that will be visible to LLM
+                    modified_invocations.append({
+                        **inv,
+                        "_implementing_phase_blocked": True,
+                        "_blocked_reason": _error_msg,
+                    })
+                else:
+                    modified_invocations.append(inv)
+            invocations = modified_invocations
+
+            # Mark that we blocked tools — this will be used in continuation prompt
+            ledger._implementing_phase_block_triggered = True
 
         # FIX-20250421: Verifying Phase Hard Constraint
         # In verifying phase, if no verification tools (execute_command, pytest, etc.) are invoked,

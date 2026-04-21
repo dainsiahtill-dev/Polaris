@@ -297,6 +297,10 @@ class RoleSessionOrchestrator:
                 )
             else:
                 self.state.goal = _first_prompt
+                # FIX-20250421: 首次设置 goal 时，同时保存 original_goal（永不丢失）
+                if not self.state.original_goal:
+                    self.state.original_goal = _first_prompt
+                    logger.debug("original_goal_set: %s", _first_prompt[:60])
                 # 只有非第一回合才允许根据新请求跃迁到 implementing。
                 # 第一回合总是 exploring——LLM 需要先读代码了解现状，再执行修改。
                 if self.state.turn_count > 0:
@@ -670,13 +674,15 @@ class RoleSessionOrchestrator:
         让 LLM 在下一回合能"看见"之前读取的文件内容，而非面对空上下文。
         """
         findings = get_active_findings(self.state.structured_findings)
-        goal = self.state.goal or "（未设定明确目标）"
+        # FIX-20250421: 使用 original_goal（永不丢失）替代 goal（可能被覆盖）
+        goal = self.state.original_goal or self.state.goal or "（未设定明确目标）"
         progress = self.state.task_progress
         turn = self.state.turn_count
         max_turns = self.state.max_turns
 
         # --- Zone 1: Goal ---
-        goal_block = goal
+        # FIX-20250421: 强制置顶原始目标，不可变更
+        goal_block = f"【核心任务 - 不可变更】\n{goal}\n\n当前执行目标: {self.state.goal or goal}"
 
         # --- Zone 2: Progress ---
         progress_block = f"当前阶段: {progress} | 回合: {turn} / {max_turns}"
@@ -712,6 +718,10 @@ class RoleSessionOrchestrator:
             wm_parts.append("已确认:")
             for fact in confirmed_facts:
                 wm_parts.append(f"  - {fact}")
+        # FIX-20250421: 显示真正读取过的文件（从 state.read_files）
+        if self.state.read_files:
+            wm_parts.append("已成功读取的文件:")
+            wm_parts.append(f"  - {', '.join(self.state.read_files)}")
         # 注入最近使用的读工具（来自 continue_multi_turn 的 SESSION_PATCH）
         if recent_reads := findings.get("recent_reads"):
             reads = recent_reads if isinstance(recent_reads, list) else [recent_reads]
@@ -751,7 +761,7 @@ class RoleSessionOrchestrator:
                 result_data = item.get("result")
                 args = item.get("arguments", {})
 
-                if tool_name in {"read_file", "repo_read_head", "repo_rg"} and success:
+                if tool_name in {"read_file", "repo_read_head"} and success:
                     # read_file 的参数可能是 file/filepath/path/target_file 等
                     path = (
                         args.get("file")
@@ -762,6 +772,9 @@ class RoleSessionOrchestrator:
                         or args.get("file_path")
                         or "unknown"
                     )
+                    # FIX-20250421: 记录真正读取过的文件
+                    if path and path not in self.state.read_files:
+                        self.state.read_files.append(path)
                     content = ""
                     if isinstance(result_data, dict):
                         content = str(result_data.get("result", result_data.get("content", "")))
@@ -771,6 +784,10 @@ class RoleSessionOrchestrator:
                     if len(content) > 2000:
                         content = content[:2000] + f"\n... [truncated, total {len(content)} chars]"
                     tool_result_lines.append(f"  文件 `{path}` ({len(content)} chars):\n{content}")
+                elif tool_name == "repo_rg" and success:
+                    # repo_rg 不算真正读取文件，只记录搜索模式
+                    pattern = args.get("pattern", "")
+                    tool_result_lines.append(f"  搜索: {pattern}")
                 elif tool_name in {"list_directory", "glob"} and success:
                     path = args.get("path", ".")
                     entries = []

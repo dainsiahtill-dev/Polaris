@@ -108,6 +108,10 @@ class OrchestratorSessionState:
     task_progress: str = "exploring"
     # 关键文件的快照指纹：用于判断当前 Turn 是否真的在推进
     key_file_snapshots: dict[str, str] = field(default_factory=dict)
+    # FIX-20250421: 原始目标，一旦设置永不丢失（防止 Turn 6 goal 为空）
+    original_goal: str = ""
+    # FIX-20250421: 已成功读取的文件列表（真正的 read_file，不是 glob）
+    read_files: list[str] = field(default_factory=list)
 
 
 class ContinuationPolicy:

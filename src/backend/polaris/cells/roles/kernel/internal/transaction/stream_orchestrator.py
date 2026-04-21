@@ -77,7 +77,11 @@ def is_refusal_response(response: RawLLMResponse) -> bool:
 
 
 def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> list[str]:
-    """从 batch_receipt 中提取读工具名称列表（去重）。"""
+    """从 batch_receipt 中提取真正的文件读取工具名称列表（去重）。
+
+    FIX-20250421: 区分 exploration tools（glob/repo_rg/grep）和 actual read tools（read_file/repo_read_*）。
+    只有真正读取了文件内容的工具才算 read tools。
+    """
     if not batch_receipt:
         return []
     results = batch_receipt.get("results") or batch_receipt.get("raw_results") or []
@@ -89,8 +93,9 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
             continue
         if name in seen:
             continue
-        # 识别读工具：以 read_ 或 repo_read_ 开头，且不是 write 工具
-        if name.startswith(("read_", "repo_read_", "search_", "grep", "find_")):
+        # FIX-20250421: 只识别真正读取文件内容的工具
+        # Exploration tools (glob, repo_rg, grep, search_code) are NOT read tools
+        if name.startswith(("read_file", "repo_read_head", "repo_read_slice", "repo_read_tail", "repo_read_around", "repo_read_range")):
             seen.add(name)
             reads.append(name)
     return reads
@@ -108,17 +113,29 @@ def _build_continue_visible_content(read_tools: list[str], current_progress: str
         current_progress: 当前 task_progress（implementing/verifying/done等）
     """
     # 根据当前 progress 动态生成 instruction，不再强制重置为 implementing
+    # FIX-20250421: 根据是否有真正的 read_tools 来调整提示语
+    has_actual_read = bool(read_tools)  # read_tools 现在只包含真正读取文件内容的工具
+
     if current_progress == "verifying":
         instruction = (
             "验证阶段。请运行测试或手动验证修复效果，确保无回归。严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
         )
         visible_prefix = "验证阶段继续"
     elif current_progress == "implementing":
-        instruction = (
-            "读阶段已完成，现在请调用写工具（edit_file / write_file 等）执行修改。"
-            "严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
-        )
-        visible_prefix = "写阶段继续"
+        if has_actual_read:
+            instruction = (
+                "读阶段已完成，现在请调用写工具（edit_file / write_file 等）执行修改。"
+                "严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
+            )
+            visible_prefix = "写阶段继续"
+        else:
+            # FIX-20250421: 如果没有真正读取文件，提示模型需要先读取
+            instruction = (
+                "探索阶段已完成。你已通过 glob/repo_rg 定位了文件。"
+                "MANDATORY: 在修改前，必须先调用 read_file 或 repo_read_head 读取目标文件的内容。"
+                "严禁在implementing阶段继续调用 glob/repo_rg/repo_tree。"
+            )
+            visible_prefix = "读阶段"
     elif current_progress == "done":
         instruction = "任务已完成。请汇总结果并以 END_SESSION 结束。"
         visible_prefix = "完成阶段"

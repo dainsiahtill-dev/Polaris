@@ -133,6 +133,9 @@ class TurnLedger:
     delivery_contract: DeliveryContract = field(default_factory=DeliveryContract)
     mutation_obligation: MutationObligationState = field(default_factory=MutationObligationState)
 
+    # FIX-20250421: Implementing phase 阻断标记（用于 continuation prompt）
+    _implementing_phase_block_triggered: bool = field(default=False)
+
     def set_delivery_contract(self, contract: DeliveryContract) -> None:
         """设置交付契约。"""
         self.delivery_contract = contract
