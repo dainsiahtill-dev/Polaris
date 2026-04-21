@@ -13,12 +13,23 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from polaris.cells.roles.kernel.internal.transaction.delivery_contract import BlockedReason
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
+    BlockedReason,
+    DeliveryContract,
+    DeliveryMode,
+)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
-from polaris.cells.roles.kernel.public.turn_contracts import TurnDecision
+from polaris.cells.roles.kernel.public.turn_contracts import (
+    BatchId,
+    BatchReceipt,
+    ToolCallId,
+    ToolExecutionResult,
+    TurnDecision,
+    TurnId,
+)
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent
 
 
@@ -108,6 +119,91 @@ async def test_mutation_bypass_uses_merged_batch_receipt(
 
 
 @pytest.mark.asyncio
+async def test_mutation_bypass_normalizes_batch_receipt_models(
+    mock_emit_event: Any,
+    mock_guard_assert: Any,
+) -> None:
+    """continue_multi_turn 必须兼容 ToolBatchRuntime 返回的 BatchReceipt 模型对象。"""
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=mock_emit_event,
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_merge_model")
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTING)
+    state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTED)
+    ledger = TurnLedger(turn_id="turn_merge_model")
+    ledger.mutation_obligation.mark_blocked(
+        BlockedReason.NO_WRITE_TOOL_AVAILABLE,
+        detail="no write tools",
+    )
+
+    receipts = cast(
+        list[dict[str, Any]],
+        [
+            BatchReceipt(
+                batch_id=BatchId("b1"),
+                turn_id=TurnId("turn_merge_model"),
+                results=[
+                    ToolExecutionResult(
+                        call_id=ToolCallId("call_glob"),
+                        tool_name="glob",
+                        status="success",
+                        result={"path": ".", "results": ["session_orchestrator.py"]},
+                        execution_time_ms=5,
+                    )
+                ],
+                success_count=1,
+                raw_results=[{"tool_name": "glob", "status": "success"}],
+            ),
+            BatchReceipt(
+                batch_id=BatchId("b2"),
+                turn_id=TurnId("turn_merge_model"),
+                results=[
+                    ToolExecutionResult(
+                        call_id=ToolCallId("call_rg"),
+                        tool_name="repo_rg",
+                        status="success",
+                        result={"result": {"query": "session_orchestrator"}},
+                        execution_time_ms=7,
+                    )
+                ],
+                success_count=1,
+                raw_results=[{"tool_name": "repo_rg", "status": "success"}],
+            ),
+        ],
+    )
+
+    result = executor._build_mutation_bypass_result(
+        cast(
+            TurnDecision,
+            {
+                "turn_id": "turn_merge_model",
+                "kind": "TOOL_BATCH",
+                "finalize_mode": "LLM_ONCE",
+            },
+        ),
+        state_machine,
+        ledger,
+        receipts,
+        stream=True,
+    )
+
+    receipt = cast(dict[str, Any], result.get("batch_receipt"))
+    assert receipt is not None
+    assert len(receipt["results"]) == 2
+    assert {item["tool_name"] for item in receipt["results"]} == {"glob", "repo_rg"}
+    assert receipt["success_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_exploration_streak_hard_block_rejects_exploration_only_batch(
     mock_guard_assert: Any,
 ) -> None:
@@ -157,6 +253,62 @@ async def test_exploration_streak_hard_block_rejects_exploration_only_batch(
     assert any(
         isinstance(event, ErrorEvent) and event.error_type == "exploration_streak_hard_block"
         for event in captured_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_known_target_requires_read_blocks_exploration_only_batch(
+    mock_guard_assert: Any,
+) -> None:
+    """已知目标文件后仍只做 broad exploration，必须被 executor 拦截。"""
+    captured_events: list[Any] = []
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=lambda event: captured_events.append(event),
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    decision = cast(
+        TurnDecision,
+        {
+            "turn_id": "turn_known_target_requires_read",
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": "batch_known_target_requires_read",
+                "invocations": [
+                    {
+                        "call_id": "call_glob",
+                        "tool_name": "glob",
+                        "arguments": {"pattern": "**/*session_orchestrator*"},
+                    }
+                ],
+            },
+        },
+    )
+    state_machine = TurnStateMachine(turn_id="turn_known_target_requires_read")
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    ledger = TurnLedger(turn_id="turn_known_target_requires_read")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "请进一步完善 polaris/cells/roles/runtime/internal/session_orchestrator.py 相关代码。"
+                " 当前必须先 read_file 再修改。"
+            ),
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="target_files_known_without_read_evidence"):
+        await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
+    assert any(
+        isinstance(event, ErrorEvent) and event.error_type == "known_target_requires_read" for event in captured_events
     )
 
 
@@ -289,6 +441,53 @@ async def test_warn_mode_allows_readonly_batch_for_negated_mutation_request(
 
     # 结果应包含正常执行结果（tool_batch_with_receipt 或 handoff）
     assert result.get("turn_id") == "turn_negated"
+
+
+@pytest.mark.asyncio
+async def test_successful_direct_read_records_read_evidence(
+    mock_emit_event: Any,
+    mock_guard_assert: Any,
+) -> None:
+    """direct read 工具成功后必须写入 mutation/read evidence ledger。"""
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "README.md", "content": "ok"}}),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=mock_emit_event,
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    decision = cast(
+        TurnDecision,
+        {
+            "turn_id": "turn_read_evidence",
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": "batch_read_evidence",
+                "invocations": [
+                    {
+                        "call_id": "call_read",
+                        "tool_name": "read_file",
+                        "arguments": {"file": "README.md"},
+                        "execution_mode": "readonly_parallel",
+                        "effect_type": "read",
+                    }
+                ],
+            },
+        },
+    )
+    state_machine = TurnStateMachine(turn_id="turn_read_evidence")
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    ledger = TurnLedger(turn_id="turn_read_evidence")
+    context = [{"role": "user", "content": "读取 README.md 的内容"}]
+
+    await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
+
+    assert ledger.mutation_obligation.read_evidence_count == 1
 
 
 @pytest.mark.asyncio

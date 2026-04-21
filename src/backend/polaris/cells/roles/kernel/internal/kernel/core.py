@@ -515,6 +515,16 @@ class RoleExecutionKernel:
 
             __slots__ = ()
 
+            def reset_turn_boundary(self, turn_id: str) -> None:
+                kernel = kernel_weakref()
+                if kernel is None:
+                    return
+                normalized_turn_id = str(turn_id or "").strip()
+                if not normalized_turn_id:
+                    return
+                cast(Any, provider_request).turn_id = normalized_turn_id
+                kernel.reset_tool_gateway_turn_boundary(normalized_turn_id)
+
             async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> Any:
                 kernel = kernel_weakref()
                 if kernel is None:
@@ -1906,6 +1916,22 @@ class RoleExecutionKernel:
         if turn_id:
             return f"turn_id:{turn_id}"
         return f"request_obj:{id(request_obj)}"
+
+    def reset_tool_gateway_turn_boundary(self, turn_id: str) -> None:
+        """Explicitly reset cached gateway counters when the authoritative turn id changes."""
+        normalized_turn_id = str(turn_id or "").strip()
+        if not normalized_turn_id:
+            return
+        current_turn_key = f"turn_id:{normalized_turn_id}"
+        if current_turn_key == self._cached_gateway_turn_id:
+            return
+        if self._cached_tool_gateway is not None:
+            self._cached_tool_gateway.reset_execution_count()
+            if hasattr(self._cached_tool_gateway, "_failure_budget") and hasattr(
+                self._cached_tool_gateway._failure_budget, "reset"
+            ):
+                self._cached_tool_gateway._failure_budget.reset()
+        self._cached_gateway_turn_id = current_turn_key
 
     async def _execute_single_tool(
         self,

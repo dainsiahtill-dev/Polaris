@@ -1,8 +1,9 @@
 ﻿card_id: "vc-20260422-session-orchestrator-full-remediation"
 bug_summary: >
   MATERIALIZE_CHANGES sessions can enter an exploration loop and exhaust max turns without
-  progressing to read/write. The loop is caused by incomplete continuation receipts,
-  weak working-memory extraction, instruction regression, and cross-turn tool-count leakage.
+  progressing to read/write. The loop is caused by BatchReceipt model receipts being dropped
+  during continuation merge, weak working-memory truth propagation, prompt-only enforcement,
+  and cross-turn tool-count leakage when run_id is empty in real CLI flows.
 
 classification: structural
 
@@ -13,14 +14,14 @@ bug_path:
 
 assumptions:
   - id: "A1"
-    statement: "Continuation batch_receipt must contain merged results from all executed tools in a batch."
+    statement: "Continuation batch_receipt must preserve ToolBatchRuntime BatchReceipt model objects as merged results."
     status: verified_true
-    evidence: "tool_batch_executor mutation bypass currently returns receipts[0], dropping later results."
+    evidence: "tool_batch_executor _merge_batch_receipts accepted only dict and skipped BatchReceipt model objects."
 
   - id: "A2"
-    statement: "Glob/repo_rg tool payloads are available but not fully surfaced into continuation working memory."
+    statement: "Glob/repo_rg tool payloads are present in real execution, but empty merged receipts prevent them from reaching continuation working memory."
     status: verified_true
-    evidence: "session_orchestrator reads glob from result_data['result'] while handler uses result_data['results']."
+    evidence: "real CLI log shows tool_gateway success for repo_tree/repo_rg/glob while continue_multi_turn merged_receipt_summary remains results=0."
 
   - id: "A3"
     statement: "Turn boundary reset cannot depend only on request.run_id because run_id may be empty in real flows."
@@ -31,6 +32,11 @@ assumptions:
     statement: "Instruction-only mitigation is insufficient; repeated exploration-only turns require executor hard-block."
     status: verified_true
     evidence: "real CLI logs show 10-turn exploring loop despite repeated mandatory instructions."
+
+  - id: "A5"
+    statement: "Once target file paths are already known, recovery should reuse bootstrap-read flow instead of relying on another LLM-only reminder."
+    status: verified_true
+    evidence: "retry_orchestrator already owns stale-edit bootstrap read path and can be extended for known-target read recovery."
 
 pre_mortem:
   failure_point: >
@@ -49,38 +55,48 @@ verification_plan:
       status: passed
 
     - file: "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py"
-      description: "continue_multi_turn carries merged batch receipt + exploration streak hard-block enforcement"
+      description: "continue_multi_turn carries merged batch receipt from BatchReceipt model objects + exploration streak hard-block enforcement"
       expected: "new regression test passes"
       status: passed
 
     - file: "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py"
-      description: "exploration hard-block emits structured ErrorEvent and does not over-block mixed read/write remediation batches"
+      description: "exploration hard-block emits structured ErrorEvent, known-target guard works, and direct read evidence is tracked"
       expected: "new regression tests pass"
       status: passed
 
     - file: "polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
-      description: "execution counter reset works with empty run_id across turns"
+      description: "execution counter reset works with empty run_id across turns and explicit turn-id boundary"
       expected: "new regression test passes"
+      status: passed
+
+    - file: "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+      description: "retry orchestrator reuses bootstrap-read path when target file is known but model keeps exploring"
+      expected: "new regression test passes"
+      status: passed
+
+    - file: "polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py"
+      description: "normalized batch_receipt remains compatible with stream continuation orchestration"
+      expected: "existing regression suite passes"
       status: passed
 
   quality_gates:
     - description: "Ruff lint/fix"
-      command: "python -m ruff check polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/core.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py --fix"
+      command: "python -m ruff check --fix polaris/cells/roles/kernel/internal/transaction/receipt_utils.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py polaris/cells/roles/kernel/internal/transaction/contract_guards.py polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py polaris/cells/roles/kernel/internal/kernel/core.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
       expected: "0 diagnostics"
       status: passed
 
     - description: "Ruff format"
-      command: "python -m ruff format polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/core.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
+      command: "python -m ruff format polaris/cells/roles/kernel/internal/transaction/receipt_utils.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py polaris/cells/roles/kernel/internal/transaction/contract_guards.py polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py polaris/cells/roles/kernel/internal/kernel/core.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
       expected: "formatted or already clean"
       status: passed
 
     - description: "Mypy targeted"
-      command: "python -m mypy polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/core.py"
+      command: "python -m mypy polaris/cells/roles/kernel/internal/transaction/receipt_utils.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py polaris/cells/roles/kernel/internal/transaction/contract_guards.py polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py polaris/cells/roles/kernel/internal/kernel/core.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
       expected: "Success: no issues found"
       status: passed
 
     - description: "Pytest targeted"
-      command: "python -m pytest -q polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py"
       expected: "0 failed"
       status: passed
 

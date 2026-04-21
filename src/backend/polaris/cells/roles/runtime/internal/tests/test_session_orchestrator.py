@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock
 import pytest
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.public.turn_contracts import (
+    BatchId,
+    BatchReceipt,
+    ToolExecutionResult,
     TurnContinuationMode,
+    TurnId,
     TurnOutcomeEnvelope,
     TurnResult,
 )
@@ -718,6 +722,78 @@ class TestRoleSessionOrchestrator:
 
         assert "session_orchestrator.py" in prompt
         assert "搜索 `session_orchestrator` 命中 1 处" in prompt
+        assert "必须先对已定位候选文件调用 read_file" in prompt
+
+    @pytest.mark.asyncio
+    async def test_materialize_prompt_handles_batch_receipt_model_objects(self, tmp_workspace):
+        """真实 BatchReceipt 模型对象也必须把搜索命中投影到 continuation prompt。"""
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.goal = "进一步完善 Session Orchestrator 相关代码"
+        orch.state.original_goal = orch.state.goal
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        orch.state.task_progress = "exploring"
+
+        envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t0",
+                kind="continue_multi_turn",
+                visible_content="",
+                decision={},
+                batch_receipt=BatchReceipt(
+                    batch_id=BatchId("batch_model_receipt"),
+                    turn_id=TurnId("t0"),
+                    results=[
+                        ToolExecutionResult(
+                            call_id="call_glob",
+                            tool_name="glob",
+                            status="success",
+                            result={
+                                "path": ".",
+                                "results": ["polaris/cells/roles/runtime/internal/session_orchestrator.py"],
+                            },
+                            execution_time_ms=3,
+                        ),
+                        ToolExecutionResult(
+                            call_id="call_rg",
+                            tool_name="repo_rg",
+                            status="success",
+                            result={
+                                "result": {
+                                    "query": "SessionOrchestrator",
+                                    "results": [
+                                        {
+                                            "file": "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+                                            "line": 1,
+                                            "snippet": "class RoleSessionOrchestrator:",
+                                        }
+                                    ],
+                                }
+                            },
+                            execution_time_ms=4,
+                        ),
+                    ],
+                    success_count=2,
+                    raw_results=[
+                        {"tool_name": "glob", "status": "success"},
+                        {"tool_name": "repo_rg", "status": "success"},
+                    ],
+                ),
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        prompt = orch._build_continuation_prompt(envelope)
+
+        assert "session_orchestrator.py" in prompt
+        assert "SessionOrchestrator" in prompt
         assert "必须先对已定位候选文件调用 read_file" in prompt
 
     @pytest.mark.asyncio

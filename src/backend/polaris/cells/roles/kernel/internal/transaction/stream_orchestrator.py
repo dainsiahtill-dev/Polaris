@@ -33,6 +33,7 @@ from polaris.cells.roles.kernel.internal.transaction.read_strategy import (
     determine_optimal_strategy,
     is_content_truncated,
 )
+from polaris.cells.roles.kernel.internal.transaction.receipt_utils import normalize_batch_receipt
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_continuation_prompt_metadata,
@@ -980,7 +981,7 @@ class StreamOrchestrator:
 
         if forced_retry_result is not None:
             result = forced_retry_result
-            batch_receipt = dict(result.get("batch_receipt") or {})
+            batch_receipt = normalize_batch_receipt(result.get("batch_receipt"))
             if batch_receipt:
                 for item in batch_receipt.get("results", []):
                     yield ToolBatchEvent(
@@ -1042,7 +1043,7 @@ class StreamOrchestrator:
                         stream=True,
                         shadow_engine=shadow_engine,
                     )
-                batch_receipt = dict(result.get("batch_receipt") or {})
+                batch_receipt = normalize_batch_receipt(result.get("batch_receipt"))
                 if batch_receipt:
                     for item in batch_receipt.get("results", []):
                         yield ToolBatchEvent(
@@ -1075,8 +1076,8 @@ class StreamOrchestrator:
         # continue_multi_turn: 构建包含 SESSION_PATCH 的 visible_content，
         # 让 Orchestrator 通过 ADR-0080 机制自动注入 structured_findings
         if _kind == "continue_multi_turn":
-            _receipt = result.get("batch_receipt") or {}
-            if isinstance(_receipt, dict):
+            _receipt = normalize_batch_receipt(result.get("batch_receipt"))
+            if _receipt:
                 _summary_results = _receipt.get("results") or []
                 _summary_tool_names = []
                 if isinstance(_summary_results, list):

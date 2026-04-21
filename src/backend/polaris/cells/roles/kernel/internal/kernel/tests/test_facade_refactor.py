@@ -250,6 +250,16 @@ class TestFacadeMethods:
 
         assert key == "run_123"
 
+    def test_resolve_tool_gateway_turn_key_uses_turn_id_when_run_id_missing(self) -> None:
+        """run_id 缺失时应优先使用显式 turn_id。"""
+        request = MagicMock()
+        request.run_id = None
+        request.turn_id = "turn_456"
+
+        key = RoleExecutionKernel._resolve_tool_gateway_turn_key(request)
+
+        assert key == "turn_id:turn_456"
+
     def test_resolve_tool_gateway_turn_key_falls_back_to_request_identity(self) -> None:
         """run_id 缺失时应回退到 request identity，避免跨回合计数串扰。"""
         request_a = MagicMock()
@@ -265,6 +275,25 @@ class TestFacadeMethods:
         assert key_a.startswith("request_obj:")
         assert key_b.startswith("request_obj:")
         assert key_a != key_b
+
+    def test_reset_tool_gateway_turn_boundary_is_idempotent_per_turn(self) -> None:
+        """显式 turn reset 对同一 turn 不重复清零，对新 turn 必须清零。"""
+        kernel = RoleExecutionKernel(workspace=".")
+        mock_gateway = MagicMock()
+        mock_gateway.reset_execution_count = MagicMock()
+        mock_failure_budget = MagicMock()
+        mock_failure_budget.reset = MagicMock()
+        mock_gateway._failure_budget = mock_failure_budget
+        kernel._cached_tool_gateway = mock_gateway
+        kernel._cached_gateway_turn_id = "request_obj:legacy"
+
+        kernel.reset_tool_gateway_turn_boundary("turn_a")
+        kernel.reset_tool_gateway_turn_boundary("turn_a")
+        kernel.reset_tool_gateway_turn_boundary("turn_b")
+
+        assert mock_gateway.reset_execution_count.call_count == 2
+        assert mock_failure_budget.reset.call_count == 2
+        assert kernel._cached_gateway_turn_id == "turn_id:turn_b"
 
 
 class TestLazyLoading:

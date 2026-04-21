@@ -758,6 +758,137 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
     assert first_file == "README.md"
 
 
+@pytest.mark.asyncio
+async def test_retry_known_target_requires_read_switches_to_context_bootstrap(monkeypatch) -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_retry_context_bootstrap")
+    ledger = TurnLedger(turn_id="turn_retry_context_bootstrap")
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "请继续完善 polaris/cells/roles/runtime/internal/session_orchestrator.py。"
+                " 当前必须先 read_file 再修改。"
+            ),
+        }
+    ]
+    captured: dict[str, object] = {"execute_calls": 0}
+
+    async def _fake_call_llm_for_decision(
+        ctx,
+        tool_definitions,
+        llm_ledger,
+        *,
+        tool_choice_override=None,
+        model_override=None,
+    ):
+        captured["retry_context"] = ctx
+        captured["retry_tool_definitions"] = list(tool_definitions)
+        captured["retry_ledger"] = llm_ledger
+        captured["retry_tool_choice_override"] = tool_choice_override
+        return RawLLMResponse(content="", native_tool_calls=[])
+
+    def _fake_decode(_response, _turn_id):
+        return {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "turn_id": "turn_retry_context_bootstrap",
+            "metadata": {"workspace": "."},
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "glob",
+                        "arguments": {"pattern": "**/*session_orchestrator*"},
+                    }
+                ]
+            },
+        }
+
+    async def _fake_execute_tool_batch(
+        decision,
+        sm,
+        lg,
+        exec_context,
+        *,
+        stream,
+        shadow_engine,
+        allowed_tool_names=None,
+        count_towards_batch_limit=True,
+    ):
+        execute_calls = int(captured["execute_calls"]) + 1
+        captured["execute_calls"] = execute_calls
+        if execute_calls == 1:
+            raise RuntimeError(
+                "single_batch_contract_violation: target_files_known_without_read_evidence; requires_bootstrap_read"
+            )
+        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+
+    async def _fake_execute_read_bootstrap_batch(
+        *,
+        turn_id,
+        workspace,
+        tool_batch,
+        ledger,
+    ):
+        captured["bootstrap_turn_id"] = turn_id
+        captured["bootstrap_workspace"] = workspace
+        captured["bootstrap_tool_batch"] = tool_batch
+        return {
+            "results": [
+                {
+                    "tool_name": "read_file",
+                    "status": "success",
+                    "result": {
+                        "file": "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+                        "content": "class RoleSessionOrchestrator:",
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
+    monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
+    monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
+    monkeypatch.setattr(
+        controller._retry_orchestrator, "execute_read_bootstrap_batch", _fake_execute_read_bootstrap_batch
+    )
+
+    result = await controller._retry_tool_batch_after_contract_violation(
+        turn_id="turn_retry_context_bootstrap",
+        context=context,
+        tool_definitions=[
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "glob"}},
+            {"type": "function", "function": {"name": "edit_file"}},
+        ],
+        state_machine=state_machine,
+        ledger=ledger,
+        stream=False,
+        shadow_engine=None,
+    )
+
+    assert result["kind"] == "tool_batch_with_receipt"
+    assert captured["execute_calls"] == 2
+    bootstrap_batch = captured["bootstrap_tool_batch"]
+    if isinstance(bootstrap_batch, dict):
+        bootstrap_invocations = list(bootstrap_batch.get("invocations", []))
+    else:
+        bootstrap_invocations = list(getattr(bootstrap_batch, "invocations", []) or [])
+    assert bootstrap_invocations
+    first_bootstrap = bootstrap_invocations[0]
+    if isinstance(first_bootstrap, dict):
+        first_tool_name = first_bootstrap.get("tool_name")
+        first_file = (first_bootstrap.get("arguments") or {}).get("file")
+    else:
+        first_tool_name = getattr(first_bootstrap, "tool_name", "")
+        first_file = getattr(first_bootstrap, "arguments", {}).get("file")
+    assert first_tool_name == "read_file"
+    assert first_file == "polaris/cells/roles/runtime/internal/session_orchestrator.py"
+
+
 def test_build_decision_messages_omits_task_contract_for_read_only_request() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

@@ -19,6 +19,7 @@ from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteTo
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_invocation_tool_name,
+    extract_target_files_from_message,
     receipts_have_stale_edit_failure,
     resolve_mutation_target_guard_violation,
     tool_batch_has_write_invocation,
@@ -35,7 +36,11 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionCo
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
     extract_tool_results_from_batch_receipt,
 )
-from polaris.cells.roles.kernel.internal.transaction.receipt_utils import record_receipts_to_ledger
+from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
+    merge_batch_receipts,
+    normalize_batch_receipts,
+    record_receipts_to_ledger,
+)
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_latest_user_message
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -192,56 +197,9 @@ def rewrite_existing_file_paths_in_invocations(
 # ---------------------------------------------------------------------------
 
 
-def _merge_batch_receipts(receipts: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Merge multiple per-tool receipts into a single canonical batch receipt.
-
-    ToolBatchRuntime returns one receipt per invocation. Continuation workflows
-    should carry the full evidence set instead of only the first receipt.
-    """
-    if not receipts:
-        return None
-
-    merged_results: list[dict[str, Any]] = []
-    merged_raw_results: list[dict[str, Any]] = []
-    success_count = 0
-    failure_count = 0
-    pending_async_count = 0
-    has_pending_async = False
-    turn_id = ""
-    first_batch_id = ""
-
-    for receipt in receipts:
-        if not isinstance(receipt, dict):
-            continue
-        if not first_batch_id:
-            first_batch_id = str(receipt.get("batch_id", "") or "")
-        if not turn_id:
-            turn_id = str(receipt.get("turn_id", "") or "")
-
-        results = receipt.get("results")
-        if isinstance(results, list):
-            merged_results.extend(item for item in results if isinstance(item, dict))
-
-        raw_results = receipt.get("raw_results")
-        if isinstance(raw_results, list):
-            merged_raw_results.extend(item for item in raw_results if isinstance(item, dict))
-
-        success_count += int(receipt.get("success_count", 0) or 0)
-        failure_count += int(receipt.get("failure_count", 0) or 0)
-        pending_async_count += int(receipt.get("pending_async_count", 0) or 0)
-        has_pending_async = has_pending_async or bool(receipt.get("has_pending_async"))
-
-    batch_id = first_batch_id or f"{turn_id}_merged_batch"
-    return {
-        "batch_id": batch_id,
-        "turn_id": turn_id,
-        "results": merged_results,
-        "raw_results": merged_raw_results,
-        "success_count": success_count,
-        "failure_count": failure_count,
-        "pending_async_count": pending_async_count,
-        "has_pending_async": has_pending_async or pending_async_count > 0,
-    }
+def _merge_batch_receipts(receipts: list[Any]) -> dict[str, Any] | None:
+    """Merge multiple per-tool receipts into a single canonical batch receipt."""
+    return merge_batch_receipts(receipts)
 
 
 # ---------------------------------------------------------------------------
@@ -303,16 +261,30 @@ class ToolBatchExecutor:
         *,
         batch_idempotency_key: str = "",
         side_effect_class: str = "readonly",
+        turn_id: str = "",
     ) -> ToolBatchRuntime:
         return ToolBatchRuntime(
             executor=self.tool_runtime,
             context=ToolExecutionContext(
                 workspace=workspace or ".",
                 timeout_ms=self.config.max_tool_execution_time_ms,
+                turn_id=turn_id,
                 batch_idempotency_key=batch_idempotency_key,
                 side_effect_class=side_effect_class,  # type: ignore[arg-type]
             ),
         )
+
+    async def _reset_tool_runtime_turn_boundary(self, turn_id: str) -> None:
+        """Explicitly notify the tool runtime of turn boundaries."""
+        reset_hook = getattr(self.tool_runtime, "reset_turn_boundary", None)
+        if not callable(reset_hook):
+            return
+        try:
+            result = reset_hook(turn_id)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:  # noqa: BLE001
+            logger.warning("tool-runtime turn boundary reset failed: turn_id=%s", turn_id, exc_info=True)
 
     def _check_idempotency(self, batch_idempotency_key: str) -> dict | None:
         """Check if a tool batch has already been executed.
@@ -377,6 +349,7 @@ class ToolBatchExecutor:
             workspace=workspace,
             invocations=raw_invocations,
         )
+        await self._reset_tool_runtime_turn_boundary(turn_id)
         if allowed_tool_names is not None:
             disallowed_tools = []
             for invocation in invocations:
@@ -472,31 +445,36 @@ class ToolBatchExecutor:
             extract_invocation_tool_name(inv) in _broad_exploration_tools for inv in invocations
         )
         _has_write = tool_batch_has_write_invocation(invocations)
+        tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
+        non_empty_tool_names = [name for name in tool_names if name]
+        only_broad_exploration = bool(non_empty_tool_names) and all(
+            name in _broad_exploration_tools for name in non_empty_tool_names
+        )
+        has_direct_read = any(name in _DIRECT_READ_TOOLS for name in non_empty_tool_names)
 
         _exploration_streak_hard_block = "EXPLORATION_STREAK_HARD_BLOCK" in _latest_user_for_barrier
-        if _exploration_streak_hard_block and _is_exploring_phase:
-            tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
-            non_empty_tool_names = [name for name in tool_names if name]
-            only_broad_exploration = bool(non_empty_tool_names) and all(
-                name in _broad_exploration_tools for name in non_empty_tool_names
+        if (
+            _exploration_streak_hard_block
+            and _is_exploring_phase
+            and only_broad_exploration
+            and not has_direct_read
+            and not _has_write
+        ):
+            self._raise_contract_violation(
+                turn_id=turn_id,
+                error_type="exploration_streak_hard_block",
+                message=(
+                    "single_batch_contract_violation: exploration_streak_hard_block active. "
+                    "Do not emit only glob/repo_rg/list_directory/repo_tree again. "
+                    "You must call read_file (or a write tool) this turn."
+                ),
+                metadata={
+                    "phase": "exploring",
+                    "tool_names": non_empty_tool_names,
+                    "has_direct_read": has_direct_read,
+                    "has_write": _has_write,
+                },
             )
-            has_direct_read = any(name in _DIRECT_READ_TOOLS for name in non_empty_tool_names)
-            if only_broad_exploration and not has_direct_read and not _has_write:
-                self._raise_contract_violation(
-                    turn_id=turn_id,
-                    error_type="exploration_streak_hard_block",
-                    message=(
-                        "single_batch_contract_violation: exploration_streak_hard_block active. "
-                        "Do not emit only glob/repo_rg/list_directory/repo_tree again. "
-                        "You must call read_file (or a write tool) this turn."
-                    ),
-                    metadata={
-                        "phase": "exploring",
-                        "tool_names": non_empty_tool_names,
-                        "has_direct_read": has_direct_read,
-                        "has_write": _has_write,
-                    },
-                )
 
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
             # FIX-20250421: Hard block when ALL tools are broad exploration — raise exception
@@ -545,6 +523,34 @@ class ToolBatchExecutor:
 
         latest_user_request = extract_latest_user_message(context)
         requires_mutation = enforce_mutation_write_guard and self.requires_mutation_intent(latest_user_request)
+        known_target_files = extract_target_files_from_message(latest_user_request)
+        target_files_known = bool(known_target_files) or bool(ledger.mutation_obligation.target_files_known)
+        missing_read_evidence = int(ledger.mutation_obligation.read_evidence_count or 0) <= 0
+        if (
+            requires_mutation
+            and _is_materialize
+            and _is_exploring_phase
+            and target_files_known
+            and missing_read_evidence
+            and only_broad_exploration
+            and not has_direct_read
+            and not _has_write
+        ):
+            self._raise_contract_violation(
+                turn_id=turn_id,
+                error_type="known_target_requires_read",
+                message=(
+                    "single_batch_contract_violation: target_files_known_without_read_evidence; "
+                    "requires_bootstrap_read. Broad exploration is no longer allowed once a candidate file path "
+                    "is already known. Call read_file on the known target (or write after a fresh read)."
+                ),
+                metadata={
+                    "phase": "exploring",
+                    "tool_names": non_empty_tool_names,
+                    "known_target_files": known_target_files[:6],
+                    "read_evidence_count": ledger.mutation_obligation.read_evidence_count,
+                },
+            )
         guard_mode = str(getattr(self.config, "mutation_guard_mode", "warn"))
         # FIX-20250421: Upgrade to strict in implementing phase if broad exploration was attempted
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
@@ -670,11 +676,11 @@ class ToolBatchExecutor:
                     inv for inv in replay_invocations if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT
                 ],
             )
-            receipts = await self._build_tool_batch_runtime(workspace).execute_batch(
+            receipts = await self._build_tool_batch_runtime(workspace, turn_id=turn_id).execute_batch(
                 replay_batch,
                 TurnId(turn_id),
             )
-            receipts_as_dicts.extend(cast("dict", r) for r in receipts)
+            receipts_as_dicts.extend(normalize_batch_receipts(receipts))
 
         record_receipts_to_ledger(receipts_as_dicts, ledger)
 

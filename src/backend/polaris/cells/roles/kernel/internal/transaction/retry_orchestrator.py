@@ -19,6 +19,7 @@ from typing import Any, Protocol, cast
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    build_context_target_bootstrap_decision,
     build_stale_edit_bootstrap_decision,
     extract_invocation_tool_name,
     is_mutation_contract_violation,
@@ -31,7 +32,11 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_verification_intent,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.receipt_utils import record_receipts_to_ledger
+from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
+    merge_batch_receipts,
+    normalize_batch_receipts,
+    record_receipts_to_ledger,
+)
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_allowed_tool_names_from_definitions,
     extract_latest_user_message,
@@ -540,41 +545,16 @@ class RetryOrchestrator:
             bootstrap_batch,
             TurnId(turn_id),
         )
-        receipts_as_dicts = [cast("dict[str, Any]", receipt) for receipt in receipts]
+        receipts_as_dicts = normalize_batch_receipts(receipts)
         record_receipts_to_ledger(receipts_as_dicts, ledger)
         if not receipts_as_dicts:
             return None
-        merged_results: list[dict[str, Any]] = []
-        merged_raw_results: list[dict[str, Any]] = []
-        success_count = 0
-        failure_count = 0
-        pending_async_count = 0
-        has_pending_async = False
-        for receipt in receipts_as_dicts:
-            raw_results = receipt.get("raw_results")
-            if isinstance(raw_results, list):
-                for item in raw_results:
-                    if isinstance(item, Mapping):
-                        merged_raw_results.append(dict(item))
-            results = receipt.get("results")
-            if isinstance(results, list):
-                for item in results:
-                    if isinstance(item, Mapping):
-                        merged_results.append(dict(item))
-            success_count += int(receipt.get("success_count", 0) or 0)
-            failure_count += int(receipt.get("failure_count", 0) or 0)
-            pending_async_count += int(receipt.get("pending_async_count", 0) or 0)
-            has_pending_async = has_pending_async or bool(receipt.get("has_pending_async", False))
-        return {
-            "batch_id": str(batch_id),
-            "turn_id": turn_id,
-            "results": merged_results,
-            "raw_results": merged_raw_results,
-            "success_count": success_count,
-            "failure_count": failure_count,
-            "pending_async_count": pending_async_count,
-            "has_pending_async": has_pending_async,
-        }
+        merged_receipt = merge_batch_receipts(receipts_as_dicts)
+        if merged_receipt is None:
+            return None
+        merged_receipt["batch_id"] = str(batch_id)
+        merged_receipt["turn_id"] = turn_id
+        return merged_receipt
 
     def _build_retry_context(
         self,
@@ -824,12 +804,20 @@ class RetryOrchestrator:
                         retry_invocations=retry_invocations,
                         decision_metadata=retry_decision.get("metadata"),
                     )
-                    if bootstrap_from_write is not None:
+                    bootstrap_from_context = None
+                    if bootstrap_from_write is None:
+                        bootstrap_from_context = build_context_target_bootstrap_decision(
+                            turn_id=turn_id,
+                            latest_user_request=extract_latest_user_message(retry_context),
+                            decision_metadata=retry_decision.get("metadata"),
+                        )
+                    bootstrap_decision = bootstrap_from_write or bootstrap_from_context
+                    if bootstrap_decision is not None:
                         logger.warning(
-                            "mutation-contract retry attempt=%s switching to stale-edit bootstrap read path",
+                            "mutation-contract retry attempt=%s switching to bootstrap read path",
                             attempt_index + 1,
                         )
-                        candidate_bootstrap_decision = bootstrap_from_write
+                        candidate_bootstrap_decision = bootstrap_decision
                         break
                 if not is_mutation_contract_violation(retry_exc):
                     raise

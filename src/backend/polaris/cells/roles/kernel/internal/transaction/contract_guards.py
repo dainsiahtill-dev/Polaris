@@ -383,23 +383,60 @@ def build_stale_edit_bootstrap_decision(
     当 strict write retry 被 stale-edit guard 阻止时，合成一个只读批次
     先读取目标文件，再走现有的 write-followup 路径。
     """
+    target_files: list[str] = []
+    for invocation in retry_invocations:
+        target_file = extract_target_file_from_invocation_args(invocation)
+        if target_file:
+            target_files.append(target_file)
+
+    return _build_read_bootstrap_decision(
+        turn_id=turn_id,
+        target_files=target_files,
+        decision_metadata=decision_metadata,
+        batch_suffix="stale_bootstrap",
+    )
+
+
+def build_context_target_bootstrap_decision(
+    *,
+    turn_id: str,
+    latest_user_request: str,
+    decision_metadata: Any,
+) -> TurnDecision | None:
+    """Synthesize a safe read bootstrap batch from target paths already present in context."""
+    target_files = extract_target_files_from_message(latest_user_request)
+    return _build_read_bootstrap_decision(
+        turn_id=turn_id,
+        target_files=target_files,
+        decision_metadata=decision_metadata,
+        batch_suffix="context_bootstrap",
+    )
+
+
+def _build_read_bootstrap_decision(
+    *,
+    turn_id: str,
+    target_files: list[str],
+    decision_metadata: Any,
+    batch_suffix: str,
+) -> TurnDecision | None:
     from polaris.cells.roles.kernel.public.turn_contracts import ToolInvocation  # local import to avoid cycles
 
     read_invocations: list[Any] = []
     seen_targets: set[str] = set()
-    for index, invocation in enumerate(retry_invocations, start=1):
-        target_file = extract_target_file_from_invocation_args(invocation)
+    for index, target_file in enumerate(target_files, start=1):
         for candidate_file in expand_bootstrap_read_candidates(target_file):
-            if not candidate_file or candidate_file in seen_targets:
+            normalized_candidate = normalize_path_token(candidate_file)
+            if not normalized_candidate or normalized_candidate in seen_targets:
                 continue
-            seen_targets.add(candidate_file)
+            seen_targets.add(normalized_candidate)
             read_invocations.append(
                 cast(
                     "ToolInvocation",
                     {
                         "call_id": ToolCallId(f"{turn_id}_bootstrap_read_{index}_{len(read_invocations) + 1}"),
                         "tool_name": "read_file",
-                        "arguments": {"file": candidate_file},
+                        "arguments": {"file": normalized_candidate},
                         "effect_type": ToolEffectType.READ,
                         "execution_mode": ToolExecutionMode.READONLY_SERIAL,
                     },
@@ -419,7 +456,7 @@ def build_stale_edit_bootstrap_decision(
             "kind": TurnDecisionKind.TOOL_BATCH,
             "turn_id": turn_id,
             "tool_batch": {
-                "batch_id": BatchId(f"{turn_id}_stale_bootstrap"),
+                "batch_id": BatchId(f"{turn_id}_{batch_suffix}"),
                 "invocations": read_invocations,
             },
             "metadata": metadata_payload,
