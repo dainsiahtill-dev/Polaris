@@ -221,6 +221,20 @@ def build_single_batch_task_contract_hint(
                 required_any_groups_from_contract.append(normalized_group)
 
     required_any_groups_resolved: list[list[str]] = []
+    # BUG-06 fix: Tool priority order within write-groups.
+    # Models (especially MiniMax) frequently confuse edit_file's complex
+    # signature (requires start_line/end_line or search/replace) with
+    # write_file's simple signature (just file + content).  By placing
+    # simpler/safer tools first in the resolved group, the model is more
+    # likely to pick a tool whose signature it can correctly fill.
+    _write_group_priority: dict[str, int] = {
+        "append_to_file": 0,  # simplest: file + content
+        "precision_edit": 1,  # structured but well-defined
+        "repo_apply_diff": 2,  # diff-based, models handle reasonably
+        "search_replace": 3,  # search + replace pair
+        "edit_file": 4,  # complex: needs start_line/end_line OR search/replace
+        "write_file": 5,  # destructive full-overwrite, last resort
+    }
     for group in required_any_groups_from_contract:
         resolved_group: list[str] = []
         for group_item in group:
@@ -235,12 +249,14 @@ def build_single_batch_task_contract_hint(
             ]
             resolved_group.extend(equivalents)
         if resolved_group:
+            # Sort write-tools by safety priority; leave non-write tools in original order
+            resolved_group.sort(key=lambda t: _write_group_priority.get(t, 99))
             required_any_groups_resolved.append(resolved_group)
 
     # --- 解析最小调用次数 ---
     min_calls_required = 0
     min_calls_match = re.search(
-        r"tool\s+call\s+count\s+must\s*be\s*>=\s*(\d+)",
+        r"tool\s+call\s+count\s*must\s*be\s*>=\s*(\d+)",
         latest_user,
         flags=re.IGNORECASE,
     )

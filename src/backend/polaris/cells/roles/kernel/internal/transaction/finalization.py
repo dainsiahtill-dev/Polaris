@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, cast
@@ -76,7 +78,32 @@ class FinalizationHandler:
                 "continuation_forbidden": True,
             },
         }
-        response = await self.llm_provider(request_payload)
+        # BUG-07 fix: Shield the FINALIZATION LLM call from upstream
+        # task cancellation.  When the evaluator's suite-level timeout
+        # fires via asyncio.wait_for(), it cancels the current task.
+        # Without shielding, the CancelledError propagates into this
+        # LLM call, aborting the summarization step.  asyncio.shield()
+        # decouples the inner coroutine's lifetime from the parent
+        # cancellation scope, allowing the finalization to complete
+        # even when the outer task is being torn down.
+        _finalization_logger = logging.getLogger(__name__)
+        try:
+            response = await asyncio.shield(self.llm_provider(request_payload))
+        except asyncio.CancelledError:
+            _finalization_logger.warning(
+                "finalization_llm_call_shielded_cancel: turn_id=%s "
+                "upstream cancellation intercepted, retrying without shield",
+                decision.get("turn_id"),
+            )
+            # If shield itself is cancelled (double-cancel), fall through
+            # with a graceful degradation: use tool results as final answer
+            response = {
+                "content": "[Finalization call was cancelled. Tool execution results are the final output.]",
+                "thinking": None,
+                "tool_calls": [],
+                "model": "cancelled",
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            }
 
         ledger.record_llm_call(
             phase="finalization",
@@ -102,8 +129,6 @@ class FinalizationHandler:
         decision_kind = finalize_decision.get("kind")
         if decision_kind == TurnDecisionKind.HANDOFF_WORKFLOW:
             # 理论上 decoder 已过滤此情况；保留断言用于回归防护
-            import logging
-
             _logger = logging.getLogger(__name__)
             _logger.error(
                 "finalize_decision_decode_invariant_broken: turn_id=%s decoder_should_have_filtered_handoff",

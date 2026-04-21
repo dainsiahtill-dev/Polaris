@@ -437,7 +437,22 @@ class StreamEngine:
             break
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
-        completion_tokens = len(total_content) // 2
+        # BUG-03 fix: When the LLM emits only tool calls (no text chunks),
+        # total_content is empty/whitespace.  Previously this produced
+        # completion_tokens=0 and response_content="\n" in telemetry,
+        # which misrepresents a successful tool-calling turn as empty.
+        # Fix: estimate tokens from tool call count when text is absent,
+        # and normalize response_content to "" for tool-only responses.
+        _has_tool_calls = len(emitted_tool_signatures) > 0
+        _effective_content = total_content if total_content.strip() else ""
+        if _effective_content:
+            completion_tokens = len(_effective_content) // 2
+        elif _has_tool_calls:
+            # Each tool call consumes ~50 tokens on average (name + args).
+            # This is an estimate for telemetry purposes only.
+            completion_tokens = len(emitted_tool_signatures) * 50
+        else:
+            completion_tokens = 0
         prompt_tokens_val = int(context_result.token_estimate) if context_result else 0
         total_tokens = prompt_tokens_val + completion_tokens
         yield {
@@ -459,11 +474,11 @@ class StreamEngine:
             attempt=attempt,
             model=model,
             call_id=call_id,
-            completion_tokens=len(total_content) // 2,
+            completion_tokens=completion_tokens,
             prompt_tokens=prompt_tokens_val,
             context_tokens_after=context_result.token_estimate if context_result else None,
             compression_strategy=context_result.compression_strategy if context_result else None,
-            response_content=total_content,
+            response_content=_effective_content,
             tool_calls_count=len(emitted_tool_signatures),
             metadata={
                 "stream": True,
