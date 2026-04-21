@@ -641,7 +641,6 @@ class RoleSessionOrchestrator:
                         yield SessionWaitingHumanEvent(
                             session_id=self.session_id,
                             reason=f"DESTRUCTIVE_OPERATION_REQUIRES_APPROVAL:{hard_gate_check}",
-                            required_approval="confirm_destructive_action",
                         )
                         return
                 if not is_first_turn and self.state.session_invariants.is_frozen():

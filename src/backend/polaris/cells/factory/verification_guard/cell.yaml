@@ -1,0 +1,59 @@
+"""Cell definition for VerificationGuard.
+
+This cell implements "Verification Before Completion" pattern,
+ensuring that no completion claim is accepted without fresh verification evidence.
+"""
+
+id: factory.verification_guard
+title: Verification Guard
+kind: capability
+visibility: public
+stateful: false
+owner: factory
+purpose: >
+  Implements "Verification Before Completion" pattern to ensure all completion
+  claims are verified before acceptance. Provides safe command execution with
+  whitelist validation, timeout enforcement, and detailed verification reports.
+  
+  Core principle: "No fresh verification evidence, no completion claim."
+  
+current_modules:
+  - polaris.cells.factory.verification_guard.public.contracts
+  - polaris.cells.factory.verification_guard.internal.verification_engine
+  - polaris.cells.factory.verification_guard.internal.safe_executor
+tags:
+  - verification
+  - safety
+  - quality-gate
+owned_paths:
+  - polaris/cells/factory/verification_guard/**
+public_contracts:
+  modules:
+    - polaris.cells.factory.verification_guard.public.contracts
+  commands:
+    - VerifyCompletionCommandV1
+  queries: []
+  events:
+    - VerificationCompletedEventV1
+  results:
+    - VerifyCompletionResultV1
+    - VerificationReport
+  errors:
+    - VerificationGuardErrorV1
+depends_on:
+  - factory.pipeline
+  - policy.workspace_guard
+subgraphs: []
+state_owners: []
+effects_allowed:
+  - fs.read:workspace/**
+  - process.spawn:verification/*
+verification:
+  tests:
+    - polaris/cells/factory/verification_guard/tests/test_verification_guard.py
+  gaps:
+    - Integration with TurnTransactionController pending
+    - Metrics and telemetry collection not implemented
+  smoke_commands:
+    - python -m pytest polaris/cells/factory/verification_guard/tests/ -v
+generated_artifacts: []

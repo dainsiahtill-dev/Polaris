@@ -29,6 +29,8 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnEvent, TurnPhaseEvent
 
+logger = logging.getLogger(__name__)
+
 
 class FinalizationHandler:
     """收口处理器 — 将工具执行结果转化为最终用户可见输出。"""
@@ -157,8 +159,7 @@ class FinalizationHandler:
         self_check = _pre_finalization_self_check(ledger, receipts)
         if not self_check["completeness"] or not self_check["discipline"]:
             logger.warning(
-                "pre_finalization_self_check_failed: "
-                "turn_id=%s completeness=%s quality=%s discipline=%s",
+                "pre_finalization_self_check_failed: turn_id=%s completeness=%s quality=%s discipline=%s",
                 turn_id,
                 self_check["completeness"],
                 self_check["quality"],
@@ -552,7 +553,7 @@ class FinalizationHandler:
             for result in receipt.get("results", []):
                 tool_name = result.get("tool_name", "unknown")
                 status = result.get("status", "unknown")
-                status_emoji = "check" if status == "success" else "fail"
+                status_emoji = "✅" if status == "success" else "❌"
                 lines.append(f"{status_emoji} **{tool_name}**")
                 if status == "success":
                     lines.append(f"```\n{result.get('result', '')}\n```")
@@ -561,3 +562,71 @@ class FinalizationHandler:
                     lines.append(f"```\nError: {error}\n```")
                 lines.append("")
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Two-Stage Review Gate — Pre-Finalization Self-Check
+# ---------------------------------------------------------------------------
+
+
+def _pre_finalization_self_check(ledger: TurnLedger, receipts: list[dict]) -> dict[str, bool]:
+    """Agent 提交完成前必须自问三个问题（Superpowers 风格）。
+
+    在 finalization 之前对 ledger 执行完整性/质量/纪律三维检查。
+    返回各维度布尔值，供调用方决定是否标记 DONE_WITH_CONCERNS。
+
+    检查维度：
+    1. completeness — 是否覆盖了所有 expected_actions？
+    2. quality — 是否有 regression 或未处理的 error？
+    3. discipline — 是否遵循了 MATERIALIZE_CHANGES 流程（写工具 vs 贴代码）？
+
+    Args:
+        ledger: TurnLedger 实例，携带 delivery_contract 和 mutation_obligation
+        receipts: batch_receipt 列表
+
+    Returns:
+        {"completeness": bool, "quality": bool, "discipline": bool, "has_materialized": bool}
+    """
+    from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
+
+    results = [r for receipt in receipts for r in receipt.get("results", [])]
+    invoked_tools = {r.get("tool_name", "") for r in results}
+
+    # Dimension 1: Completeness — expected_actions 是否都有对应工具调用
+    completeness = True
+    if ledger.delivery_contract and ledger.delivery_contract.enrichment:
+        expected = ledger.delivery_contract.enrichment.expected_actions
+        if expected:
+            has_write_action = any(str(a).upper() in ("WRITE_CODE", "WRITE_TESTS") for a in expected)
+            if has_write_action:
+                has_write_tool = bool(invoked_tools & WRITE_TOOLS)
+                completeness = has_write_tool
+
+    # Dimension 2: Quality — batch 中是否有 failed 工具
+    quality = True
+    failed_count = sum(1 for r in results if str(r.get("status", "")) == "error")
+    if failed_count > 0:
+        quality = False
+        logger.warning(
+            "pre_finalization_self_check: quality=False — %d failed tools in batch",
+            failed_count,
+        )
+
+    # Dimension 3: Discipline — MATERIALIZE_CHANGES 模式必须用写工具，不能贴代码
+    discipline = True
+    if ledger.delivery_contract and ledger.delivery_contract.must_materialize:
+        has_write_tool = bool(invoked_tools & WRITE_TOOLS)
+        if not has_write_tool:
+            discipline = False
+            logger.warning(
+                "pre_finalization_self_check: discipline=False — MATERIALIZE_CHANGES but no write tool invoked",
+            )
+
+    has_materialized = bool(invoked_tools & WRITE_TOOLS)
+
+    return {
+        "completeness": completeness,
+        "quality": quality,
+        "discipline": discipline,
+        "has_materialized": has_materialized,
+    }
