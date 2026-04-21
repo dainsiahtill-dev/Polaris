@@ -502,7 +502,7 @@ class TestFalseCompletionDetection:
         claim = VerificationClaim(
             claim_id="false-format-claim",
             claimed_outcome="code is formatted",
-            verification_commands=["python -c \"print('E501 line too long'); exit(1)\""],
+            verification_commands=['python -c "import sys; print(\\"E501 line too long\\", file=sys.stderr); exit(1)"'],
         )
         report = verification_engine.verify(claim)
         assert report.status == VerificationStatus.FAIL
@@ -753,10 +753,10 @@ class TestErrorHandling:
         claim = VerificationClaim(
             claim_id="valid-claim",
             claimed_outcome="tests pass",
-            verification_commands=["pytest", ""],
+            verification_commands=["pytest", "rm -rf /"],
         )
         errors = verification_engine.validate_claim_structure(claim)
-        # Should detect empty command
+        # Should detect dangerous command
         assert len(errors) > 0
 
     def test_valid_claim_no_errors(self, verification_engine: VerificationEngine) -> None:

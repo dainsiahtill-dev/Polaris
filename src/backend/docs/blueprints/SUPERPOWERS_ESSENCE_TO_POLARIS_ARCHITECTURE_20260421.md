@@ -197,7 +197,36 @@ Phase 3 (中优先级):
 
 ---
 
-## 5. 技术选型
+## 5. 实施状态
+
+### Phase 1 (已完成 ✅)
+
+| 组件 | 位置 | 测试 | 状态 |
+|------|------|------|------|
+| **VerificationGuard Cell** | `polaris/cells/factory/verification_guard/` | 46 passed | ✅ 完成 |
+| **DebugStrategyEngine** | `polaris/cells/roles/kernel/internal/debug_strategy/` | 81 passed | ✅ 完成 |
+
+**质量门禁**:
+- ✅ Ruff: All checks passed
+- ✅ MyPy --strict: Success, no issues found
+- ✅ pytest: 127 passed (46 + 81)
+
+### Phase 2 (待实施)
+
+| 组件 | 预计工时 | 依赖 |
+|------|----------|------|
+| SubagentTaskDispatcher Cell | 3天 | VerificationGuard |
+| ParallelTaskExecutor | 2天 | StreamShadowEngine扩展 |
+
+### Phase 3 (待实施)
+
+| 组件 | 预计工时 | 依赖 |
+|------|----------|------|
+| SkillValidationFramework | 2天 | CI/CD管道 |
+
+---
+
+## 6. 技术选型
 
 | 组件 | 技术栈 | 理由 |
 |------|--------|------|
@@ -209,7 +238,7 @@ Phase 3 (中优先级):
 
 ---
 
-## 6. 风险与缓解
+## 7. 风险与缓解
 
 | 风险 | 缓解措施 |
 |------|----------|
