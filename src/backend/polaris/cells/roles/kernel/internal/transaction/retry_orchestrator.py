@@ -261,15 +261,26 @@ def build_retry_tool_definitions_for_mutation(
 
 
 def select_retry_forced_write_tool_name(tool_definitions: list[dict]) -> str | None:
+    # BUG-NEW-2 fix: write_file was ranked first, causing destructive full-file
+    # overwrites when the task only requires appending or editing a few lines.
+    # Reordered so that safe incremental tools are tried first:
+    #   append_to_file  — appends without touching existing content (safest)
+    #   precision_edit  — targeted line/block edits
+    #   edit_file       — structured file editing
+    #   search_replace  — targeted search-and-replace
+    #   repo_apply_diff — diff-based patching
+    #   edit_blocks     — block-level edits
+    #   write_file      — OVERWRITES entire file (last resort, destructive!)
+    #   create_file     — only for brand-new files
     priority_order = (
-        "write_file",
-        "create_file",
         "append_to_file",
-        "repo_apply_diff",
-        "edit_blocks",
+        "precision_edit",
         "edit_file",
         "search_replace",
-        "precision_edit",
+        "repo_apply_diff",
+        "edit_blocks",
+        "write_file",
+        "create_file",
     )
     available = extract_allowed_tool_names_from_definitions(tool_definitions)
     for tool_name in priority_order:
