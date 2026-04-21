@@ -17,6 +17,9 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     MutationObligationState,
 )
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+    PhaseManager,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import (
     CommitReceipt,
     ContinuationHint,
@@ -135,6 +138,8 @@ class TurnLedger:
 
     # FIX-20250421: Implementing phase 阻断标记（用于 continuation prompt）
     _implementing_phase_block_triggered: bool = field(default=False)
+    # FIX-20250421: PhaseManager — 基于事实的阶段管理器
+    phase_manager: PhaseManager = field(default_factory=PhaseManager)
 
     def set_delivery_contract(self, contract: DeliveryContract) -> None:
         """设置交付契约。"""

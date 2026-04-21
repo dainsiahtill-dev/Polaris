@@ -264,26 +264,40 @@ class ContinuationPolicy:
         # - 如果 trajectory 倒数第二个条目（上一轮 LLM 报告的 task_progress）也是 "verifying"：已在 verifying 停留至少两轮没有推进到 done，停滞，返回 True
         # 注意：前两个检测已覆盖回退场景（verifying → implementing）和轨迹卡住场景，检测 3 只处理"停留在 verifying"的边界。
         # FIX-20250421: 增强检测 — 不仅检查是否在 verifying 停留，还需检查是否实际调用了验证工具
+        # FIX-20250421: 同时检查是否有进度回退（verifying → implementing）以检测 oscillation 问题
         current_progress = state.task_progress
         if not envelope.speculative_hints and current_progress == "verifying":
-            trajectory = state.structured_findings.get("_findings_trajectory", [])
-            if len(trajectory) >= 2:
-                prev_progress = trajectory[-2].get("task_progress") if isinstance(trajectory[-2], dict) else None
-                if prev_progress == "verifying":
-                    # 已在 verifying 停留至少两轮，检查是否实际执行了验证工具
-                    _verification_tools = {"execute_command", "pytest", "npm_test", "run_tests", "python", "node"}
-                    verification_tools_called = False
-                    batch_receipt = getattr(envelope.turn_result, "batch_receipt", None)
-                    if batch_receipt:
-                        results = getattr(batch_receipt, "results", None) or []
+            # FIX-20250421: 检查 speculative_hints 质量 — hit_rate 低于阈值时仍执行检测
+            _shadow_hit_rate = float(envelope.speculative_hints.get("shadow_engine_hit_rate", 0.0) or 0.0)
+            _skip_due_to_speculation = bool(envelope.speculative_hints) and _shadow_hit_rate >= 0.1
+            if not _skip_due_to_speculation:
+                trajectory = state.structured_findings.get("_findings_trajectory", [])
+                if len(trajectory) >= 2:
+                    prev_progress = trajectory[-2].get("task_progress") if isinstance(trajectory[-2], dict) else None
+                    if prev_progress == "verifying":
+                        # 已在 verifying 停留至少两轮，检查是否实际执行了验证工具
+                        from polaris.cells.roles.kernel.internal.transaction.constants import VERIFICATION_TOOLS
+
+                        verification_tools_called = False
+                        batch_receipt = getattr(envelope.turn_result, "batch_receipt", None) or {}
+                        # FIX-20250421: Use dict-style .get() for batch_receipt since it can be dict or Pydantic model
+                        results = (
+                            batch_receipt.get("results", [])
+                            if isinstance(batch_receipt, dict)
+                            else getattr(batch_receipt, "results", None) or []
+                        )
                         for result in results:
-                            tool_name = str(getattr(result, "tool_name", "") or getattr(result, "tool", "") or "")
-                            if tool_name in _verification_tools:
+                            tool_name = str(
+                                (result.get("tool_name") or result.get("tool") or "")
+                                if isinstance(result, dict)
+                                else getattr(result, "tool_name", "") or getattr(result, "tool", "") or ""
+                            )
+                            if tool_name in VERIFICATION_TOOLS:
                                 verification_tools_called = True
                                 break
-                    if not verification_tools_called:
-                        # 在 verifying 停留超过 1 轮且未调用验证工具 → 强制结束
-                        return True
+                        if not verification_tools_called:
+                            # 在 verifying 停留超过 1 轮且未调用验证工具 → 强制结束
+                            return True
 
         return False
 

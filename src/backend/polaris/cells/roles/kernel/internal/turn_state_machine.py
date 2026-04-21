@@ -123,6 +123,10 @@ _FORBIDDEN_TRANSITIONS: set[tuple[TurnState, TurnState]] = {
     # 禁止跳过必要阶段
     (TurnState.IDLE, TurnState.TOOL_BATCH_EXECUTING),
     (TurnState.IDLE, TurnState.FINALIZATION_REQUESTED),
+    # SUSPENDED是终态，禁止从它转换到任何状态（保持WAITING_HUMAN语义）
+    (TurnState.SUSPENDED, TurnState.TOOL_BATCH_EXECUTING),
+    (TurnState.SUSPENDED, TurnState.DECISION_REQUESTED),
+    (TurnState.SUSPENDED, TurnState.CONTEXT_BUILT),
 }
 
 # Terminal states

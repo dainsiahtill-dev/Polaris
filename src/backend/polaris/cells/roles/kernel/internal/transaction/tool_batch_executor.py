@@ -31,6 +31,9 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent as _default_requires_mutation_intent,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+    extract_tool_results_from_batch_receipt,
+)
 from polaris.cells.roles.kernel.internal.transaction.receipt_utils import record_receipts_to_ledger
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_latest_user_message
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
@@ -324,70 +327,64 @@ class ToolBatchExecutor:
         # Detect implementing phase from context and block broad exploration tools
         # (glob/repo_tree/repo_rg/grep/search_code) when no write tools are present.
         # This prevents the infinite explore loop seen in CLI mode.
-        _is_implementing_phase = any(
-            "当前阶段: implementing" in str(m.get("content", ""))
+        # FIX-20250421: Phase detection with normalized string comparison (lowercase, strip)
+        _all_user_contents = [
+            str(m.get("content", "")).strip().lower()
             for m in context
             if str(m.get("role", "")).strip().lower() == "user"
-        )
-        _is_verifying_phase = any(
-            "当前阶段: verifying" in str(m.get("content", ""))
-            for m in context
-            if str(m.get("role", "")).strip().lower() == "user"
-        )
+        ]
+        _is_implementing_phase = any("当前阶段: implementing" in c for c in _all_user_contents)
+        _is_verifying_phase = any("当前阶段: verifying" in c for c in _all_user_contents)
+
         _broad_exploration_tools = {"glob", "repo_tree", "repo_rg", "grep", "search_code", "ripgrep", "find"}
-        _verification_tools = {"execute_command", "pytest", "npm_test", "run_tests", "python", "node"}
         _has_broad_exploration = any(
             extract_invocation_tool_name(inv) in _broad_exploration_tools for inv in invocations
         )
         _has_write = tool_batch_has_write_invocation(invocations)
 
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
-            # FIX-20250421: Soft block with clear guidance — return error receipts instead of raising
-            # This prevents session crash while still enforcing the implementing phase constraint.
-            _blocked_tools = [extract_invocation_tool_name(inv) for inv in invocations
-                              if extract_invocation_tool_name(inv) in _broad_exploration_tools]
-            _error_msg = (
-                f"[Implementing Phase Block] Tools {_blocked_tools} were blocked. "
-                f"In implementing phase, broad exploration (glob/repo_tree/repo_rg) is not allowed. "
-                f"You have already gathered context in previous turns. "
-                f"MANDATORY: Call write_file or edit_file NOW to materialize changes. "
-                f"If you don't know what to write, call final_answer to end the session."
-            )
-            logger.warning(_error_msg + " turn_id=%s", turn_id)
-
-            # Replace blocked invocations with error receipts that will be shown to LLM
+            # FIX-20250421: Hard block when ALL tools are broad exploration — raise exception
+            # This triggers retry orchestrator (is_mutation_contract_violation check with
+            # "single_batch_contract_violation" prefix) and forces LLM to use write tools.
+            filtered_invocations = [
+                inv for inv in invocations if extract_invocation_tool_name(inv) not in _broad_exploration_tools
+            ]
+            if not filtered_invocations:
+                raise RuntimeError(
+                    "single_batch_contract_violation: "
+                    "in implementing phase, broad exploration tools (glob/repo_tree/repo_rg) "
+                    "are not allowed. Use write_file/edit_file to materialize changes."
+                )
+            # Partial block: replace blocked tools with error receipts, keep valid tools
             modified_invocations = []
             for inv in invocations:
                 tname = extract_invocation_tool_name(inv)
                 if tname in _broad_exploration_tools:
-                    # Create a synthetic error result that will be visible to LLM
-                    modified_invocations.append({
-                        **inv,
-                        "_implementing_phase_blocked": True,
-                        "_blocked_reason": _error_msg,
-                    })
+                    modified_invocations.append(
+                        {
+                            **inv,
+                            "_implementing_phase_blocked": True,
+                            "_blocked_reason": f"Tool '{tname}' blocked in implementing phase. Use write tools.",
+                        }
+                    )
                 else:
                     modified_invocations.append(inv)
             invocations = modified_invocations
-
-            # Mark that we blocked tools — this will be used in continuation prompt
             ledger._implementing_phase_block_triggered = True
 
-        # FIX-20250421: Verifying Phase Hard Constraint
-        # In verifying phase, if no verification tools (execute_command, pytest, etc.) are invoked,
-        # raise an error to force session termination. This prevents infinite loops where
-        # the LLM keeps calling read-only tools (glob/repo_tree) instead of running tests.
+        # FIX-20250421: Verifying Phase Hard Constraint — verification REQUIRED, write not enough
+        from polaris.cells.roles.kernel.internal.transaction.constants import VERIFICATION_TOOLS
+
         if _is_verifying_phase:
             tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
-            has_verification = any(t in _verification_tools for t in tool_names)
-            has_write = tool_batch_has_write_invocation(invocations)
-            if not has_verification and not has_write:
-                # No verification tools AND no write tools — verify phase MUST end session
+            has_verification = any(t in VERIFICATION_TOOLS for t in tool_names)
+            if not has_verification:
+                # Verification tool (execute_command) is mandatory in verifying phase
                 raise RuntimeError(
+                    "single_batch_contract_violation: "
                     "verifying-phase-requires-verification: In verifying phase, "
-                    "you must call execute_command to run tests (pytest, npm test, etc.) "
-                    "or verify the fix manually. Glob/repo_tree are not allowed. "
-                    "No verification detected — ending session."
+                    "you must call execute_command to run tests (pytest, etc.) "
+                    "or verify the fix manually. No verification tool detected — ending session."
                 )
 
         latest_user_request = extract_latest_user_message(context)
@@ -524,6 +521,46 @@ class ToolBatchExecutor:
             receipts_as_dicts.extend(cast("dict", r) for r in receipts)
 
         record_receipts_to_ledger(receipts_as_dicts, ledger)
+
+        # FIX-20250421: PhaseManager — 基于工具执行结果驱动阶段流转
+        # 只有在非 benchmark 模式下才使用 PhaseManager（benchmark 有独立规则）
+        _latest_user = extract_latest_user_message(context)
+        _is_benchmark = "[Benchmark Tool Contract]" in str(_latest_user)
+        if not _is_benchmark:
+            # FIX-20250421: receipts_as_dicts 是 receipt 列表，每个 receipt 包含嵌套的 results
+            # 需要展开所有 receipt 的 results 才能正确提取 ToolResult
+            all_result_items: list[dict[str, Any]] = []
+            for receipt in receipts_as_dicts:
+                if isinstance(receipt, dict):
+                    receipt_results = receipt.get("results") or []
+                    if isinstance(receipt_results, list):
+                        all_result_items.extend(r for r in receipt_results if isinstance(r, dict))
+            tool_results = extract_tool_results_from_batch_receipt(
+                {"results": all_result_items}
+            )
+            if tool_results:
+                old_phase = ledger.phase_manager.current_phase
+                new_phase = ledger.phase_manager.transition(tool_results)
+                if new_phase != old_phase:
+                    logger.info(
+                        "Phase transition: %s -> %s (tools: %s) turn_id=%s",
+                        old_phase.value, new_phase.value,
+                        [r.tool_name for r in tool_results],
+                        turn_id,
+                    )
+
+                # 验证工具组合是否符合阶段约束
+                is_valid, error_msg = ledger.phase_manager.validate_tools_for_phase(tool_results)
+                if not is_valid:
+                    # 阶段违规：生成错误 receipt 而不是抛异常
+                    logger.warning("Phase violation: %s turn_id=%s", error_msg, turn_id)
+                    # 将错误信息注入到 receipts 中，让 LLM 在下一轮看到
+                    receipts_as_dicts.append({
+                        "tool_name": "phase_guard",
+                        "status": "error",
+                        "result": error_msg,
+                        "call_id": f"phase_guard_{turn_id}",
+                    })
 
         if (
             requires_mutation

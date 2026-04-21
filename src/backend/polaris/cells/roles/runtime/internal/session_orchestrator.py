@@ -685,7 +685,28 @@ class RoleSessionOrchestrator:
         goal_block = f"【核心任务 - 不可变更】\n{goal}\n\n当前执行目标: {self.state.goal or goal}"
 
         # --- Zone 2: Progress ---
-        progress_block = f"当前阶段: {progress} | 回合: {turn} / {max_turns}"
+        # FIX-20250421: 从最后一个 turn 的 PhaseManager 获取真实阶段
+        _phase_str = progress
+        if self.state.turn_history:
+            last_turn = self.state.turn_history[-1]
+            batch_receipt = last_turn.get("batch_receipt", {})
+            from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+                PhaseManager,
+                extract_tool_results_from_batch_receipt,
+            )
+
+            tool_results = extract_tool_results_from_batch_receipt(batch_receipt)
+            if tool_results:
+                pm = PhaseManager()
+                # 重放历史到 PhaseManager
+                for turn_item in self.state.turn_history:
+                    br = turn_item.get("batch_receipt", {})
+                    trs = extract_tool_results_from_batch_receipt(br)
+                    if trs:
+                        pm.transition(trs)
+                _phase_str = pm.current_phase.value
+
+        progress_block = f"当前阶段: {_phase_str} | 回合: {turn} / {max_turns}"
 
         # --- Zone 3: WorkingMemory ---
         # 已确认的事实
@@ -956,6 +977,9 @@ class RoleSessionOrchestrator:
         elif turn_kind == "continue_multi_turn":
             continuation_mode = TurnContinuationMode.AUTO_CONTINUE
         elif turn_kind == "final_answer":
+            continuation_mode = TurnContinuationMode.END_SESSION
+        elif turn_kind in ("inline_patch_escape_blocked", "mutation_bypass_blocked"):
+            # Blocked finalization kinds must end the session, not AUTO_CONTINUE
             continuation_mode = TurnContinuationMode.END_SESSION
         else:
             # tool_batch_with_receipt → 默认自动继续
