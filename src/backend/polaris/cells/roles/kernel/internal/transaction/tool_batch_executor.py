@@ -19,6 +19,7 @@ from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteTo
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_invocation_tool_name,
+    extract_target_file_from_invocation_args,
     extract_target_files_from_message,
     receipts_have_stale_edit_failure,
     resolve_mutation_target_guard_violation,
@@ -228,6 +229,8 @@ class ToolBatchExecutor:
         self.finalization_handler = finalization_handler
         self.handoff_handler = handoff_handler
         self.requires_mutation_intent = requires_mutation_intent or _default_requires_mutation_intent
+        # FIX-20250422: Track files already read in this session to block redundant reads
+        self._session_read_files: set[str] = set()
 
     def _raise_contract_violation(
         self,
@@ -555,6 +558,16 @@ class ToolBatchExecutor:
         # FIX-20250421: Upgrade to strict in implementing phase if broad exploration was attempted
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
             guard_mode = "strict"
+        # FIX-20250422: CONTENT_GATHERED phase without write tools → strict
+        # Prevents infinite read loops when model keeps re-reading same file
+        _is_content_gathered_phase = _current_phase == Phase.CONTENT_GATHERED
+        if _is_content_gathered_phase and not _has_write:
+            guard_mode = "strict"
+            logger.debug(
+                "[DEBUG][FIX-20250422] guard_mode upgraded to strict: "
+                "phase=CONTENT_GATHERED no_write_tools turn_id=%s",
+                turn_id,
+            )
         if requires_mutation and not tool_batch_has_write_invocation(invocations):
             if guard_mode == "strict":
                 raise RuntimeError(
@@ -595,6 +608,46 @@ class ToolBatchExecutor:
                 tool_batch_count=ledger.tool_batch_count,
                 ledger=ledger,
             )
+
+        # FIX-20250422: Block redundant reads of files already read in this session
+        # This prevents the dead loop where model keeps re-reading the same file
+        # because WorkingMemory shows truncated content
+        _redundant_reads: list[str] = []
+        for invocation in invocations:
+            tname = extract_invocation_tool_name(invocation)
+            if tname in _DIRECT_READ_TOOLS:
+                target_file = extract_target_file_from_invocation_args(invocation)
+                if target_file:
+                    normalized_target = target_file.replace("\\", "/").lower()
+                    if normalized_target in self._session_read_files:
+                        _redundant_reads.append(target_file)
+        if _redundant_reads and _is_content_gathered_phase and not _has_write:
+            logger.debug(
+                "[DEBUG][FIX-20250422] redundant_read_blocked: files=%s phase=%s turn_id=%s",
+                _redundant_reads[:3],
+                _current_phase.value if hasattr(_current_phase, "value") else str(_current_phase),
+                turn_id,
+            )
+            self._raise_contract_violation(
+                turn_id=turn_id,
+                error_type="redundant_read_blocked",
+                message=(
+                    "single_batch_contract_violation: redundant_read_blocked; "
+                    f"Files already read in this session: {_redundant_reads[:3]}. "
+                    "Do NOT call read_file again on files you have already read. "
+                    "The file content is already in your working memory. "
+                    "Proceed directly to write_file/edit_file to materialize changes."
+                ),
+                metadata={
+                    "redundant_files": _redundant_reads[:3],
+                    "session_read_count": len(self._session_read_files),
+                },
+            )
+        logger.debug(
+            "[DEBUG][FIX-20250422] session_read_files count=%s turn_id=%s",
+            len(self._session_read_files),
+            turn_id,
+        )
 
         # === Phase 4a: 开始执行 ===
         if state_machine.current_state != TurnState.TOOL_BATCH_EXECUTING:
@@ -684,6 +737,30 @@ class ToolBatchExecutor:
 
         record_receipts_to_ledger(receipts_as_dicts, ledger)
 
+        # FIX-20250422: Track successfully read files in session state
+        # to prevent redundant read loops across turns
+        for receipt in receipts_as_dicts:
+            if not isinstance(receipt, dict):
+                continue
+            for result_item in receipt.get("results", []) or []:
+                if not isinstance(result_item, dict):
+                    continue
+                if result_item.get("status") != "success":
+                    continue
+                tname = str(result_item.get("tool_name", ""))
+                if tname in _DIRECT_READ_TOOLS:
+                    result_data = result_item.get("result") or {}
+                    file_path = str(result_data.get("file", "")) if isinstance(result_data, dict) else ""
+                    if file_path:
+                        normalized_fp = file_path.replace("\\", "/").lower()
+                        if normalized_fp not in self._session_read_files:
+                            self._session_read_files.add(normalized_fp)
+                            logger.debug(
+                                "[DEBUG][FIX-20250422] session_read_files added: %s turn_id=%s",
+                                normalized_fp,
+                                turn_id,
+                            )
+
         # FIX-20250421: PhaseManager — 基于工具执行结果驱动阶段流转
         # 只有在非 benchmark 模式下才使用 PhaseManager（benchmark 有独立规则）
         _latest_user = extract_latest_user_message(context)
@@ -723,6 +800,27 @@ class ToolBatchExecutor:
                             "result": error_msg,
                             "call_id": f"phase_guard_{turn_id}",
                         }
+                    )
+
+                # FIX-20250422: Phase timeout 熔断机制
+                # 防止 MATERIALIZE_CHANGES 模式下 LLM 在 CONTENT_GATHERED 阶段无限重读
+                is_timeout, timeout_msg = ledger.phase_manager.is_phase_timeout()
+                if is_timeout:
+                    logger.warning("Phase timeout: %s turn_id=%s", timeout_msg, turn_id)
+                    # 将超时信息注入到 receipts 中
+                    receipts_as_dicts.append(
+                        {
+                            "tool_name": "phase_timeout_guard",
+                            "status": "error",
+                            "result": timeout_msg,
+                            "call_id": f"phase_timeout_{turn_id}",
+                        }
+                    )
+                    # 标记 mutation obligation 为 forced_finalization
+                    # 这样 _should_block_llm_once_finalization 会允许 LLM_ONCE 收口
+                    ledger.mutation_obligation.mark_blocked(
+                        BlockedReason.PHASE_TIMEOUT,
+                        detail=timeout_msg,
                     )
 
         if (
@@ -818,6 +916,17 @@ class ToolBatchExecutor:
             return False
         if tool_batch_has_write_invocation(invocations):
             return False
+
+        # FIX-20250422: Phase timeout 熔断 —— 如果已经超时，允许 LLM_ONCE 收口
+        # 不再返回 continue_multi_turn，让 LLM 输出 final_answer 或错误
+        if ledger.mutation_obligation.blocked_reason == BlockedReason.PHASE_TIMEOUT:
+            logger.warning(
+                "phase-timeout-allow-finalization: MATERIALIZE_CHANGES mode phase timeout detected. "
+                "Allowing LLM_ONCE to prevent infinite loop. turn_id=%s",
+                ledger.turn_id,
+            )
+            return False
+
         logger.debug(
             "mutation-bypass-skip-finalization: MATERIALIZE_CHANGES mode, no write tools yet. "
             "Blocking LLM_ONCE (would close tool channel) and returning continue_multi_turn. turn_id=%s",

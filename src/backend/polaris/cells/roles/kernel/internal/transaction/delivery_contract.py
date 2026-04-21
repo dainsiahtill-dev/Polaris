@@ -45,6 +45,7 @@ class BlockedReason(str, Enum):
     VERIFICATION_FAILED = "verification_failed"
     SAFETY_CONSTRAINT = "safety_constraint"
     USER_CANCELLED = "user_cancelled"
+    PHASE_TIMEOUT = "phase_timeout"
 
 
 class TaskCategory(str, Enum):

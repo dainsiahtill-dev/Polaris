@@ -87,6 +87,7 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     resolve_delivery_mode,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import PhaseManager
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import StreamOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
@@ -246,6 +247,10 @@ class TurnTransactionController:
         self._session_tokens_used = 0
         self._session_cost_budget = 0.0
         self._session_cost_used = 0.0
+
+        # FIX-20250422: Session-level PhaseManager persistence across turns
+        # TurnLedger is recreated per-turn, but phase must survive across turns
+        self._session_phase_manager: PhaseManager | None = None
 
         self._retry_orchestrator = RetryOrchestrator(
             tool_runtime=self.tool_runtime,
@@ -815,6 +820,22 @@ class TurnTransactionController:
         """
         state_machine = TurnStateMachine(turn_id=turn_id)
         ledger = TurnLedger(turn_id=turn_id)
+        # FIX-20250422: Restore session-level PhaseManager so phase survives across turns
+        if self._session_phase_manager is not None:
+            _restored_phase = self._session_phase_manager.current_phase.value
+            ledger.phase_manager = self._session_phase_manager
+            logger.debug(
+                "[DEBUG][FIX-20250422] PhaseManager restored from session: phase=%s turn_id=%s",
+                _restored_phase,
+                turn_id,
+            )
+        else:
+            self._session_phase_manager = ledger.phase_manager
+            logger.debug(
+                "[DEBUG][FIX-20250422] PhaseManager created fresh: phase=%s turn_id=%s",
+                ledger.phase_manager.current_phase.value,
+                turn_id,
+            )
 
         try:
             logger.debug("[DEBUG] turn_execute_start: turn_id=%s mode=run", turn_id)
@@ -868,6 +889,22 @@ class TurnTransactionController:
         """
         state_machine = TurnStateMachine(turn_id=turn_id)
         ledger = TurnLedger(turn_id=turn_id)
+        # FIX-20250422: Restore session-level PhaseManager so phase survives across turns
+        if self._session_phase_manager is not None:
+            _restored_phase = self._session_phase_manager.current_phase.value
+            ledger.phase_manager = self._session_phase_manager
+            logger.debug(
+                "[DEBUG][FIX-20250422] PhaseManager restored from session: phase=%s turn_id=%s",
+                _restored_phase,
+                turn_id,
+            )
+        else:
+            self._session_phase_manager = ledger.phase_manager
+            logger.debug(
+                "[DEBUG][FIX-20250422] PhaseManager created fresh: phase=%s turn_id=%s",
+                ledger.phase_manager.current_phase.value,
+                turn_id,
+            )
 
         try:
             async for event in self._execute_turn_stream(turn_id, context, tool_definitions, state_machine, ledger):

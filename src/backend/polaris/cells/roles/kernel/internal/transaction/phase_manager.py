@@ -80,6 +80,82 @@ _VERIFICATION_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# FIX-20250422: 每个阶段允许的工具白名单 —— 架构级防死循环
+_PHASE_TOOL_WHITELIST: dict[Phase, frozenset[str]] = {
+    Phase.EXPLORING: frozenset(
+        {
+            "glob",
+            "repo_tree",
+            "repo_rg",
+            "grep",
+            "search_code",
+            "ripgrep",
+            "find",
+            "read_file",
+            "repo_read_head",
+            "repo_read_slice",
+            "repo_read_tail",
+            "repo_read_around",
+            "repo_read_range",
+        }
+    ),
+    Phase.CONTENT_GATHERED: frozenset(
+        {
+            # CONTENT_GATHERED 阶段：只允许写工具和验证工具
+            # 禁止所有读工具和探索工具，防止无限重读死循环
+            "write_file",
+            "edit_file",
+            "edit_blocks",
+            "precision_edit",
+            "search_replace",
+            "apply_diff",
+            "repo_apply_diff",
+            "append_to_file",
+            "execute_command",
+            "pytest",
+            "npm_test",
+            "run_tests",
+            "python",
+            "node",
+            "final_answer",
+            "ask_user",
+        }
+    ),
+    Phase.IMPLEMENTING: frozenset(
+        {
+            "write_file",
+            "edit_file",
+            "edit_blocks",
+            "precision_edit",
+            "search_replace",
+            "apply_diff",
+            "repo_apply_diff",
+            "append_to_file",
+            "execute_command",
+            "pytest",
+            "npm_test",
+            "run_tests",
+            "python",
+            "node",
+            "final_answer",
+            "ask_user",
+        }
+    ),
+    Phase.VERIFYING: frozenset(
+        {
+            "execute_command",
+            "pytest",
+            "npm_test",
+            "run_tests",
+            "python",
+            "node",
+            "final_answer",
+            "ask_user",
+        }
+    ),
+    Phase.DONE: frozenset(),  # 终态，不允许任何工具
+}
+
 
 @dataclass(frozen=True)
 class ToolResult:
@@ -252,6 +328,32 @@ class PhaseManager:
                     "阶段错误：你已在 CONTENT_GATHERED 阶段（已读取过文件），"
                     "不应继续使用探索工具（glob/repo_rg）。"
                     "请直接调用 write_file/edit_file 执行修改。"
+                )
+
+            # FIX-20250422: 架构级防死循环 —— CONTENT_GATHERED 阶段硬阻止无限重读
+            # 如果已连续多次只读不写（turns_in_phase > max_turns_per_phase），
+            # 返回 False 硬阻止工具执行，强制 LLM 进入写阶段或收口
+            if has_read and not has_write and self._turns_in_current_phase > self._max_turns_per_phase:
+                return False, (
+                    f"阶段强制终止：你已在 CONTENT_GATHERED 阶段停留 {self._turns_in_current_phase} 个回合，"
+                    f"超过最大限制 {self._max_turns_per_phase}。"
+                    f"系统已强制阻止所有读工具。"
+                    f"你必须立即调用 write_file/edit_file 执行修改，或输出 final_answer 结束任务。"
+                )
+
+            # 软性警告：如果已连续多次只读不写，但尚未超过硬限制
+            if has_read and not has_write and self._turns_in_current_phase >= 2:
+                return True, (
+                    f"警告：你已在 CONTENT_GATHERED 阶段停留 {self._turns_in_current_phase} 个回合，"
+                    f"但仍未执行任何写操作。这是第 {self._turns_in_current_phase} 次读取。"
+                    f"系统将在 {self._max_turns_per_phase} 次尝试后强制终止。"
+                    f"请立即调用 write_file/edit_file 执行修改！"
+                )
+            if has_read and not has_write:
+                return True, (
+                    "[DEBUG][FIX-20250422] validate_tools_for_phase: "
+                    f"CONTENT_GATHERED phase, read_only batch, turns_in_phase={self._turns_in_current_phase}. "
+                    "Allowed this turn but write tool REQUIRED next turn."
                 )
             return True, ""
 

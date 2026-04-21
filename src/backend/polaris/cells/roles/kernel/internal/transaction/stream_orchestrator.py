@@ -254,6 +254,8 @@ def _build_continue_visible_content(
     current_progress: str = "content_gathered",
     force_read_required: bool = False,
     delivery_mode: str | None = None,
+    turns_in_phase: int = 0,
+    max_turns_per_phase: int = 3,
 ) -> str:
     """构建 continue_multi_turn 的 visible_content，内嵌 SESSION_PATCH。
 
@@ -285,10 +287,19 @@ def _build_continue_visible_content(
         )
         visible_prefix = "写阶段继续"
     elif phase == Phase.CONTENT_GATHERED:
+        # FIX-20250422: 增加回合计数，让 LLM 知道已经读取了多少次
         instruction = (
             "当前阶段：内容已收集（CONTENT_GATHERED）。你已读取文件内容。"
             "MANDATORY: 现在必须调用 write_file/edit_file 执行修改，禁止继续探索。"
         )
+        # 如果已经停留多次，增加超时警告
+        if turns_in_phase > 1:
+            remaining = max(0, max_turns_per_phase - turns_in_phase)
+            instruction += (
+                f"\n\n⚠️ 系统警告：你已在当前阶段停留 {turns_in_phase} 个回合。"
+                f"如果继续读取而不写，将在 {remaining} 次尝试后强制终止任务。"
+                f"这是最后机会，请立即执行写操作！"
+            )
         visible_prefix = "写阶段开始"
     elif phase == Phase.DONE:
         instruction = "当前阶段：已完成（DONE）。请汇总结果并以 END_SESSION 结束。"
@@ -1118,6 +1129,8 @@ class StreamOrchestrator:
                 current_progress=_current_progress,
                 force_read_required=_force_read_required,
                 delivery_mode=ledger.delivery_contract.mode.value,
+                turns_in_phase=ledger.phase_manager._turns_in_current_phase,
+                max_turns_per_phase=ledger.phase_manager._max_turns_per_phase,
             )
 
         visible_content = result.get("visible_content", "")
