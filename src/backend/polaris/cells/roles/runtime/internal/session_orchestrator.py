@@ -911,7 +911,9 @@ class RoleSessionOrchestrator:
 
         # --- Zone 1: Goal ---
         # FIX-20250421: 强制置顶原始目标，不可变更
-        goal_block = f"【核心任务 - 不可变更】\n{goal}\n\n当前执行目标: {self.state.goal or goal}"
+        # FIX-20250421-v4: 注入 delivery_mode，确保跨 Turn 不丢失
+        _delivery_mode = getattr(self.state, "delivery_mode", None) or "unknown"
+        goal_block = f"【核心任务 - 不可变更】\n{goal}\n\n当前执行目标: {self.state.goal or goal}\n<DeliveryMode>{_delivery_mode}</DeliveryMode>"
 
         # --- Zone 2: Progress ---
         phase_alias = self._state_reducer.current_phase().value

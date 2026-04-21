@@ -244,6 +244,29 @@ def _resolve_continuation_delivery_contract(
             )
             return _build_delivery_contract_from_mode(mode)
 
+    # FIX-20250421: Also check for <DeliveryMode> XML tag injected by session_orchestrator.py
+    # in the Goal block. This ensures delivery_mode survives across turns even when
+    # the SESSION_PATCH block is not present or doesn't contain delivery_mode.
+    delivery_mode_match = re.search(r"<DeliveryMode>(.*?)</DeliveryMode>", raw_user, re.IGNORECASE)
+    if delivery_mode_match:
+        xml_delivery_mode = delivery_mode_match.group(1).strip().lower()
+        if xml_delivery_mode:
+            try:
+                mode = DeliveryMode(xml_delivery_mode)
+            except ValueError:
+                logger.warning(
+                    "continuation_prompt_delivery_mode_invalid_xml: progress=%s raw_mode=%s",
+                    parsed_progress,
+                    xml_delivery_mode,
+                )
+            else:
+                logger.debug(
+                    "continuation_prompt_delivery_mode: progress=%s mode=%s (xml_tag)",
+                    parsed_progress,
+                    mode.name,
+                )
+                return _build_delivery_contract_from_mode(mode)
+
     if original_delivery_mode == DeliveryMode.MATERIALIZE_CHANGES.value:
         logger.debug(
             "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (original_preserved)",
