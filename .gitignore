@@ -166,3 +166,5 @@ src/backend/workspace/*
 src/backend/.polaris/*
 src/backend/.kernelone/*
 
+
+src/backend/polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/
