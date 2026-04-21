@@ -624,6 +624,153 @@ class TestRoleSessionOrchestrator:
         assert "repo_read_head" in prompt
 
     @pytest.mark.asyncio
+    async def test_state_reducer_remember_read_files_from_result_payload(self, tmp_workspace):
+        """read_file 结果缺少 arguments 时也应从 payload 抽取文件路径。"""
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t0",
+                kind="final_answer",
+                visible_content="",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "success",
+                            "result": {"file": "polaris/cells/roles/runtime/internal/session_orchestrator.py"},
+                        }
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        orch.state.turn_count = 1
+        orch._state_reducer.apply_turn_outcome(envelope, turn_index=1)
+
+        assert "polaris/cells/roles/runtime/internal/session_orchestrator.py" in orch.state.read_files
+
+    @pytest.mark.asyncio
+    async def test_materialize_exploring_prompt_includes_search_hits_and_forces_read_file(self, tmp_workspace):
+        """MATERIALIZE_CHANGES + exploring 时应展示搜索命中并强制 read_file。"""
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.goal = "请进一步完善：session_orchestrator相关的代码"
+        orch.state.original_goal = orch.state.goal
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        orch.state.task_progress = "exploring"
+
+        envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t0",
+                kind="continue_multi_turn",
+                visible_content="",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": "glob",
+                            "status": "success",
+                            "result": {
+                                "path": ".",
+                                "results": ["polaris/cells/roles/runtime/internal/session_orchestrator.py"],
+                            },
+                        },
+                        {
+                            "tool_name": "repo_rg",
+                            "status": "success",
+                            "result": {
+                                "result": {
+                                    "query": "session_orchestrator",
+                                    "results": [
+                                        {
+                                            "file": "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+                                            "line": 1,
+                                            "snippet": "class RoleSessionOrchestrator:",
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        prompt = orch._build_continuation_prompt(envelope)
+
+        assert "session_orchestrator.py" in prompt
+        assert "搜索 `session_orchestrator` 命中 1 处" in prompt
+        assert "必须先对已定位候选文件调用 read_file" in prompt
+
+    @pytest.mark.asyncio
+    async def test_materialize_exploration_streak_enables_hard_block_marker(self, tmp_workspace):
+        """连续探索回合后应注入 EXPLORATION_STREAK_HARD_BLOCK 指令。"""
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.goal = "请进一步完善：session_orchestrator相关的代码"
+        orch.state.original_goal = orch.state.goal
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        orch.state.task_progress = "exploring"
+
+        exploration_envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t0",
+                kind="continue_multi_turn",
+                visible_content="",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": "glob",
+                            "status": "success",
+                            "result": {"results": ["polaris/cells/roles/runtime/internal/session_orchestrator.py"]},
+                        }
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        orch.state.turn_count = 1
+        orch._state_reducer.apply_turn_outcome(exploration_envelope, turn_index=1)
+        orch.state.turn_count = 2
+        orch._state_reducer.apply_turn_outcome(
+            exploration_envelope.model_copy(
+                update={"turn_result": exploration_envelope.turn_result.model_copy(update={"turn_id": "t1"})}
+            ),
+            turn_index=2,
+        )
+
+        prompt = orch._build_continuation_prompt(exploration_envelope)
+        assert "EXPLORATION_STREAK_HARD_BLOCK" in prompt
+        assert "禁止再次仅调用 glob/repo_rg/list_directory/repo_tree" in prompt
+
+    @pytest.mark.asyncio
     async def test_multi_turn_continue_multi_turn_then_end(self, tmp_workspace):
         """验证 continue_multi_turn 触发第二回合，随后 END_SESSION 结束。"""
         kernel = MockKernel(

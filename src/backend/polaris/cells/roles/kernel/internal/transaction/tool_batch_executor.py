@@ -13,7 +13,7 @@ import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
@@ -46,7 +46,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecision,
     TurnId,
 )
-from polaris.cells.roles.kernel.public.turn_events import TurnEvent, TurnPhaseEvent
+from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnEvent, TurnPhaseEvent
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,16 @@ def _tool_requires_existing_file(tool_name: str) -> bool:
         "edit_file",
         "precision_edit",
     }
+
+
+_DIRECT_READ_TOOLS = {
+    "read_file",
+    "repo_read_head",
+    "repo_read_slice",
+    "repo_read_tail",
+    "repo_read_around",
+    "repo_read_range",
+}
 
 
 def _normalize_file_reference_path(raw_path: str) -> str:
@@ -182,6 +192,58 @@ def rewrite_existing_file_paths_in_invocations(
 # ---------------------------------------------------------------------------
 
 
+def _merge_batch_receipts(receipts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Merge multiple per-tool receipts into a single canonical batch receipt.
+
+    ToolBatchRuntime returns one receipt per invocation. Continuation workflows
+    should carry the full evidence set instead of only the first receipt.
+    """
+    if not receipts:
+        return None
+
+    merged_results: list[dict[str, Any]] = []
+    merged_raw_results: list[dict[str, Any]] = []
+    success_count = 0
+    failure_count = 0
+    pending_async_count = 0
+    has_pending_async = False
+    turn_id = ""
+    first_batch_id = ""
+
+    for receipt in receipts:
+        if not isinstance(receipt, dict):
+            continue
+        if not first_batch_id:
+            first_batch_id = str(receipt.get("batch_id", "") or "")
+        if not turn_id:
+            turn_id = str(receipt.get("turn_id", "") or "")
+
+        results = receipt.get("results")
+        if isinstance(results, list):
+            merged_results.extend(item for item in results if isinstance(item, dict))
+
+        raw_results = receipt.get("raw_results")
+        if isinstance(raw_results, list):
+            merged_raw_results.extend(item for item in raw_results if isinstance(item, dict))
+
+        success_count += int(receipt.get("success_count", 0) or 0)
+        failure_count += int(receipt.get("failure_count", 0) or 0)
+        pending_async_count += int(receipt.get("pending_async_count", 0) or 0)
+        has_pending_async = has_pending_async or bool(receipt.get("has_pending_async"))
+
+    batch_id = first_batch_id or f"{turn_id}_merged_batch"
+    return {
+        "batch_id": batch_id,
+        "turn_id": turn_id,
+        "results": merged_results,
+        "raw_results": merged_raw_results,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "pending_async_count": pending_async_count,
+        "has_pending_async": has_pending_async or pending_async_count > 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # ToolBatchExecutor
 # ---------------------------------------------------------------------------
@@ -208,6 +270,32 @@ class ToolBatchExecutor:
         self.finalization_handler = finalization_handler
         self.handoff_handler = handoff_handler
         self.requires_mutation_intent = requires_mutation_intent or _default_requires_mutation_intent
+
+    def _raise_contract_violation(
+        self,
+        *,
+        turn_id: str,
+        error_type: str,
+        message: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> NoReturn:
+        """Emit structured error telemetry then raise contract violation."""
+        self.emit_event(
+            ErrorEvent(
+                turn_id=turn_id,
+                error_type=error_type,
+                message=message,
+                state_at_error="TOOL_BATCH_VALIDATION",
+            )
+        )
+        if metadata:
+            logger.warning(
+                "contract_violation_event: turn_id=%s error_type=%s metadata=%s",
+                turn_id,
+                error_type,
+                dict(metadata),
+            )
+        raise RuntimeError(message)
 
     def _build_tool_batch_runtime(
         self,
@@ -379,10 +467,36 @@ class ToolBatchExecutor:
             )
 
         _broad_exploration_tools = {"glob", "repo_tree", "repo_rg", "grep", "search_code", "ripgrep", "find"}
+        _broad_exploration_tools.add("list_directory")
         _has_broad_exploration = any(
             extract_invocation_tool_name(inv) in _broad_exploration_tools for inv in invocations
         )
         _has_write = tool_batch_has_write_invocation(invocations)
+
+        _exploration_streak_hard_block = "EXPLORATION_STREAK_HARD_BLOCK" in _latest_user_for_barrier
+        if _exploration_streak_hard_block and _is_exploring_phase:
+            tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
+            non_empty_tool_names = [name for name in tool_names if name]
+            only_broad_exploration = bool(non_empty_tool_names) and all(
+                name in _broad_exploration_tools for name in non_empty_tool_names
+            )
+            has_direct_read = any(name in _DIRECT_READ_TOOLS for name in non_empty_tool_names)
+            if only_broad_exploration and not has_direct_read and not _has_write:
+                self._raise_contract_violation(
+                    turn_id=turn_id,
+                    error_type="exploration_streak_hard_block",
+                    message=(
+                        "single_batch_contract_violation: exploration_streak_hard_block active. "
+                        "Do not emit only glob/repo_rg/list_directory/repo_tree again. "
+                        "You must call read_file (or a write tool) this turn."
+                    ),
+                    metadata={
+                        "phase": "exploring",
+                        "tool_names": non_empty_tool_names,
+                        "has_direct_read": has_direct_read,
+                        "has_write": _has_write,
+                    },
+                )
 
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
             # FIX-20250421: Hard block when ALL tools are broad exploration — raise exception
@@ -629,6 +743,7 @@ class ToolBatchExecutor:
         )
         pending_async_count = sum(int(r.get("pending_async_count", 0)) for r in receipts_as_dicts)
         if pending_async_count > 0:
+            merged_batch_receipt = _merge_batch_receipts(receipts_as_dicts)
             workflow_context = build_workflow_handoff_context(
                 decision=decision,
                 receipts=receipts_as_dicts,
@@ -639,7 +754,7 @@ class ToolBatchExecutor:
             if stream:
                 return {
                     "kind": "handoff_workflow",
-                    "batch_receipt": receipts_as_dicts[0] if receipts_as_dicts else None,
+                    "batch_receipt": merged_batch_receipt,
                     "workflow_context": workflow_context,
                 }
             return await self.handoff_handler.handle_handoff(
@@ -648,7 +763,7 @@ class ToolBatchExecutor:
                 ledger,
                 workflow_context=workflow_context,
                 handoff_reason="async_operation",
-                batch_receipt=receipts_as_dicts[0] if receipts_as_dicts else None,
+                batch_receipt=merged_batch_receipt,
             )
 
         # === Phase 5: 确定下一步 ===
@@ -821,10 +936,11 @@ class ToolBatchExecutor:
         )
 
         # 对于流式模式，返回 continue_multi_turn 让 orchestrator 自动进入下一回合
+        merged_batch_receipt = _merge_batch_receipts(receipts)
         if stream:
             return {
                 "kind": "continue_multi_turn",
-                "batch_receipt": receipts[0] if receipts else None,
+                "batch_receipt": merged_batch_receipt,
                 "workflow_context": {
                     "turn_id": turn_id,
                     "reason": "mutation_skip_finalization",
@@ -869,7 +985,7 @@ class ToolBatchExecutor:
                 "llm_calls": len(ledger.llm_calls),
                 "tool_calls": len(ledger.tool_executions),
             },
-            "batch_receipt": receipts[0] if receipts else None,
+            "batch_receipt": merged_batch_receipt,
             "finalization": {
                 "turn_id": turn_id,
                 "mode": "blocked",

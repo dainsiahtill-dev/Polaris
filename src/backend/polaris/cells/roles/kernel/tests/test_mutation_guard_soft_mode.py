@@ -13,11 +13,13 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import BlockedReason
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import TurnDecision
+from polaris.cells.roles.kernel.public.turn_events import ErrorEvent
 
 
 @pytest.fixture
@@ -33,6 +35,210 @@ def mock_guard_assert() -> Any:
 # ---------------------------------------------------------------------------
 # ToolBatchExecutor 层测试
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mutation_bypass_uses_merged_batch_receipt(
+    mock_emit_event: Any,
+    mock_guard_assert: Any,
+) -> None:
+    """continue_multi_turn 应携带完整 merged receipt，而不是 receipts[0]。"""
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=mock_emit_event,
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_merge")
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTING)
+    state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTED)
+    ledger = TurnLedger(turn_id="turn_merge")
+    ledger.mutation_obligation.mark_blocked(
+        BlockedReason.NO_WRITE_TOOL_AVAILABLE,
+        detail="no write tools",
+    )
+
+    result = executor._build_mutation_bypass_result(
+        cast(
+            TurnDecision,
+            {
+                "turn_id": "turn_merge",
+                "kind": "TOOL_BATCH",
+                "finalize_mode": "LLM_ONCE",
+            },
+        ),
+        state_machine,
+        ledger,
+        [
+            {
+                "batch_id": "b1",
+                "turn_id": "turn_merge",
+                "results": [{"tool_name": "glob", "status": "success"}],
+                "raw_results": [{"tool_name": "glob", "status": "success"}],
+                "success_count": 1,
+                "failure_count": 0,
+                "pending_async_count": 0,
+                "has_pending_async": False,
+            },
+            {
+                "batch_id": "b2",
+                "turn_id": "turn_merge",
+                "results": [{"tool_name": "repo_rg", "status": "success"}],
+                "raw_results": [{"tool_name": "repo_rg", "status": "success"}],
+                "success_count": 1,
+                "failure_count": 0,
+                "pending_async_count": 0,
+                "has_pending_async": False,
+            },
+        ],
+        stream=True,
+    )
+
+    receipt = cast(dict[str, Any], result.get("batch_receipt"))
+    assert receipt is not None
+    assert len(receipt["results"]) == 2
+    assert {item["tool_name"] for item in receipt["results"]} == {"glob", "repo_rg"}
+    assert receipt["success_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_exploration_streak_hard_block_rejects_exploration_only_batch(
+    mock_guard_assert: Any,
+) -> None:
+    """当 EXPLORATION_STREAK_HARD_BLOCK 生效时，只探索工具应被拒绝。"""
+    captured_events: list[Any] = []
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=lambda event: captured_events.append(event),
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    decision = cast(
+        TurnDecision,
+        {
+            "turn_id": "turn_streak_block",
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": "batch_streak_block",
+                "invocations": [
+                    {
+                        "call_id": "call_glob",
+                        "tool_name": "glob",
+                        "arguments": {"pattern": "**/*session_orchestrator*"},
+                    }
+                ],
+            },
+        },
+    )
+    state_machine = TurnStateMachine(turn_id="turn_streak_block")
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    ledger = TurnLedger(turn_id="turn_streak_block")
+    context = [
+        {
+            "role": "user",
+            "content": "EXPLORATION_STREAK_HARD_BLOCK: 必须 read_file，禁止继续仅用 glob/repo_rg。",
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="exploration_streak_hard_block"):
+        await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
+    assert any(
+        isinstance(event, ErrorEvent) and event.error_type == "exploration_streak_hard_block"
+        for event in captured_events
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("invocations", "case_id"),
+    [
+        (
+            [
+                {
+                    "call_id": "call_glob",
+                    "tool_name": "glob",
+                    "arguments": {"pattern": "**/*session_orchestrator*"},
+                },
+                {
+                    "call_id": "call_read",
+                    "tool_name": "read_file",
+                    "arguments": {"file": "polaris/cells/roles/runtime/internal/session_orchestrator.py"},
+                },
+            ],
+            "broad_plus_direct_read",
+        ),
+        (
+            [
+                {
+                    "call_id": "call_write",
+                    "tool_name": "write_file",
+                    "arguments": {"file": "tmp/patch.txt", "content": "patched"},
+                }
+            ],
+            "write_only",
+        ),
+    ],
+    ids=["broad_plus_direct_read", "write_only"],
+)
+async def test_exploration_streak_hard_block_allows_non_exploration_only_batches(
+    invocations: list[dict[str, Any]],
+    case_id: str,
+    mock_guard_assert: Any,
+) -> None:
+    """熔断标记存在时，包含 direct read 或 write 的批次不应被误拦截。"""
+    captured_events: list[Any] = []
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=lambda event: captured_events.append(event),
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    decision = cast(
+        TurnDecision,
+        {
+            "turn_id": f"turn_streak_allow_{case_id}",
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": f"batch_streak_allow_{case_id}",
+                "invocations": invocations,
+            },
+        },
+    )
+    state_machine = TurnStateMachine(turn_id=f"turn_streak_allow_{case_id}")
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    ledger = TurnLedger(turn_id=f"turn_streak_allow_{case_id}")
+    context = [
+        {
+            "role": "user",
+            "content": "EXPLORATION_STREAK_HARD_BLOCK: 必须 read_file，禁止继续仅用 glob/repo_rg。",
+        }
+    ]
+
+    result = await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
+
+    assert result.get("turn_id") == f"turn_streak_allow_{case_id}"
+    assert not any(
+        isinstance(event, ErrorEvent) and event.error_type == "exploration_streak_hard_block"
+        for event in captured_events
+    )
 
 
 @pytest.mark.asyncio
@@ -78,10 +284,8 @@ async def test_warn_mode_allows_readonly_batch_for_negated_mutation_request(
     # 不应抛异常
     result = await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
 
-    # ledger 应记录警告
-    assert len(ledger.mutation_guard_warnings) == 1
-    assert ledger.mutation_guard_warnings[0]["reason"] == "mutation_markers_detected_but_no_write_tool"
-    assert "不要修改" in ledger.mutation_guard_warnings[0]["user_request"]
+    # 否定语境当前策略为“放行且不记 warning”（避免误报）
+    assert ledger.mutation_guard_warnings == []
 
     # 结果应包含正常执行结果（tool_batch_with_receipt 或 handoff）
     assert result.get("turn_id") == "turn_negated"

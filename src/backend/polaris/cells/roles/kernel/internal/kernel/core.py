@@ -663,9 +663,7 @@ class RoleExecutionKernel:
 
         # 3. no_hidden_continuation: check state_history for duplicate DECISION_REQUESTED
         if ledger is not None:
-            decision_requests = sum(
-                1 for state, _ts in ledger.state_history if state == "DECISION_REQUESTED"
-            )
+            decision_requests = sum(1 for state, _ts in ledger.state_history if state == "DECISION_REQUESTED")
             checks["no_hidden_continuation"] = decision_requests <= 1
             if not checks["no_hidden_continuation"]:
                 errors.append(f"DECISION_REQUESTED appeared {decision_requests} times")
@@ -1492,6 +1490,8 @@ class RoleExecutionKernel:
                         response_schema=response_schema,
                     )
                 else:
+                    from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
+
                     engine = TurnEngine(kernel=self)
                     te_result = await engine.run(
                         request=request,
@@ -1810,6 +1810,8 @@ class RoleExecutionKernel:
                     )
                     yield {"type": "error", "error": str(e)}
             else:
+                from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
+
                 engine = TurnEngine(kernel=self)
                 try:
                     async for event in engine.run_stream(
@@ -1894,6 +1896,17 @@ class RoleExecutionKernel:
         # 向后兼容：使用旧的 LLMCaller
         raise NotImplementedError("call_stream() requires injected llm_invoker")
 
+    @staticmethod
+    def _resolve_tool_gateway_turn_key(request_obj: Any) -> str:
+        """Resolve a stable per-turn cache key for gateway counters."""
+        run_id = str(getattr(request_obj, "run_id", "") or "").strip()
+        if run_id:
+            return run_id
+        turn_id = str(getattr(request_obj, "turn_id", "") or "").strip()
+        if turn_id:
+            return f"turn_id:{turn_id}"
+        return f"request_obj:{id(request_obj)}"
+
     async def _execute_single_tool(
         self,
         tool_name: str,
@@ -1926,7 +1939,7 @@ class RoleExecutionKernel:
                     request = RoleTurnRequest(message="")
 
                 # Reuse or create the cached gateway for authorization check
-                current_turn_id = str(getattr(request, "run_id", "") or "")
+                current_turn_id = self._resolve_tool_gateway_turn_key(request)
                 if self._cached_tool_gateway is not None and self._cached_gateway_profile is profile:
                     gateway = self._cached_tool_gateway
                     if current_turn_id != self._cached_gateway_turn_id:
@@ -1993,7 +2006,7 @@ class RoleExecutionKernel:
         # gateway was reused across turns, causing permanent tool lockout.
         # Also reset FailureBudget on turn boundary to prevent stale failure state
         # from one task/turn affecting the next one.
-        current_turn_id = str(getattr(request, "run_id", "") or "")
+        current_turn_id = self._resolve_tool_gateway_turn_key(request)
         if self._cached_tool_gateway is not None and self._cached_gateway_profile is profile:
             gateway = self._cached_tool_gateway
             # Reset counter and failure budget if turn boundary changed

@@ -194,6 +194,78 @@ class TestFacadeMethods:
         mock_executor.execute.assert_called_once()
         assert result == {"success": True}
 
+    @pytest.mark.asyncio
+    async def test_execute_single_tool_resets_counter_between_none_run_id_requests(self, monkeypatch) -> None:
+        """run_id 缺失时，不同 request 对象之间应触发计数重置。"""
+        kernel = RoleExecutionKernel(workspace=".")
+
+        mock_gateway = MagicMock()
+        mock_gateway.check_tool_permission.return_value = (True, "授权通过")
+        mock_gateway.execute_tool.return_value = {"success": True}
+        mock_gateway.reset_execution_count = MagicMock()
+
+        mock_executor_instance = MagicMock()
+        mock_executor_instance.create_gateway.return_value = mock_gateway
+
+        class _PatchedKernelToolExecutor:
+            def __init__(self, _kernel, _workspace) -> None:
+                pass
+
+            def create_gateway(self, profile, request, tool_gateway=None):
+                return mock_executor_instance.create_gateway(profile, request, tool_gateway=tool_gateway)
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.kernel.tool_executor.KernelToolExecutor",
+            _PatchedKernelToolExecutor,
+        )
+
+        profile = MagicMock()
+        request_a = MagicMock()
+        request_a.run_id = None
+        request_a.turn_id = ""
+        request_b = MagicMock()
+        request_b.run_id = None
+        request_b.turn_id = ""
+
+        await kernel._execute_single_tool(
+            "read_file",
+            {"file": "a.py"},
+            context={"profile": profile, "request": request_a},
+        )
+        await kernel._execute_single_tool(
+            "read_file",
+            {"file": "b.py"},
+            context={"profile": profile, "request": request_b},
+        )
+
+        assert mock_gateway.reset_execution_count.call_count == 1
+
+    def test_resolve_tool_gateway_turn_key_prefers_run_id(self) -> None:
+        """run_id 存在时，turn key 必须稳定使用 run_id。"""
+        request = MagicMock()
+        request.run_id = "run_123"
+        request.turn_id = "ignored"
+
+        key = RoleExecutionKernel._resolve_tool_gateway_turn_key(request)
+
+        assert key == "run_123"
+
+    def test_resolve_tool_gateway_turn_key_falls_back_to_request_identity(self) -> None:
+        """run_id 缺失时应回退到 request identity，避免跨回合计数串扰。"""
+        request_a = MagicMock()
+        request_a.run_id = None
+        request_a.turn_id = ""
+        request_b = MagicMock()
+        request_b.run_id = None
+        request_b.turn_id = ""
+
+        key_a = RoleExecutionKernel._resolve_tool_gateway_turn_key(request_a)
+        key_b = RoleExecutionKernel._resolve_tool_gateway_turn_key(request_b)
+
+        assert key_a.startswith("request_obj:")
+        assert key_b.startswith("request_obj:")
+        assert key_a != key_b
+
 
 class TestLazyLoading:
     """懒加载测试"""

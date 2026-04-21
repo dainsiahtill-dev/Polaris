@@ -1075,6 +1075,24 @@ class StreamOrchestrator:
         # continue_multi_turn: 构建包含 SESSION_PATCH 的 visible_content，
         # 让 Orchestrator 通过 ADR-0080 机制自动注入 structured_findings
         if _kind == "continue_multi_turn":
+            _receipt = result.get("batch_receipt") or {}
+            if isinstance(_receipt, dict):
+                _summary_results = _receipt.get("results") or []
+                _summary_tool_names = []
+                if isinstance(_summary_results, list):
+                    _summary_tool_names = [
+                        str(item.get("tool_name", ""))
+                        for item in _summary_results
+                        if isinstance(item, dict) and str(item.get("tool_name", ""))
+                    ]
+                logger.debug(
+                    "continue_multi_turn merged_receipt_summary: turn_id=%s results=%d success=%s failure=%s tools=%s",
+                    turn_id,
+                    len(_summary_results) if isinstance(_summary_results, list) else 0,
+                    _receipt.get("success_count"),
+                    _receipt.get("failure_count"),
+                    ",".join(_summary_tool_names[:8]),
+                )
             read_tools = _extract_read_tools_from_receipt(result.get("batch_receipt"))
             # FIX-20250421: 使用 PhaseManager 的真实阶段，不再依赖字符串匹配
             # PhaseManager 基于工具执行结果（不是 LLM 宣称）驱动阶段

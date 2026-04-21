@@ -80,6 +80,17 @@ _READ_TOOL_NAMES = {
     "repo_read_range",
 }
 
+_EXPLORATION_ONLY_TOOLS = {
+    "glob",
+    "repo_rg",
+    "repo_tree",
+    "list_directory",
+    "search_code",
+    "grep",
+    "ripgrep",
+    "find",
+}
+
 _PHASE_PROGRESS_ALIASES = {
     "investigating": "content_gathered",
 }
@@ -196,6 +207,7 @@ class SessionStateReducer:
             apply_session_patch(self.state, session_patch)
 
         self._remember_read_files(batch_receipt)
+        self._update_materialize_exploration_streak(batch_receipt)
         normalized_progress = self._derive_task_progress(envelope, batch_receipt)
         self.state.task_progress = normalized_progress
         self.state.structured_findings["task_progress"] = normalized_progress
@@ -304,18 +316,63 @@ class SessionStateReducer:
             if tool_name not in _READ_TOOL_NAMES or str(result.get("status", "")) != "success":
                 continue
             args = result.get("arguments", {})
-            if not isinstance(args, dict):
-                continue
-            path = (
-                args.get("file")
-                or args.get("filepath")
-                or args.get("path")
-                or args.get("target")
-                or args.get("target_file")
-                or args.get("file_path")
-            )
+            path = self._extract_path_from_payload(args) if isinstance(args, dict) else None
+            if not path:
+                path = self._extract_path_from_payload(result.get("result"))
             if isinstance(path, str) and path and path not in self.state.read_files:
                 self.state.read_files.append(path)
+
+    def _update_materialize_exploration_streak(self, batch_receipt: dict[str, Any]) -> None:
+        """Track repeated exploration-only turns for mutation workflows."""
+        key = "_exploration_only_streak"
+        marker = "EXPLORATION_STREAK_HARD_BLOCK"
+        mandatory = str(self.state.structured_findings.get("mandatory_instruction", "") or "")
+
+        if not self._is_materialize_changes_mode():
+            self.state.structured_findings.pop(key, None)
+            if marker in mandatory:
+                cleaned = "\n".join(line for line in mandatory.splitlines() if marker not in line).strip()
+                if cleaned:
+                    self.state.structured_findings["mandatory_instruction"] = cleaned
+                else:
+                    self.state.structured_findings.pop("mandatory_instruction", None)
+            return
+
+        tool_names: list[str] = []
+        for result in batch_receipt.get("results", []):
+            if not isinstance(result, dict):
+                continue
+            name = str(result.get("tool_name", "")).strip()
+            if name:
+                tool_names.append(name)
+
+        has_write = any(name in _WRITE_TOOL_NAMES for name in tool_names)
+        has_read = any(name in _READ_TOOL_NAMES for name in tool_names)
+        only_exploration = bool(tool_names) and all(name in _EXPLORATION_ONLY_TOOLS for name in tool_names)
+
+        streak = int(self.state.structured_findings.get(key, 0) or 0)
+        if only_exploration and not has_read and not has_write:
+            streak += 1
+        elif has_read or has_write:
+            streak = 0
+        self.state.structured_findings[key] = streak
+
+        if streak >= 2 and marker not in mandatory:
+            hard_block_line = (
+                "EXPLORATION_STREAK_HARD_BLOCK: 已连续多回合只调用探索工具。"
+                "下一回合禁止再次仅用 glob/repo_rg/list_directory/repo_tree，"
+                "必须至少调用 read_file（或直接 write 工具）。"
+            )
+            if mandatory.strip():
+                self.state.structured_findings["mandatory_instruction"] = f"{mandatory}\n{hard_block_line}"
+            else:
+                self.state.structured_findings["mandatory_instruction"] = hard_block_line
+        elif streak == 0 and marker in mandatory:
+            cleaned = "\n".join(line for line in mandatory.splitlines() if marker not in line).strip()
+            if cleaned:
+                self.state.structured_findings["mandatory_instruction"] = cleaned
+            else:
+                self.state.structured_findings.pop("mandatory_instruction", None)
 
     @staticmethod
     def _normalize_batch_receipt(batch_receipt: Any) -> dict[str, Any]:
@@ -328,6 +385,25 @@ class SessionStateReducer:
             dumped = model_dump()
             return dumped if isinstance(dumped, dict) else {}
         return {}
+
+    @staticmethod
+    def _extract_path_from_payload(payload: Any) -> str | None:
+        """Extract a file path token from common tool payload shapes."""
+        if isinstance(payload, dict):
+            for key in ("file", "filepath", "path", "target", "target_file", "file_path"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+            nested = payload.get("result")
+            nested_path = SessionStateReducer._extract_path_from_payload(nested)
+            if nested_path:
+                return nested_path
+        elif isinstance(payload, list):
+            for item in payload:
+                nested_path = SessionStateReducer._extract_path_from_payload(item)
+                if nested_path:
+                    return nested_path
+        return None
 
     @staticmethod
     def _normalize_progress(progress: str) -> str:
@@ -1007,6 +1083,45 @@ class RoleSessionOrchestrator:
         batch_receipt = getattr(envelope.turn_result, "batch_receipt", None) or {}
         results: list[dict[str, Any]] = batch_receipt.get("results", [])
         if results:
+
+            def _extract_path(args_payload: Any, result_payload: Any) -> str:
+                if isinstance(args_payload, dict):
+                    path = SessionStateReducer._extract_path_from_payload(args_payload)
+                    if path:
+                        return path
+                path = SessionStateReducer._extract_path_from_payload(result_payload)
+                return path or "unknown"
+
+            def _extract_glob_entries(result_payload: Any) -> list[str]:
+                if isinstance(result_payload, dict):
+                    direct = result_payload.get("results")
+                    if isinstance(direct, list):
+                        return [str(item) for item in direct]
+                    nested = result_payload.get("result")
+                    if isinstance(nested, dict):
+                        nested_results = nested.get("results")
+                        if isinstance(nested_results, list):
+                            return [str(item) for item in nested_results]
+                    if isinstance(nested, list):
+                        return [str(item) for item in nested]
+                if isinstance(result_payload, list):
+                    return [str(item) for item in result_payload]
+                return []
+
+            def _extract_search_hits(result_payload: Any) -> tuple[str, list[dict[str, Any]]]:
+                if isinstance(result_payload, dict):
+                    query = str(result_payload.get("query", "") or "")
+                    hit_rows = result_payload.get("results")
+                    if isinstance(hit_rows, list):
+                        return query, [row for row in hit_rows if isinstance(row, dict)]
+                    nested = result_payload.get("result")
+                    if isinstance(nested, dict):
+                        nested_query = str(nested.get("query", "") or "")
+                        nested_hits = nested.get("results")
+                        if isinstance(nested_hits, list):
+                            return nested_query or query, [row for row in nested_hits if isinstance(row, dict)]
+                return "", []
+
             tool_result_lines: list[str] = []
             for item in results:
                 tool_name = str(item.get("tool_name", ""))
@@ -1016,22 +1131,19 @@ class RoleSessionOrchestrator:
                 args = item.get("arguments", {})
 
                 if tool_name in {"read_file", "repo_read_head"} and success:
-                    # read_file 的参数可能是 file/filepath/path/target_file 等
-                    path = (
-                        args.get("file")
-                        or args.get("filepath")
-                        or args.get("path")
-                        or args.get("target")
-                        or args.get("target_file")
-                        or args.get("file_path")
-                        or "unknown"
-                    )
+                    path = _extract_path(args, result_data)
                     # FIX-20250421: 记录真正读取过的文件
                     if path and path not in self.state.read_files:
                         self.state.read_files.append(path)
                     content = ""
                     if isinstance(result_data, dict):
-                        content = str(result_data.get("result", result_data.get("content", "")))
+                        nested_result = result_data.get("result")
+                        if isinstance(nested_result, dict):
+                            content = str(nested_result.get("content", nested_result.get("result", "")))
+                        elif isinstance(nested_result, str):
+                            content = nested_result
+                        else:
+                            content = str(result_data.get("content", ""))
                     elif isinstance(result_data, str):
                         content = result_data
                     # 截断过长内容避免 token 爆炸
@@ -1039,19 +1151,37 @@ class RoleSessionOrchestrator:
                         content = content[:2000] + f"\n... [truncated, total {len(content)} chars]"
                     tool_result_lines.append(f"  文件 `{path}` ({len(content)} chars):\n{content}")
                 elif tool_name == "repo_rg" and success:
-                    # repo_rg 不算真正读取文件，只记录搜索模式
-                    pattern = args.get("pattern", "")
-                    tool_result_lines.append(f"  搜索: {pattern}")
+                    pattern = ""
+                    if isinstance(args, dict):
+                        pattern = str(args.get("pattern", "") or "")
+                    query, hits = _extract_search_hits(result_data)
+                    effective_query = pattern or query or "(empty-pattern)"
+                    if hits:
+                        preview_tokens: list[str] = []
+                        for row in hits[:8]:
+                            file_token = str(row.get("file", "?"))
+                            line_token = row.get("line")
+                            if line_token is not None:
+                                preview_tokens.append(f"{file_token}:{line_token}")
+                            else:
+                                preview_tokens.append(file_token)
+                        tool_result_lines.append(
+                            f"  搜索 `{effective_query}` 命中 {len(hits)} 处: {', '.join(preview_tokens)}"
+                        )
+                    else:
+                        tool_result_lines.append(f"  搜索 `{effective_query}` 未返回可用命中")
                 elif tool_name in {"list_directory", "glob"} and success:
-                    path = args.get("path", ".")
-                    entries = []
+                    path = "."
+                    if isinstance(args, dict):
+                        path = str(args.get("path", ".") or ".")
                     if isinstance(result_data, dict):
-                        entries = result_data.get("result", [])
-                    elif isinstance(result_data, list):
-                        entries = result_data
+                        path = str(result_data.get("path", path) or path)
+                    entries = _extract_glob_entries(result_data)
                     if entries:
                         names = [e.get("name", str(e)) if isinstance(e, dict) else str(e) for e in entries[:20]]
                         tool_result_lines.append(f"  目录 `{path}` 包含: {', '.join(names)}")
+                    else:
+                        tool_result_lines.append(f"  目录 `{path}` 未返回条目")
                 elif not success:
                     tool_result_lines.append(f"  {tool_name} 执行失败: {item.get('error', 'unknown error')}")
 
@@ -1088,11 +1218,31 @@ class RoleSessionOrchestrator:
         _mandatory_instruction = findings.get("mandatory_instruction", "")
         _hint_line = f"【用户最新指令】{_progression_hint}\n" if _progression_hint else ""
         _mandatory_line = f"【系统强制要求】{_mandatory_instruction}\n" if _mandatory_instruction else ""
+        _exploration_streak = int(findings.get("_exploration_only_streak", 0) or 0)
+        _materialize_exploring_instruction = (
+            "当前任务是代码修改（MATERIALIZE_CHANGES）。本回合必须执行工具动作，禁止纯文本分析。"
+        )
+        if self._state_reducer._is_materialize_changes_mode():
+            if self.state.read_files:
+                _materialize_exploring_instruction += (
+                    "你已经有可用读取上下文，下一步必须直接调用 write_file/edit_file 等写工具。"
+                    "禁止继续重复 glob/repo_rg。"
+                )
+            else:
+                _materialize_exploring_instruction += (
+                    "必须先对已定位候选文件调用 read_file；仅当候选文件仍未知时，才允许一次 glob/repo_rg。"
+                )
+            if _exploration_streak >= 2:
+                _materialize_exploring_instruction += (
+                    " EXPLORATION_STREAK_HARD_BLOCK: 当前已触发探索熔断，"
+                    "禁止再次仅调用 glob/repo_rg/list_directory/repo_tree。"
+                )
+        else:
+            _materialize_exploring_instruction = "请继续探索和分析。优先确认问题根因，收集必要信息后再决定修复方案。"
 
         instruction_map = {
             "exploring": (
-                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n"
-                f"请继续探索和分析。优先确认问题根因，收集必要信息后再决定修复方案。"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_materialize_exploring_instruction}"
             ),
             "content_gathered": (
                 f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n"
