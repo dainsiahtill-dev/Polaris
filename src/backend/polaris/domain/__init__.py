@@ -107,9 +107,6 @@ from polaris.domain.models import (
     ConfigValidationResult,
     FrozenInstanceError,
     SourceType,
-    Task as TaskModel,
-    TaskPriority as TaskPriorityModel,
-    TaskStatus as TaskStatusModel,
 )
 from polaris.domain.services import (
     # Background task
@@ -233,13 +230,10 @@ __all__ = [
     # Entities
     "Task",
     "TaskEvidence",
-    "TaskModel",
     "TaskPriority",
-    "TaskPriorityModel",
     "TaskResult",
     "TaskStateError",
     "TaskStatus",
-    "TaskStatusModel",
     "TodoService",
     "TokenService",
     "ToolTier",

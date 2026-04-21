@@ -12,10 +12,10 @@ from polaris.delivery.cli.pm.config import (
     MANUAL_INTERVENTION_MODES,
     MANUAL_INTERVENTION_STATUS,
 )
-from polaris.infrastructure.compat.io_utils import (
-    emit_dialogue,
+from polaris.kernelone.events import emit_dialogue
+from polaris.kernelone.fs.control_flags import pause_flag_path
+from polaris.kernelone.fs.text_ops import (
     ensure_parent_dir,
-    pause_flag_path,
     read_file_safe,
     write_json_atomic,
     write_text_atomic,

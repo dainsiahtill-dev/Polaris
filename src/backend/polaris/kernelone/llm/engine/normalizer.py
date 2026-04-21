@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
+
+from polaris.kernelone.utils.json_utils import parse_json_payload
 
 from .contracts import AIResponse, ErrorCategory, Usage
 
@@ -119,43 +119,8 @@ class ResponseNormalizer:
 
     @classmethod
     def extract_json_object(cls, text: str) -> dict[str, Any] | None:
-        """从文本中提取 JSON 对象"""
-        body = str(text or "").strip()
-        if not body:
-            return None
-
-        for candidate in cls._iter_json_candidates(body):
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-
-        return None
-
-    @classmethod
-    def _iter_json_candidates(cls, text: str) -> list[str]:
-        """迭代可能的 JSON 候选"""
-        candidates: list[str] = []
-        seen = set()
-
-        def _append(value: str) -> None:
-            candidate = str(value or "").strip()
-            if not candidate or candidate in seen:
-                return
-            seen.add(candidate)
-            candidates.append(candidate)
-
-        _append(text)
-
-        for match in re.finditer(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, flags=re.IGNORECASE):
-            _append(match.group(1))
-
-        for fragment in cls._balanced_json_fragments(text):
-            _append(fragment)
-
-        return candidates
+        """从文本中提取 JSON 对象（委托给 parse_json_payload）"""
+        return parse_json_payload(text)
 
     @staticmethod
     def _first_choice(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -227,44 +192,6 @@ class ResponseNormalizer:
                         return nested
         return ""
 
-    @staticmethod
-    def _balanced_json_fragments(text: str) -> list[str]:
-        """提取平衡的 JSON 片段"""
-        fragments: list[str] = []
-        start = -1
-        depth = 0
-        in_string = False
-        escape = False
-
-        for idx, ch in enumerate(text):
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-                continue
-
-            if ch == '"':
-                in_string = True
-                continue
-
-            if ch == "{":
-                if depth == 0:
-                    start = idx
-                depth += 1
-                continue
-
-            if ch == "}" and depth > 0:
-                depth -= 1
-                if depth == 0 and start >= 0:
-                    fragments.append(text[start : idx + 1])
-                    start = -1
-
-        fragments.sort(key=len, reverse=True)
-        return fragments
-
     @classmethod
     def normalize_response(
         cls,
@@ -331,14 +258,6 @@ def normalize_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(item).strip() for item in value if str(item).strip()]
     return [str(value).strip()]
-
-
-def truncate_text(text: str, limit: int = 80) -> str:
-    """截断文本"""
-    compact = re.sub(r"\s+", " ", str(text or "").strip())
-    if len(compact) <= limit:
-        return compact
-    return compact[: max(1, limit - 1)] + "…"
 
 
 def split_lines(value: str) -> list[str]:

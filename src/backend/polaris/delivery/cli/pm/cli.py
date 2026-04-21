@@ -32,17 +32,14 @@ def _bootstrap_backend_import_path():
     from polaris.delivery.cli.pm.orchestration_core import load_cli_directive, run_architect_docs_stage
     from polaris.delivery.cli.pm.orchestration_engine import ensure_docs_ready, run_once
     from polaris.delivery.cli.pm.utils import read_json_file
-    from polaris.infrastructure.compat.io_utils import (
+    from polaris.kernelone.events import set_dialogue_seq
+    from polaris.kernelone.fs.control_flags import pause_flag_path, pause_requested
+    from polaris.kernelone.fs.jsonl.ops import flush_jsonl_buffers, scan_last_seq
+    from polaris.kernelone.storage import resolve_ramdisk_root, state_to_ramdisk_enabled
+    from polaris.kernelone.storage.io_paths import (
         build_cache_root,
-        flush_jsonl_buffers,
-        pause_flag_path,
-        pause_requested,
         resolve_artifact_path,
-        resolve_ramdisk_root,
         resolve_workspace_path,
-        scan_last_seq,
-        set_dialogue_seq,
-        state_to_ramdisk_enabled,
     )
 
     return (

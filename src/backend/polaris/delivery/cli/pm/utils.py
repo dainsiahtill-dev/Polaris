@@ -75,7 +75,7 @@ def append_text(path: str, text: str) -> None:
     """Append text to file."""
     if not path:
         return
-    from polaris.infrastructure.compat.io_utils import ensure_parent_dir
+    from polaris.kernelone.fs.text_ops import ensure_parent_dir
 
     ensure_parent_dir(path)
     with open(path, "a", encoding="utf-8") as handle:

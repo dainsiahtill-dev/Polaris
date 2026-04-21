@@ -5,7 +5,8 @@ from polaris.kernelone.context.context_os import (
     GenericContextDomainAdapter,
     RoutingClass,
 )
-from polaris.kernelone.context.context_os.models import StateFirstContextOSPolicy, TranscriptEvent
+from polaris.kernelone.context.context_os.models_v2 import TranscriptEventV2 as TranscriptEvent
+from polaris.kernelone.context.context_os.policies import StateFirstContextOSPolicy
 
 
 def _event(

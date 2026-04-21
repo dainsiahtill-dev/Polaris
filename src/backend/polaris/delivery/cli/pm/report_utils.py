@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from polaris.infrastructure.compat.io_utils import ensure_parent_dir
+from polaris.kernelone.fs.text_ops import ensure_parent_dir
 
 # ============ Report Generation ============
 

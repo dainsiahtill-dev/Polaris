@@ -21,10 +21,10 @@ class TestStateFirstContextOSIntegration:
         """Verify build_context calls StateFirstContextOS.project()."""
         # Import here to avoid import errors if module has issues
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-            ContextOSSnapshot,
-            TranscriptEvent,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
         )
 
         # Create mock profile
@@ -101,11 +101,11 @@ class TestStateFirstContextOSIntegration:
     async def test_build_context_with_snapshot_uses_projection(self):
         """Verify build_context uses projection when snapshot is provided."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-            ContextOSSnapshot,
-            TranscriptEvent,
-            WorkingState,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
+            WorkingStateV2 as WorkingState,
         )
 
         # Create mock profile
@@ -185,11 +185,11 @@ class TestStateFirstContextOSIntegration:
     async def test_budget_validation_error_triggers_emergency_truncate(self):
         """Verify BudgetPlan validation error triggers emergency truncation."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-        from polaris.kernelone.context.context_os.models import (
-            BudgetPlan,
-            ContextOSProjection,
-            ContextOSSnapshot,
-            TranscriptEvent,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            BudgetPlanV2 as BudgetPlan,
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
         )
 
         # Create mock profile
@@ -270,9 +270,7 @@ class TestMessagesFromProjection:
     def test_creates_head_anchor_message(self):
         """Verify head_anchor creates a system message."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-        )
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 
         mock_profile = MagicMock()
         mock_profile.context_policy = MagicMock()
@@ -301,9 +299,9 @@ class TestMessagesFromProjection:
     def test_creates_active_window_messages(self):
         """Verify active_window events become messages."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-            TranscriptEvent,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            TranscriptEventV2 as TranscriptEvent,
         )
 
         mock_profile = MagicMock()
@@ -343,9 +341,9 @@ class TestMessagesFromProjection:
     def test_creates_run_card_message(self):
         """Verify run_card creates a system message."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-            RunCard,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            RunCardV2 as RunCard,
         )
 
         mock_profile = MagicMock()

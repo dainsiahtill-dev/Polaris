@@ -8,12 +8,9 @@ from datetime import datetime
 from typing import Any
 
 from polaris.delivery.cli.pm.utils import read_json_file
-from polaris.infrastructure.compat.io_utils import (
-    read_file_safe,
-    resolve_artifact_path,
-    stop_requested,
-    write_json_atomic,
-)
+from polaris.kernelone.fs.control_flags import stop_requested
+from polaris.kernelone.fs.text_ops import read_file_safe, write_json_atomic
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 from .architect_stage import ensure_docs_ready
 from .directive_processing import (

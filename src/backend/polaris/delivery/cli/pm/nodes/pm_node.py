@@ -45,7 +45,7 @@ class PMNode(BaseRoleNode):
             collect_schema_warnings,
             normalize_pm_payload,
         )
-        from polaris.infrastructure.compat.io_utils import emit_event
+        from polaris.kernelone.events import emit_event
 
         workspace = context.workspace_full
         iteration = context.pm_iteration
@@ -154,7 +154,7 @@ class PMNode(BaseRoleNode):
         pm_out_full = getattr(args, "pm_out", "")
         run_pm_tasks = getattr(args, "pm_task_path", "")
 
-        from polaris.infrastructure.compat.io_utils import write_json_atomic
+        from polaris.kernelone.fs.text_ops import write_json_atomic
 
         for path in (pm_out_full, run_pm_tasks):
             if path:

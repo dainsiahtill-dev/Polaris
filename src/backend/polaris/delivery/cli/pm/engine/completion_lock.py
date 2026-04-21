@@ -17,10 +17,8 @@ from polaris.delivery.cli.pm.engine.helpers import (
     _task_identity_key,
 )
 from polaris.delivery.cli.pm.utils import normalize_path_list, read_json_file
-from polaris.infrastructure.compat.io_utils import (
-    resolve_artifact_path,
-    write_json_atomic,
-)
+from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

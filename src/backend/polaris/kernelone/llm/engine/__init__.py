@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from polaris.kernelone.shared import truncate_text
+
 # Contracts
 from .contracts import (
     AIRequest,
@@ -57,7 +59,7 @@ from .executor import (
 from .model_catalog import ModelCatalog
 
 # Normalizer
-from .normalizer import ResponseNormalizer, normalize_list, split_lines, truncate_text
+from .normalizer import ResponseNormalizer, normalize_list, split_lines
 from .prompt_budget import CompressionRouter, TokenBudgetManager
 
 # Resilience

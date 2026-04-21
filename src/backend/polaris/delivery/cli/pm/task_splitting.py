@@ -98,7 +98,7 @@ def persist_pm_payloads(
     run_pm_tasks: str,
 ) -> None:
     """Persist PM payloads to files."""
-    from polaris.infrastructure.compat.io_utils import write_json_atomic
+    from polaris.kernelone.fs.text_ops import write_json_atomic
 
     write_json_atomic(pm_out_full, normalized)
     write_json_atomic(run_pm_tasks, director_payload)

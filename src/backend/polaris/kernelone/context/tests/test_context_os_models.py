@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from polaris.kernelone.context.context_os.models import (
-    ArtifactRecord,
-    DialogActResult,
-    TranscriptEvent,
+from polaris.kernelone.context.context_os.models_v2 import (
+    ArtifactRecordV2 as ArtifactRecord,
+    DialogActResultV2 as DialogActResult,
+    TranscriptEventV2 as TranscriptEvent,
 )
 
 

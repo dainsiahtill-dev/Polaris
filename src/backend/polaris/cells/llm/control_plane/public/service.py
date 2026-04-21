@@ -44,7 +44,7 @@ def _resolve_control_plane_storage_path(workspace: str) -> str:
 
     LLM role configs are user-global, stored under ~/.polaris/config/llm/.
     """
-    from polaris.cells.storage.layout.internal.layout_business import polaris_home
+    from polaris.cells.storage.layout.public.service import polaris_home
 
     return str(Path(polaris_home()) / "config" / "llm")
 

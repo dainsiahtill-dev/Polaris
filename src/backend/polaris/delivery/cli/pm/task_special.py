@@ -105,7 +105,8 @@ def build_interrupt_task(
 
 def consume_interrupt_task(workspace_full: str, run_dir: str, iteration: int, run_id: str) -> dict[str, Any] | None:
     """Consume interrupt task from INTERRUPT.md if present."""
-    from polaris.infrastructure.compat.io_utils import interrupt_notice_path, read_file_safe, write_text_atomic
+    from polaris.kernelone.fs.control_flags import interrupt_notice_path
+    from polaris.kernelone.fs.text_ops import read_file_safe, write_text_atomic
 
     interrupt_file = interrupt_notice_path(workspace_full)
     if not os.path.isfile(interrupt_file):

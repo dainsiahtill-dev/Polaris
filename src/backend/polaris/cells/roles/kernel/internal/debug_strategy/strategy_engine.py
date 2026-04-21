@@ -172,7 +172,6 @@ class DebugStrategyEngine:
         """推断可能的根因。"""
         root_causes = {
             ErrorCategory.SYNTAX_ERROR: "代码语法不正确或格式错误",
-            ErrorCategory.RUNTIME_ERROR: "运行时条件未满足",
             ErrorCategory.LOGIC_ERROR: "程序逻辑存在缺陷",
             ErrorCategory.TIMING_ERROR: "时序或竞态条件问题",
             ErrorCategory.RESOURCE_ERROR: "资源不可用或耗尽",

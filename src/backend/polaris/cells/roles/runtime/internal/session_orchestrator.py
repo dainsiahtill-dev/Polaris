@@ -403,7 +403,7 @@ class RoleSessionOrchestrator:
         tool_defs: list[dict[str, Any]] = []
 
         try:
-            from polaris.cells.roles.profile.internal.registry import load_core_roles, registry
+            from polaris.cells.roles.profile.public.service import load_core_roles, registry
 
             if not registry.list_roles():
                 load_core_roles()

@@ -29,7 +29,7 @@ from polaris.delivery.http.schemas import (
     DocsInitPreviewPayload,
     DocsInitSuggestPayload,
 )
-from polaris.infrastructure.compat.io_utils import emit_event
+from polaris.kernelone.events import emit_event
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path

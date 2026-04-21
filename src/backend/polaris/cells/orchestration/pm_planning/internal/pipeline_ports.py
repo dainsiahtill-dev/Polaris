@@ -337,7 +337,7 @@ def _build_pm_prompt_impl(
     workspace_root: str = "",
 ) -> str:
     from polaris.cells.context.engine.public.service import get_anthropomorphic_context_v2
-    from polaris.infrastructure.compat.io_utils import emit_event
+    from polaris.kernelone.events import emit_event
     from polaris.kernelone.memory.integration import get_anthropomorphic_context
     from polaris.kernelone.prompts.loader import current_profile, get_template, render_template
     from polaris.kernelone.prompts.meta_prompting import build_meta_prompting_appendix
@@ -503,7 +503,7 @@ class CellPmInvokePort:
     ) -> str:
         import time
 
-        from polaris.infrastructure.compat.io_utils import emit_llm_event
+        from polaris.kernelone.events import emit_llm_event
         from polaris.infrastructure.llm.provider_runtime_adapter import (
             AppLLMRuntimeAdapter,
         )

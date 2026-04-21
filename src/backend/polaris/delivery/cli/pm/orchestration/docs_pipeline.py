@@ -8,12 +8,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from polaris.delivery.cli.pm.utils import read_json_file
-from polaris.infrastructure.compat.io_utils import (
-    read_file_safe,
-    resolve_artifact_path,
-    write_json_atomic,
-    write_text_atomic,
-)
+from polaris.kernelone.fs.text_ops import read_file_safe, write_json_atomic, write_text_atomic
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 from .blueprint_pipeline import (
     _all_tasks_terminal,

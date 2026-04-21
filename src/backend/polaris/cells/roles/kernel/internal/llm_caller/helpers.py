@@ -6,10 +6,8 @@ Provides utility functions for request preparation and message formatting.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
-import re
 from functools import lru_cache
 from typing import Any
 
@@ -204,7 +202,7 @@ def build_native_response_format(response_model: type) -> dict[str, Any] | None:
 
 
 def extract_json_from_text(text: str) -> dict[str, Any]:
-    """Extract JSON object from text response.
+    """Extract JSON object from text response (delegate to parse_json_payload).
 
     Args:
         text: Response text containing JSON
@@ -213,32 +211,17 @@ def extract_json_from_text(text: str) -> dict[str, Any]:
         Parsed JSON dictionary
 
     Raises:
-        ValueError: If no valid JSON object found (arrays are rejected)
+        ValueError: If no valid JSON object found (arrays are rejected for type safety)
     """
+    from polaris.kernelone.utils.json_utils import parse_json_payload
+
     if not text or not text.strip():
         raise ValueError("Empty text")
 
-    # Try code blocks - only match JSON objects (not arrays) for type safety
-    pattern = r"```(?:json)?\s*(\{[\s\S]*?\})\s*```"
-
-    matches = re.findall(pattern, text, re.DOTALL)
-    for match in matches:
-        try:
-            parsed = json.loads(match.strip())
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            continue
-
-    # Try bare JSON object (not array)
-    try:
-        parsed = json.loads(text.strip())
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-
-    raise ValueError(f"No valid JSON object found in: {text[:200]}...")
+    result = parse_json_payload(text)
+    if result is None or not isinstance(result, dict):
+        raise ValueError(f"No valid JSON object found in: {text[:200]}...")
+    return result
 
 
 def compute_context_summary(input_text: str) -> str:

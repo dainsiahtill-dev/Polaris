@@ -35,15 +35,15 @@ from polaris.delivery.cli.pm.config import (
     PmRoleState,
 )
 from polaris.delivery.cli.pm.utils import _is_interactive_session
-from polaris.infrastructure.compat.io_utils import (
-    emit_dialogue,
+from polaris.kernelone.events import emit_dialogue
+from polaris.kernelone.fs.control_flags import stop_requested
+from polaris.kernelone.fs.text_ops import (
     ensure_parent_dir,
     read_file_safe,
-    resolve_artifact_path,
-    stop_requested,
     write_json_atomic,
     write_text_atomic,
 )
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 from polaris.kernelone.prompts.loader import get_template, render_template
 from polaris.kernelone.runtime.shared_types import strip_ansi
 

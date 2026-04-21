@@ -873,7 +873,7 @@ class TestPhase6EventSourcingSafeguard:
 
     def test_context_os_snapshot_is_frozen(self) -> None:
         """ContextOSSnapshot must be frozen/immutable."""
-        from polaris.kernelone.context.context_os.models import ContextOSSnapshot
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
 
         snapshot = ContextOSSnapshot(
             transcript_log=(),
@@ -883,7 +883,7 @@ class TestPhase6EventSourcingSafeguard:
 
     def test_transcript_log_is_tuple_immutable(self) -> None:
         """transcript_log field must be a tuple (immutable)."""
-        from polaris.kernelone.context.context_os.models import ContextOSSnapshot
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
 
         snapshot = ContextOSSnapshot(
             transcript_log=(("user", "hello"), ("assistant", "hi")),
@@ -894,10 +894,10 @@ class TestPhase6EventSourcingSafeguard:
 
     def test_context_os_projection_compress_does_not_modify_snapshot(self) -> None:
         """compress() must NOT modify snapshot.transcript_log."""
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-            ContextOSSnapshot,
-            TranscriptEvent,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
         )
 
         # Create a snapshot with known transcript_log
@@ -954,10 +954,10 @@ class TestPhase6EventSourcingSafeguard:
 
     def test_context_os_projection_compress_preserves_pinned_events(self) -> None:
         """compress() must preserve events marked as is_root (pinned)."""
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-            ContextOSSnapshot,
-            TranscriptEvent,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
         )
 
         transcript_events = (
@@ -1007,10 +1007,10 @@ class TestPhase6EventSourcingSafeguard:
 
     def test_context_os_projection_compress_returns_new_instance(self) -> None:
         """compress() must return a new instance, not modify in place."""
-        from polaris.kernelone.context.context_os.models import (
-            ContextOSProjection,
-            ContextOSSnapshot,
-            TranscriptEvent,
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
         )
 
         snapshot = ContextOSSnapshot(

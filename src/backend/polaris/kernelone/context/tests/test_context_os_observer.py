@@ -8,13 +8,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
-from polaris.kernelone.context.context_os.models import (
-    ArtifactRecord,
-    EpisodeCard,
-    PendingFollowUp,
-    StateFirstContextOSPolicy,
-    TranscriptEvent,
+from polaris.kernelone.context.context_os.models_v2 import (
+    ArtifactRecordV2 as ArtifactRecord,
+    EpisodeCardV2 as EpisodeCard,
+    PendingFollowUpV2 as PendingFollowUp,
+    TranscriptEventV2 as TranscriptEvent,
 )
+from polaris.kernelone.context.context_os.policies import StateFirstContextOSPolicy
 from polaris.kernelone.context.context_os.runtime import StateFirstContextOS
 
 

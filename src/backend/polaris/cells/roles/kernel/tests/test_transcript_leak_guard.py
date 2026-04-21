@@ -532,7 +532,7 @@ class TestCompactionSemanticSafety:
             ContextRequest,
             RoleContextGateway,
         )
-        from polaris.kernelone.context.context_os.models import ContextOSProjection
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 
         mock_profile = MagicMock()
         mock_profile.context_policy.include_project_structure = False
@@ -595,7 +595,7 @@ class TestCompactionSemanticSafety:
             ContextRequest,
             RoleContextGateway,
         )
-        from polaris.kernelone.context.context_os.models import ContextOSProjection
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 
         mock_profile = MagicMock()
         mock_profile.context_policy.include_project_structure = False
@@ -657,7 +657,7 @@ class TestCompactionSemanticSafety:
             ContextRequest,
             RoleContextGateway,
         )
-        from polaris.kernelone.context.context_os.models import ContextOSProjection
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 
         mock_profile = MagicMock()
         mock_profile.context_policy.include_project_structure = False

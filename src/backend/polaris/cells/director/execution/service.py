@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any
 
-from polaris.cells.director.tasking.internal import TaskQueueConfig, TaskService, WorkerPoolConfig, WorkerService
+from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService, WorkerPoolConfig, WorkerService
 from polaris.domain.entities import Task, TaskPriority, TaskStatus, Worker, WorkerStatus
 from polaris.domain.entities.capability import Role, RoleConfig, get_role_config
 from polaris.domain.entities.policy import Policy

@@ -289,9 +289,7 @@ class TestActiveWindowRootHardening:
 
     async def test_min_recent_floor_respected(self, engine: StateFirstContextOS) -> None:
         """min_recent_floor is respected even when recent_window_messages is small."""
-        policy = StateFirstContextOSPolicy(
-            window_size=WindowSizePolicy(min_recent_messages_pinned=3)
-        )
+        policy = StateFirstContextOSPolicy(window_size=WindowSizePolicy(min_recent_messages_pinned=3))
         engine = StateFirstContextOS(policy=policy)
 
         messages = [{"role": "user", "content": f"消息{i}"} for i in range(5)]
@@ -603,7 +601,7 @@ class TestPendingFollowUpPersistence:
         snapshot_dict = snapshot.to_dict()
 
         # Deserialize back
-        from polaris.kernelone.context.context_os.models import ContextOSSnapshot
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
 
         restored = ContextOSSnapshot.from_mapping(snapshot_dict)
 

@@ -305,7 +305,8 @@ class OrchestrationCoordinator:
         ramdisk_root = getattr(args, "ramdisk_root", None)
         cache_root = ""
         try:
-            from polaris.infrastructure.compat.io_utils import build_cache_root, resolve_ramdisk_root
+            from polaris.kernelone.storage import resolve_ramdisk_root
+            from polaris.kernelone.storage.io_paths import build_cache_root
 
             ramdisk = resolve_ramdisk_root(ramdisk_root)
             cache_root = build_cache_root(ramdisk, self.workspace) or ""

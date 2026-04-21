@@ -13,13 +13,12 @@ from polaris.cells.context.engine.public.service import get_anthropomorphic_cont
 # Use runtime config from polaris.delivery.cli.pm.config.
 from polaris.delivery.cli.pm.config import PmRoleState, load_pm_model_config
 from polaris.delivery.cli.pm.utils import _use_context_engine_v2, format_json_for_prompt
-from polaris.infrastructure.compat.io_utils import (
-    emit_event,
-    emit_llm_event,
+from polaris.kernelone.events import emit_event, emit_llm_event
+from polaris.kernelone.tool_execution.io_tools import (
     ensure_codex_available,
     ensure_ollama_available,
-    write_text_atomic,
 )
+from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.memory.integration import (
     get_anthropomorphic_context,
 )

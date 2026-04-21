@@ -343,26 +343,20 @@ class LLMJudge:
         perspective: dict[str, str],
         temperature: float
     ) -> float:
-        """Call LLM with specific perspective"""
-        # This would integrate with Polaris LLM client
-        # For now, return placeholder
-        f"""
-You are a {perspective['role']} evaluating code quality.
-Focus: {perspective['focus']}
-Strictness: {perspective['strictness']}
+        """Call LLM with specific perspective.
 
-Evaluate the following skill implementation:
-
-{content}
-
-Evaluation Rubric:
-{rubric}
-
-Score from 0.0 to 1.0. Return ONLY the numeric score.
-"""
-        # Placeholder - would call actual LLM
-        logger.debug(f"LLM Judge call with {perspective['role']}")
-        return 0.9  # Placeholder
+        NOTE: This is a placeholder implementation. L3 (Expert Review) tier
+        requires integration with Polaris LLM infrastructure. Until then,
+        returns a conservative score that errs on the side of triggering
+        manual review rather than auto-approving.
+        """
+        logger.warning(
+            f"LLMJudge._call_llm_with_perspective is a PLACEHOLDER - "
+            f"L3 expert review not yet functional. "
+            f"Perspective: {perspective.get('role', 'unknown')}. "
+            f"Returning conservative score 0.5 instead of auto-approving."
+        )
+        return 0.5
 
     def _discretize(self, score: float) -> float:
         """Discretize score to reduce boundary jitter"""

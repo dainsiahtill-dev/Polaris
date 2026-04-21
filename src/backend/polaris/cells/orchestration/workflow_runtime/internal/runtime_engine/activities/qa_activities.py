@@ -8,7 +8,7 @@ from typing import Any
 
 from polaris.cells.orchestration.pm_planning.public.service import run_integration_verify_runner
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import get_activity_api
-from polaris.infrastructure.compat.io_utils import write_json_atomic
+from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 

@@ -619,7 +619,7 @@ class TestPendingFollowUpPersistenceIntegration:
 
         This tests: snapshot -> to_dict() -> from_mapping() preserves pending_followup.
         """
-        from polaris.kernelone.context.context_os.models import ContextOSSnapshot
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
 
         # Create projection with pending follow-up
         projection = await engine.project(
@@ -699,7 +699,7 @@ class TestPendingFollowUpPersistenceIntegration:
 
         # The new session should NOT carry over the old resolved follow-up as pending
         # If there's a new pending follow-up from the new assistant question, it should be separate
-        from polaris.kernelone.context.context_os.models import ContextOSSnapshot
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
 
         ContextOSSnapshot.from_mapping(persisted)
 

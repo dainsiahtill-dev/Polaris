@@ -11,11 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-from polaris.kernelone.context.context_os.models import (
-    EpisodeCard,
+from polaris.kernelone.context.context_os.models_v2 import (
+    EpisodeCardV2 as EpisodeCard,
 )
-
 
 # -----------------------------------------------------------------------------
 # Fixtures
@@ -489,16 +487,12 @@ class TestEpisodeCardEdgeCases:
 
     def test_special_characters_in_intent(self) -> None:
         """验证意图中的特殊字符"""
-        card = _make_episode(
-            intent="实现登录功能 <script>alert('xss')</script>"
-        )
+        card = _make_episode(intent="实现登录功能 <script>alert('xss')</script>")
         assert "<script>" in card.intent
 
     def test_unicode_in_narrative(self) -> None:
         """验证叙事摘要中的 Unicode"""
-        card = _make_episode(
-            digest_1k="用户请求实现登录功能，包括用户名密码验证和错误处理。"
-        )
+        card = _make_episode(digest_1k="用户请求实现登录功能，包括用户名密码验证和错误处理。")
         assert isinstance(card.digest_1k, str)
 
     def test_reopen_without_reason(self) -> None:

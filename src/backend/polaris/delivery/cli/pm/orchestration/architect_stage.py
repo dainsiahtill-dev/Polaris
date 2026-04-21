@@ -5,11 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from polaris.infrastructure.compat.io_utils import (
-    resolve_artifact_path,
-    workspace_has_docs,
-    write_json_atomic,
-)
+from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.storage.io_paths import resolve_artifact_path, workspace_has_docs
 
 from .directive_processing import (
     _DEFAULT_BACKLOG_ITEMS,

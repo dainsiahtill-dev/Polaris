@@ -9,10 +9,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from polaris.kernelone.context.context_os.models import (
-    ContextOSProjection,
-    ContextOSSnapshot,
-    TranscriptEvent,
+from polaris.kernelone.context.context_os.models_v2 import (
+    ContextOSProjectionV2 as ContextOSProjection,
+    ContextOSSnapshotV2 as ContextOSSnapshot,
+    TranscriptEventV2 as TranscriptEvent,
 )
 from polaris.kernelone.context.intelligent_compressor import (
     CompressionResult,

@@ -21,28 +21,9 @@ from polaris.cells.runtime.state_owner.public.service import (
 )
 
 # kernelone / infrastructure imports – these are not delivery layer
-try:
-    from polaris.infrastructure.compat.io_utils import (
-        emit_dialogue,
-        emit_event,
-        emit_llm_event,
-    )
-    from polaris.kernelone.fs.jsonl.ops import append_jsonl
-except ImportError:  # pragma: no cover - script-mode fallback
-    from polaris.infrastructure.compat.io_utils import (
-        emit_dialogue,
-        emit_event,
-        emit_llm_event,
-    )
-    from polaris.kernelone.fs.jsonl.ops import append_jsonl
-
-try:
-    from polaris.infrastructure.compat.io_utils import pause_flag_path
-except ImportError:  # pragma: no cover - script-mode fallback
-
-    def pause_flag_path(workspace: str) -> str:
-        """Fallback pause_flag_path implementation."""
-        return os.path.join(workspace, "runtime", "state", "pause.flag")
+from polaris.kernelone.events import emit_dialogue, emit_event, emit_llm_event
+from polaris.kernelone.fs.control_flags import pause_flag_path
+from polaris.kernelone.fs.jsonl.ops import append_jsonl
 
 
 # Cell-internal port – no delivery dependency

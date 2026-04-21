@@ -7,10 +7,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from polaris.infrastructure.compat.io_utils import (
-    ensure_parent_dir,
-    write_json_atomic,
-)
+from polaris.kernelone.fs.text_ops import ensure_parent_dir, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +191,7 @@ def archive_if_exists(src: str, dest: str) -> None:
     try:
         with open(src, encoding="utf-8") as handle:
             content = handle.read()
-        from polaris.infrastructure.compat.io_utils import write_text_atomic
+        from polaris.kernelone.fs.text_ops import write_text_atomic
 
         write_text_atomic(dest, content)
     except (RuntimeError, ValueError) as e:
@@ -203,7 +200,7 @@ def archive_if_exists(src: str, dest: str) -> None:
 
 def build_run_dir(workspace: str, cache_root: str, iteration: int) -> str:
     """Build run directory path."""
-    from polaris.infrastructure.compat.io_utils import resolve_artifact_path
+    from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
     rel = os.path.join("runtime", "runs", f"pm-{iteration:05d}")
     return resolve_artifact_path(workspace, cache_root, rel)

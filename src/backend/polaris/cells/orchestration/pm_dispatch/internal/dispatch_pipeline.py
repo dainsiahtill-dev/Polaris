@@ -111,8 +111,8 @@ def _get_shared_quality():
 
 
 def _get_io_utils():
-    """Lazy import for io_utils to avoid circular imports."""
-    from polaris.infrastructure.compat.io_utils import emit_dialogue, emit_event
+    """Lazy import for events to avoid circular imports."""
+    from polaris.kernelone.events import emit_dialogue, emit_event
 
     return emit_event, emit_dialogue
 
@@ -1297,7 +1297,7 @@ def _emit_engine_dispatch_status(
     error: str = "",
 ) -> None:
     """Emit a structured engine dispatch status event."""
-    from polaris.infrastructure.compat.io_utils import emit_event
+    from polaris.kernelone.events import emit_event
 
     emit_event(
         run_events,

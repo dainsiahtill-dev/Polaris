@@ -6,7 +6,8 @@ from datetime import datetime
 
 from polaris.delivery.cli.pm.config import AGENTS_DRAFT_REL, AGENTS_FEEDBACK_REL
 from polaris.delivery.cli.pm.utils import truncate_text_block
-from polaris.infrastructure.compat.io_utils import read_file_safe, resolve_artifact_path
+from polaris.kernelone.fs.text_ops import read_file_safe
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 logger = logging.getLogger(__name__)
 

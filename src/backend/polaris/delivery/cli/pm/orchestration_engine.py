@@ -86,18 +86,18 @@ from polaris.delivery.cli.pm.tasks import (
 from polaris.delivery.cli.pm.tasks_utils import (
     build_requirements_fallback_payload,
 )
-from polaris.infrastructure.compat.io_utils import (
-    build_cache_root,
-    emit_event,
-    emit_llm_event,
-    resolve_artifact_path,
+from polaris.kernelone.events import emit_event, emit_llm_event, set_dialogue_seq
+from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.storage import (
     resolve_ramdisk_root,
+    state_to_ramdisk_enabled,
+)
+from polaris.kernelone.storage.io_paths import (
+    build_cache_root,
+    resolve_artifact_path,
     resolve_run_dir,
     resolve_workspace_path,
-    set_dialogue_seq,
-    state_to_ramdisk_enabled,
     update_latest_pointer,
-    write_json_atomic,
 )
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 

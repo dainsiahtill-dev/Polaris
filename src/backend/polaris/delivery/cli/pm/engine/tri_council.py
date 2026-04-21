@@ -19,12 +19,9 @@ from polaris.delivery.cli.pm.engine.helpers import (
     _safe_int,
 )
 from polaris.delivery.cli.pm.utils import normalize_path_list, normalize_str_list
-from polaris.infrastructure.compat.io_utils import (
-    append_jsonl,
-    emit_dialogue,
-    emit_event,
-    write_json_atomic,
-)
+from polaris.kernelone.events import emit_dialogue, emit_event
+from polaris.kernelone.fs.jsonl.ops import append_jsonl
+from polaris.kernelone.fs.text_ops import write_json_atomic
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -228,7 +225,7 @@ def _runtime_learning_paths(
 ) -> tuple[list[str], list[str]]:
     """Resolve learning dataset paths for meeting records."""
     from polaris.delivery.cli.pm.engine.helpers import _dedupe_paths
-    from polaris.infrastructure.compat.io_utils import resolve_artifact_path
+    from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
     sample_paths: list[str] = []
     improve_paths: list[str] = []

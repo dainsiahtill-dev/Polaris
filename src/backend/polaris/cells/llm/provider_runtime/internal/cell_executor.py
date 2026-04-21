@@ -12,6 +12,8 @@ from enum import Enum
 from typing import Any
 
 from polaris.infrastructure.llm import AppLLMRuntimeAdapter
+from polaris.kernelone.shared import truncate_text
+from polaris.kernelone.utils.json_utils import parse_json_payload
 
 logger = logging.getLogger(__name__)
 
@@ -163,15 +165,6 @@ def normalize_list(value: Any, *, limit: int = 10) -> list[str]:
     return unique_items
 
 
-def truncate_text(text: str, limit: int) -> str:
-    """Truncate text to limit characters."""
-    if not text:
-        return ""
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 3)] + "..."
-
-
 def split_lines(value: str) -> list[str]:
     """Split text into lines."""
     return [line.strip() for line in str(value or "").replace("\r\n", "\n").split("\n") if line.strip()]
@@ -182,48 +175,8 @@ class ResponseNormalizer:
 
     @staticmethod
     def extract_json_object(text: str) -> dict[str, Any] | None:
-        """Extract JSON object from text."""
-        import json
-        import re
-
-        text = text.strip()
-
-        # Try direct parse
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Try code blocks
-        patterns = [
-            r"```json\s*(.*?)\s*```",
-            r"```\s*(.*?)\s*```",
-        ]
-        for pattern in patterns:
-            for match in re.findall(pattern, text, re.DOTALL):
-                try:
-                    return json.loads(match.strip())
-                except json.JSONDecodeError:
-                    continue
-
-        # Try <output> tags
-        output_match = re.search(r"<output>(.*?)</output>", text, re.DOTALL)
-        if output_match:
-            try:
-                return json.loads(output_match.group(1).strip())
-            except json.JSONDecodeError:
-                pass
-
-        # Try first { to last }
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and start < end:
-            try:
-                return json.loads(text[start : end + 1])
-            except json.JSONDecodeError:
-                pass
-
-        return None
+        """Extract JSON object from text (delegate to parse_json_payload)."""
+        return parse_json_payload(text)
 
     @staticmethod
     def looks_truncated_json(text: str) -> bool:

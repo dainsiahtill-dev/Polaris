@@ -447,10 +447,7 @@ def run_pm_planning_iteration(
     state: Any,
     context: dict[str, Any],
 ) -> tuple[int, dict[str, Any]]:
-    from polaris.infrastructure.compat.io_utils import (
-        emit_event,
-        emit_llm_event,
-    )
+    from polaris.kernelone.events import emit_event, emit_llm_event
     from polaris.kernelone.runtime.shared_types import strip_ansi
     from polaris.kernelone.runtime.usage_metrics import UsageContext
     from polaris.kernelone.traceability.internal.safety import (
@@ -774,12 +771,8 @@ def _handle_invoke_error(
     start_timestamp: str,
     pm_llm_events_full: str,
 ) -> None:
-    from polaris.infrastructure.compat.io_utils import (
-        emit_dialogue,
-        emit_event,
-        emit_llm_event,
-        write_json_atomic,
-    )
+    from polaris.kernelone.events import emit_dialogue, emit_event, emit_llm_event
+    from polaris.kernelone.fs.text_ops import write_json_atomic
 
     emit_event(
         run_events,

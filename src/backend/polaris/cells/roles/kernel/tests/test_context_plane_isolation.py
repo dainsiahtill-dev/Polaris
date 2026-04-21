@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from polaris.kernelone.context.context_os.models import (
-    ArtifactRecord,
-    ContextOSProjection,
-    ContextOSSnapshot,
-    ContextSlicePlan,
-    RunCard,
-    TranscriptEvent,
-    WorkingState,
+from polaris.kernelone.context.context_os.models_v2 import (
+    ArtifactRecordV2 as ArtifactRecord,
+    ContextOSProjectionV2 as ContextOSProjection,
+    ContextOSSnapshotV2 as ContextOSSnapshot,
+    ContextSlicePlanV2 as ContextSlicePlan,
+    RunCardV2 as RunCard,
+    TranscriptEventV2 as TranscriptEvent,
+    WorkingStateV2 as WorkingState,
 )
 
 
@@ -185,7 +185,7 @@ class TestContextPlaneIsolation:
 
     def test_control_plane_pending_followup_not_in_prompt(self) -> None:
         """Pending follow-up (control-plane state) must not leak into prompt dict."""
-        from polaris.kernelone.context.context_os.models import PendingFollowUp
+        from polaris.kernelone.context.context_os.models_v2 import PendingFollowUpV2 as PendingFollowUp
 
         snapshot = self._make_snapshot(pending_followup=PendingFollowUp(action="confirm", status="pending"))
         projection = self._make_projection(snapshot=snapshot)

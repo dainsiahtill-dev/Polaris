@@ -95,7 +95,8 @@ async def log_user_action(
     try:
         import time
 
-        from polaris.infrastructure.compat.io_utils import append_jsonl_atomic, utc_iso_now
+        from polaris.kernelone.events import utc_iso_now
+        from polaris.kernelone.fs.jsonl.ops import append_jsonl_atomic
 
         log_path = resolve_runtime_path(
             workspace_path,

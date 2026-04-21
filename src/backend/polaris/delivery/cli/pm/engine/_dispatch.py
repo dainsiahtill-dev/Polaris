@@ -53,12 +53,9 @@ from polaris.delivery.cli.pm.utils import (
     normalize_path_list,
     read_json_file,
 )
-from polaris.infrastructure.compat.io_utils import (
-    append_jsonl,
-    emit_event,
-    ensure_parent_dir,
-    write_json_atomic,
-)
+from polaris.kernelone.events import emit_event
+from polaris.kernelone.fs.jsonl.ops import append_jsonl
+from polaris.kernelone.fs.text_ops import ensure_parent_dir, write_json_atomic
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

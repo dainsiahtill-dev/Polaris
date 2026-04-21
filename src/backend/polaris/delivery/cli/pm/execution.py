@@ -20,13 +20,9 @@ from polaris.delivery.cli.pm.utils import (
     _normalize_audit_result,
     _slug_token,
 )
-from polaris.infrastructure.compat.io_utils import (
-    emit_dialogue,
-    emit_event,
-    ensure_parent_dir,
-    resolve_artifact_path,
-    write_json_atomic,
-)
+from polaris.kernelone.events import emit_dialogue, emit_event
+from polaris.kernelone.fs.text_ops import ensure_parent_dir, write_json_atomic
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 
 def _execute_non_director_task(

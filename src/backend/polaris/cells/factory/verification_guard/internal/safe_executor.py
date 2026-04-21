@@ -207,19 +207,22 @@ class SafeExecutor:
                 return True
 
         # For ; && ||, only flag if they appear outside of quotes
-        # This is a simplified check
-        separators = [";", "&&", "||"]
-        for sep in separators:
-            if sep in command:
-                # Check if it's inside quotes by counting quotes before it
-                idx = command.find(sep)
-                before = command[:idx]
-                # Count unescaped quotes
-                single_quotes = before.count("'") - before.count("\\'")
-                double_quotes = before.count('"') - before.count('\\"')
-                # If odd number of quotes, it's inside a string
-                if single_quotes % 2 == 0 and double_quotes % 2 == 0:
-                    return True
+        # Use proper quote-aware parsing that handles escaped characters
+        in_single_quote = False
+        in_double_quote = False
+        i = 0
+        while i < len(command):
+            char = command[i]
+            if char == "\\" and i + 1 < len(command):
+                i += 2
+                continue
+            if char == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+            elif char == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+            elif (char == ";" or (char in ("&", "|") and i + 1 < len(command) and command[i + 1] == char)) and not in_single_quote and not in_double_quote:
+                return True
+            i += 1
 
         return False
 

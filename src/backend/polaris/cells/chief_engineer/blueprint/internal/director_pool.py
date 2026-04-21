@@ -433,6 +433,8 @@ class DirectorPool:
                 last_heartbeat_ms=now,
                 capabilities=list(status.capabilities),
                 review_status="in_review",
+                spec_compliance_score=status.spec_compliance_score,
+                code_quality_score=status.code_quality_score,
                 review_iterations=status.review_iterations + 1,
             )
 
@@ -567,6 +569,10 @@ class DirectorPool:
             progress_pct=new_progress,
             last_heartbeat_ms=now,
             capabilities=list(status.capabilities),
+            review_status=status.review_status,
+            spec_compliance_score=status.spec_compliance_score,
+            code_quality_score=status.code_quality_score,
+            review_iterations=status.review_iterations,
         )
         if new_phase != old_phase:
             self._event_bus.publish(

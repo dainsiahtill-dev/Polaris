@@ -272,7 +272,8 @@ class VerificationEngine:
                 return bool(all_commands_succeeded and command_results)
 
         # Default: if all commands succeeded and we have evidence, it's a match
-        if all_commands_succeeded:
+        # Guard against all([]) = True vacuous truth when command_results is empty
+        if all_commands_succeeded and command_results:
             return True
 
         # If no commands and no specific keywords, be lenient

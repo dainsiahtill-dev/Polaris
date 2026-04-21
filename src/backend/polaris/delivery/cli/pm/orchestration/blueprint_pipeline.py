@@ -9,12 +9,8 @@ from typing import Any
 
 from polaris.delivery.cli.pm.config import TERMINAL_TASK_STATUSES
 from polaris.delivery.cli.pm.tasks import normalize_task_status
-from polaris.infrastructure.compat.io_utils import (
-    read_file_safe,
-    resolve_artifact_path,
-    write_json_atomic,
-    write_text_atomic,
-)
+from polaris.kernelone.fs.text_ops import read_file_safe, write_json_atomic, write_text_atomic
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 from .helpers import (
     _ZHONGSHU_BLUEPRINTS_MANIFEST_REL,

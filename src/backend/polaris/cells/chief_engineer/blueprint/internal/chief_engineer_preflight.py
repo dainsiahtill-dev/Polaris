@@ -73,7 +73,7 @@ class _NullEventEmitter:
 def _load_kernelone_emitter() -> EventEmitter:
     """Load the real event emitter, fall back to no-op on ImportError."""
     try:
-        from polaris.infrastructure.compat.io_utils import emit_dialogue, emit_event
+        from polaris.kernelone.events import emit_dialogue, emit_event
 
         class _KernelOneEmitter:
             def emit_event(self, path: str, **kwargs: Any) -> None:  # type: ignore[override]

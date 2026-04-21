@@ -5,7 +5,9 @@ from datetime import datetime
 from typing import Any
 
 from polaris.delivery.cli.pm.utils import compact_text
-from polaris.infrastructure.compat.io_utils import append_jsonl, resolve_artifact_path, write_text_atomic
+from polaris.kernelone.fs.jsonl.ops import append_jsonl
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
+from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.runtime.shared_types import normalize_path_list
 
 

@@ -242,7 +242,7 @@ def emit_pm_director_conversation(
     qa_enabled: bool,
 ) -> tuple:
     """Emit PM-Director conversation to dialogue."""
-    from polaris.infrastructure.compat.io_utils import emit_dialogue
+    from polaris.kernelone.events import emit_dialogue
 
     pm_question = "请确认：刚刚分配的任务你完成了哪些部分？还有哪些未完成？"
     director_report = build_director_response(result, expected_task_title)
