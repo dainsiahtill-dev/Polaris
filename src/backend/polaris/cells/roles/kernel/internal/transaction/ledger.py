@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -33,6 +34,8 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnOutcome,
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnPhaseEvent
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -135,6 +138,8 @@ class TurnLedger:
     # 交付契约与突变义务追踪（Phase 2）
     delivery_contract: DeliveryContract = field(default_factory=DeliveryContract)
     mutation_obligation: MutationObligationState = field(default_factory=MutationObligationState)
+    # FIX-20250421-v3: 原始交付模式（Turn 0 设定后冻结，用于 continuation prompt 不降级）
+    _original_delivery_mode: str | None = None
 
     # FIX-20250421: Implementing phase 阻断标记（用于 continuation prompt）
     _implementing_phase_block_triggered: bool = field(default=False)
@@ -142,8 +147,15 @@ class TurnLedger:
     phase_manager: PhaseManager = field(default_factory=PhaseManager)
 
     def set_delivery_contract(self, contract: DeliveryContract) -> None:
-        """设置交付契约。"""
+        """设置交付契约。
+
+        FIX-20250421-v3: 首次设置时保存原始 delivery_mode，后续 continuation prompt 使用它
+        防止 delivery_mode 在 continuation turns 中丢失。
+        """
         self.delivery_contract = contract
+        if self._original_delivery_mode is None:
+            self._original_delivery_mode = contract.mode.value
+            logger.debug("original_delivery_mode_frozen: %s", self._original_delivery_mode)
 
     def record_llm_call(self, phase: str, model: str, tokens_in: int, tokens_out: int) -> None:
         """记录LLM调用"""

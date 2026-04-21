@@ -16,6 +16,9 @@ from typing import Any
 from polaris.cells.roles.kernel.internal.development_workflow_runtime import (
     DevelopmentWorkflowRuntime,
 )
+from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
+    resolve_delivery_mode,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnContinuationMode,
     TurnOutcomeEnvelope,
@@ -32,7 +35,9 @@ from polaris.cells.roles.kernel.public.turn_events import (
 )
 from polaris.cells.roles.runtime.internal.continuation_policy import (
     ContinuationPolicy,
+    InvariantViolationError,
     OrchestratorSessionState,
+    SessionInvariants,
     apply_session_patch,
     extract_session_patch_from_text,
     get_active_findings,
@@ -284,7 +289,19 @@ class RoleSessionOrchestrator:
         _is_continuation_prompt = _first_prompt is not None and (
             "<SESSION_PATCH>" in _first_prompt or ("<Goal>" in _first_prompt and "<Progress>" in _first_prompt)
         )
-        if _first_prompt and _first_prompt != self.state.goal and not _is_continuation_prompt:
+        # FIX-20250421-v3: 检测模型输出回灌（防止目标污染）
+        _is_model_output_regurgitation = (
+            _first_prompt is not None and self.state.turn_count > 0 and self._is_model_output(_first_prompt)
+        )
+        if _is_model_output_regurgitation:
+            logger.warning(
+                "model_output_regurgitation_blocked: turn=%d prompt=%s...",
+                self.state.turn_count,
+                _first_prompt[:60],
+            )
+            # 忽略此输入，使用 original_goal 继续
+            _first_prompt = self.state.original_goal or self.state.goal
+        elif _first_prompt and _first_prompt != self.state.goal and not _is_continuation_prompt:
             _is_progression_shortcut = self._is_progression_shortcut(_first_prompt)
             if _is_progression_shortcut and self.state.goal:
                 # 保留原 goal，将推进指令作为额外上下文存储
@@ -298,9 +315,12 @@ class RoleSessionOrchestrator:
             else:
                 self.state.goal = _first_prompt
                 # FIX-20250421: 首次设置 goal 时，同时保存 original_goal（永不丢失）
+                # FIX-20250421-v2: 一旦设置，不再被覆盖。用户后续的模糊输入（如"下一步""按照你的建议"）不能覆盖明确的目标。
                 if not self.state.original_goal:
                     self.state.original_goal = _first_prompt
                     logger.debug("original_goal_set: %s", _first_prompt[:60])
+                else:
+                    logger.debug("original_goal_preserved: %s", self.state.original_goal[:60])
                 # 只有非第一回合才允许根据新请求跃迁到 implementing。
                 # 第一回合总是 exploring——LLM 需要先读代码了解现状，再执行修改。
                 if self.state.turn_count > 0:
@@ -337,6 +357,31 @@ class RoleSessionOrchestrator:
 
         while True:
             is_first_turn = self.state.turn_count == 0
+
+            # FIX-20250421-v3: 验证 Session State 不变式（非 Turn 0）
+            if not is_first_turn and self.state.session_invariants.is_frozen():
+                try:
+                    self.state.session_invariants.validate(
+                        current_delivery_mode=self.state.delivery_mode,
+                        current_original_goal=self.state.original_goal,
+                        current_phase=self.state.task_progress,
+                    )
+                except InvariantViolationError as inv_exc:
+                    logger.error("InvariantViolation detected: %s", inv_exc)
+                    yield ErrorEvent(
+                        turn_id=self.session_id,
+                        error_type="InvariantViolation",
+                        message=f"Session State 不变式违规: {inv_exc}",
+                    )
+                    # 触发 END_SESSION 而非直接崩溃，让上层处理恢复
+                    if envelope is not None:
+                        envelope = TurnOutcomeEnvelope(
+                            turn_result=envelope.turn_result,
+                            continuation_mode=TurnContinuationMode.END_SESSION,
+                            next_intent=f"invariant_violation_recovery: {inv_exc}",
+                        )
+                    break
+
             prompt = (
                 _first_prompt
                 if is_first_turn
@@ -444,6 +489,30 @@ class RoleSessionOrchestrator:
 
             self.state.turn_count += 1
             is_first_turn = False
+
+            # FIX-20250421-v3: Session State 硬化
+            # Turn 0 完成后冻结 delivery_mode、original_goal、phase
+            if self.state.turn_count == 1 and not self.state.session_invariants.is_frozen():
+                # 解析 delivery_mode（复用内核的 intent classifier）
+                _contract = resolve_delivery_mode(_first_prompt)
+                _delivery_mode = _contract.mode.value
+                self.state.delivery_mode = _delivery_mode
+                # 如果 original_goal 还未设置（如 checkpoint resume 场景），使用当前 goal
+                _og = self.state.original_goal or self.state.goal or _first_prompt
+                if not self.state.original_goal:
+                    self.state.original_goal = _og
+                _phase = self.state.task_progress or "exploring"
+                self.state.session_invariants.freeze(
+                    delivery_mode=_delivery_mode,
+                    original_goal=_og,
+                    phase=_phase,
+                )
+                logger.debug(
+                    "session_invariants_frozen: delivery_mode=%s original_goal=%s... phase=%s",
+                    _delivery_mode,
+                    _og[:60],
+                    _phase,
+                )
 
             if envelope is None:
                 yield ErrorEvent(
@@ -631,7 +700,7 @@ class RoleSessionOrchestrator:
         with open(checkpoint_path, "w", encoding="utf-8") as handle:
             json.dump(
                 {
-                    "schema_version": 2,
+                    "schema_version": 3,  # FIX-20250421-v3: 升级 schema 版本
                     "session_id": self.state.session_id,
                     "turn_count": self.state.turn_count,
                     "goal": self.state.goal,
@@ -643,6 +712,11 @@ class RoleSessionOrchestrator:
                     # artifacts 存引用或压缩版（完整版由 SessionArtifactStore 管理）
                     "artifacts": self.state.artifacts,
                     "recent_artifact_hashes": self.state.recent_artifact_hashes,
+                    # FIX-20250421-v3: Session State 硬化字段
+                    "original_goal": self.state.original_goal,
+                    "read_files": self.state.read_files,
+                    "delivery_mode": self.state.delivery_mode,
+                    "session_invariants": self.state.session_invariants.to_dict(),
                 },
                 handle,
                 ensure_ascii=False,
@@ -929,6 +1003,49 @@ class RoleSessionOrchestrator:
         return not any(m in prompt for m in _context_referencers)
 
     @staticmethod
+    def _is_model_output(text: str) -> bool:
+        """检测文本是否为模型输出回灌（而非真实用户输入）。
+
+        模型输出的特征（基于审计日志中的模式）：
+        1. 包含 markdown 标题（### 建议后续行动）
+        2. 包含 "目标文件已定位"、"相关模块" 等分析性语言
+        3. 包含编号列表（1. **立即读取**）
+        4. 包含 "下一步："、"预期改进方向" 等总结性语言
+
+        Args:
+            text: 待检测的文本
+
+        Returns:
+            True 如果文本看起来像模型输出
+        """
+        if not text:
+            return False
+        # 模型输出特征模式
+        _model_output_markers = [
+            "### ",  # markdown 标题
+            "**目标文件已定位**",
+            "**相关模块**",
+            "**建议后续行动**",
+            "**预期改进方向**",
+            "**关键发现**",
+            "**分析与总结**",
+            "**下一步：**",
+            "1. **",
+            "2. **",
+            "3. **",
+            "4. **",
+            "- 主文件：",
+            "- 测试文件：",
+            "立即读取",
+            "检查测试覆盖",
+            "确认功能完整性",
+            "集成点检查",
+        ]
+        _marker_hits = sum(1 for m in _model_output_markers if m in text)
+        # 命中 3 个及以上特征即判定为模型输出
+        return _marker_hits >= 3
+
+    @staticmethod
     def _build_empty_envelope() -> TurnOutcomeEnvelope:
         """创建空 envelope（用于首次非 first_turn 的类型安全降级）。"""
         return TurnOutcomeEnvelope(
@@ -1059,7 +1176,7 @@ class RoleSessionOrchestrator:
             data: dict[str, Any] = json.load(handle)
 
         schema_version = data.get("schema_version")
-        if schema_version != 2:
+        if schema_version not in {2, 3}:
             raise ValueError(f"Unsupported checkpoint schema_version: {schema_version}")
 
         # 恢复 state 字段
@@ -1072,6 +1189,16 @@ class RoleSessionOrchestrator:
         self.state.last_failure = data.get("last_failure")
         self.state.artifacts = data.get("artifacts", {})
         self.state.recent_artifact_hashes = data.get("recent_artifact_hashes", [])
+
+        # FIX-20250421-v3: 恢复 Session State 硬化字段（schema_version >= 3）
+        if schema_version >= 3:
+            self.state.original_goal = data.get("original_goal", "")
+            self.state.read_files = data.get("read_files", [])
+            self.state.delivery_mode = data.get("delivery_mode")
+            _invariants_data = data.get("session_invariants")
+            if _invariants_data:
+                self.state.session_invariants = SessionInvariants.from_dict(_invariants_data)
+                logger.debug("session_invariants_restored: delivery_mode=%s", self.state.delivery_mode)
 
     @staticmethod
     async def _yield_pre_warmed_events(_pre_warmed: dict[str, Any]) -> AsyncIterator[TurnEvent]:

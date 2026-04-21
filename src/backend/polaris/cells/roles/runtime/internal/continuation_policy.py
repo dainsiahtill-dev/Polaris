@@ -17,6 +17,131 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnOutcomeEnvelope,
 )
 
+# ============ Session Invariants（Session State 硬化） ============
+
+
+class InvariantViolationError(Exception):
+    """Session State 不变式违规异常。
+
+    当 delivery_mode、original_goal 等 Session-level 不可变字段被修改时触发。
+    根据 ADR-0071，违规后应执行 panic + handoff_workflow。
+    """
+
+
+@dataclass
+class SessionInvariants:
+    """Session State 不变式守卫。
+
+    负责验证 Session-level 状态（delivery_mode, original_goal, phase）的不可变性。
+    每次 Turn 开始前调用 validate()，若发现违规则抛出 InvariantViolation。
+
+    设计原则：
+    - Session State 一旦在 Turn 0 设定，后续 Turn 不可变更
+    - Turn State（goal, task_progress, artifacts）可在约束内变化
+    - Phase 只允许向前推进，禁止回退
+    """
+
+    # 初始值（Turn 0 设定后冻结）
+    _initial_delivery_mode: str | None = None
+    _initial_original_goal: str | None = None
+    _initial_phase: str | None = None
+    # 历史阶段轨迹，用于检测非法回退
+    _phase_history: list[str] = field(default_factory=list)
+
+    def freeze(self, delivery_mode: str, original_goal: str, phase: str) -> None:
+        """在 Turn 0 完成后冻结 Session State。
+
+        Args:
+            delivery_mode: 交付模式（如 MATERIALIZE_CHANGES, ANALYZE_ONLY）
+            original_goal: 用户原始目标
+            phase: 初始阶段（通常为 EXPLORING）
+        """
+        if self._initial_delivery_mode is None:
+            self._initial_delivery_mode = delivery_mode
+        if self._initial_original_goal is None:
+            self._initial_original_goal = original_goal
+        if self._initial_phase is None:
+            self._initial_phase = phase
+        if phase not in self._phase_history:
+            self._phase_history.append(phase)
+
+    def validate(
+        self,
+        current_delivery_mode: str | None,
+        current_original_goal: str | None,
+        current_phase: str | None,
+    ) -> None:
+        """验证当前 Turn 的 Session State 是否违反不变式。
+
+        Args:
+            current_delivery_mode: 当前交付模式
+            current_original_goal: 当前原始目标
+            current_phase: 当前阶段
+
+        Raises:
+            InvariantViolation: 当不可变字段被修改或阶段回退时
+        """
+        # 验证 delivery_mode 未被修改
+        if (
+            self._initial_delivery_mode is not None
+            and current_delivery_mode is not None
+            and current_delivery_mode != self._initial_delivery_mode
+        ):
+            raise InvariantViolationError(
+                f"delivery_mode 被非法修改: {self._initial_delivery_mode} -> {current_delivery_mode}"
+            )
+
+        # 验证 original_goal 未被修改
+        if (
+            self._initial_original_goal is not None
+            and current_original_goal is not None
+            and current_original_goal != self._initial_original_goal
+        ):
+            raise InvariantViolationError(
+                f"original_goal 被非法修改: {self._initial_original_goal[:60]}... -> {current_original_goal[:60]}..."
+            )
+
+        # 验证 phase 未回退
+        if current_phase is not None and self._phase_history:
+            # 定义阶段优先级（数值越大越高级）
+            phase_priority = {
+                "exploring": 1,
+                "content_gathered": 2,
+                "implementing": 3,
+                "verifying": 4,
+                "done": 5,
+            }
+            current_priority = phase_priority.get(current_phase, 0)
+            last_priority = phase_priority.get(self._phase_history[-1], 0)
+            if current_priority < last_priority:
+                raise InvariantViolationError(f"phase 非法回退: {self._phase_history[-1]} -> {current_phase}")
+            if current_phase not in self._phase_history:
+                self._phase_history.append(current_phase)
+
+    def is_frozen(self) -> bool:
+        """检查 Session State 是否已冻结。"""
+        return self._initial_delivery_mode is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为 dict（用于 checkpoint）。"""
+        return {
+            "delivery_mode": self._initial_delivery_mode,
+            "original_goal": self._initial_original_goal,
+            "phase": self._initial_phase,
+            "phase_history": self._phase_history,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionInvariants:
+        """从 dict 反序列化（用于 checkpoint 恢复）。"""
+        inv = cls()
+        inv._initial_delivery_mode = data.get("delivery_mode")
+        inv._initial_original_goal = data.get("original_goal")
+        inv._initial_phase = data.get("phase")
+        inv._phase_history = data.get("phase_history", [])
+        return inv
+
+
 # ============ SessionPatch TypedDict（Step 2 类型化 schema） ============
 
 # 置信度等级（高 → 低：superseded 时被高等级覆盖低等级）
@@ -112,6 +237,10 @@ class OrchestratorSessionState:
     original_goal: str = ""
     # FIX-20250421: 已成功读取的文件列表（真正的 read_file，不是 glob）
     read_files: list[str] = field(default_factory=list)
+    # FIX-20250421-v3: Session State 不变式守卫（ hardened session state ）
+    session_invariants: SessionInvariants = field(default_factory=SessionInvariants)
+    # FIX-20250421-v3: 交付模式（Session-level，Turn 0 后冻结）
+    delivery_mode: str | None = None
 
 
 class ContinuationPolicy:
@@ -163,9 +292,10 @@ class ContinuationPolicy:
         6. SPECULATIVE_CONTINUE 模式下需满足 speculative worthwhile 条件
         """
         # Phase 1.5: FailureClass-driven self-protection
-        failure_action = self._resolve_failure_class(envelope.failure_class)
+        _failure_class = getattr(envelope, "failure_class", None)
+        failure_action = self._resolve_failure_class(_failure_class)
         if failure_action == "stop":
-            failure_name = envelope.failure_class.value if envelope.failure_class else "unknown"
+            failure_name = _failure_class.value if _failure_class else "unknown"
             return False, f"failure_class={failure_name}"
         if failure_action == "stop_and_help":
             return False, "durability_failure_stop"

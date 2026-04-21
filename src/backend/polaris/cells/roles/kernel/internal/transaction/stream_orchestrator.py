@@ -25,6 +25,7 @@ from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScope
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
@@ -103,7 +104,9 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
     return reads
 
 
-def _build_continue_visible_content(read_tools: list[str], current_progress: str = "content_gathered") -> str:
+def _build_continue_visible_content(
+    read_tools: list[str], current_progress: str = "content_gathered", force_read_required: bool = False
+) -> str:
     """构建 continue_multi_turn 的 visible_content，内嵌 SESSION_PATCH。
 
     FIX-20250421: 基于 PhaseManager 的真实阶段生成提示语，不再依赖字符串匹配。
@@ -114,8 +117,6 @@ def _build_continue_visible_content(read_tools: list[str], current_progress: str
         current_progress: PhaseManager 的当前阶段值
     """
     # FIX-20250421: 使用 PhaseManager 的阶段生成约束提示
-    from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase
-
     try:
         phase = Phase(current_progress)
     except ValueError:
@@ -124,8 +125,7 @@ def _build_continue_visible_content(read_tools: list[str], current_progress: str
     # 基于 Phase 的约束提示
     if phase == Phase.VERIFYING:
         instruction = (
-            "当前阶段：验证（VERIFYING）。请运行测试或手动验证修复效果。"
-            "严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
+            "当前阶段：验证（VERIFYING）。请运行测试或手动验证修复效果。严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
         )
         visible_prefix = "验证阶段继续"
     elif phase == Phase.IMPLEMENTING:
@@ -149,6 +149,14 @@ def _build_continue_visible_content(read_tools: list[str], current_progress: str
             "当前阶段：探索（EXPLORING）。允许使用 glob/repo_rg 定位文件。"
             "找到目标文件后，必须调用 read_file 读取内容后才能修改。"
         )
+        # FIX-20250421-v2: 在 MATERIALIZE_CHANGES 模式下，强制要求继续执行，不能返回文本
+        if force_read_required:
+            instruction += (
+                "\n\n🚨 CRITICAL: 当前任务要求代码修改（MATERIALIZE_CHANGES）。"
+                "你只执行了探索工具（glob/repo_rg），尚未读取任何文件内容。"
+                "MANDATORY: 必须立即调用 read_file 读取目标文件，然后执行 write_file/edit_file 完成修改。"
+                "严禁返回文本分析或建议——必须通过工具执行实际修改！"
+            )
         visible_prefix = "探索阶段继续"
 
     patch: dict[str, Any] = {
@@ -484,12 +492,14 @@ class StreamOrchestrator:
                 DeliveryMode,
             )
 
-            # 【修复根因 A】：continuation prompt 不再盲目降级为 ANALYZE_ONLY。
-            # 从 <Progress> 块解析当前阶段（如 implementing），据此选择正确的 delivery mode。
-            # 根因：implementing 阶段被强制 ANALYZE_ONLY，导致写工具通道被关闭。
+            # FIX-20250421-v3: continuation prompt 交付模式持久化。
+            # 根因：Session-level delivery_mode 一旦设定不可变更。
+            # exploration / verifying 都是 MATERIALIZE_CHANGES 的子阶段，不应降级为 ANALYZE_ONLY。
             _progress_match = re.search(r"当前阶段:\s*(\w+)", _raw_user)
             _parsed_progress = _progress_match.group(1) if _progress_match else "exploring"
-            if _parsed_progress == "implementing":
+
+            # FIX-20250421-v3: 优先使用 Turn 0 冻结的原始 delivery_mode（不可变更）
+            if ledger._original_delivery_mode == DeliveryMode.MATERIALIZE_CHANGES.value:
                 delivery_contract = DeliveryContract(
                     mode=DeliveryMode.MATERIALIZE_CHANGES,
                     requires_mutation=True,
@@ -498,7 +508,31 @@ class StreamOrchestrator:
                     allow_patch_proposal=False,
                 )
                 logger.debug(
-                    "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES",
+                    "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (original_preserved)",
+                    _parsed_progress,
+                )
+            elif ledger._original_delivery_mode == DeliveryMode.ANALYZE_ONLY.value:
+                delivery_contract = DeliveryContract(
+                    mode=DeliveryMode.ANALYZE_ONLY,
+                    requires_mutation=False,
+                    requires_verification=False,
+                    allow_inline_code=True,
+                    allow_patch_proposal=False,
+                )
+                logger.debug(
+                    "continuation_prompt_delivery_mode: progress=%s mode=ANALYZE_ONLY (original_preserved)",
+                    _parsed_progress,
+                )
+            elif _parsed_progress == "implementing":
+                delivery_contract = DeliveryContract(
+                    mode=DeliveryMode.MATERIALIZE_CHANGES,
+                    requires_mutation=True,
+                    requires_verification=False,
+                    allow_inline_code=False,
+                    allow_patch_proposal=False,
+                )
+                logger.debug(
+                    "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (fallback)",
                     _parsed_progress,
                 )
             else:
@@ -510,7 +544,7 @@ class StreamOrchestrator:
                     allow_patch_proposal=False,
                 )
                 logger.debug(
-                    "continuation_prompt_delivery_mode: progress=%s mode=ANALYZE_ONLY",
+                    "continuation_prompt_delivery_mode: progress=%s mode=ANALYZE_ONLY (fallback)",
                     _parsed_progress,
                 )
         else:
@@ -757,7 +791,21 @@ class StreamOrchestrator:
                 _current_progress,
                 turn_id,
             )
-            result["visible_content"] = _build_continue_visible_content(read_tools, current_progress=_current_progress)
+
+            # FIX-20250421-v2: 在 MATERIALIZE_CHANGES 模式下，如果仍在 EXPLORING 阶段，
+            # 强化提示语，强制要求模型继续执行 read_file，严禁返回文本
+            _is_materialize = getattr(ledger.delivery_contract, "mode", None) == DeliveryMode.MATERIALIZE_CHANGES
+            _force_read_required = (
+                _is_materialize
+                and _current_progress == Phase.EXPLORING.value
+                and not read_tools  # 还没有真正读取过文件
+            )
+
+            result["visible_content"] = _build_continue_visible_content(
+                read_tools,
+                current_progress=_current_progress,
+                force_read_required=_force_read_required,
+            )
 
         visible_content = result.get("visible_content", "")
         if visible_content and result.get("kind") != "final_answer":

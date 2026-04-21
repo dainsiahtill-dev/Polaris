@@ -270,7 +270,8 @@ class TestRoleSessionOrchestrator:
         data = json.loads(checkpoint.read_text(encoding="utf-8"))
 
         # 验证所有降维字段都持久化到 checkpoint
-        assert data["schema_version"] == 2
+        # FIX-20250421-v3: schema_version 升级到 3
+        assert data["schema_version"] == 3
         assert data["task_progress"] == "implementing"
         assert data["structured_findings"]["error_summary"] == "DB timeout"
         assert "auth.py" in str(data["structured_findings"]["suspected_files"])

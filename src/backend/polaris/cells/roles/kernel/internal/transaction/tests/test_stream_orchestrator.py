@@ -28,7 +28,8 @@ class TestExtractReadToolsFromReceipt:
         result = _extract_read_tools_from_receipt(receipt)
         assert "read_file" in result
         assert "repo_read_head" in result
-        assert "search_symbol" in result
+        # FIX-20250421: search_symbol 不是真正的文件读取工具（只是符号搜索）
+        assert "search_symbol" not in result
         assert "edit_file" not in result
         assert "write_file" not in result
 
@@ -42,7 +43,8 @@ class TestExtractReadToolsFromReceipt:
         }
         result = _extract_read_tools_from_receipt(receipt)
         assert result.count("read_file") == 1
-        assert result == ["read_file", "grep"]
+        # FIX-20250421: grep 不是真正的文件读取工具（只是搜索）
+        assert result == ["read_file"]
 
     def test_ignores_empty_tool_names(self):
         receipt = {
@@ -70,9 +72,9 @@ class TestBuildContinueVisibleContent:
         end = content.index("</SESSION_PATCH>")
         json_str = content[start:end].strip()
         patch = json.loads(json_str)
-        assert patch["task_progress"] == "implementing"
+        # FIX-20250421: task_progress 不再强制覆盖，保持当前阶段
+        assert "recent_reads" in patch
         assert patch["recent_reads"] == ["read_file"]
-        assert "写工具" in patch["instruction"]
 
     def test_empty_reads_omits_recent_reads(self):
         content = _build_continue_visible_content([])
@@ -84,5 +86,6 @@ class TestBuildContinueVisibleContent:
     def test_visible_content_has_system_hint(self):
         content = _build_continue_visible_content(["read_file"])
         assert "多回合工作流继续" in content
-        assert "读阶段已完成" in content
-        assert "进入写阶段" in content
+        # FIX-20250421: 基于 PhaseManager 阶段生成提示语
+        assert "内容已收集（CONTENT_GATHERED）" in content
+        assert "write_file/edit_file" in content

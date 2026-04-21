@@ -323,18 +323,34 @@ class ToolBatchExecutor:
                 turn_id,
             )
 
-        # FIX-20250421: Implementing Phase Broad Exploration Block.
-        # Detect implementing phase from context and block broad exploration tools
-        # (glob/repo_tree/repo_rg/grep/search_code) when no write tools are present.
-        # This prevents the infinite explore loop seen in CLI mode.
-        # FIX-20250421: Phase detection with normalized string comparison (lowercase, strip)
-        _all_user_contents = [
-            str(m.get("content", "")).strip().lower()
-            for m in context
-            if str(m.get("role", "")).strip().lower() == "user"
-        ]
-        _is_implementing_phase = any("当前阶段: implementing" in c for c in _all_user_contents)
-        _is_verifying_phase = any("当前阶段: verifying" in c for c in _all_user_contents)
+        # FIX-20250421-v3: Phase detection using PhaseManager (real phase) instead of string matching.
+        # PhaseManager is the single source of truth for phase state.
+        from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase
+
+        _current_phase = ledger.phase_manager.current_phase
+        _is_implementing_phase = _current_phase == Phase.IMPLEMENTING
+        _is_verifying_phase = _current_phase == Phase.VERIFYING
+        _is_exploring_phase = _current_phase == Phase.EXPLORING
+
+        # FIX-20250421-v3: Text output interception for MATERIALIZE_CHANGES + EXPLORING.
+        # If no tools are invoked in EXPLORING phase with MATERIALIZE_CHANGES mode,
+        # block the text output and force continue_multi_turn.
+        _is_materialize = (
+            ledger._original_delivery_mode == DeliveryMode.MATERIALIZE_CHANGES.value
+            or getattr(ledger.delivery_contract, "mode", None) == DeliveryMode.MATERIALIZE_CHANGES
+        )
+        if _is_exploring_phase and _is_materialize and not invocations:
+            logger.warning(
+                "text_output_intercepted: MATERIALIZE_CHANGES + EXPLORING with no tool calls. "
+                "Forcing continue_multi_turn. turn_id=%s",
+                turn_id,
+            )
+            raise RuntimeError(
+                "single_batch_contract_violation: "
+                "MATERIALIZE_CHANGES mode requires tool execution in EXPLORING phase. "
+                "You must call read_file/glob/repo_rg to explore, then write_file/edit_file to modify. "
+                "Text-only responses are not allowed."
+            )
 
         _broad_exploration_tools = {"glob", "repo_tree", "repo_rg", "grep", "search_code", "ripgrep", "find"}
         _has_broad_exploration = any(
@@ -535,16 +551,15 @@ class ToolBatchExecutor:
                     receipt_results = receipt.get("results") or []
                     if isinstance(receipt_results, list):
                         all_result_items.extend(r for r in receipt_results if isinstance(r, dict))
-            tool_results = extract_tool_results_from_batch_receipt(
-                {"results": all_result_items}
-            )
+            tool_results = extract_tool_results_from_batch_receipt({"results": all_result_items})
             if tool_results:
                 old_phase = ledger.phase_manager.current_phase
                 new_phase = ledger.phase_manager.transition(tool_results)
                 if new_phase != old_phase:
                     logger.info(
                         "Phase transition: %s -> %s (tools: %s) turn_id=%s",
-                        old_phase.value, new_phase.value,
+                        old_phase.value,
+                        new_phase.value,
                         [r.tool_name for r in tool_results],
                         turn_id,
                     )
@@ -555,12 +570,14 @@ class ToolBatchExecutor:
                     # 阶段违规：生成错误 receipt 而不是抛异常
                     logger.warning("Phase violation: %s turn_id=%s", error_msg, turn_id)
                     # 将错误信息注入到 receipts 中，让 LLM 在下一轮看到
-                    receipts_as_dicts.append({
-                        "tool_name": "phase_guard",
-                        "status": "error",
-                        "result": error_msg,
-                        "call_id": f"phase_guard_{turn_id}",
-                    })
+                    receipts_as_dicts.append(
+                        {
+                            "tool_name": "phase_guard",
+                            "status": "error",
+                            "result": error_msg,
+                            "call_id": f"phase_guard_{turn_id}",
+                        }
+                    )
 
         if (
             requires_mutation

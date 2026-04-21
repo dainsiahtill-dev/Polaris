@@ -91,8 +91,9 @@ class TestContinuationPolicyCanContinue:
         base_state.recent_artifact_hashes = ["abc123", "abc123"]
         envelope = self._make_envelope(TurnContinuationMode.AUTO_CONTINUE)
         can, reason = policy.can_continue(base_state, envelope)
-        assert can is False
-        assert reason == "stagnation_detected"
+        # Phase 5.1: stagnation 检测后会尝试 recovery strategy
+        assert can is True
+        assert "recovery_strategy=" in reason
 
     def test_stagnation_with_speculative_hints_allowed(self, policy, base_state):
         base_state.recent_artifact_hashes = ["abc123", "abc123"]

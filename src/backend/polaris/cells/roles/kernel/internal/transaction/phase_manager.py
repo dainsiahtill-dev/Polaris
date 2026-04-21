@@ -24,6 +24,7 @@ class Phase(str, Enum):
     单向流转：EXPLORING → CONTENT_GATHERED → IMPLEMENTING → VERIFYING → DONE
     特殊情况：任何阶段都可以直接 DONE（final_answer）
     """
+
     EXPLORING = "exploring"
     CONTENT_GATHERED = "content_gathered"
     IMPLEMENTING = "implementing"
@@ -32,28 +33,58 @@ class Phase(str, Enum):
 
 
 # 工具分类定义 — 这是唯一的工具类型真相来源
-_BROAD_EXPLORATION_TOOLS: frozenset[str] = frozenset({
-    "glob", "repo_tree", "repo_rg", "grep", "search_code", "ripgrep", "find",
-})
+_BROAD_EXPLORATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "glob",
+        "repo_tree",
+        "repo_rg",
+        "grep",
+        "search_code",
+        "ripgrep",
+        "find",
+    }
+)
 
-_READ_TOOLS: frozenset[str] = frozenset({
-    "read_file", "repo_read_head", "repo_read_slice", "repo_read_tail",
-    "repo_read_around", "repo_read_range",
-})
+_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        "read_file",
+        "repo_read_head",
+        "repo_read_slice",
+        "repo_read_tail",
+        "repo_read_around",
+        "repo_read_range",
+    }
+)
 
-_WRITE_TOOLS: frozenset[str] = frozenset({
-    "write_file", "edit_file", "edit_blocks", "precision_edit",
-    "search_replace", "apply_diff", "repo_apply_diff", "append_to_file",
-})
+_WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "edit_blocks",
+        "precision_edit",
+        "search_replace",
+        "apply_diff",
+        "repo_apply_diff",
+        "append_to_file",
+    }
+)
 
-_VERIFICATION_TOOLS: frozenset[str] = frozenset({
-    "execute_command", "pytest", "npm_test", "run_tests", "python", "node",
-})
+_VERIFICATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "execute_command",
+        "pytest",
+        "npm_test",
+        "run_tests",
+        "python",
+        "node",
+    }
+)
 
 
 @dataclass(frozen=True)
 class ToolResult:
     """工具执行结果的轻量表示 — 用于驱动 Phase 流转。"""
+
     tool_name: str
     success: bool = True
     bytes_read: int = 0  # 对于 read 工具，实际读取的字节数
@@ -111,6 +142,9 @@ class PhaseManager:
 
     _current_phase: Phase = field(default=Phase.EXPLORING)
     _phase_history: list[tuple[Phase, list[str]]] = field(default_factory=list)
+    # FIX-20250421-v3: 阶段停留计数器（用于超时熔断）
+    _turns_in_current_phase: int = 0
+    _max_turns_per_phase: int = 3
 
     @property
     def current_phase(self) -> Phase:
@@ -143,14 +177,21 @@ class PhaseManager:
             if self._current_phase != Phase.IMPLEMENTING:
                 self._phase_history.append((self._current_phase, tool_names))
                 self._current_phase = Phase.IMPLEMENTING
+                self._turns_in_current_phase = 1
+            else:
+                self._turns_in_current_phase += 1
             return self._current_phase
 
         # 规则 2: 任何验证工具 → VERIFYING（只在已实现后才允许）
-        if (self._current_phase in {Phase.IMPLEMENTING, Phase.CONTENT_GATHERED} and
-                any(r.tool_name in _VERIFICATION_TOOLS for r in tool_results if r.success)):
+        if self._current_phase in {Phase.IMPLEMENTING, Phase.CONTENT_GATHERED} and any(
+            r.tool_name in _VERIFICATION_TOOLS for r in tool_results if r.success
+        ):
             if self._current_phase != Phase.VERIFYING:
                 self._phase_history.append((self._current_phase, tool_names))
                 self._current_phase = Phase.VERIFYING
+                self._turns_in_current_phase = 1
+            else:
+                self._turns_in_current_phase += 1
             return self._current_phase
 
         # 规则 3: 真正读取了文件内容 → CONTENT_GATHERED
@@ -158,9 +199,13 @@ class PhaseManager:
             if self._current_phase == Phase.EXPLORING:  # 只能单向推进
                 self._phase_history.append((self._current_phase, tool_names))
                 self._current_phase = Phase.CONTENT_GATHERED
+                self._turns_in_current_phase = 1
+            else:
+                self._turns_in_current_phase += 1
             return self._current_phase
 
-        # 探索工具不推进状态
+        # 探索工具不推进状态，但增加停留计数
+        self._turns_in_current_phase += 1
         return self._current_phase
 
     def can_transition_to(self, target_phase: Phase) -> bool:
@@ -200,10 +245,7 @@ class PhaseManager:
         if self._current_phase == Phase.CONTENT_GATHERED:
             has_write = any(r.is_write for r in tool_results if r.success)
             has_read = any(r.bytes_read > 0 for r in tool_results if r.success)
-            has_explore = any(
-                r.tool_name in _BROAD_EXPLORATION_TOOLS
-                for r in tool_results if r.success
-            )
+            has_explore = any(r.tool_name in _BROAD_EXPLORATION_TOOLS for r in tool_results if r.success)
 
             if has_explore and not has_write:
                 return False, (
@@ -215,10 +257,7 @@ class PhaseManager:
 
         # IMPLEMENTING 阶段：禁止 broad exploration
         if self._current_phase == Phase.IMPLEMENTING:
-            has_explore = any(
-                r.tool_name in _BROAD_EXPLORATION_TOOLS
-                for r in tool_results if r.success
-            )
+            has_explore = any(r.tool_name in _BROAD_EXPLORATION_TOOLS for r in tool_results if r.success)
             if has_explore:
                 return False, (
                     "阶段错误：当前在 IMPLEMENTING 阶段（已开始修改），"
@@ -233,23 +272,53 @@ class PhaseManager:
         """获取当前阶段的约束提示语 — 注入到 System Prompt。"""
         constraints: dict[Phase, str] = {
             Phase.EXPLORING: (
-                "当前阶段：探索（EXPLORING）。允许使用 glob/repo_rg 定位文件，"
-                "但必须在下一回合调用 read_file 读取内容。"
+                "当前阶段：探索（EXPLORING）。允许使用 glob/repo_rg 定位文件，但必须在下一回合调用 read_file 读取内容。"
             ),
             Phase.CONTENT_GATHERED: (
                 "当前阶段：内容已收集（CONTENT_GATHERED）。你已读取文件，"
                 "现在必须调用 write_file/edit_file 执行修改，禁止继续探索。"
             ),
             Phase.IMPLEMENTING: (
-                "当前阶段：实现（IMPLEMENTING）。你正在执行修改，"
-                "严禁使用 glob/repo_rg 等探索工具，请专注完成写入。"
+                "当前阶段：实现（IMPLEMENTING）。你正在执行修改，严禁使用 glob/repo_rg 等探索工具，请专注完成写入。"
             ),
-            Phase.VERIFYING: (
-                "当前阶段：验证中（VERIFYING）。请运行测试或验证修复效果。"
-            ),
+            Phase.VERIFYING: ("当前阶段：验证中（VERIFYING）。请运行测试或验证修复效果。"),
             Phase.DONE: "当前阶段：已完成（DONE）。",
         }
         return constraints.get(self._current_phase, "继续执行任务。")
+
+    def is_phase_timeout(self) -> tuple[bool, str]:
+        """检查当前阶段是否超时（停留超过 max_turns_per_phase）。
+
+        Returns:
+            (是否超时, 超时提示信息)
+        """
+        if self._turns_in_current_phase > self._max_turns_per_phase:
+            return True, (
+                f"阶段超时警告：你已在 {self._current_phase.value} 阶段停留 "
+                f"{self._turns_in_current_phase} 个回合（超过最大限制 {self._max_turns_per_phase}）。"
+                "请立即推进到下一阶段或结束任务。"
+            )
+        return False, ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为 dict（用于跨 Turn 持久化）。"""
+        return {
+            "current_phase": self._current_phase.value,
+            "phase_history": [{"from": phase.value, "tools": tools} for phase, tools in self._phase_history],
+            "turns_in_current_phase": self._turns_in_current_phase,
+            "max_turns_per_phase": self._max_turns_per_phase,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PhaseManager:
+        """从 dict 反序列化（用于跨 Turn 恢复）。"""
+        pm = cls()
+        pm._current_phase = Phase(data.get("current_phase", "exploring"))
+        pm._turns_in_current_phase = data.get("turns_in_current_phase", 0)
+        pm._max_turns_per_phase = data.get("max_turns_per_phase", 3)
+        _history = data.get("phase_history", [])
+        pm._phase_history = [(Phase(item["from"]), item.get("tools", [])) for item in _history]
+        return pm
 
 
 # 便捷函数：从 batch_receipt 构造 ToolResult 列表
