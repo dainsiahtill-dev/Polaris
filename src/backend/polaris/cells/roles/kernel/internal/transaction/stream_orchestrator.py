@@ -74,9 +74,7 @@ _MATERIALIZE_KEYWORDS: list[str] = [
 ]
 
 # 预编译正则表达式，支持关键词变体匹配
-_MATERIALIZE_KEYWORDS_RE: re.Pattern[str] = re.compile(
-    "|".join(re.escape(kw) for kw in _MATERIALIZE_KEYWORDS)
-)
+_MATERIALIZE_KEYWORDS_RE: re.Pattern[str] = re.compile("|".join(re.escape(kw) for kw in _MATERIALIZE_KEYWORDS))
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +564,9 @@ class StreamOrchestrator:
         self.extract_monitoring_metrics = extract_monitoring_metrics
         self.config = config
         self._session_turn_count = 0
+        # FIX-20250421-P2: 逃生舱机制 - 连续 exploring 回合计数
+        self._consecutive_exploring_count: int = 0
+        self._escape_hatch_triggered: bool = False
 
     # -----------------------------------------------------------------------
     # 流式 LLM 决策调用
@@ -724,6 +725,11 @@ class StreamOrchestrator:
             is_mutation_contract_violation,
         )
 
+        # FIX-20250421-P2: 在函数开始处统一导入，避免局部导入导致的 F823 错误
+        from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
+            DeliveryMode as DeliveryModeEnum,
+        )
+
         # H2 物理熔断器：session 级 turn 硬限制，防止无限循环
         self._session_turn_count += 1
         max_session_turns = getattr(self.config, "max_session_turns", 20)
@@ -801,6 +807,62 @@ class StreamOrchestrator:
             except (ImportError, AttributeError, RuntimeError, asyncio.TimeoutError, OSError):
                 delivery_contract = resolve_delivery_mode(latest_user_request)
         ledger.set_delivery_contract(delivery_contract)
+
+        # FIX-20250421-P2: 逃生舱机制 - 连续 exploring 回合检测
+        # 当 LLM 连续 N 回合处于 exploring 且未执行 write 时，强制降级为单 batch write 模式
+        _escape_hatch_threshold: int = 3  # 连续 3 回合 exploring 触发
+        if _is_continuation_prompt:
+            if delivery_contract.mode in (DeliveryModeEnum.ANALYZE_ONLY, DeliveryModeEnum.PROPOSE_PATCH):
+                self._consecutive_exploring_count += 1
+                logger.debug(
+                    "escape_hatch_monitor: consecutive_exploring=%d/%d turn_id=%s",
+                    self._consecutive_exploring_count,
+                    _escape_hatch_threshold,
+                    turn_id,
+                )
+            elif delivery_contract.mode == DeliveryModeEnum.MATERIALIZE_CHANGES:
+                # 进入 mutation 模式，重置计数器
+                if self._consecutive_exploring_count > 0:
+                    logger.debug(
+                        "escape_hatch_monitor: reset_counter (materialize) turn_id=%s",
+                        turn_id,
+                    )
+                self._consecutive_exploring_count = 0
+
+            # 触发逃生舱：强制降级为 MATERIALIZE_CHANGES 并限制工具
+            if self._consecutive_exploring_count >= _escape_hatch_threshold and not self._escape_hatch_triggered:
+                logger.warning(
+                    "escape_hatch_triggered: consecutive_exploring=%d turn_id=%s "
+                    "forcing MATERIALIZE_CHANGES with write-only tools",
+                    self._consecutive_exploring_count,
+                    turn_id,
+                )
+                self._escape_hatch_triggered = True
+                delivery_contract = _build_delivery_contract_from_mode(DeliveryMode.MATERIALIZE_CHANGES)
+                ledger.set_delivery_contract(delivery_contract)
+                # 限制工具列表：只保留 write 工具，强制 LLM 必须修改
+                _write_tool_names: set[str] = {
+                    "write_file",
+                    "edit_file",
+                    "repo_apply_diff",
+                    "precision_edit",
+                    "write_files_batch",
+                }
+                tool_definitions = [
+                    td
+                    for td in tool_definitions
+                    if str(
+                        (td.get("function") or {}).get("name", "")
+                        if isinstance(td.get("function"), Mapping)
+                        else td.get("name", "")
+                    ).strip()
+                    in _write_tool_names
+                ]
+                if not tool_definitions:
+                    logger.error(
+                        "escape_hatch_no_write_tools: turn_id=%s no write tools available",
+                        turn_id,
+                    )
 
         state_machine.transition_to(TurnState.DECISION_REQUESTED)
         ledger.state_history.append(("DECISION_REQUESTED", int(time.time() * 1000)))
@@ -881,15 +943,7 @@ class StreamOrchestrator:
         guard_mode = str(getattr(self.config, "mutation_guard_mode", "warn"))
         # 当 delivery contract 明确要求 MATERIALIZE_CHANGES 时，无视 guard_mode 强制 strict
         # 防止 LLM 以"请求确认"的 FINAL_ANSWER 逃避工具调用（用户已确认多次但仍不执行）
-        _contract_requires_tools = False
-        try:
-            from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
-                DeliveryMode,
-            )
-
-            _contract_requires_tools = ledger.delivery_contract.mode == DeliveryMode.MATERIALIZE_CHANGES
-        except Exception:  # noqa: BLE001
-            pass
+        _contract_requires_tools = ledger.delivery_contract.mode == DeliveryModeEnum.MATERIALIZE_CHANGES
         if (
             decision_kind != TurnDecisionKind.TOOL_BATCH
             and await self.requires_mutation_intent_hybrid(latest_user_request)

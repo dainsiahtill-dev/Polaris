@@ -5,6 +5,7 @@ Contains Circuit Breaker and anti-dead-loop logic, with Speculative-Aware strate
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -12,10 +13,13 @@ if TYPE_CHECKING:
     pass
 
 from polaris.cells.roles.kernel.public.turn_contracts import (
+    AgentStatus,
     FailureClass,
     TurnContinuationMode,
     TurnOutcomeEnvelope,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============ Session Invariants（Session State 硬化） ============
 
@@ -300,6 +304,30 @@ class ContinuationPolicy:
         if failure_action == "stop_and_help":
             return False, "durability_failure_stop"
 
+        # Phase 2: Status Contract Protocol — agent_status 驱动路由
+        _agent_status = getattr(envelope, "agent_status", None)
+        if _agent_status is not None:
+            if _agent_status == AgentStatus.BLOCKED:
+                # BLOCKED 是终态，停止自动继续，升级人工处理
+                return False, "agent_status=blocked"
+            if _agent_status == AgentStatus.NEEDS_CONTEXT:
+                # 需要上下文补充，触发恢复策略
+                recovery = self.get_recovery_strategy("needs_context")
+                if recovery:
+                    return True, f"recovery_strategy={recovery}"
+                # 无恢复策略时允许继续（上游应提供更多上下文）
+                return True, "awaiting_context"
+            if _agent_status == AgentStatus.DONE:
+                # DONE 正常通过，继续后续检查
+                pass
+            if _agent_status == AgentStatus.DONE_WITH_CONCERNS:
+                # 有隐患的完成，记录但不阻止
+                logger.warning(
+                    "agent_reported_done_with_concerns: turn=%d evidence=%s",
+                    state.turn_count,
+                    getattr(envelope, "status_evidence", None),
+                )
+
         if envelope.continuation_mode not in {
             TurnContinuationMode.AUTO_CONTINUE,
             TurnContinuationMode.SPECULATIVE_CONTINUE,
@@ -363,6 +391,101 @@ class ContinuationPolicy:
         errors = [t.get("error") for t in recent]
         return all(errors) and len({str(e) for e in errors}) == 1
 
+    # ---------------------------------------------------------------------------
+    # Evidence-Based Verification（证据先于声明）
+    # ---------------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_verification_output(
+        batch_receipt: dict[str, Any],
+        custom_patterns: list[str] | None = None,
+    ) -> tuple[bool, str]:
+        """解析验证工具输出，要求实际证据才能声称成功。
+
+        Evidence before claims — 强制校验 exit_code 和 stdout/stderr 内容。
+        支持三层叠加：constants.py 默认值 → custom_patterns 覆盖 → hardcoded fallback。
+
+        Args:
+            batch_receipt: turn_result.batch_receipt，结构为 {"results": [...]}
+            custom_patterns: 可选，覆盖 constants.py 的框架默认 patterns
+
+        Returns:
+            (is_verification_confirmed, evidence_string)
+            - is_verification_confirmed=True 表示验证真正通过
+            - evidence_string 包含成功/失败的简短证据（用于日志/审计）
+        """
+        from polaris.cells.roles.kernel.internal.transaction.constants import (
+            VERIFICATION_TOOLS,
+            get_verification_patterns,
+        )
+
+        results = (
+            batch_receipt.get("results", [])
+            if isinstance(batch_receipt, dict)
+            else getattr(batch_receipt, "results", None) or []
+        )
+
+        for result in results:
+            tool_name = str(
+                (result.get("tool_name") or result.get("tool") or "")
+                if isinstance(result, dict)
+                else getattr(result, "tool_name", "") or getattr(result, "tool", "") or ""
+            )
+            if tool_name not in VERIFICATION_TOOLS:
+                continue
+
+            # 提取 execute_command 的 arguments（用于识别测试框架）
+            tool_args: dict[str, Any] = {}
+            if isinstance(result, dict):
+                tool_args = result.get("arguments", {})
+            else:
+                tool_args = getattr(result, "arguments", {}) or {}
+
+            # 获取成功 patterns（三层叠加）
+            framework_key, default_patterns = get_verification_patterns(tool_args)
+            patterns = tuple(custom_patterns) if custom_patterns else default_patterns
+
+            # 提取命令输出
+            result_data = result.get("result") if isinstance(result, dict) else getattr(result, "result", None)
+            if isinstance(result_data, dict):
+                stdout = str(result_data.get("stdout", ""))
+                stderr = str(result_data.get("stderr", ""))
+                exit_code = int(result_data.get("exit_code", 1) if result_data.get("exit_code") is not None else 1)
+            elif isinstance(result_data, str):
+                stdout = result_data
+                stderr = ""
+                exit_code = 0 if result_data.strip().endswith(("passed", "OK", "PASS")) else 1
+            else:
+                stdout = ""
+                stderr = ""
+                exit_code = 1
+
+            combined_output = (stdout + "\n" + stderr).lower()
+
+            # Layer 1: 退出码验证（所有框架通用）
+            if exit_code != 0:
+                # 截断 stderr 用于证据
+                err_preview = stderr[:200].strip() if stderr else "(no stderr)"
+                return False, f"[{framework_key}] exit_code={exit_code} {err_preview}"
+
+            # Layer 2: 成功 patterns 验证（非 generic 框架必需）
+            if framework_key != "generic" and patterns:
+                matched = any(p.lower() in combined_output for p in patterns)
+                if not matched:
+                    # 显示实际输出片段用于调试
+                    output_snippet = (stdout + stderr)[:300].strip()
+                    return False, f"[{framework_key}] exit_code=0 but missing success pattern. output: {output_snippet}"
+                return True, f"[{framework_key}] verified: exit_code=0, pattern matched"
+
+            # Layer 3: generic 命令 — exit_code=0 即通过
+            return True, "[generic] verified: exit_code=0"
+
+        return False, "no_execute_command_in_receipt"
+
+    # ---------------------------------------------------------------------------
+    # Stagnation Detection (enhanced with Evidence-Based Verification)
+    # ---------------------------------------------------------------------------
+
     @staticmethod
     def _detect_stagnation_v2(
         state: OrchestratorSessionState,
@@ -405,28 +528,18 @@ class ContinuationPolicy:
                 if len(trajectory) >= 2:
                     prev_progress = trajectory[-2].get("task_progress") if isinstance(trajectory[-2], dict) else None
                     if prev_progress == "verifying":
-                        # 已在 verifying 停留至少两轮，检查是否实际执行了验证工具
-                        from polaris.cells.roles.kernel.internal.transaction.constants import VERIFICATION_TOOLS
-
-                        verification_tools_called = False
+                        # 已在 verifying 停留至少两轮。
+                        # Evidence-Based Verification：不仅检查是否调用了验证工具，
+                        # 还要检查输出是否真正证明验证成功（exit_code + success patterns）。
                         batch_receipt = getattr(envelope.turn_result, "batch_receipt", None) or {}
-                        # FIX-20250421: Use dict-style .get() for batch_receipt since it can be dict or Pydantic model
-                        results = (
-                            batch_receipt.get("results", [])
-                            if isinstance(batch_receipt, dict)
-                            else getattr(batch_receipt, "results", None) or []
-                        )
-                        for result in results:
-                            tool_name = str(
-                                (result.get("tool_name") or result.get("tool") or "")
-                                if isinstance(result, dict)
-                                else getattr(result, "tool_name", "") or getattr(result, "tool", "") or ""
+
+                        is_verified, evidence = ContinuationPolicy._parse_verification_output(batch_receipt)
+                        if not is_verified:
+                            logger.debug(
+                                "verifying-phase-stagnation: verification failed — %s",
+                                evidence,
                             )
-                            if tool_name in VERIFICATION_TOOLS:
-                                verification_tools_called = True
-                                break
-                        if not verification_tools_called:
-                            # 在 verifying 停留超过 1 轮且未调用验证工具 → 强制结束
+                            # 在 verifying 停留超过 1 轮且验证未通过 → 强制结束
                             return True
 
         return False

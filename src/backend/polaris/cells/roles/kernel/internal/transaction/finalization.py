@@ -151,6 +151,28 @@ class FinalizationHandler:
             content=response.get("content", ""), reasoning=response.get("thinking"), format="markdown"
         )
 
+        # === Phase 4: Two-Stage Review Gate — Pre-Finalization Self-Check ===
+        # Agent 报告完成前必须自问三个问题（来自 Superpowers subagent-driven-development skill）。
+        # 若任一维度不合格，标记为 DONE_WITH_CONCERNS 而非 DONE。
+        self_check = _pre_finalization_self_check(ledger, receipts)
+        if not self_check["completeness"] or not self_check["discipline"]:
+            logger.warning(
+                "pre_finalization_self_check_failed: "
+                "turn_id=%s completeness=%s quality=%s discipline=%s",
+                turn_id,
+                self_check["completeness"],
+                self_check["quality"],
+                self_check["discipline"],
+            )
+            # 记录到 ledger 的 anomaly_flags（供后续审计）
+            ledger.anomaly_flags.append(
+                {
+                    "type": "PRE_FINALIZATION_SELF_CHECK_FAILED",
+                    "turn_id": turn_id,
+                    "check": self_check,
+                }
+            )
+
         # === Inline Patch Escape 检测（LLM_ONCE 收口阶段兜底）===
         if ledger.delivery_contract.must_materialize and not ledger.mutation_obligation.mutation_satisfied:
             escape_result = detect_inline_patch_escape(finalization_output.content)

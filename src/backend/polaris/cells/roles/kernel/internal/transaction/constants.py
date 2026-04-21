@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from polaris.cells.roles.kernel.public.turn_contracts import (
     _ASYNC_TOOLS,
@@ -408,3 +409,58 @@ _EN_PLANNING_RE = re.compile(
 # ---------------------------------------------------------------------------
 VERIFICATION_CN_MARKERS: tuple[str, ...] = ("验证", "校验", "测试")
 VERIFICATION_EN_PATTERN: str = r"\b(verify|validation|validate|test|pytest|check)\b"
+
+# ---------------------------------------------------------------------------
+# 验证输出模式（Evidence-Based Verification — 证据先于声明）
+# ---------------------------------------------------------------------------
+# 主流测试框架的"成功"输出特征。
+# 用于 _parse_verification_output() 判断验证工具是否真正通过。
+# 支持三层叠加：constants.py 默认值 → EnrichmentContext.verification_patterns 覆盖 → hardcoded fallback
+# ---------------------------------------------------------------------------
+VERIFICATION_PATTERNS: dict[str, tuple[str, ...]] = {
+    # pytest: exit_code=0 + stdout 包含 "passed" 或 "X passed"
+    "pytest": ("passed", "passed", "X passed", "X passed in"),
+    # python -m pytest (same as pytest)
+    "python": ("passed", "X passed", "X passed in"),
+    # node/npm test: exit_code=0 + stdout 包含 "PASS" or "Tests:"
+    "node": ("PASS", "Tests:", "test suite", "passed"),
+    # npm test with jest: exit_code=0 + "Tests: X passed"
+    "jest": ("Tests:", "passed", "PASS"),
+    # go test: exit_code=0 + stdout 或 stderr 包含 "ok" 或 "PASS"
+    "go": ("ok", "PASS", "--- PASS"),
+    # rust cargo test: exit_code=0 + "test result: ok"
+    "cargo": ("test result: ok", "passed", "-- ok"),
+    # 通用命令（无特定框架）：exit_code=0 即认为通过
+    "generic": (),
+}
+
+
+def get_verification_patterns(tool_args: dict[str, Any] | None = None) -> tuple[str, tuple[str, ...]]:
+    """根据验证工具的命令参数返回对应的成功 patterns。
+
+    Args:
+        tool_args: execute_command 的 arguments 字段，如 {"command": "pytest tests/"}。
+
+    Returns:
+        (framework_key, patterns_tuple)。若无法识别框架，返回 ("generic", ())。
+    """
+    if not tool_args:
+        return ("generic", ())
+
+    command: str = str(tool_args.get("command", "") or tool_args.get("cmd", "")).lower()
+
+    # 按命令关键词识别框架
+    if "pytest" in command or "python -m pytest" in command:
+        return ("pytest", VERIFICATION_PATTERNS["pytest"])
+    if "jest" in command:
+        return ("jest", VERIFICATION_PATTERNS["jest"])
+    if "npm test" in command or "yarn test" in command:
+        return ("node", VERIFICATION_PATTERNS["node"])
+    if "cargo test" in command:
+        return ("cargo", VERIFICATION_PATTERNS["cargo"])
+    if command.startswith("go test") or "go build" in command:
+        return ("go", VERIFICATION_PATTERNS["go"])
+    if "python" in command or "python3" in command:
+        return ("python", VERIFICATION_PATTERNS["python"])
+
+    return ("generic", ())

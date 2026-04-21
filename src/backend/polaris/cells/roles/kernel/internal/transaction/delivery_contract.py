@@ -117,6 +117,11 @@ class EnrichmentContext(BaseModel):
     # 8. 向后兼容：保留原始意图标签
     raw_intent_label: str = Field(default="")
 
+    # 9. Evidence-Based Verification: 覆盖 constants.py 默认验证 patterns
+    #    用于自定义测试框架或特殊验证命令（如指定特定的 "BUILD SUCCESS" 字样）。
+    #    三层叠加：constants.py 默认值 → 本字段覆盖 → hardcoded fallback。
+    verification_patterns: list[str] = Field(default_factory=list)
+
     @model_validator(mode="before")
     @classmethod
     def _coerce_enums(cls, values: Any) -> Any:

@@ -630,6 +630,20 @@ class RoleSessionOrchestrator:
         try:
             while True:
                 is_first_turn = self.state.turn_count == 0
+                # Phase 3: HARD-GATE — 危险操作必须人类审批，不能自动继续
+                if is_first_turn and first_prompt:
+                    hard_gate_check = self._check_hard_gate(first_prompt)
+                    if hard_gate_check is not None:
+                        logger.warning(
+                            "hard_gate_triggered: turn=0 reason=%s",
+                            hard_gate_check,
+                        )
+                        yield SessionWaitingHumanEvent(
+                            session_id=self.session_id,
+                            reason=f"DESTRUCTIVE_OPERATION_REQUIRES_APPROVAL:{hard_gate_check}",
+                            required_approval="confirm_destructive_action",
+                        )
+                        return
                 if not is_first_turn and self.state.session_invariants.is_frozen():
                     try:
                         self.state.session_invariants.validate(
@@ -954,10 +968,13 @@ class RoleSessionOrchestrator:
             wm_parts.append("已确认:")
             for fact in confirmed_facts:
                 wm_parts.append(f"  - {fact}")
-        # FIX-20250421: 显示真正读取过的文件（从 state.read_files）
+        # FIX-20250421: 显示真正读取过的文件（从 state.read_files），只保留最近 5 个
         if self.state.read_files:
+            _recent_files = self.state.read_files[-5:]  # 限制最近 5 个文件
             wm_parts.append("已成功读取的文件:")
-            wm_parts.append(f"  - {', '.join(self.state.read_files)}")
+            wm_parts.append(f"  - {', '.join(_recent_files)}")
+            if len(self.state.read_files) > 5:
+                wm_parts.append(f"  ... 还有 {len(self.state.read_files) - 5} 个更早的文件")
         # 注入最近使用的读工具（来自 continue_multi_turn 的 SESSION_PATCH）
         if recent_reads := findings.get("recent_reads"):
             reads = recent_reads if isinstance(recent_reads, list) else [recent_reads]
@@ -978,12 +995,13 @@ class RoleSessionOrchestrator:
         # 根因：跨回合时 LLM 面对空 WorkingMemory，丢失自己上一回合的分析结论、
         # 实施步骤、错误码字典等关键上下文，导致每次 turn 都从零开始。
         # Fix：把 Turn N 的 visible_content 直接塞进 Turn N+1 的 WorkingMemory。
+        # FIX-20250421-P2: 减少 WorkingMemory token 消耗，从 3000 降到 1500 chars
         _prev_visible = getattr(envelope.turn_result, "visible_content", None) or ""
         if _prev_visible and str(_prev_visible).strip():
             _prev_stripped = str(_prev_visible).strip()
-            # 截断避免 token 爆炸，但保留足够上下文（3000 chars 约 750 tokens）
-            if len(_prev_stripped) > 3000:
-                _prev_stripped = _prev_stripped[:3000] + f"\n... [truncated, total {len(_prev_stripped)} chars]"
+            # 截断避免 token 爆炸（1500 chars 约 375 tokens）
+            if len(_prev_stripped) > 1500:
+                _prev_stripped = _prev_stripped[:1500] + f"\n... [truncated, total {len(_prev_stripped)} chars]"
             wm_parts.append("上回合分析结果（你自己的输出）:")
             wm_parts.append(f"  {_prev_stripped}")
 
@@ -1041,8 +1059,21 @@ class RoleSessionOrchestrator:
                     tool_result_lines.append(f"  {tool_name} 执行失败: {item.get('error', 'unknown error')}")
 
             if tool_result_lines:
+                # FIX-20250421-P2: 限制工具结果总大小，避免 token 爆炸
+                _max_tool_result_chars: int = 3000  # 工具结果总预算
+                _current_length: int = 0
+                _filtered_lines: list[str] = []
+                for line in tool_result_lines:
+                    if _current_length + len(line) <= _max_tool_result_chars:
+                        _filtered_lines.append(line)
+                        _current_length += len(line)
+                    else:
+                        _filtered_lines.append(
+                            f"  ... 还有 {len(tool_result_lines) - len(_filtered_lines)} 个工具结果被省略"
+                        )
+                        break
                 wm_parts.append("上回合工具执行结果:")
-                wm_parts.extend(tool_result_lines)
+                wm_parts.extend(_filtered_lines)
 
         if not wm_parts:
             wm_parts.append("（暂无工作记忆）")
@@ -1382,3 +1413,57 @@ class RoleSessionOrchestrator:
         if "read" in intent or "查看" in intent:
             predicted.append({"tool_name": "read_file", "arguments": {"path": ""}})
         return predicted
+
+    # ---------------------------------------------------------------------------
+    # HARD-GATE Approval Protocol（危险操作强制人类审批）
+    # ---------------------------------------------------------------------------
+
+    # 危险操作关键词 — 匹配到则触发 HARD-GATE
+    _HARD_GATE_TRIGGERS: frozenset[str] = frozenset(
+        {
+            "rm -rf",
+            "rm -r /",
+            "delete all",
+            "drop table",
+            "drop database",
+            "truncate table",
+            "reset hard",
+            "force push --force",
+            "force push origin",
+            "--force-with-lease",
+            "chmod -r 777",
+            "chmod 777",
+        }
+    )
+
+    # 破坏性操作类别 → 人类需要确认的操作
+    _DESTRUCTIVE_OPERATION_MARKERS: dict[str, str] = {
+        "rm -rf": "DELETE_DIRECTORY_RECURSIVE",
+        "rm -r /": "DELETE_FILESYSTEM_ROOT",
+        "delete all": "DELETE_ALL_FILES",
+        "drop table": "DROP_DATABASE_TABLE",
+        "drop database": "DROP_DATABASE",
+        "truncate table": "TRUNCATE_TABLE",
+        "reset hard": "GIT_RESET_HARD",
+        "force push": "GIT_FORCE_PUSH",
+        "chmod -r 777": "PERMISSION_ESCALATION_777",
+        "chmod 777": "PERMISSION_ESCALATION_777",
+    }
+
+    @classmethod
+    def _check_hard_gate(cls, prompt: str) -> str | None:
+        """检测危险操作，返回操作类型字符串；若无需审批则返回 None。
+
+        HARD-GATE 协议（来自 Superpowers brainstorming skill）：
+        重大破坏性操作必须人类审批，不能自动执行。
+
+        检测逻辑：prompt 全文匹配危险关键词列表。
+        """
+        if not prompt:
+            return None
+        prompt_lower = prompt.lower()
+        for trigger in cls._HARD_GATE_TRIGGERS:
+            if trigger in prompt_lower:
+                op_type = cls._DESTRUCTIVE_OPERATION_MARKERS.get(trigger, trigger.upper())
+                return op_type
+        return None

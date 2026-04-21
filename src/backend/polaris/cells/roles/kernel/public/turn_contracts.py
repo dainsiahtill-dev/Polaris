@@ -311,6 +311,15 @@ class TurnOutcomeEnvelope(BaseModel):
     speculative_hints: dict[str, Any] = Field(default_factory=dict)
     # Phase 1.5: Failure classification for continuation policy
     failure_class: FailureClass | None = None
+    # Phase 2: Status Contract Protocol — subagent 必须报告明确状态
+    agent_status: AgentStatus | None = Field(
+        default=None,
+        description="Subagent reported status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT",
+    )
+    status_evidence: dict[str, Any] | None = Field(
+        default=None,
+        description="Supporting evidence for agent_status (verification output, error details, etc.)",
+    )
 
 
 # ============ 上下文定义 ============
@@ -447,6 +456,25 @@ class FailureClass(str, Enum):
     DURABILITY_FAILURE = "durability_failure"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     POLICY_FAILURE = "policy_failure"
+
+
+class AgentStatus(str, Enum):
+    """Subagent 状态契约 — Superpowers 风格的状态报告协议。
+
+    在多 agent 协作场景中，subagent 必须返回明确状态，
+    Controller 据此决定下一步（重试/补充上下文/升级人工/终止）。
+
+    状态语义：
+    - DONE: 任务完成，所有验收标准满足
+    - DONE_WITH_CONCERNS: 完成任务但存在未解决的次要问题
+    - BLOCKED: 遇到无法自行解决的阻塞（权限/依赖/架构决策）
+    - NEEDS_CONTEXT: 需要更多上下文才能继续（缺文件/缺定义/缺接口）
+    """
+
+    DONE = "done"
+    DONE_WITH_CONCERNS = "done_with_concerns"
+    BLOCKED = "blocked"
+    NEEDS_CONTEXT = "needs_context"
 
 
 class TurnOutcome(_FrozenMappingModel):

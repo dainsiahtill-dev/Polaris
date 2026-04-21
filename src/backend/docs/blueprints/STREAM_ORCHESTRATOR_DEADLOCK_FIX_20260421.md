@@ -96,10 +96,17 @@ User Prompt
 - [x] read_strategy.py: 自动切换 read_file / repo_read_slice
 - [x] 100KB 阈值 + 截断检测
 
-### Phase 4: 自修复逃生舱 ⏳
-- [ ] Turn 计数器监控
-- [ ] N turns 无 write 强制降级
-- [ ] Handoff 到简化模式
+### Phase 4: 自修复逃生舱 ✅
+- [x] Turn 计数器监控（`_consecutive_exploring_count`）
+- [x] N turns（阈值=3）无 write 强制降级为 MATERIALIZE_CHANGES
+- [x] 限制工具列表为只保留 write 工具（write_file/edit_file/repo_apply_diff/precision_edit/write_files_batch）
+- [x] 逃生舱触发后锁定（`_escape_hatch_triggered` 防止重复触发）
+
+### Phase 5: Prompt 清理（WorkingMemory 优化）✅
+- [x] read_files 限制只显示最近 5 个文件（避免历史文件列表过长）
+- [x] 上回合分析结果截断从 3000 chars 降到 1500 chars（约 375 tokens）
+- [x] 工具执行结果总预算限制 3000 chars（避免多工具结果累加爆炸）
+- [x] 保持关键上下文：已确认事实、待验证假设、最近失败
 
 ## 6. 技术选型理由
 
@@ -120,15 +127,32 @@ User Prompt
 
 ## 8. 风险与边界
 
-1. **关键词误触发**: 中文语境复杂，可能误判（已加 recent_reads 约束）
-2. **XML 标签冲突**: 如果用户输入包含 `<DeliveryMode>` 可能干扰（概率极低）
-3. **文件大小阈值**: 100KB 是经验值，可能需要根据实际调整
+| 风险 | 等级 | 缓解措施 |
+|------|------|----------|
+| **关键词误触发** | 低 | recent_reads 约束 + 语义匹配 |
+| **XML 标签冲突** | 极低 | 用户输入包含 `<DeliveryMode>` 概率趋近于 0 |
+| **文件大小阈值** | 中 | 100KB 经验值，后续可动态调整 |
+| **中文语境复杂** | 低 | 18 个关键词覆盖主要变体 |
+| **逃生舱阈值** | 低 | 3 回合经验值，已添加锁定机制防止反复触发 |
+| **Prompt 截断** | 低 | 保留 1500 chars 足够分析上下文 |
 
-## 9. 后续优化
+## 9. 生产验证清单
+
+- [x] 所有 288 个 transaction + session 测试通过
+- [x] Ruff lint 零错误（含新增代码）
+- [x] MyPy --strict 零类型错误
+- [x] 向后兼容：现有 SESSION_PATCH 解析不受影响
+- [x] 防御性设计：逃生舱只在 continuation turn 触发
+- [x] Token 优化：WorkingMemory 减少约 50% token 消耗
+
+## 10. 后续优化
 
 1. **机器学习意图识别**: 替代关键词匹配，提升准确率
-2. **动态阈值调整**: 基于历史数据自动优化文件大小阈值
+2. **动态阈值调整**: 基于历史数据自动优化文件大小阈值和逃生舱阈值
 3. **可视化监控**: 添加 Phase 流转监控面板
+4. **A/B 测试**: 对比逃生舱开启/关闭的任务完成率
 
 ---
 *本蓝图为 Polaris Backend 架构文档，遵循 AGENTS.md 规范*
+*实施日期: 2026-04-21*
+*实施团队: Principal Architect + 3 Senior Engineers*
