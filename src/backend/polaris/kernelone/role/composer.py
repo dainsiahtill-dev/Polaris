@@ -60,7 +60,7 @@ class RoleComposer:
     Usage:
         composer = RoleComposer()
         composed = composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
             task_type="new_code"
@@ -90,7 +90,7 @@ class RoleComposer:
         Compose a complete System Prompt from three axes.
 
         Args:
-            anchor_id: System Anchor ID (e.g., "harbor_pilot_director")
+            anchor_id: System Anchor ID (e.g., "polaris_director")
             profession_id: Profession ID (e.g., "python_principal_architect")
             persona_id: Persona ID (e.g., "gongbu_shilang")
             task_type: Task type for selecting workflow stages (e.g., "new_code", "refactor")

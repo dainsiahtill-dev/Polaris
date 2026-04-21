@@ -64,7 +64,7 @@ AGI 上线的真实目标不是“宣布 Polaris 已经是 AGI”，而是把 Po
 ```bash
 curl -X POST http://127.0.0.1:49977/v2/resident/start ^
   -H "Content-Type: application/json" ^
-  -d "{\"workspace\":\"X:/Git/Harborpilot\",\"mode\":\"observe\"}"
+  -d "{\"workspace\":\"X:/Git/polaris\",\"mode\":\"observe\"}"
 ```
 
 ### 3.2 运行一次 PM / Director
@@ -81,13 +81,13 @@ AGI 已接入：
 ```bash
 curl -X POST "http://127.0.0.1:49977/v2/resident/tick?force=true" ^
   -H "Content-Type: application/json" ^
-  -d "{\"workspace\":\"X:/Git/Harborpilot\"}"
+  -d "{\"workspace\":\"X:/Git/polaris\"}"
 ```
 
 ### 3.4 审查 AGI 状态
 
 ```bash
-curl "http://127.0.0.1:49977/v2/resident/status?workspace=X:/Git/Harborpilot&details=true"
+curl "http://127.0.0.1:49977/v2/resident/status?workspace=X:/Git/polaris&details=true"
 ```
 
 重点检查：

@@ -195,7 +195,7 @@ class TestStorageLayoutErrorV1:
 # ─── polaris_home() ───────────────────────────────────────────────────────
 
 
-class TestHarborpilotHome:
+class TestPolarisHome:
     def test_polaris_home_priority_polaris_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
         hp_home = "/custom/hp/home"
         monkeypatch.setenv("POLARIS_HOME", hp_home)
@@ -240,7 +240,7 @@ class TestHarborpilotHome:
 # ─── default_polaris_cache_base() ─────────────────────────────────────────
 
 
-class TestDefaultHarborpilotCacheBase:
+class TestDefaultPolarisCacheBase:
     def test_windows_uses_local_app_data(self, monkeypatch: pytest.MonkeyPatch) -> None:
         if os.name != "nt":
             pytest.skip("Windows-specific test")
@@ -341,7 +341,7 @@ class TestPolarisStorageLayout:
 # ─── resolve_polaris_roots() ───────────────────────────────────────────────
 
 
-class TestResolveHarborpilotRoots:
+class TestResolvePolarisRoots:
     def test_config_root_uses_polaris_home_not_kernelone(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

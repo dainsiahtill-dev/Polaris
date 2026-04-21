@@ -6,7 +6,7 @@ import importlib.util
 
 
 def _load_lancedb_store():
-    # repo_root is the Harborpilot directory (2 levels up from tests/test_lancedb_store.py)
+    # repo_root is the polaris directory (2 levels up from tests/test_lancedb_store.py)
     repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / "src" / "backend" / "lancedb_store.py"
     spec = importlib.util.spec_from_file_location("lancedb_store", module_path)

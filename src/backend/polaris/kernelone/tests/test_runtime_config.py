@@ -67,7 +67,7 @@ class TestWorkspaceMetadataDirName:
 class TestEnvResolution:
     """Tests for KERNELONE_* + POLARIS_* fallback resolution."""
 
-    def test_kern优先_harbor_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_kern优先_polaris_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.kernelone._runtime_config import resolve_env_str
 
         monkeypatch.setenv("KERNELONE_WORKSPACE", "/kern/path")
@@ -75,7 +75,7 @@ class TestEnvResolution:
 
         assert resolve_env_str("workspace") == "/kern/path"
 
-    def test_kern无则回退到_harbor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_kern无则回退到_polaris(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.kernelone._runtime_config import resolve_env_str
 
         monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
@@ -161,7 +161,7 @@ class TestEnvResolution:
             monkeypatch.setenv("KERNELONE_JSONL_BUFFERED", val)
             assert resolve_env_bool("jsonl_buffered") is False, f"expected False for {val!r}"
 
-    def test_bool_kern优先_harbor_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_bool_kern优先_polaris_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.kernelone._runtime_config import resolve_env_bool
 
         monkeypatch.setenv("KERNELONE_JSONL_BUFFERED", "0")
@@ -169,7 +169,7 @@ class TestEnvResolution:
 
         assert resolve_env_bool("jsonl_buffered") is False
 
-    def test_bool_harbor_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_bool_polaris_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.kernelone._runtime_config import resolve_env_bool
 
         monkeypatch.delenv("KERNELONE_JSONL_BUFFERED", raising=False)
@@ -189,7 +189,7 @@ class TestConvenienceAccessors:
 
         assert get_workspace() == "/kern/ws"
 
-    def test_get_workspace_from_harbor_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_get_workspace_from_polaris_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.kernelone._runtime_config import get_workspace
 
         monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
@@ -248,7 +248,7 @@ class TestIntegrationWithStorageLayout:
 
         assert kernelone_home() == str(Path("/kern/home").resolve())
 
-    def test_polaris_home_from_harbor_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_polaris_home_from_polaris_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that kernelone_home falls back to POLARIS_HOME.
 
         Note: The polaris_home alias has been removed. For Polaris-specific

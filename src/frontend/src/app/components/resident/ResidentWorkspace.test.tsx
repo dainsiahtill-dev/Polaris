@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { ResidentWorkspace } from './ResidentWorkspace';
 
 const mockResidentState = {
-  workspace: 'X:/Git/Harborpilot',
+  workspace: 'X:/Git/polaris',
   status: null,
   goals: [
     {
@@ -130,7 +130,7 @@ describe('ResidentWorkspace', () => {
   it('renders the AGI workspace shell', () => {
     render(
       <ResidentWorkspace
-        workspace="X:/Git/Harborpilot"
+        workspace="X:/Git/polaris"
         onBackToMain={vi.fn()}
         residentSnapshot={null}
       />,
@@ -144,7 +144,7 @@ describe('ResidentWorkspace', () => {
   it('creates a goal from the AGI console', async () => {
     render(
       <ResidentWorkspace
-        workspace="X:/Git/Harborpilot"
+        workspace="X:/Git/polaris"
         onBackToMain={vi.fn()}
         residentSnapshot={null}
         initialTab="goals"
@@ -169,7 +169,7 @@ describe('ResidentWorkspace', () => {
   it('governs and runs approved goals', async () => {
     render(
       <ResidentWorkspace
-        workspace="X:/Git/Harborpilot"
+        workspace="X:/Git/polaris"
         onBackToMain={vi.fn()}
         residentSnapshot={null}
         initialTab="goals"

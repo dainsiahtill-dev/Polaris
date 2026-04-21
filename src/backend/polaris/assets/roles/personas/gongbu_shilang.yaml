@@ -38,7 +38,7 @@ expression:
 
 # 适合与哪些 Anchor 配合
 compatible_anchors:
-  - harbor_pilot_director
+  - polaris_director
 
 # 适合与哪些 Profession 配合
 compatible_professions:

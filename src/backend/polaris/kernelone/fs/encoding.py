@@ -1,4 +1,4 @@
-"""Encoding and environment utilities for Harborpilot Loop."""
+"""Encoding and environment utilities for polaris Loop."""
 
 import logging
 import os

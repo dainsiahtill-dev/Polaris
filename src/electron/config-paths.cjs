@@ -14,7 +14,7 @@ function isTruthyEnv(value) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-function resolveHarborpilotRoot(env = process.env, platform = process.platform) {
+function resolvepolarisRoot(env = process.env, platform = process.platform) {
   const rootOverride = String(env.POLARIS_ROOT || "").trim();
   if (rootOverride) {
     return expandPath(rootOverride);
@@ -45,16 +45,16 @@ function resolveHarborpilotRoot(env = process.env, platform = process.platform) 
   return expandPath(os.homedir());
 }
 
-function resolveHarborpilotHome(env = process.env, platform = process.platform) {
-  return path.join(resolveHarborpilotRoot(env, platform), ".polaris");
+function resolvepolarisHome(env = process.env, platform = process.platform) {
+  return path.join(resolvepolarisRoot(env, platform), ".polaris");
 }
 
 function getGlobalSettingsPath(env = process.env, platform = process.platform) {
-  return path.join(resolveHarborpilotHome(env, platform), "config", "settings.json");
+  return path.join(resolvepolarisHome(env, platform), "config", "settings.json");
 }
 
 function getDesktopBackendInfoPath(env = process.env, platform = process.platform) {
-  return path.join(resolveHarborpilotHome(env, platform), "runtime", "desktop-backend.json");
+  return path.join(resolvepolarisHome(env, platform), "runtime", "desktop-backend.json");
 }
 
 function selectStartupWorkspaceOverride(options = {}) {
@@ -118,8 +118,8 @@ module.exports = {
   getDesktopBackendInfoPath,
   isTruthyEnv,
   isPathInside,
-  resolveHarborpilotRoot,
-  resolveHarborpilotHome,
+  resolvepolarisRoot,
+  resolvepolarisHome,
   getGlobalSettingsPath,
   selectStartupWorkspaceOverride,
   shouldEnableSelfUpgradeMode,

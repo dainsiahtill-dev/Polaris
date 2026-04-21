@@ -1,4 +1,4 @@
-"""Text and JSON file utilities for Harborpilot Loop."""
+"""Text and JSON file utilities for polaris Loop."""
 
 from __future__ import annotations
 

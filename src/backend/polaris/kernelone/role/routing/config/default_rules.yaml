@@ -9,7 +9,7 @@ rules:
       task_type: new_crate
       domain: python
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: python_principal_architect
       persona: null
 
@@ -21,7 +21,7 @@ rules:
       task_type: bug_fix
       domain: python
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: software_engineer
       persona: null
 
@@ -32,7 +32,7 @@ rules:
     match:
       task_type: security_review
     recommendation:
-      anchor: harbor_pilot_qa
+      anchor: polaris_qa
       profession: security_auditor
       persona: mentu_xiaozhong
 
@@ -43,7 +43,7 @@ rules:
     match:
       task_type: architecture_design
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: python_principal_architect
       persona: null
 
@@ -54,7 +54,7 @@ rules:
     match:
       task_type: performance_critical
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: python_principal_architect
       persona: null
 
@@ -66,7 +66,7 @@ rules:
       task_type: new_code
       domain: typescript
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: typescript_frontend_architect
       persona: null
 
@@ -77,7 +77,7 @@ rules:
     match:
       task_type: code_review
     recommendation:
-      anchor: harbor_pilot_qa
+      anchor: polaris_qa
       profession: quality_engineer
       persona: null
 
@@ -89,7 +89,7 @@ rules:
       task_type: deployment
       domain: devops
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: devops_engineer
       persona: null
 
@@ -110,6 +110,6 @@ rules:
     match:
       task_type: security_review
     recommendation:
-      anchor: harbor_pilot_qa
+      anchor: polaris_qa
       profession: security_auditor
       persona: mentu_xiaozhong

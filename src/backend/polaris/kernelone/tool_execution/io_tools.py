@@ -1,4 +1,4 @@
-"""Tool detection utilities for Harborpilot Loop."""
+"""Tool detection utilities for polaris Loop."""
 
 import logging
 import os

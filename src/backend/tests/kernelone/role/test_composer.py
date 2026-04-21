@@ -19,10 +19,10 @@ class TestRoleComposer:
         """Setup fresh composer for each test."""
         self.composer = RoleComposer()
 
-    def test_compose_harbor_pilot_director(self) -> None:
+    def test_compose_polaris_director(self) -> None:
         """Test composing director with python_principal_architect."""
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
             task_type="new_code",
@@ -48,7 +48,7 @@ class TestRoleComposer:
     def test_compose_returns_none_for_missing_profession(self) -> None:
         """Test compose returns None when profession is missing."""
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="nonexistent_profession",
             persona_id="gongbu_shilang",
         )
@@ -58,7 +58,7 @@ class TestRoleComposer:
     def test_compose_returns_none_for_missing_persona(self) -> None:
         """Test compose returns None when persona is missing."""
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="nonexistent_persona",
         )
@@ -97,7 +97,7 @@ class TestRoleComposer:
     def test_metadata_populated(self) -> None:
         """Test that metadata is properly populated."""
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
             task_type="new_code",
@@ -106,7 +106,7 @@ class TestRoleComposer:
 
         assert composed is not None
         metadata = composed.metadata
-        assert metadata.anchor_id == "harbor_pilot_director"
+        assert metadata.anchor_id == "polaris_director"
         assert metadata.persona_id == "gongbu_shilang"
         assert metadata.profession_id == "python_principal_architect"
         assert metadata.task_type == "new_code"
@@ -117,13 +117,13 @@ class TestRoleComposer:
     def test_cache_key_consistency(self) -> None:
         """Test that same inputs produce same cache key."""
         composed1 = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
 
         composed2 = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
@@ -135,13 +135,13 @@ class TestRoleComposer:
     def test_different_inputs_different_cache_keys(self) -> None:
         """Test that different inputs produce different cache keys."""
         composed1 = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
 
         composed2 = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="security_auditor",
             persona_id="gongbu_shilang",
         )
@@ -153,13 +153,13 @@ class TestRoleComposer:
     def test_skip_cache_parameter(self) -> None:
         """Test skip_cache parameter."""
         composed1 = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
 
         composed2 = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
             skip_cache=True,
@@ -173,7 +173,7 @@ class TestRoleComposer:
     def test_workflow_in_composed(self) -> None:
         """Test that workflow is included in composed prompt."""
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
             task_type="new_code",
@@ -186,7 +186,7 @@ class TestRoleComposer:
     def test_engineering_standards_in_composed(self) -> None:
         """Test that engineering_standards is included in composed prompt."""
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
@@ -200,17 +200,17 @@ class TestRoleComposer:
         """Test cache invalidation by anchor."""
         # First composition
         self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
 
         # Invalidate
-        self.composer.invalidate_cache(anchor_id="harbor_pilot_director")
+        self.composer.invalidate_cache(anchor_id="polaris_director")
 
         # Second composition should regenerate
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
@@ -220,7 +220,7 @@ class TestRoleComposer:
         """Test clearing all cache."""
         # Create some cached entries
         self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
@@ -230,7 +230,7 @@ class TestRoleComposer:
 
         # Should still work but rebuild cache
         composed = self.composer.compose(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             profession_id="python_principal_architect",
             persona_id="gongbu_shilang",
         )
@@ -253,7 +253,7 @@ class TestComposedPrompt:
     def test_prompt_metadata_dataclass(self) -> None:
         """Test PromptMetadata dataclass."""
         metadata = PromptMetadata(
-            anchor_id="harbor_pilot_director",
+            anchor_id="polaris_director",
             persona_id="gongbu_shilang",
             profession_id="python_principal_architect",
             task_type="new_code",
@@ -261,7 +261,7 @@ class TestComposedPrompt:
             cache_key="abc123",
         )
 
-        assert metadata.anchor_id == "harbor_pilot_director"
+        assert metadata.anchor_id == "polaris_director"
         assert metadata.cache_key == "abc123"
 
     def test_composed_prompt_dataclass(self) -> None:

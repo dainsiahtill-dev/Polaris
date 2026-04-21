@@ -36,8 +36,8 @@ expression:
   farewell: "以此为基。"
 
 compatible_anchors:
-  - harbor_pilot_director
-  - harbor_pilot_qa
+  - polaris_director
+  - polaris_qa
 
 compatible_professions:
   - software_engineer

@@ -99,7 +99,7 @@ def _normalize_workspace_alias_path(value: Any) -> str:
     lowered = normalized.lower()
 
     # Polaris path alias mappings
-    harbor_exact_aliases = {
+    polaris_exact_aliases = {
         "/workspace": ".",
         "/workspace/": ".",
         "workspace": ".",
@@ -123,8 +123,8 @@ def _normalize_workspace_alias_path(value: Any) -> str:
         "/stress_reports": "./stress_reports",
         "/stress_reports/": "./stress_reports",
     }
-    if lowered in harbor_exact_aliases:
-        return harbor_exact_aliases[lowered]
+    if lowered in polaris_exact_aliases:
+        return polaris_exact_aliases[lowered]
 
     # Prefix mapping
     if lowered.startswith("file:///workspace/"):

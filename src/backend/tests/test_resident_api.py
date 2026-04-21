@@ -98,12 +98,12 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
             "/v2/resident/identity",
             json={
                 "workspace": str(workspace),
-                "name": "Harbor Resident",
+                "name": "Polaris Resident",
                 "mission": "Keep Polaris stable and evidence-driven.",
             },
         )
         assert identity_response.status_code == 200
-        assert identity_response.json()["name"] == "Harbor Resident"
+        assert identity_response.json()["name"] == "Polaris Resident"
 
         decision_response = client.post(
             "/v2/resident/decisions",
@@ -156,7 +156,7 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         status_response = client.get("/v2/resident/status", params={"workspace": str(workspace), "details": True})
         assert status_response.status_code == 200
         payload = status_response.json()
-        assert payload["identity"]["name"] == "Harbor Resident"
+        assert payload["identity"]["name"] == "Polaris Resident"
         assert payload["counts"]["decisions"] >= 1
         assert payload["counts"]["goals"] >= 1
 

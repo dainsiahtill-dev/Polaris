@@ -362,7 +362,7 @@ rules:
       task_type: new_crate
       domain: python
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: python_principal_architect
       persona: null
 ```

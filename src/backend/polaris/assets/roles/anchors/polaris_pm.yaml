@@ -1,7 +1,7 @@
 # Polaris System Anchor: PM (Project Manager)
 # X-Axis: System Anchor - 决定"处于什么流程节点"和"宏观职责"
 
-id: harbor_pilot_pm
+id: polaris_pm
 type: system_anchor
 version: "1.0"
 

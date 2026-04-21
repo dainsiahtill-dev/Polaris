@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from polaris.config.director_config import DirectorConfig
-from polaris.config.pm_config import PMConfig
-from polaris.config.llm_config import LLMConfig
-from polaris.config.nats_config import NATSConfig
-
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-
+from polaris.config.director_config import DirectorConfig
+from polaris.config.llm_config import LLMConfig
+from polaris.config.nats_config import NATSConfig
+from polaris.config.pm_config import PMConfig
 from pydantic import BaseModel, Field, field_validator, model_validator
+
 
 def find_workspace_root(start: str | Path) -> Path:
     """Find workspace root by scanning parent directories for `docs/`."""
@@ -72,7 +71,7 @@ DEFAULT_BACKEND_PORT: int = 49977
 DEFAULT_RENDERER_PORT: int = 5173
 
 class JSONLConfig(BaseModel):
-    """JSONL I/O configuration for Harborpilot Loop.
+    """JSONL I/O configuration for Polaris Loop.
 
     All configuration values can be overridden via environment variables.
     See field descriptions for corresponding environment variable names.
@@ -917,7 +916,10 @@ class Settings(BaseModel):
     @classmethod
     def from_env(cls) -> Settings:
         """Create settings from environment variables."""
-        from polaris.cells.policy.workspace_guard.public.service import ensure_workspace_target_allowed, SELF_UPGRADE_MODE_ENV
+        from polaris.cells.policy.workspace_guard.public.service import (
+            SELF_UPGRADE_MODE_ENV,
+            ensure_workspace_target_allowed,
+        )
         kwargs: dict[str, Any] = {}
         self_upgrade_mode = _parse_bool(os.environ.get(SELF_UPGRADE_MODE_ENV, "0"))
         kwargs["self_upgrade_mode"] = self_upgrade_mode

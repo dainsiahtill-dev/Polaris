@@ -1,4 +1,4 @@
-"""File locking utilities for Harborpilot Loop.
+"""File locking utilities for polaris Loop.
 
 This module provides atomic file locking operations with proper resource management
 and stale lock detection.

@@ -1,4 +1,4 @@
-"""Unified JSONL operations for Harborpilot Loop.
+"""Unified JSONL operations for polaris Loop.
 
 This module provides atomic JSONL file operations with buffering support,
 proper locking, and memory leak protection.

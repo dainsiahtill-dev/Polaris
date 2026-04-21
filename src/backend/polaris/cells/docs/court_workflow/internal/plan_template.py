@@ -1,4 +1,4 @@
-"""Workspace status and plan template utilities for Harborpilot Loop."""
+"""Workspace status and plan template utilities for Polaris Loop."""
 
 import logging
 import os

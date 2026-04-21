@@ -27,30 +27,30 @@ class TestAnchorLoader:
         """Setup fresh loader for each test."""
         self.loader = AnchorLoader()
 
-    def test_load_harbor_pilot_director(self) -> None:
+    def test_load_polaris_director(self) -> None:
         """Test loading director anchor."""
-        anchor = self.loader.load("harbor_pilot_director")
+        anchor = self.loader.load("polaris_director")
 
         assert anchor is not None
-        assert anchor.id == "harbor_pilot_director"
+        assert anchor.id == "polaris_director"
         assert anchor.name == "工部侍郎"
         assert "workflow_orchestration" in anchor.capabilities
         assert anchor.macro_workflow.get("type") == "blueprint_then_execute"
 
-    def test_load_harbor_pilot_pm(self) -> None:
+    def test_load_polaris_pm(self) -> None:
         """Test loading pm anchor."""
-        anchor = self.loader.load("harbor_pilot_pm")
+        anchor = self.loader.load("polaris_pm")
 
         assert anchor is not None
-        assert anchor.id == "harbor_pilot_pm"
+        assert anchor.id == "polaris_pm"
         assert "requirement_analysis" in anchor.capabilities
 
-    def test_load_harbor_pilot_qa(self) -> None:
+    def test_load_polaris_qa(self) -> None:
         """Test loading qa anchor."""
-        anchor = self.loader.load("harbor_pilot_qa")
+        anchor = self.loader.load("polaris_qa")
 
         assert anchor is not None
-        assert anchor.id == "harbor_pilot_qa"
+        assert anchor.id == "polaris_qa"
         assert "quality_review" in anchor.capabilities
 
     def test_load_nonexistent_returns_none(self) -> None:
@@ -60,14 +60,14 @@ class TestAnchorLoader:
 
     def test_caching(self) -> None:
         """Test that loaded anchors are cached."""
-        anchor1 = self.loader.load("harbor_pilot_director")
-        anchor2 = self.loader.load("harbor_pilot_director")
+        anchor1 = self.loader.load("polaris_director")
+        anchor2 = self.loader.load("polaris_director")
 
         assert anchor1 is anchor2  # Same object reference
 
     def test_get_workflow(self) -> None:
         """Test getting workflow definition."""
-        workflow = self.loader.get_workflow("harbor_pilot_director")
+        workflow = self.loader.get_workflow("polaris_director")
 
         assert workflow is not None
         assert workflow.get("type") == "blueprint_then_execute"
@@ -91,7 +91,7 @@ class TestPersonaLoader:
         assert len(persona.vocabulary) >= 3
         assert "臣已核实" in persona.vocabulary
 
-    def test_load_all_harbor_pilot_personas(self) -> None:
+    def test_load_all_polaris_personas(self) -> None:
         """Test loading all Polaris personas."""
         personas = ["gongbu_shilang", "shangshuling", "zhongshuling", "mentu_xiaozhong"]
 
@@ -201,7 +201,7 @@ class TestRecipeLoader:
         recipe = self.loader.load("senior_python_architect")
 
         assert recipe is not None
-        assert recipe.anchor == "harbor_pilot_director"
+        assert recipe.anchor == "polaris_director"
         assert recipe.persona == "gongbu_shilang"
         assert recipe.profession == "python_principal_architect"
 

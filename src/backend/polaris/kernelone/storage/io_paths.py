@@ -1,4 +1,4 @@
-"""Path utilities for Harborpilot Loop.
+"""Path utilities for polaris Loop.
 
 Hard-cut storage layout:
 - runtime/*

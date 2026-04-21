@@ -12,7 +12,7 @@
 
 ```json
 {
-  "workspace": "X:/Git/Harborpilot",
+  "workspace": "X:/Git/polaris",
   "mode": "propose"
 }
 ```
@@ -101,7 +101,7 @@ Query：
 
 ```json
 {
-  "workspace": "X:/Git/Harborpilot",
+  "workspace": "X:/Git/polaris",
   "run_id": "run-001",
   "actor": "pm",
   "stage": "contract_validation",
@@ -140,7 +140,7 @@ Query：
 
 ```json
 {
-  "workspace": "X:/Git/Harborpilot",
+  "workspace": "X:/Git/polaris",
   "goal_type": "reliability",
   "title": "Stabilize PM contract quality",
   "motivation": "Reduce drift in PM output",
@@ -158,7 +158,7 @@ Query：
 
 ```json
 {
-  "workspace": "X:/Git/Harborpilot",
+  "workspace": "X:/Git/polaris",
   "note": "approved in AGI workspace"
 }
 ```
@@ -191,7 +191,7 @@ Query：
 
 ```json
 {
-  "workspace": "X:/Git/Harborpilot",
+  "workspace": "X:/Git/polaris",
   "promote_to_pm_runtime": true
 }
 ```
@@ -214,7 +214,7 @@ Query：
 
 ```json
 {
-  "workspace": "X:/Git/Harborpilot",
+  "workspace": "X:/Git/polaris",
   "run_type": "pm",
   "run_director": false,
   "director_iterations": 1

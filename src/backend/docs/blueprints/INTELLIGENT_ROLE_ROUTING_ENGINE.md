@@ -393,8 +393,8 @@ routing:
 
   # 兼容性声明
   compatible_anchors:
-    - harbor_pilot_director
-    - harbor_pilot_qa
+    - polaris_director
+    - polaris_qa
 
   compatible_personas:
     - gongbu_shilang
@@ -415,9 +415,9 @@ routing:
 ### 4.2 Anchor 扩展
 
 ```yaml
-# polaris/assets/roles/anchors/harbor_pilot_director.yaml
+# polaris/assets/roles/anchors/polaris_director.yaml
 
-id: harbor_pilot_director
+id: polaris_director
 type: system_anchor
 version: "1.0"
 
@@ -503,7 +503,7 @@ rules:
 
     # 推荐的组合
     recommendation:
-      anchor: harbor_pilot_director
+      anchor: polaris_director
       profession: python_principal_architect
       persona: null  # null表示由系统随机或从workspace固化
 
@@ -515,7 +515,7 @@ rules:
       task_type: security_review
 
     recommendation:
-      anchor: harbor_pilot_qa
+      anchor: polaris_qa
       profession: security_auditor
       persona: mentu_xiaozhong
 
@@ -896,7 +896,7 @@ FALLBACK_STRATEGY = {
 | Profession未找到 | 使用 `software_engineer` |
 | Persona未找到 | 使用 `gongbu_shilang` |
 | 评分都低于阈值 | 使用最高评分候选 |
-| 全部失败 | 返回 `(harbor_pilot_director, software_engineer, gongbu_shilang)` |
+| 全部失败 | 返回 `(polaris_director, software_engineer, gongbu_shilang)` |
 
 ---
 

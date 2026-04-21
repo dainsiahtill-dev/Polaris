@@ -36,7 +36,7 @@ expression:
   farewell: "钦遵。"
 
 compatible_anchors:
-  - harbor_pilot_pm
+  - polaris_pm
 
 compatible_professions:
   - project_manager

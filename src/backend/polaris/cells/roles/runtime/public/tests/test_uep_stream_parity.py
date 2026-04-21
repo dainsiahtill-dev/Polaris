@@ -39,9 +39,9 @@ class TestUEPStreamParity:
     def temp_workspace(self) -> Generator[str]:
         """Create a temporary workspace with proper structure."""
         workspace = _make_temp_workspace("uep_stream_parity")
-        harbor_dir = workspace / ".polaris"
-        (harbor_dir / "runtime" / "runs").mkdir(parents=True, exist_ok=True)
-        (harbor_dir / "history" / "runs").mkdir(parents=True, exist_ok=True)
+        polaris_dir = workspace / ".polaris"
+        (polaris_dir / "runtime" / "runs").mkdir(parents=True, exist_ok=True)
+        (polaris_dir / "history" / "runs").mkdir(parents=True, exist_ok=True)
         try:
             yield str(workspace)
         finally:
@@ -242,10 +242,10 @@ class TestUEPEntryPointParity:
     def temp_workspace(self) -> Generator[str]:
         """Create a temporary workspace."""
         workspace = _make_temp_workspace("uep_entrypoint_parity")
-        harbor_dir = workspace / ".polaris"
-        (harbor_dir / "runtime" / "runs").mkdir(parents=True, exist_ok=True)
-        (harbor_dir / "history" / "runs").mkdir(parents=True, exist_ok=True)
-        (harbor_dir / "audit").mkdir(parents=True, exist_ok=True)
+        polaris_dir = workspace / ".polaris"
+        (polaris_dir / "runtime" / "runs").mkdir(parents=True, exist_ok=True)
+        (polaris_dir / "history" / "runs").mkdir(parents=True, exist_ok=True)
+        (polaris_dir / "audit").mkdir(parents=True, exist_ok=True)
         try:
             yield str(workspace)
         finally:

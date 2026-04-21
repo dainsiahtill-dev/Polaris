@@ -1,6 +1,6 @@
 """Context engine module.
 
-This module provides context management for Harborpilot.
+This module provides context management for polaris.
 """
 
 from polaris.kernelone.utils.time_utils import _utc_now

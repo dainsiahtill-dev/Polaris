@@ -8,7 +8,7 @@ describe('useUsageStats logical path', () => {
   });
 
   it('does not depend on a workspace-prefixed runtime path', () => {
-    const workspacePrefixed = 'X:/Git/Harborpilot/runtime/events/llm.observations.jsonl';
+    const workspacePrefixed = 'X:/Git/polaris/runtime/events/llm.observations.jsonl';
     expect(LLM_OBSERVATIONS_LOGICAL_PATH).not.toBe(workspacePrefixed);
   });
 });

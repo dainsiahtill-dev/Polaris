@@ -47,8 +47,8 @@ from typing import Any
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
 from polaris.cells.events.fact_stream.public.service import append_fact_event
 from polaris.domain.entities.task import (
-    TaskPriority as HarborTaskPriority,
-    TaskStatus as HarborTaskStatus,
+    TaskPriority as PolarisTaskPriority,
+    TaskStatus as PolarisTaskStatus,
 )
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.registry import get_default_adapter
@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 class TaskStatus(Enum):
     """Task lifecycle states used by the Polaris TaskBoard.
 
-    Alias for ``HarborTaskStatus`` for backward compatibility with
+    Alias for ``PolarisTaskStatus`` for backward compatibility with
     existing callers that import from this module.
     """
 
@@ -196,7 +196,7 @@ _PRIORITY_VALUE_TO_LABEL: dict[int, str] = {v: k for k, v in _PRIORITY_LABEL_TO_
 def _normalize_priority(priority: Any) -> int:
     if isinstance(priority, TaskPriority):
         return _PRIORITY_LABEL_TO_VALUE.get(priority.value, 1)
-    if isinstance(priority, HarborTaskPriority):
+    if isinstance(priority, PolarisTaskPriority):
         return priority.numeric_value
     if isinstance(priority, (int, float)):
         return int(priority)
@@ -214,7 +214,7 @@ def _normalize_priority(priority: Any) -> int:
 def _normalize_status(value: Any) -> TaskStatus:
     if isinstance(value, TaskStatus):
         return value
-    if isinstance(value, HarborTaskStatus):
+    if isinstance(value, PolarisTaskStatus):
         try:
             return TaskStatus(value.value)
         except ValueError:

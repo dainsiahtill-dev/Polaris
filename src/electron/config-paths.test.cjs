@@ -7,27 +7,27 @@ const {
   getGlobalSettingsPath,
   isPathInside,
   isTruthyEnv,
-  resolveHarborpilotHome,
-  resolveHarborpilotRoot,
+  resolvepolarisHome,
+  resolvepolarisRoot,
   selectStartupWorkspaceOverride,
   shouldEnableSelfUpgradeMode,
 } = require("./config-paths.cjs");
 
-test("resolveHarborpilotRoot prefers APPDATA on Windows when no overrides exist", () => {
+test("resolvepolarisRoot prefers APPDATA on Windows when no overrides exist", () => {
   const env = {
     APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
   };
 
-  const result = resolveHarborpilotRoot(env, "win32");
+  const result = resolvepolarisRoot(env, "win32");
   assert.equal(result, path.resolve("C:\\Users\\tester\\AppData\\Roaming"));
 });
 
-test("resolveHarborpilotRoot trims POLARIS_HOME when it already points at .polaris", () => {
+test("resolvepolarisRoot trims POLARIS_HOME when it already points at .polaris", () => {
   const env = {
     POLARIS_HOME: "C:\\Users\\tester\\AppData\\Roaming\\.polaris",
   };
 
-  const result = resolveHarborpilotRoot(env, "win32");
+  const result = resolvepolarisRoot(env, "win32");
   assert.equal(result, path.resolve("C:\\Users\\tester\\AppData\\Roaming"));
 });
 
@@ -36,7 +36,7 @@ test("getGlobalSettingsPath matches backend-style root resolution", () => {
     APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
   };
 
-  const home = resolveHarborpilotHome(env, "win32");
+  const home = resolvepolarisHome(env, "win32");
   const settingsPath = getGlobalSettingsPath(env, "win32");
 
   assert.equal(home, path.resolve("C:\\Users\\tester\\AppData\\Roaming\\.polaris"));

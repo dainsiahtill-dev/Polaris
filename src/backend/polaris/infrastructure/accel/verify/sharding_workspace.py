@@ -64,8 +64,6 @@ def _discover_workspaces(project_dir: Path, marker_names: set[str], max_depth: i
         ".venv",
         "venv",
         ".polaris",
-        ".polaris",
-        ".harborpitlot",
         "__pycache__",
         ".mypy_cache",
         ".pytest_cache",

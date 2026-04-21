@@ -12,7 +12,7 @@ def build_slug(namespace: str, name: str) -> str:
 def default_headers() -> dict[str, str]:
     return {
         "content-type": "application/json",
-        "x-harborpilot-source": "tool-calling-matrix",
+        "x-polaris-source": "tool-calling-matrix",
     }
 
 

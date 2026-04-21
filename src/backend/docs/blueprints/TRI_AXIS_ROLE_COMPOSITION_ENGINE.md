@@ -83,7 +83,7 @@ polaris/assets/roles/
 ### 4.1 Anchor 配置 (anchors/director.yaml)
 
 ```yaml
-id: harbor_pilot_director
+id: polaris_director
 type: system_anchor
 version: "1.0"
 

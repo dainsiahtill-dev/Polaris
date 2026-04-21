@@ -30,7 +30,7 @@ from polaris.kernelone.role.routing.semantic.inferrer import SemanticIntentInfer
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_ANCHOR_ID = "harbor_pilot_director"
+_DEFAULT_ANCHOR_ID = "polaris_director"
 _DEFAULT_PROFESSION_ID = "software_engineer"
 _DEFAULT_PERSONA_ID = "gongbu_shilang"
 

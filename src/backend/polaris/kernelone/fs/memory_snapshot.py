@@ -1,4 +1,4 @@
-"""Memory snapshot utilities for Harborpilot Loop."""
+"""Memory snapshot utilities for polaris Loop."""
 
 from __future__ import annotations
 
