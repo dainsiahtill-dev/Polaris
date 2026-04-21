@@ -1266,7 +1266,9 @@ class TurnTransactionController:
             DeliveryMode.PROPOSE_PATCH,
         }
         if not is_materialize:
-            task_contract_hint = build_single_batch_task_contract_hint(context, tool_definitions)
+            task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(
+                context, tool_definitions
+            )
             if task_contract_hint:
                 messages.append({"role": "system", "content": task_contract_hint})
 

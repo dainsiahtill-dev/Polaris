@@ -575,13 +575,18 @@ def _write_seq_file(path: str, value: int) -> None:
         logger.warning(f"Failed to write seq file {path}: {e}")
 
 
-def _next_seq_for_path(path: str, current: int, key: str = "seq") -> int:
+def _next_seq_for_path(path: str, current: int, key: str = "seq", *, commit: bool = True) -> int:
     """Get the next sequence number for a path.
 
     Args:
         path: Path to the JSONL file
         current: Current sequence number
         key: Key to look for in JSON objects
+        commit: If True, write the new sequence to .seq file. If False,
+            only compute and return the next value without persisting.
+            This allows emit_event to compute the sequence for the payload
+            before attempting the JSONL write, and only commit after
+            the write succeeds.
 
     Returns:
         Next sequence number
@@ -600,10 +605,37 @@ def _next_seq_for_path(path: str, current: int, key: str = "seq") -> int:
         if existing <= 0:
             existing = scan_last_seq(path, key=key)
         next_val = max(existing, current) + 1
-        _write_seq_file(seq_path, next_val)
+        if commit:
+            _write_seq_file(seq_path, next_val)
         return next_val
     except (RuntimeError, ValueError) as e:
         logger.warning(f"Failed to get next seq for {path}: {e}")
         return current
+    finally:
+        release_lock_fd(fd, lock_path)
+
+
+def _commit_seq_for_path(path: str, seq_value: int) -> None:
+    """Commit a sequence value to the .seq file with proper locking.
+
+    This is used by emit_event to commit the sequence AFTER the JSONL event
+    has been successfully written, avoiding the race condition where
+    .seq is updated before the event write succeeds.
+
+    Args:
+        path: Path to the JSONL file (the .seq file is path + ".seq")
+        seq_value: The sequence value to commit
+    """
+    if not path:
+        return
+
+    seq_path = path + ".seq"
+    lock_path = seq_path + ".lock"
+    fd = acquire_lock_fd(lock_path, timeout_sec=2.0)
+    if fd is None:
+        return
+
+    try:
+        _write_seq_file(seq_path, seq_value)
     finally:
         release_lock_fd(fd, lock_path)

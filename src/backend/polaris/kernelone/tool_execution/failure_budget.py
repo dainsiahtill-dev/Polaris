@@ -264,12 +264,18 @@ class FailureBudget:
 
     def _escalate_suggestion(self, pattern: ToolErrorPattern) -> str:
         """Generate escalation suggestion for ESCALATE decision."""
+        # Build fallback chain for edit tools
+        edit_fallback_chain = "append_to_file -> precision_edit -> edit_file -> search_replace -> write_file"
+
         suggestions_by_type = {
             "no_match": (
                 f"WARNING: Tool '{pattern.tool_name}' failing repeatedly with 'no match' errors. "
                 "MANDATORY: You MUST call read_file() to verify the EXACT content before retrying. "
                 "Copy search strings character-by-character from the file output - do NOT guess. "
-                "Check for missing spaces (e.g., 'return0' vs 'return 0') and indentation differences."
+                "Check for missing spaces (e.g., 'return0' vs 'return 0') and indentation differences. "
+                f"RECOVERY PATH: If {pattern.tool_name} fails again after read_file verification, "
+                f"downgrade to safer tools in this order: {edit_fallback_chain}. "
+                "NEVER retry with the same incorrect search string more than once."
             ),
             "not_found": (
                 f"WARNING: Tool '{pattern.tool_name}' failing with 'not found'. "

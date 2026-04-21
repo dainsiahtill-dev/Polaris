@@ -24,7 +24,7 @@ from polaris.kernelone.events.realtime_bridge import (
 )
 from polaris.kernelone.events.registry import get_global_bus
 from polaris.kernelone.fs import KernelFileSystem
-from polaris.kernelone.fs.jsonl.ops import _next_seq_for_path
+from polaris.kernelone.fs.jsonl.ops import _commit_seq_for_path, _next_seq_for_path
 from polaris.kernelone.fs.registry import get_default_adapter
 from polaris.kernelone.utils.time_utils import utc_now_str
 
@@ -531,14 +531,18 @@ def emit_event(
     if _should_suppress_runtime_event(event_path, fingerprint, now_ts):
         return
     seq = _next_event_seq()
+    # BUG-FIX: Sequence must ONLY be committed AFTER successful event write.
+    # Previously, _next_seq_for_path() updated .seq file BEFORE _append_jsonl_via_kernel()
+    # which could cause seq/event mismatch if the write failed or returned early.
+    pending_seq: int | None = None
     if event_path:
-        seq = _next_seq_for_path(event_path, seq, key="seq")
-        set_event_seq(seq)
+        # Compute next sequence WITHOUT writing to .seq file
+        pending_seq = _next_seq_for_path(event_path, seq, key="seq", commit=False)
     payload: dict[str, Any] = {
         "schema_version": 1,
         "ts": utc_iso_now(),
         "ts_epoch": now_ts,
-        "seq": seq,
+        "seq": pending_seq if pending_seq is not None else seq,
         "event_id": _new_event_id(),
         "kind": kind,
         "actor": actor,
@@ -561,7 +565,18 @@ def emit_event(
     # Store event_path for MessageBus publish (not part of JSONL payload)
     payload["event_path"] = event_path
 
-    _append_jsonl_via_kernel(event_path, payload)
+    try:
+        _append_jsonl_via_kernel(event_path, payload)
+    except Exception:
+        # If JSONL write fails, do NOT commit the sequence - it will be
+        # re-incremented on the next attempt, ensuring seq/event consistency.
+        raise
+
+    # BUG-FIX: Only commit sequence AFTER confirmed successful event write
+    if pending_seq is not None:
+        # Use _commit_seq_for_path to directly write pending_seq with proper locking,
+        # avoiding re-computing which could cause inconsistency if .seq changed.
+        _commit_seq_for_path(event_path, pending_seq)
 
     # P2-006 Fix: Also publish to MessageBus for real-time subscribers
     # JSONL write is the durable persistence layer; MessageBus enables real-time

@@ -472,6 +472,8 @@ class MatrixObservation:
     event_count: int = 0
     # Tools blocked by ExplorationToolPolicy cooldown (captured via policy_blocked events)
     cooldown_blocked_tools: tuple[str, ...] = field(default_factory=tuple)
+    # Tool failures captured during execution (tool_name -> error_message)
+    tool_errors: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -483,6 +485,7 @@ class MatrixObservation:
             "duration_ms": self.duration_ms,
             "event_count": self.event_count,
             "cooldown_blocked_tools": list(self.cooldown_blocked_tools),
+            "tool_errors": dict(self.tool_errors),
         }
 
 
@@ -1107,6 +1110,7 @@ async def _collect_stream_observation(
         captured_events: list[dict[str, Any]] = []
         error_message = ""
         cooldown_blocked_tools: list[str] = []
+        tool_errors: list[tuple[str, str]] = []
         start = time.perf_counter()
 
         try:
@@ -1134,9 +1138,9 @@ async def _collect_stream_observation(
                         args_str = json.dumps(tool_args, ensure_ascii=False)[:100]
                         print(f"\r[TOOL_CALL] {tool_name}({args_str})", end="", flush=True)
                 elif event_type == "tool_result":
+                    result_val = _event_value(event, "result")
                     if observable:
                         # 'ok'/'success' may be at event level or inside 'result' payload
-                        result_val = _event_value(event, "result")
                         # Try multiple locations for 'ok' status
                         event_ok = event.get("ok", event.get("success"))
                         inner_ok = (
@@ -1158,6 +1162,12 @@ async def _collect_stream_observation(
                         else:
                             result_str = json.dumps(result_val, ensure_ascii=False)[:100] if result_val else "no result"
                         print(f"\r[TOOL_RESULT] {result_str}", end="", flush=True)
+                    # Track tool failures for retry logic
+                    if isinstance(result_val, dict) and result_val.get("ok") is False:
+                        err_tool = _non_empty(event.get("tool") or _event_value(event, "tool") or "")
+                        err_msg = str(result_val.get("error") or "")[:200]
+                        if err_tool:
+                            tool_errors.append((err_tool, err_msg))
                 elif event_type == "policy_blocked":
                     # Track tools blocked by ExplorationToolPolicy cooldown
                     blocked_tool = _non_empty(event.get("tool") or _event_value(event, "tool"))
@@ -1203,6 +1213,7 @@ async def _collect_stream_observation(
             duration_ms=duration_ms,
             event_count=len(captured_events),
             cooldown_blocked_tools=tuple(cooldown_blocked_tools),
+            tool_errors=tuple(tool_errors),
         )
         merged_events.extend(captured_events)
         should_retry = (
@@ -1217,8 +1228,9 @@ async def _collect_stream_observation(
             and min_tool_calls > 1
             and len(observed.tool_calls) < min_tool_calls
             and not observed.error
-            and (bool(ordered_tool_groups) or bool(required_any_tools))
         )
+        # Retry when tools failed during execution (tool returned ok=False or error)
+        should_retry_on_tool_failure = attempt == 0 and bool(observed.tool_errors) and not observed.error
         if not should_retry:
             if should_retry_under_calls:
                 attempt += 1
@@ -1235,6 +1247,19 @@ async def _collect_stream_observation(
                         "case_id": case.case_id,
                         "observed_tool_calls": len(observed.tool_calls),
                         "required_min_tool_calls": min_tool_calls,
+                    }
+                )
+                continue
+            if should_retry_on_tool_failure:
+                failed_tools_str = "; ".join(f"{t}: {e}" for t, e in observed.tool_errors)
+                attempt += 1
+                user_message = f"{base_prompt.rstrip()}\n\n[Benchmark Retry - Tool Failure]\nPrevious attempt had tool failures: {failed_tools_str}\nPlease retry the task, fixing the errors."
+                merged_events.append(
+                    {
+                        "type": "benchmark_retry",
+                        "reason": "stream_tool_failure",
+                        "case_id": case.case_id,
+                        "tool_errors": list(observed.tool_errors),
                     }
                 )
                 continue
@@ -1313,6 +1338,7 @@ async def _collect_non_stream_observation(
             duration_ms=duration_ms,
             event_count=0,
             cooldown_blocked_tools=(),
+            tool_errors=(),
         )
     duration_ms = int((time.perf_counter() - start) * 1000)
 
@@ -1356,6 +1382,7 @@ async def _collect_non_stream_observation(
         duration_ms=duration_ms,
         event_count=0,
         cooldown_blocked_tools=(),
+        tool_errors=(),
     )
 
 

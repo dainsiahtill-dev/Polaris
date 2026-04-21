@@ -26,6 +26,11 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent,
     requires_verification_intent,
 )
+from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates import (
+    build_recovery_protocol,
+    build_sequence_template,
+    extract_expected_read_count,
+)
 
 # Sentinel prefix that marks the start of injected Benchmark boilerplate.
 # Everything from this marker onwards is framework metadata, not user intent.
@@ -117,15 +122,19 @@ def extract_allowed_tool_names_from_definitions(tool_definitions: list[dict]) ->
 def build_single_batch_task_contract_hint(
     context: list[dict],
     tool_definitions: list[dict],
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """构建单次批次的任务契约提示文本。
 
     解析用户消息中的隐含约束（目标文件、必需工具、最小调用次数），
     并生成 LLM 必须遵守的 HARD GATE 规则。
+
+    Returns:
+        Tuple of (contract_text, metadata_dict).
+        metadata_dict contains keys like "expected_read_count" for circuit breaker tuning.
     """
     latest_user = extract_latest_user_message(context)
     if not latest_user:
-        return ""
+        return "", {}
 
     target_file_tokens = [
         token.strip()
@@ -165,7 +174,7 @@ def build_single_batch_task_contract_hint(
         if name:
             available_tools.append(name)
     if not available_tools:
-        return ""
+        return "", {}
 
     write_candidates = tuple(WRITE_TOOLS)
     verify_candidates = tuple(VERIFICATION_TOOLS)
@@ -283,7 +292,7 @@ def build_single_batch_task_contract_hint(
 
     # C4 修复：只有「既无 mutation 意图又无显式 contract 约束」才早期返回
     if not _requires_write and not _requires_verify and not required_tools_from_contract:
-        return ""
+        return "", {}
 
     lines = [
         "TASK CONTRACT (single-batch planning):",
@@ -372,4 +381,35 @@ def build_single_batch_task_contract_hint(
             )
         else:
             lines.append("Verification is required by the user. Include an available verification step.")
-    return "\n".join(lines)
+
+    # --- 追加正例序列模板和恢复协议 ---
+    sequence_template = build_sequence_template(
+        required_tools=required_tools_from_contract,
+        required_any_groups=required_any_groups_from_contract,
+        ordered_tool_groups=required_any_groups_from_contract,
+        min_tool_calls=min_calls_required,
+        requires_write=_requires_write,
+        requires_verify=_requires_verify,
+    )
+    if sequence_template:
+        lines.append(sequence_template)
+
+    recovery_protocol = build_recovery_protocol(
+        required_tools=required_tools_from_contract,
+        required_any_groups=required_any_groups_from_contract,
+        available_write_tools=selected_write,
+    )
+    if recovery_protocol:
+        lines.append(recovery_protocol)
+
+    # 计算 expected_read_count 供 Circuit Breaker 使用
+    expected_read_count = extract_expected_read_count(
+        required_tools=required_tools_from_contract,
+        ordered_tool_groups=required_any_groups_from_contract,
+        min_tool_calls=min_calls_required,
+        requires_write=_requires_write,
+    )
+
+    contract_text = "\n".join(lines)
+    metadata: dict[str, Any] = {"expected_read_count": expected_read_count}
+    return contract_text, metadata
