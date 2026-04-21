@@ -88,22 +88,22 @@ def _rehydrate_transcript_from_index(
             continue
         event_id = str(item.get("event_id") or "").strip()
         role = str(item.get("role") or "").strip().lower()
-        event: dict[str, Any] | None = events_by_id.get(event_id)
-        if event is None and role:
+        matched_event: dict[str, Any] | None = events_by_id.get(event_id)
+        if matched_event is None and role:
             role_bucket = events_by_role.get(role) or []
             while role_bucket:
                 candidate = role_bucket.pop(0)
                 candidate_id = str(candidate.get("event_id") or "").strip()
                 if candidate_id and candidate_id in consumed_ids:
                     continue
-                event = candidate
+                matched_event = candidate
                 break
-        if event is None:
+        if matched_event is None:
             continue
-        candidate_id = str(event.get("event_id") or "").strip()
+        candidate_id = str(matched_event.get("event_id") or "").strip()
         if candidate_id:
             consumed_ids.add(candidate_id)
-        restored.append(dict(event))
+        restored.append(dict(matched_event))
     return restored
 
 

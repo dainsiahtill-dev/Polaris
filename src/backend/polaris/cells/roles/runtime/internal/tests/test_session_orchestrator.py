@@ -143,8 +143,9 @@ class TestRoleSessionOrchestrator:
         )
 
         events = [e async for e in orch.execute_stream("hello")]
-        assert any(isinstance(e, SessionWaitingHumanEvent) for e in events)
+        assert isinstance(events[-1], SessionWaitingHumanEvent)
         assert events[-1].session_id == "sess-1"
+        assert not any(isinstance(e, SessionCompletedEvent) for e in events)
 
     @pytest.mark.asyncio
     async def test_max_turns_exceeded(self, tmp_workspace):
@@ -270,12 +271,14 @@ class TestRoleSessionOrchestrator:
         data = json.loads(checkpoint.read_text(encoding="utf-8"))
 
         # 验证所有降维字段都持久化到 checkpoint
-        # FIX-20250421-v3: schema_version 升级到 3
-        assert data["schema_version"] == 3
+        # FIX-20250421-v4: schema_version 升级到 4，并包含 canonical turn history / phase_manager
+        assert data["schema_version"] == 4
         assert data["task_progress"] == "implementing"
         assert data["structured_findings"]["error_summary"] == "DB timeout"
         assert "auth.py" in str(data["structured_findings"]["suspected_files"])
         assert data["key_file_snapshots"]["auth.py"] == "hash123"
+        assert "turn_history" in data
+        assert "phase_manager" in data
         orch = RoleSessionOrchestrator(
             session_id="sess-1",
             kernel=AsyncMock(),
@@ -306,7 +309,7 @@ class TestRoleSessionOrchestrator:
 
         # 验证回合信息在 Progress 中
         assert "回合: 2 / 10" in prompt
-        assert "investigating" in prompt
+        assert "content_gathered" in prompt
 
         # 验证 structured_findings 进入 WorkingMemory（而非 raw artifacts）
         assert "a.txt" in prompt
@@ -491,9 +494,7 @@ class TestRoleSessionOrchestrator:
         def _build_envelope(event):
             if event.turn_id == "t0":
                 return SimpleNamespace(
-                    turn_result=TurnResult(
-                        turn_id="t0", kind="continue_multi_turn", visible_content="", decision={}
-                    ),
+                    turn_result=TurnResult(turn_id="t0", kind="continue_multi_turn", visible_content="", decision={}),
                     continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
                     next_intent=None,
                     session_patch={"recent_reads": ["read_file"]},
@@ -501,9 +502,7 @@ class TestRoleSessionOrchestrator:
                     speculative_hints={},
                 )
             return SimpleNamespace(
-                turn_result=TurnResult(
-                    turn_id="t1", kind="final_answer", visible_content="done", decision={}
-                ),
+                turn_result=TurnResult(turn_id="t1", kind="final_answer", visible_content="done", decision={}),
                 continuation_mode=TurnContinuationMode.END_SESSION,
                 next_intent=None,
                 session_patch={},
@@ -519,6 +518,41 @@ class TestRoleSessionOrchestrator:
         # recent_reads 应被注入 structured_findings
         assert "read_file" in orch.state.structured_findings.get("recent_reads", [])
         assert isinstance(events[-1], SessionCompletedEvent)
+
+    @pytest.mark.asyncio
+    async def test_turn_history_is_canonical_record(self, tmp_workspace):
+        kernel = MockKernel(
+            [
+                [
+                    CompletionEvent(
+                        turn_id="t0",
+                        status="success",
+                        turn_kind="final_answer",
+                        batch_receipt={
+                            "results": [
+                                {
+                                    "tool_name": "read_file",
+                                    "status": "success",
+                                    "arguments": {"path": "src/auth.py"},
+                                    "result": {"content": "print('ok')"},
+                                }
+                            ]
+                        },
+                    )
+                ]
+            ]
+        )
+        orch = RoleSessionOrchestrator(session_id="sess-1", kernel=kernel, workspace=tmp_workspace)
+
+        [e async for e in orch.execute_stream("inspect auth flow")]
+
+        assert len(orch.state.turn_history) == 1
+        record = orch.state.turn_history[0]
+        assert record["turn_id"] == "t0"
+        assert record["turn_kind"] == "final_answer"
+        assert record["continuation_mode"] == "end_session"
+        assert "batch_receipt" in record
+        assert "phase" in record
 
 
 class TestCheckpointResume:

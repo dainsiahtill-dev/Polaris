@@ -1,0 +1,104 @@
+﻿card_id: "vc-20260421-session-orchestrator-reliability-hardening"
+bug_summary: >
+  RoleSessionOrchestrator has structural reliability defects: incomplete completion-envelope adaptation,
+  non-canonical turn history, duplicated terminal events, non-atomic checkpoint persistence, and phase progression
+  reconstructed from partial prompt-side heuristics. These defects allow session-state drift, invalid replay,
+  contradictory end states, and brittle multi-turn execution.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/runtime/internal/session_orchestrator.py"
+  method: "RoleSessionOrchestrator.execute_stream"
+  symptom: "Multi-turn session orchestration emits inconsistent terminal semantics and drifts from authoritative tool-side facts"
+
+assumptions:
+  - id: "A1"
+    statement: "TurnTransactionController remains the single-turn execution authority; orchestrator must consume, not replace, kernel outcomes."
+    status: verified_true
+    evidence: "polaris/cells/roles/kernel/internal/turn_transaction_controller.py still exposes execute()/execute_stream() as the canonical turn entrypoints."
+
+  - id: "A2"
+    statement: "TurnOutcomeEnvelope is the correct orchestration wrapper for continuation decisions."
+    status: verified_true
+    evidence: "polaris/cells/roles/kernel/public/turn_contracts.py defines TurnOutcomeEnvelope with continuation_mode, session_patch, artifacts_to_persist, speculative_hints, and failure_class."
+
+  - id: "A3"
+    statement: "Current session_orchestrator replay logic reads phase-related history fields that are not canonically persisted."
+    status: verified_true
+    evidence: "session_orchestrator.py builds phase replay from turn_history batch_receipt, but current turn_history writes omit a stable canonical event record."
+
+  - id: "A4"
+    statement: "Checkpoint persistence currently needs stronger durability guarantees."
+    status: verified_true
+    evidence: "session_orchestrator.py writes checkpoint JSON directly instead of tmp+replace atomic persistence."
+
+pre_mortem:
+  failure_point: >
+    The most likely failure is introducing reducer or phase replay logic that changes external orchestrator behavior,
+    especially around WAITING_HUMAN, HANDOFF_DEVELOPMENT, and END_SESSION paths.
+  risk_zone:
+    - "polaris/cells/roles/runtime/internal/session_orchestrator.py"
+    - "polaris/cells/roles/runtime/internal/continuation_policy.py"
+    - "polaris/cells/roles/kernel/internal/transaction/phase_manager.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py"
+      description: "Canonical turn history, single terminal event semantics, checkpoint persistence, resume, and handoff/waiting flows"
+      expected: "All targeted orchestrator tests pass"
+      status: passed
+
+    - file: "polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py"
+      description: "Hard stop, soft stop, stagnation, and incomplete-envelope tolerance"
+      expected: "All continuation policy tests pass"
+      status: passed
+
+    - file: "polaris/cells/roles/runtime/internal/tests/test_session_artifact_store.py"
+      description: "Artifact persistence remains compatible after checkpoint and reducer changes"
+      expected: "All artifact-store tests pass"
+      status: passed
+
+  integration_tests:
+    - description: "Run targeted runtime stabilization tests"
+      command: "python -m pytest -q polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/runtime/internal/tests/test_continuation_policy.py polaris/cells/roles/runtime/internal/tests/test_session_artifact_store.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "Run adjacent host continuity regression"
+      command: "python -m pytest -q polaris/cells/roles/runtime/tests/test_host_session_continuity.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "Run director console host orchestrator regression"
+      command: "python -m pytest -q polaris/delivery/cli/director/tests/test_console_host_orchestrator.py polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py"
+      expected: "0 failed"
+      status: passed
+
+  quality_gates:
+    - description: "Ruff lint/fix"
+      command: "python -m ruff check polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/runtime/internal/continuation_policy.py polaris/cells/roles/runtime/internal/session_artifact_store.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py --fix"
+      expected: "0 diagnostics"
+      status: passed
+
+    - description: "Ruff format"
+      command: "python -m ruff format polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/runtime/internal/continuation_policy.py polaris/cells/roles/runtime/internal/session_artifact_store.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py"
+      expected: "formatted or already clean"
+      status: passed
+
+    - description: "Mypy strict-targeted"
+      command: "python -m mypy polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/runtime/internal/continuation_policy.py polaris/cells/roles/runtime/internal/session_artifact_store.py polaris/cells/roles/kernel/internal/transaction/phase_manager.py"
+      expected: "Success: no issues found"
+      status: passed
+
+related_adrs:
+  - "ADR-0071"
+  - "ADR-0078"
+  - "ADR-0082"
+
+sign_off:
+  completed_by: "Codex"
+  completed_at: "2026-04-21"
+  verified_by: "Codex"
+  verified_at: "2026-04-21"
+  regression_result: "passed-targeted-and-adjacent-host-regressions"

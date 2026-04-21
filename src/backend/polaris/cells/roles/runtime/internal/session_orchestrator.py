@@ -1,4 +1,4 @@
-"""Session Orchestrator - 服务端会话编排器。
+﻿"""Session Orchestrator - 服务端会话编排器。
 
 负责回合级状态机轮转、ContinuationPolicy 仲裁、ShadowEngine 跨 Turn 预热，
 以及 DevelopmentWorkflowRuntime 的 handoff 路由。
@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +22,13 @@ from polaris.cells.roles.kernel.internal.development_workflow_runtime import (
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     resolve_delivery_mode,
 )
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+    Phase,
+    PhaseManager,
+    extract_tool_results_from_batch_receipt,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import (
+    FailureClass,
     TurnContinuationMode,
     TurnOutcomeEnvelope,
     TurnResult,
@@ -51,6 +60,251 @@ from polaris.cells.roles.runtime.internal.session_artifact_store import (
 _role_profile_cache: dict[str, tuple[str, list[dict[str, Any]]]] = {}  # role -> (role_definition, tool_definitions)
 
 logger = logging.getLogger(__name__)
+
+_WRITE_TOOL_NAMES = {
+    "write_file",
+    "edit_file",
+    "create_file",
+    "append_to_file",
+    "precision_edit",
+    "edit_blocks",
+    "search_replace",
+    "repo_apply_diff",
+    "apply_diff",
+}
+
+_READ_TOOL_NAMES = {
+    "read_file",
+    "repo_read_head",
+    "repo_read_slice",
+    "repo_read_tail",
+    "repo_read_around",
+    "repo_read_range",
+}
+
+_PHASE_PROGRESS_ALIASES = {
+    "investigating": "content_gathered",
+}
+
+_PHASE_PROGRESS_PRIORITY = {
+    "exploring": 1,
+    "content_gathered": 2,
+    "implementing": 3,
+    "verifying": 4,
+    "done": 5,
+}
+
+
+@dataclass
+class SessionStateReducer:
+    """Canonical post-turn reducer for orchestrator session state."""
+
+    state: OrchestratorSessionState
+    phase_manager: PhaseManager = field(default_factory=PhaseManager)
+
+    def current_phase(self) -> Phase:
+        """Return the authoritative session phase."""
+        return self.phase_manager.current_phase
+
+    def restore_phase_manager(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        fallback_progress: str | None = None,
+    ) -> None:
+        """Restore PhaseManager from checkpoint payload or fallback progress."""
+        if payload:
+            self.phase_manager = PhaseManager.from_dict(payload)
+            return
+        normalized = self._normalize_progress(fallback_progress or self.state.task_progress)
+        if normalized in {phase.value for phase in Phase}:
+            self.phase_manager = PhaseManager.from_dict({"current_phase": normalized})
+        else:
+            self.phase_manager = PhaseManager()
+
+    def enforce_materialize_changes_guard(self, envelope: TurnOutcomeEnvelope) -> TurnOutcomeEnvelope:
+        """Prevent premature final answers before a materialized task actually mutates state."""
+        if self.state.delivery_mode != "MATERIALIZE_CHANGES":
+            return envelope
+        current_phase = self.phase_manager.current_phase
+        if current_phase not in {Phase.EXPLORING, Phase.CONTENT_GATHERED}:
+            return envelope
+        if envelope.continuation_mode != TurnContinuationMode.END_SESSION:
+            return envelope
+        if envelope.turn_result.kind != "final_answer":
+            return envelope
+
+        session_patch = dict(envelope.session_patch)
+        session_patch.setdefault(
+            "mandatory_instruction",
+            (
+                "MATERIALIZE_CHANGES 任务尚未完成实际修改。"
+                "请继续下一回合：若还未读取核心文件则先读取，"
+                "若已读取则必须直接执行 write/edit 工具而不是结束会话。"
+            ),
+        )
+        return TurnOutcomeEnvelope(
+            turn_result=envelope.turn_result.model_copy(update={"kind": "continue_multi_turn"}),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=session_patch["mandatory_instruction"],
+            session_patch=session_patch,
+            artifacts_to_persist=list(envelope.artifacts_to_persist),
+            speculative_hints=dict(envelope.speculative_hints),
+            failure_class=envelope.failure_class,
+        )
+
+    def apply_turn_outcome(
+        self,
+        envelope: TurnOutcomeEnvelope,
+        *,
+        turn_index: int,
+        timestamp_ms: int | None = None,
+        stop_reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply a canonical turn outcome to session state and history."""
+        batch_receipt = self._normalize_batch_receipt(envelope.turn_result.batch_receipt)
+        session_patch = dict(envelope.session_patch)
+        if session_patch:
+            apply_session_patch(self.state, session_patch)
+
+        self._remember_read_files(batch_receipt)
+        normalized_progress = self._derive_task_progress(envelope, batch_receipt)
+        self.state.task_progress = normalized_progress
+        self.state.structured_findings["task_progress"] = normalized_progress
+        self.state.last_failure = self._build_last_failure(envelope, stop_reason)
+
+        record = self._build_turn_record(
+            envelope=envelope,
+            turn_index=turn_index,
+            batch_receipt=batch_receipt,
+            session_patch=session_patch,
+            stop_reason=stop_reason,
+            timestamp_ms=timestamp_ms,
+            normalized_progress=normalized_progress,
+        )
+        self.state.turn_history.append(record)
+        return record
+
+    def checkpoint_payload(self) -> dict[str, Any]:
+        """Build the canonical checkpoint payload."""
+        return {
+            "schema_version": 4,
+            "session_id": self.state.session_id,
+            "turn_count": self.state.turn_count,
+            "goal": self.state.goal,
+            "task_progress": self.state.task_progress,
+            "structured_findings": self.state.structured_findings,
+            "key_file_snapshots": self.state.key_file_snapshots,
+            "last_failure": self.state.last_failure,
+            "artifacts": self.state.artifacts,
+            "recent_artifact_hashes": self.state.recent_artifact_hashes,
+            "turn_history": self.state.turn_history,
+            "original_goal": self.state.original_goal,
+            "read_files": self.state.read_files,
+            "delivery_mode": self.state.delivery_mode,
+            "session_invariants": self.state.session_invariants.to_dict(),
+            "phase_manager": self.phase_manager.to_dict(),
+        }
+
+    def _derive_task_progress(
+        self,
+        envelope: TurnOutcomeEnvelope,
+        batch_receipt: dict[str, Any],
+    ) -> str:
+        tool_results = extract_tool_results_from_batch_receipt(batch_receipt)
+        if tool_results:
+            phase = self.phase_manager.transition(tool_results)
+            normalized = phase.value
+        else:
+            normalized = self._normalize_progress(self.state.task_progress)
+        if envelope.continuation_mode == TurnContinuationMode.END_SESSION:
+            return "done"
+        return normalized
+
+    def _build_last_failure(
+        self,
+        envelope: TurnOutcomeEnvelope,
+        stop_reason: str | None,
+    ) -> dict[str, Any] | None:
+        failure_class = getattr(envelope, "failure_class", None)
+        visible_content = getattr(envelope.turn_result, "visible_content", "")
+        next_intent = getattr(envelope, "next_intent", None)
+        if failure_class is None and not stop_reason and not visible_content:
+            return None
+        summary = stop_reason or next_intent or visible_content
+        if not summary:
+            return None
+        failure_class_value = failure_class.value if failure_class else ""
+        return {
+            "summary": str(summary)[:500],
+            "failure_class": failure_class_value,
+        }
+
+    def _build_turn_record(
+        self,
+        *,
+        envelope: TurnOutcomeEnvelope,
+        turn_index: int,
+        batch_receipt: dict[str, Any],
+        session_patch: dict[str, Any],
+        stop_reason: str | None,
+        timestamp_ms: int | None,
+        normalized_progress: str,
+    ) -> dict[str, Any]:
+        return {
+            "turn_index": turn_index,
+            "turn_id": str(envelope.turn_result.turn_id),
+            "turn_kind": envelope.turn_result.kind,
+            "continuation_mode": envelope.continuation_mode.value,
+            "task_progress": normalized_progress,
+            "phase": self.phase_manager.current_phase.value,
+            "failure_class": getattr(getattr(envelope, "failure_class", None), "value", None),
+            "stop_reason": stop_reason,
+            "session_patch": session_patch,
+            "batch_receipt": batch_receipt,
+            "speculative_hints": dict(envelope.speculative_hints),
+            "visible_content": envelope.turn_result.visible_content,
+            "error": envelope.next_intent if envelope.continuation_mode == TurnContinuationMode.WAITING_HUMAN else None,
+            "timestamp_ms": timestamp_ms or 0,
+        }
+
+    def _remember_read_files(self, batch_receipt: dict[str, Any]) -> None:
+        for result in batch_receipt.get("results", []):
+            if not isinstance(result, dict):
+                continue
+            tool_name = str(result.get("tool_name", ""))
+            if tool_name not in _READ_TOOL_NAMES or str(result.get("status", "")) != "success":
+                continue
+            args = result.get("arguments", {})
+            if not isinstance(args, dict):
+                continue
+            path = (
+                args.get("file")
+                or args.get("filepath")
+                or args.get("path")
+                or args.get("target")
+                or args.get("target_file")
+                or args.get("file_path")
+            )
+            if isinstance(path, str) and path and path not in self.state.read_files:
+                self.state.read_files.append(path)
+
+    @staticmethod
+    def _normalize_batch_receipt(batch_receipt: Any) -> dict[str, Any]:
+        if batch_receipt is None:
+            return {}
+        if isinstance(batch_receipt, dict):
+            return dict(batch_receipt)
+        model_dump = getattr(batch_receipt, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            return dumped if isinstance(dumped, dict) else {}
+        return {}
+
+    @staticmethod
+    def _normalize_progress(progress: str) -> str:
+        candidate = _PHASE_PROGRESS_ALIASES.get(progress, progress)
+        return candidate if candidate in _PHASE_PROGRESS_PRIORITY else "exploring"
 
 
 class RoleSessionOrchestrator:
@@ -88,6 +342,7 @@ class RoleSessionOrchestrator:
             max_turns=max_auto_turns,
             artifacts={},
         )
+        self._state_reducer = SessionStateReducer(self.state)
         self._artifact_store = SessionArtifactStore(
             workspace=workspace,
             session_id=session_id,
@@ -247,19 +502,9 @@ class RoleSessionOrchestrator:
         *,
         context: dict[str, Any] | None = None,
     ) -> AsyncIterator[TurnEvent]:
-        """流式执行多 Turn 会话编排。
+        """流式执行多 Turn 会话编排。"""
+        del context
 
-        核心循环：
-        1. Checkpoint 会话状态
-        2. 复用 ShadowEngine 推测结果（如有）
-        3. 执行单次干净 Turn（内核零修改）
-        4. 接收 TurnOutcomeEnvelope
-        5. 增量持久化 Artifacts
-        6. ContinuationPolicy 仲裁 + 路由分支
-        7. 触发下一 Turn 推测预热
-        """
-        # 触发 SLM 全局单例预热（fire-and-forget）。
-        # 当第一个 Turn 执行到 ContextOS Canonicalizer 时，模型大概率已驻留 VRAM。
         if self.state.turn_count == 0:
             try:
                 from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
@@ -271,60 +516,47 @@ class RoleSessionOrchestrator:
                 logger.debug("SLM singleton warmup trigger failed", exc_info=True)
 
         yield SessionStartedEvent(session_id=self.session_id)
-        _first_prompt = prompt  # 用户传入的原始消息作为第一回合 prompt
-        # 【关键修复】：prompt 在循环前初始化，每次迭代结束时更新。
-        # 修复了第 2+ 回合 continuation prompt 丢失工作记忆的 bug。
-        # 注意：is_first_turn 在每次迭代开始时重新计算，不在循环外设置一次。
+        first_prompt = prompt
         envelope: TurnOutcomeEnvelope | None = None
+        completion_event: CompletionEvent | None = None
+        session_terminal_event: SessionWaitingHumanEvent | None = None
+        session_completed_reason: str | None = None
+        suppress_session_completion = False
+        deferred_error: ErrorEvent | None = None
+        checkpoint_error: ErrorEvent | None = None
 
-        # 【关键修复】：如果用户发送了新请求（与当前 goal 不同），更新 goal。
-        # 根因：用户在同一会话中发送新指令（如"拆分 server.py"），但 goal 仍停留在旧的"总结代码"。
-        # 导致 continuation prompt 的 <Goal> 和 <Instruction> 都反映旧意图，LLM 执行错误的 action。
-        # 【关键修复】：检测"推进类短句"（如"开始落地啊"），保留原 goal，将推进指令注入 Instruction。
-        # 根因：短推进指令覆盖完整 goal，导致 LLM 丢失"落地什么东西"的上下文。
-        #
-        # 【关键修复】：CONTINUATION TURNS 不应更新 goal。
-        # 当 prompt 包含 SESSION_PATCH 或 <Goal>/<Progress> XML 块时，说明这是 orchestrator
-        # 生成的 continuation prompt，不是真实用户输入。绝对不能把它当作新 goal！
-        _is_continuation_prompt = _first_prompt is not None and (
-            "<SESSION_PATCH>" in _first_prompt or ("<Goal>" in _first_prompt and "<Progress>" in _first_prompt)
+        is_continuation_prompt = first_prompt is not None and (
+            "<SESSION_PATCH>" in first_prompt or ("<Goal>" in first_prompt and "<Progress>" in first_prompt)
         )
-        # FIX-20250421-v3: 检测模型输出回灌（防止目标污染）
-        _is_model_output_regurgitation = (
-            _first_prompt is not None and self.state.turn_count > 0 and self._is_model_output(_first_prompt)
+        is_model_output_regurgitation = (
+            first_prompt is not None and self.state.turn_count > 0 and self._is_model_output(first_prompt)
         )
-        if _is_model_output_regurgitation:
+        if is_model_output_regurgitation:
             logger.warning(
                 "model_output_regurgitation_blocked: turn=%d prompt=%s...",
                 self.state.turn_count,
-                _first_prompt[:60],
+                first_prompt[:60],
             )
-            # 忽略此输入，使用 original_goal 继续
-            _first_prompt = self.state.original_goal or self.state.goal
-        elif _first_prompt and _first_prompt != self.state.goal and not _is_continuation_prompt:
-            _is_progression_shortcut = self._is_progression_shortcut(_first_prompt)
-            if _is_progression_shortcut and self.state.goal:
-                # 保留原 goal，将推进指令作为额外上下文存储
-                self.state.structured_findings["_user_progression_hint"] = _first_prompt
+            first_prompt = self.state.original_goal or self.state.goal
+        elif first_prompt and first_prompt != self.state.goal and not is_continuation_prompt:
+            is_progression_shortcut = self._is_progression_shortcut(first_prompt)
+            if is_progression_shortcut and self.state.goal:
+                self.state.structured_findings["_user_progression_hint"] = first_prompt
                 logger.debug(
                     "goal_preserved_against_shortcut: turn=%d goal=%s hint=%s",
                     self.state.turn_count,
                     self.state.goal[:60],
-                    _first_prompt[:60],
+                    first_prompt[:60],
                 )
             else:
-                self.state.goal = _first_prompt
-                # FIX-20250421: 首次设置 goal 时，同时保存 original_goal（永不丢失）
-                # FIX-20250421-v2: 一旦设置，不再被覆盖。用户后续的模糊输入（如"下一步""按照你的建议"）不能覆盖明确的目标。
+                self.state.goal = first_prompt
                 if not self.state.original_goal:
-                    self.state.original_goal = _first_prompt
-                    logger.debug("original_goal_set: %s", _first_prompt[:60])
+                    self.state.original_goal = first_prompt
+                    logger.debug("original_goal_set: %s", first_prompt[:60])
                 else:
                     logger.debug("original_goal_preserved: %s", self.state.original_goal[:60])
-                # 只有非第一回合才允许根据新请求跃迁到 implementing。
-                # 第一回合总是 exploring——LLM 需要先读代码了解现状，再执行修改。
                 if self.state.turn_count > 0:
-                    _execution_markers = {
+                    execution_markers = {
                         "拆分",
                         "修改",
                         "创建",
@@ -342,349 +574,248 @@ class RoleSessionOrchestrator:
                         "实施",
                         "完善",
                     }
-                    if any(m in _first_prompt for m in _execution_markers):
+                    if any(marker in first_prompt for marker in execution_markers):
                         self.state.task_progress = "implementing"
                         self.state.structured_findings["task_progress"] = "implementing"
-                        logger.debug(
-                            "goal_and_progress_updated_for_mutation: turn=%d progress=implementing",
-                            self.state.turn_count,
-                        )
                 logger.debug(
                     "goal_updated_from_new_prompt: turn=%d goal=%s",
                     self.state.turn_count,
-                    _first_prompt[:60],
+                    first_prompt[:60],
                 )
 
-        while True:
-            is_first_turn = self.state.turn_count == 0
-
-            # FIX-20250421-v3: 验证 Session State 不变式（非 Turn 0）
-            if not is_first_turn and self.state.session_invariants.is_frozen():
-                try:
-                    self.state.session_invariants.validate(
-                        current_delivery_mode=self.state.delivery_mode,
-                        current_original_goal=self.state.original_goal,
-                        current_phase=self.state.task_progress,
-                    )
-                except InvariantViolationError as inv_exc:
-                    logger.error("InvariantViolation detected: %s", inv_exc)
-                    yield ErrorEvent(
-                        turn_id=self.session_id,
-                        error_type="InvariantViolation",
-                        message=f"Session State 不变式违规: {inv_exc}",
-                    )
-                    # 触发 END_SESSION 而非直接崩溃，让上层处理恢复
-                    if envelope is not None:
-                        envelope = TurnOutcomeEnvelope(
-                            turn_result=envelope.turn_result,
-                            continuation_mode=TurnContinuationMode.END_SESSION,
-                            next_intent=f"invariant_violation_recovery: {inv_exc}",
+        try:
+            while True:
+                is_first_turn = self.state.turn_count == 0
+                if not is_first_turn and self.state.session_invariants.is_frozen():
+                    try:
+                        self.state.session_invariants.validate(
+                            current_delivery_mode=self.state.delivery_mode,
+                            current_original_goal=self.state.original_goal,
+                            current_phase=self.state.task_progress,
                         )
+                    except InvariantViolationError as inv_exc:
+                        logger.error("InvariantViolation detected: %s", inv_exc)
+                        deferred_error = ErrorEvent(
+                            turn_id=self.session_id,
+                            error_type="InvariantViolation",
+                            message=f"Session State 不变式违规: {inv_exc}",
+                        )
+                        session_completed_reason = f"invariant_violation:{inv_exc}"
+                        break
+
+                current_prompt = (
+                    first_prompt
+                    if is_first_turn
+                    else self._build_continuation_prompt(envelope or self._build_empty_envelope())
+                )
+                if is_first_turn and first_prompt:
+                    bootstrap_knowledge = await self._retrieve_bootstrapping_knowledge(first_prompt)
+                    if bootstrap_knowledge:
+                        current_prompt = f"{bootstrap_knowledge}\n\nCurrent Task: {current_prompt}"
+
+                await self._checkpoint_session()
+
+                if self._shadow_engine is not None:
+                    has_spec = getattr(self._shadow_engine, "has_valid_speculation", lambda _sid: False)(self.session_id)
+                    if has_spec:
+                        pre_warmed = await getattr(
+                            self._shadow_engine, "consume_speculation", self._noop_consume_speculation
+                        )(self.session_id)
+                        async for event in self._yield_pre_warmed_events(pre_warmed):
+                            yield event
+
+                envelope = None
+                completion_event = None
+                tool_definitions: list[dict[str, Any]] = []
+                role_def, profile_tool_defs = self._get_role_and_tools()
+                if profile_tool_defs:
+                    tool_definitions = profile_tool_defs
+
+                turn_context: list[dict[str, Any]] = [{"role": "user", "content": current_prompt}]
+                if role_def:
+                    turn_context.insert(0, {"role": "system", "content": role_def})
+
+                async for event in self.kernel.execute_stream(
+                    turn_id=f"{self.session_id}_turn{self.state.turn_count}",
+                    context=turn_context,
+                    tool_definitions=tool_definitions,
+                ):
+                    yield event
+                    if isinstance(event, CompletionEvent):
+                        completion_event = event
+                        envelope = self._build_envelope_from_completion(event)
+
+                if envelope is None:
+                    deferred_error = ErrorEvent(
+                        turn_id=self.session_id,
+                        error_type="OrchestratorError",
+                        message="Kernel completed without yielding CompletionEvent",
+                    )
+                    session_completed_reason = "missing_completion_event"
                     break
 
-            prompt = (
-                _first_prompt
-                if is_first_turn
-                else self._build_continuation_prompt(envelope or self._build_empty_envelope())
-            )
+                envelope = self._state_reducer.enforce_materialize_changes_guard(envelope)
+                envelope = self._apply_read_only_termination_exemption(envelope)
 
-            # 【Phase 1.3 增强】：首次启动时检索历史知识注入上下文
-            if is_first_turn and _first_prompt:
-                bootstrap_knowledge = await self._retrieve_bootstrapping_knowledge(_first_prompt)
-                if bootstrap_knowledge:
-                    prompt = f"{bootstrap_knowledge}\n\nCurrent Task: {prompt}"
-
-            await self._checkpoint_session()
-
-            # 1. ShadowEngine 推测结果复用
-            if self._shadow_engine is not None:
-                has_spec = getattr(self._shadow_engine, "has_valid_speculation", lambda _sid: False)(self.session_id)
-                if has_spec:
-                    pre_warmed = await getattr(
-                        self._shadow_engine, "consume_speculation", self._noop_consume_speculation
-                    )(self.session_id)
-                    async for event in self._yield_pre_warmed_events(pre_warmed):
-                        yield event
-
-            # 2. 执行干净单 Turn
-            envelope = None
-
-            # 【关键修复】：从 RoleProfile 构建 tool_definitions（解决 orchestrator 路径
-            # tool_definitions=[] 的根因）。
-            # RoleRuntimeService.create_transaction_controller 将 tool_definitions 传给
-            # TransactionKernel 内部，但不传给 orchestrator。导致 LLM 没有实际的写工具
-            # function definitions，无法调用 write_file/edit_file。
-            # 修复：直接从 RoleProfile 构建 tool_definitions 并传给 kernel。
-            role_def, profile_tool_defs = self._get_role_and_tools()
-            if profile_tool_defs:
-                tool_definitions = profile_tool_defs
-
-            # 【关键修复】：先在循环外部计算 can_continue，确保 continuation prompt
-            # 能拿到上一回合正确的 envelope（而非 None / empty_envelope）。
-            #
-            # 原 bug：async for 循环内部构建 continuation prompt 时 envelope=None，
-            # 错误回退到 _build_empty_envelope()，导致第 2+ 回合的 prompt 丢失工作记忆。
-            # 修复后：先执行 turn → 更新 envelope → 判断 can_continue → 构建下一 prompt。
-
-            # 【关键修复】：始终 prepend role definition 作为 system message，
-            # 解决 "LLM keeps calling read_file" 的根因：
-            # orchestrator 路径下 RoleRuntimeService 不传 role definition 给 orchestrator，
-            # 导致 LLM 丢失 role identity（Director）和 write tool 权限上下文。
-            turn_context: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-            if role_def:
-                turn_context.insert(0, {"role": "system", "content": role_def})
-
-            async for event in self.kernel.execute_stream(
-                turn_id=f"{self.session_id}_turn{self.state.turn_count}",
-                context=turn_context,
-                tool_definitions=tool_definitions,
-            ):
-                yield event
-                if isinstance(event, CompletionEvent):
-                    envelope = self._build_envelope_from_completion(event)
-
-            # 【关键修复】读工具-only 豁免：如果 LLM 已生成可见输出且只调用了读工具，
-            # 直接结束会话，防止 ANALYSIS_ONLY / 误判 MATERIALIZE_CHANGES 导致的死循环。
-            # 这是"LLM 主动交卷"的轻量级替代方案：LLM 用可见输出声明任务完成。
-            #
-            # 【关键修复】但 turn_kind=continue_multi_turn 时不应触发此豁免：
-            # continue_multi_turn 意味着"需要继续写工具"，不是"读完了可以结束"。
-            # 例如 LLM 调用 glob 而非 write_file 时，系统返回 continue_multi_turn，
-            # 下一回合应强制调用写工具，而不是提前终止会话。
-            _turn_kind = getattr(envelope.turn_result, "kind", "") if envelope else ""
-            if (
-                envelope is not None
-                and envelope.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
-                and _turn_kind != "continue_multi_turn"
-            ):
-                _receipt = getattr(envelope.turn_result, "batch_receipt", None) or {}
-                _results = _receipt.get("results", [])
-                _has_write_tool = any(
-                    str(r.get("tool_name", ""))
-                    in {
-                        "write_file",
-                        "edit_file",
-                        "create_file",
-                        "append_to_file",
-                        "precision_edit",
-                        "edit_blocks",
-                        "search_replace",
-                        "repo_apply_diff",
-                    }
-                    for r in _results
-                )
-                _has_visible_output = bool(
-                    envelope.turn_result.visible_content and str(envelope.turn_result.visible_content).strip()
-                )
-                if not _has_write_tool and _has_visible_output and self.state.turn_count >= 1:
-                    logger.debug(
-                        "read-only-termination-exempt: turn=%d visible_chars=%d results=%d",
-                        self.state.turn_count,
-                        len(str(envelope.turn_result.visible_content)),
-                        len(_results),
+                self.state.turn_count += 1
+                if self.state.turn_count == 1 and not self.state.session_invariants.is_frozen():
+                    contract = resolve_delivery_mode(first_prompt)
+                    delivery_mode = contract.mode.value
+                    self.state.delivery_mode = delivery_mode
+                    original_goal = self.state.original_goal or self.state.goal or first_prompt
+                    if not self.state.original_goal:
+                        self.state.original_goal = original_goal
+                    initial_phase = self.state.task_progress or "exploring"
+                    self.state.session_invariants.freeze(
+                        delivery_mode=delivery_mode,
+                        original_goal=original_goal,
+                        phase=initial_phase,
                     )
-                    envelope.continuation_mode = TurnContinuationMode.END_SESSION
-                    # 修正 turn_result.kind 以匹配 END_SESSION 语义（TurnResult 为 frozen model，需重建）
-                    envelope.turn_result = envelope.turn_result.model_copy(update={"kind": "final_answer"})
 
-            self.state.turn_count += 1
-            is_first_turn = False
+                if envelope.artifacts_to_persist:
+                    await self._artifact_store.persist(envelope.artifacts_to_persist)
+                    self.state.artifacts.update(self._artifact_store.get_artifact_map())
+                if envelope.artifacts_to_persist or self.state.artifacts:
+                    self._update_artifact_hashes()
 
-            # FIX-20250421-v3: Session State 硬化
-            # Turn 0 完成后冻结 delivery_mode、original_goal、phase
-            if self.state.turn_count == 1 and not self.state.session_invariants.is_frozen():
-                # 解析 delivery_mode（复用内核的 intent classifier）
-                _contract = resolve_delivery_mode(_first_prompt)
-                _delivery_mode = _contract.mode.value
-                self.state.delivery_mode = _delivery_mode
-                # 如果 original_goal 还未设置（如 checkpoint resume 场景），使用当前 goal
-                _og = self.state.original_goal or self.state.goal or _first_prompt
-                if not self.state.original_goal:
-                    self.state.original_goal = _og
-                _phase = self.state.task_progress or "exploring"
-                self.state.session_invariants.freeze(
-                    delivery_mode=_delivery_mode,
-                    original_goal=_og,
-                    phase=_phase,
-                )
-                logger.debug(
-                    "session_invariants_frozen: delivery_mode=%s original_goal=%s... phase=%s",
-                    _delivery_mode,
-                    _og[:60],
-                    _phase,
+                if self.state.turn_count == 1 and not self.state.goal:
+                    self.state.goal = first_prompt
+                    if envelope.session_patch and (instruction := envelope.session_patch.get("instruction")):
+                        self.state.goal = f"{first_prompt}\n\n[补充指令]: {instruction}"
+
+                turn_record = self._state_reducer.apply_turn_outcome(
+                    envelope,
+                    turn_index=self.state.turn_count,
+                    timestamp_ms=completion_event.timestamp_ms if completion_event else None,
                 )
 
-            if envelope is None:
-                yield ErrorEvent(
-                    turn_id=self.session_id,
-                    error_type="OrchestratorError",
-                    message="Kernel completed without yielding CompletionEvent",
-                )
-                break
+                if "_user_progression_hint" in self.state.structured_findings:
+                    del self.state.structured_findings["_user_progression_hint"]
 
-            # 3. 增量持久化 Artifacts
-            if envelope.artifacts_to_persist:
-                await self._artifact_store.persist(envelope.artifacts_to_persist)
-                self.state.artifacts.update(self._artifact_store.get_artifact_map())
-            # 更新 artifact hash 指纹用于 stagnation 检测
-            if envelope.artifacts_to_persist or self.state.artifacts:
-                self._update_artifact_hashes()
-
-            # 3a. 注入 session_patch 到 structured_findings（上下文降维 ADR-0071）
-            if envelope.session_patch:
-                apply_session_patch(self.state, envelope.session_patch)
-
-            # 【关键修复】：当 write 工具成功执行后，自动将 task_progress 推进到 "verifying"。
-            # 根因：session_patch 的 task_progress 被硬编码为 "implementing"，
-            # 导致 LLM 在写完之后仍停留在 "implementing" 指令，
-            # 继续调用更多读/写工具而不是验证已完成的修改。
-            # 通过检测 batch_receipt 中的 write 工具成功结果，
-            # 主动将 progress 推进到 verifying 阶段。
-            batch_receipt = getattr(envelope.turn_result, "batch_receipt", None) or {}
-            results: list[dict[str, Any]] = batch_receipt.get("results", [])
-
-            # 调试日志：追踪 batch_receipt 和 tool_calls
-            logger.debug(
-                "turn=%d batch_receipt_keys=%s results_count=%d turn_kind=%s",
-                self.state.turn_count,
-                list(batch_receipt.keys()) if batch_receipt else [],
-                len(results),
-                envelope.turn_result.kind,
-            )
-
-            write_tools_succeeded = any(
-                item.get("tool_name") in {"write_file", "edit_file", "create_file"}
-                and str(item.get("status", "")) == "success"
-                for item in results
-            )
-            # 备用检测：即使 batch_receipt.results 不包含写工具结果，
-            # 也检查 artifacts 中是否有新创建的文件（说明写工具已成功执行）。
-            # 这是必要的，因为 batch_receipt 可能只记录第一个工具的结果。
-            if not write_tools_succeeded and self.state.task_progress == "implementing":
-                artifacts_with_files = [
-                    k
-                    for k, v in self.state.artifacts.items()
-                    if isinstance(v, dict) and v.get("operation") in {"create", "modify"}
-                ]
-                if artifacts_with_files:
-                    write_tools_succeeded = True
-            if write_tools_succeeded and self.state.task_progress == "implementing":
-                self.state.task_progress = "verifying"
-                self.state.structured_findings["task_progress"] = "verifying"
-                logger.debug("Auto-advanced task_progress to 'verifying' after successful write")
-
-            # 【关键修复】：即使 batch_receipt.results 为空（LLM 执行写工具后，
-            # 工具结果嵌入在 visible_content 而非 batch_receipt 中），
-            # 仍通过 turn_kind="tool_batch_with_receipt" 检测到工具执行，
-            # 自动推进到 verifying。
-            if (
-                not write_tools_succeeded
-                and envelope.turn_result.kind == "tool_batch_with_receipt"
-                and self.state.task_progress == "implementing"
-            ):
-                self.state.task_progress = "verifying"
-                self.state.structured_findings["task_progress"] = "verifying"
-                logger.debug(
-                    "Auto-advanced task_progress to 'verifying' (tool_batch_with_receipt, no batch_receipt.results)"
-                )
-
-            # 【关键修复】：消费后清理 _user_progression_hint，防止推进短句在后续回合持续污染 Instruction。
-            # 根因：_user_progression_hint 一旦写入 structured_findings 就会持久化到 checkpoint，
-            # 如果不清理，LLM 在 Turn 3、Turn 4 仍看到 Turn 2 的 "开始落地啊"，导致指令混乱。
-            if "_user_progression_hint" in self.state.structured_findings:
-                del self.state.structured_findings["_user_progression_hint"]
-                logger.debug("Cleared _user_progression_hint after consumption")
-
-            # 首次回合：从原始 prompt 中提取 goal 填充到 state.goal
-            # 解决 "多回合工作流继续但 goal 为空" 的根因。
-            # checkpoint resume 时 goal 已从文件恢复（_try_load_checkpoint），无需覆盖。
-            if self.state.turn_count == 1 and not self.state.goal:
-                # 优先使用用户原始请求作为 goal（_first_prompt 在函数开头保存）
-                self.state.goal = _first_prompt
-                # 如果 session_patch 有更具体的指令，追加到 goal
-                if envelope.session_patch and (instr := envelope.session_patch.get("instruction")):
-                    self.state.goal = f"{_first_prompt}\n\n[补充指令]: {instr}"
-
-            # 记录 turn 历史用于 Policy 检测
-            self.state.turn_history.append(
-                {
-                    "turn_index": self.state.turn_count,
-                    "continuation_mode": envelope.continuation_mode.value,
-                    "error": envelope.turn_result.visible_content
-                    if envelope.continuation_mode == TurnContinuationMode.END_SESSION
-                    else None,
-                }
-            )
-
-            # 4. 路由分支
-            if envelope.continuation_mode == TurnContinuationMode.HANDOFF_DEVELOPMENT:
-                yield TurnPhaseEvent.create(
-                    turn_id=self.session_id,
-                    phase="workflow_handoff",
-                    metadata={"handoff_target": "development", "intent": envelope.next_intent},
-                )
-                # 如果内核已在流式路径中执行并透传了 DevelopmentWorkflowRuntime，
-                # 则 Orchestrator 不再重复执行（通过 session_patch 中的标记识别）。
-                if not envelope.session_patch.get("_development_handoff_executed"):
-                    runtime = DevelopmentWorkflowRuntime(
-                        tool_executor=self.kernel.tool_runtime,
-                        shadow_engine=self._shadow_engine,
+                if envelope.continuation_mode == TurnContinuationMode.HANDOFF_DEVELOPMENT:
+                    turn_record["stop_reason"] = "handoff_development"
+                    yield TurnPhaseEvent.create(
+                        turn_id=self.session_id,
+                        phase="workflow_handoff",
+                        metadata={"handoff_target": "development", "intent": envelope.next_intent},
                     )
-                    async for dev_event in runtime.execute_stream(
-                        intent=envelope.next_intent or "",
-                        session_state=self.state,
-                    ):
-                        yield dev_event
-                await self._checkpoint_session()
-                break
+                    if not envelope.session_patch.get("_development_handoff_executed"):
+                        runtime = DevelopmentWorkflowRuntime(
+                            tool_executor=self.kernel.tool_runtime,
+                            shadow_engine=self._shadow_engine,
+                        )
+                        async for dev_event in runtime.execute_stream(
+                            intent=envelope.next_intent or "",
+                            session_state=self.state,
+                        ):
+                            yield dev_event
+                    suppress_session_completion = True
+                    break
 
-            if envelope.continuation_mode == TurnContinuationMode.HANDOFF_EXPLORATION:
-                yield TurnPhaseEvent.create(
-                    turn_id=self.session_id,
-                    phase="workflow_handoff",
-                    metadata={"handoff_target": "exploration", "intent": envelope.next_intent},
-                )
-                await self._checkpoint_session()
-                break
+                if envelope.continuation_mode == TurnContinuationMode.HANDOFF_EXPLORATION:
+                    turn_record["stop_reason"] = "handoff_exploration"
+                    yield TurnPhaseEvent.create(
+                        turn_id=self.session_id,
+                        phase="workflow_handoff",
+                        metadata={"handoff_target": "exploration", "intent": envelope.next_intent},
+                    )
+                    suppress_session_completion = True
+                    break
 
-            if envelope.continuation_mode == TurnContinuationMode.WAITING_HUMAN:
-                yield SessionWaitingHumanEvent(
-                    session_id=self.session_id,
-                    reason=envelope.next_intent or "human_input_required",
-                )
-                await self._checkpoint_session()
-                break
-
-            if envelope.continuation_mode == TurnContinuationMode.END_SESSION:
-                await self._checkpoint_session()
-                break
-
-            # 5. ContinuationPolicy 仲裁
-            can_continue, reason = self.policy.can_continue(self.state, envelope)
-            if not can_continue:
-                await self._checkpoint_session()
-                yield SessionCompletedEvent(
-                    session_id=self.session_id,
-                    reason=reason,
-                )
-                break
-
-            # 6. 触发下一 Turn 的跨 Turn 推测
-            if self._shadow_engine is not None and can_continue:
-                start_cross_turn = getattr(self._shadow_engine, "start_cross_turn_speculation", None)
-                if callable(start_cross_turn):
-                    start_cross_turn(
+                if envelope.continuation_mode == TurnContinuationMode.WAITING_HUMAN:
+                    turn_record["stop_reason"] = envelope.next_intent or "human_input_required"
+                    session_terminal_event = SessionWaitingHumanEvent(
                         session_id=self.session_id,
-                        predicted_next_tools=self._predict_next_tools(envelope),
-                        hints=envelope.speculative_hints,
+                        reason=turn_record["stop_reason"],
                     )
+                    break
 
-            # 【关键修复】：在循环末尾更新 prompt，确保下一迭代使用正确的 continuation。
-            # 使用当前的 envelope（已包含 SESSION_PATCH 和 batch_receipt）。
-            prompt = self._build_continuation_prompt(envelope)
+                if envelope.continuation_mode == TurnContinuationMode.END_SESSION:
+                    turn_record["stop_reason"] = envelope.next_intent or "end_session"
+                    session_completed_reason = turn_record["stop_reason"]
+                    break
 
-        await self._checkpoint_session()
-        yield SessionCompletedEvent(session_id=self.session_id)
+                can_continue, reason = self.policy.can_continue(self.state, envelope)
+                if not can_continue:
+                    turn_record["stop_reason"] = reason
+                    session_completed_reason = reason
+                    break
+
+                if self._shadow_engine is not None:
+                    start_cross_turn = getattr(self._shadow_engine, "start_cross_turn_speculation", None)
+                    if callable(start_cross_turn):
+                        start_cross_turn(
+                            session_id=self.session_id,
+                            predicted_next_tools=self._predict_next_tools(envelope),
+                            hints=envelope.speculative_hints,
+                        )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("session orchestrator failed: session_id=%s", self.session_id)
+            deferred_error = ErrorEvent(
+                turn_id=self.session_id,
+                error_type=type(exc).__name__,
+                message=str(exc),
+            )
+            session_completed_reason = "orchestrator_exception"
+        finally:
+            try:
+                await self._checkpoint_session()
+            except Exception as exc:
+                logger.exception("checkpoint persistence failed: session_id=%s", self.session_id)
+                checkpoint_error = ErrorEvent(
+                    turn_id=self.session_id,
+                    error_type="CheckpointPersistenceError",
+                    message=str(exc),
+                )
+                if session_completed_reason is None and session_terminal_event is None and not suppress_session_completion:
+                    session_completed_reason = "checkpoint_persistence_error"
+            try:
+                await self.close()
+            except Exception:
+                logger.exception("session orchestrator close failed: session_id=%s", self.session_id)
+
+        if deferred_error is not None:
+            yield deferred_error
+        if checkpoint_error is not None:
+            yield checkpoint_error
+        if session_terminal_event is not None:
+            yield session_terminal_event
+        elif not suppress_session_completion:
+            yield SessionCompletedEvent(session_id=self.session_id, reason=session_completed_reason)
+
+    def _apply_read_only_termination_exemption(self, envelope: TurnOutcomeEnvelope) -> TurnOutcomeEnvelope:
+        """Convert read-only auto-continue turns with visible output into final answers."""
+        if envelope.continuation_mode != TurnContinuationMode.AUTO_CONTINUE:
+            return envelope
+        if envelope.turn_result.kind == "continue_multi_turn":
+            return envelope
+
+        receipt = self._state_reducer._normalize_batch_receipt(envelope.turn_result.batch_receipt)
+        results = receipt.get("results", [])
+        has_write_tool = any(
+            isinstance(result, dict) and str(result.get("tool_name", "")) in _WRITE_TOOL_NAMES for result in results
+        )
+        has_visible_output = bool(envelope.turn_result.visible_content and envelope.turn_result.visible_content.strip())
+        if has_write_tool or not has_visible_output or self.state.turn_count < 1:
+            return envelope
+
+        logger.debug(
+            "read-only-termination-exempt: turn=%d visible_chars=%d results=%d",
+            self.state.turn_count,
+            len(envelope.turn_result.visible_content),
+            len(results),
+        )
+        return TurnOutcomeEnvelope(
+            turn_result=envelope.turn_result.model_copy(update={"kind": "final_answer"}),
+            continuation_mode=TurnContinuationMode.END_SESSION,
+            next_intent=envelope.next_intent,
+            session_patch=dict(envelope.session_patch),
+            artifacts_to_persist=list(envelope.artifacts_to_persist),
+            speculative_hints=dict(envelope.speculative_hints),
+            failure_class=envelope.failure_class,
+        )
 
     async def _checkpoint_session(self) -> None:
         """持久化当前会话状态到本地 checkpoint 文件。
@@ -695,33 +826,14 @@ class RoleSessionOrchestrator:
         checkpoint_dir = Path(self.workspace) / ".polaris" / "checkpoints"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_path = checkpoint_dir / f"{self.session_id}.json"
-        import json
+        payload = self._state_reducer.checkpoint_payload()
+        tmp_path = checkpoint_path.with_suffix(f"{checkpoint_path.suffix}.tmp")
 
-        with open(checkpoint_path, "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "schema_version": 3,  # FIX-20250421-v3: 升级 schema 版本
-                    "session_id": self.state.session_id,
-                    "turn_count": self.state.turn_count,
-                    "goal": self.state.goal,
-                    "task_progress": self.state.task_progress,
-                    # 降维后的工作记忆（LLM 的合成结论，而非原始 artifacts）
-                    "structured_findings": self.state.structured_findings,
-                    "key_file_snapshots": self.state.key_file_snapshots,
-                    "last_failure": self.state.last_failure,
-                    # artifacts 存引用或压缩版（完整版由 SessionArtifactStore 管理）
-                    "artifacts": self.state.artifacts,
-                    "recent_artifact_hashes": self.state.recent_artifact_hashes,
-                    # FIX-20250421-v3: Session State 硬化字段
-                    "original_goal": self.state.original_goal,
-                    "read_files": self.state.read_files,
-                    "delivery_mode": self.state.delivery_mode,
-                    "session_invariants": self.state.session_invariants.to_dict(),
-                },
-                handle,
-                ensure_ascii=False,
-                default=str,
-            )
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, default=str)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, checkpoint_path)
 
         # Phase 1.5: 将 structured_findings 作为派生记忆持久化到 artifact store
         # 标记为 derived_memory（非独立 truth source，可从 truthlog 重建）
@@ -751,6 +863,7 @@ class RoleSessionOrchestrator:
         # FIX-20250421: 使用 original_goal（永不丢失）替代 goal（可能被覆盖）
         goal = self.state.original_goal or self.state.goal or "（未设定明确目标）"
         progress = self.state.task_progress
+        normalized_progress = self._state_reducer._normalize_progress(progress)
         turn = self.state.turn_count
         max_turns = self.state.max_turns
 
@@ -759,28 +872,12 @@ class RoleSessionOrchestrator:
         goal_block = f"【核心任务 - 不可变更】\n{goal}\n\n当前执行目标: {self.state.goal or goal}"
 
         # --- Zone 2: Progress ---
-        # FIX-20250421: 从最后一个 turn 的 PhaseManager 获取真实阶段
-        _phase_str = progress
-        if self.state.turn_history:
-            last_turn = self.state.turn_history[-1]
-            batch_receipt = last_turn.get("batch_receipt", {})
-            from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
-                PhaseManager,
-                extract_tool_results_from_batch_receipt,
-            )
-
-            tool_results = extract_tool_results_from_batch_receipt(batch_receipt)
-            if tool_results:
-                pm = PhaseManager()
-                # 重放历史到 PhaseManager
-                for turn_item in self.state.turn_history:
-                    br = turn_item.get("batch_receipt", {})
-                    trs = extract_tool_results_from_batch_receipt(br)
-                    if trs:
-                        pm.transition(trs)
-                _phase_str = pm.current_phase.value
-
-        progress_block = f"当前阶段: {_phase_str} | 回合: {turn} / {max_turns}"
+        phase_alias = self._state_reducer.current_phase().value
+        if _PHASE_PROGRESS_PRIORITY.get(normalized_progress, 0) > _PHASE_PROGRESS_PRIORITY.get(phase_alias, 0):
+            phase_alias = normalized_progress
+        if progress == "done":
+            phase_alias = "done"
+        progress_block = f"当前阶段: {phase_alias} | 回合: {turn} / {max_turns}"
 
         # --- Zone 3: WorkingMemory ---
         # 已确认的事实
@@ -829,6 +926,9 @@ class RoleSessionOrchestrator:
         if recent_failure:
             wm_parts.append("最近失败:")
             wm_parts.append(f"  - {recent_failure}")
+        if mandatory_instruction := findings.get("mandatory_instruction"):
+            wm_parts.append("强制推进要求:")
+            wm_parts.append(f"  - {mandatory_instruction}")
 
         # 【关键修复】注入上回合 LLM 自己的 visible_content 到 WorkingMemory。
         # 根因：跨回合时 LLM 面对空 WorkingMemory，丢失自己上一回合的分析结论、
@@ -913,27 +1013,38 @@ class RoleSessionOrchestrator:
         # 【关键修复】注入用户的推进类短句（如"开始落地啊"）到 Instruction 中。
         # 根因：推进短句被丢弃，LLM 不知道用户最新的催促/推进意图。
         _progression_hint = findings.get("_user_progression_hint", "")
+        _mandatory_instruction = findings.get("mandatory_instruction", "")
         _hint_line = f"【用户最新指令】{_progression_hint}\n" if _progression_hint else ""
+        _mandatory_line = f"【系统强制要求】{_mandatory_instruction}\n" if _mandatory_instruction else ""
 
         instruction_map = {
             "exploring": (
-                f"{_hint_line}当前任务：{_goal_snippet}。\n"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n"
                 f"请继续探索和分析。优先确认问题根因，收集必要信息后再决定修复方案。"
             ),
+            "content_gathered": (
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n"
+                f"你已经完成必要读取。现在必须直接执行写入修改，禁止继续用 glob/repo_rg 扩散探索。"
+            ),
             "investigating": (
-                f"{_hint_line}当前任务：{_goal_snippet}。\n继续深入调查。已识别疑似文件，关注错误栈和调用链。"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n继续深入调查。已识别疑似文件，关注错误栈和调用链。"
             ),
             "implementing": (
-                f"{_hint_line}当前任务：{_goal_snippet}。\n"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n"
                 f"现在进入修复阶段。请按最小改动原则执行修改，使用 write_file/edit_file 等工具落实代码变更。"
                 f"严禁继续调用 repo_tree/read_file/glob/repo_rg 等探索工具——直接执行写入。"
             ),
             "verifying": (
-                f"{_hint_line}当前任务：{_goal_snippet}。\n验证阶段。请运行测试或手动验证修复效果，确保无回归。"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n验证阶段。请运行测试或手动验证修复效果，确保无回归。"
             ),
-            "done": (f"{_hint_line}当前任务：{_goal_snippet}。\n任务已完成。请汇总结果并以 END_SESSION 结束。"),
+            "done": (
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n任务已完成。请汇总结果并以 END_SESSION 结束。"
+            ),
         }
-        instruction = instruction_map.get(progress, f"{_hint_line}继续执行任务：{_goal_snippet}。")
+        instruction = instruction_map.get(
+            progress,
+            instruction_map.get(normalized_progress, f"{_mandatory_line}{_hint_line}继续执行任务：{_goal_snippet}。"),
+        )
 
         return (
             f"<Goal>\n{goal_block}\n</Goal>\n"
@@ -1107,6 +1218,10 @@ class RoleSessionOrchestrator:
         if not next_intent:
             next_intent = event.error if turn_kind == "ask_user" else None
 
+        failure_class: FailureClass | None = None
+        if event.status == "failed" and turn_kind != "ask_user":
+            failure_class = FailureClass.RUNTIME_FAILURE
+
         # TurnId = NewType("TurnId", str)，直接使用字符串
         turn_result = TurnResult(
             turn_id=event.turn_id,  # type: ignore[arg-type]
@@ -1121,6 +1236,7 @@ class RoleSessionOrchestrator:
             continuation_mode=continuation_mode,
             next_intent=next_intent,
             session_patch=session_patch,
+            failure_class=failure_class,
         )
 
     def _update_artifact_hashes(self) -> None:
@@ -1170,13 +1286,11 @@ class RoleSessionOrchestrator:
             FileNotFoundError: checkpoint 文件不存在（调用方已验证）
             ValueError: schema_version 不匹配或数据损坏
         """
-        import json
-
         with open(checkpoint_path, encoding="utf-8") as handle:
             data: dict[str, Any] = json.load(handle)
 
         schema_version = data.get("schema_version")
-        if schema_version not in {2, 3}:
+        if schema_version not in {2, 3, 4}:
             raise ValueError(f"Unsupported checkpoint schema_version: {schema_version}")
 
         # 恢复 state 字段
@@ -1189,6 +1303,7 @@ class RoleSessionOrchestrator:
         self.state.last_failure = data.get("last_failure")
         self.state.artifacts = data.get("artifacts", {})
         self.state.recent_artifact_hashes = data.get("recent_artifact_hashes", [])
+        self.state.turn_history = data.get("turn_history", [])
 
         # FIX-20250421-v3: 恢复 Session State 硬化字段（schema_version >= 3）
         if schema_version >= 3:
@@ -1199,6 +1314,11 @@ class RoleSessionOrchestrator:
             if _invariants_data:
                 self.state.session_invariants = SessionInvariants.from_dict(_invariants_data)
                 logger.debug("session_invariants_restored: delivery_mode=%s", self.state.delivery_mode)
+
+        self._state_reducer.restore_phase_manager(
+            data.get("phase_manager") if schema_version >= 4 else None,
+            fallback_progress=self.state.task_progress,
+        )
 
     @staticmethod
     async def _yield_pre_warmed_events(_pre_warmed: dict[str, Any]) -> AsyncIterator[TurnEvent]:
@@ -1218,3 +1338,4 @@ class RoleSessionOrchestrator:
         if "read" in intent or "查看" in intent:
             predicted.append({"tool_name": "read_file", "arguments": {"path": ""}})
         return predicted
+

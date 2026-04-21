@@ -1,10 +1,15 @@
-{
+﻿{
   "cell_id": "roles.runtime",
-  "version": "1.0",
-  "summary": "Dynamic AI role execution runtime",
-  "depends_on": ["llm.control_plane", "kernelone.llm"],
-  "owned_paths": [
-    "polaris/application/roles/runtime",
-    "polaris/application/roles/compat.py"
-  ]
+  "version": "1.1.0",
+  "read_order": [
+    "cell.yaml",
+    "README.agent.md",
+    "generated/descriptor.pack.json",
+    "internal/continuation_policy.py",
+    "internal/session_artifact_store.py",
+    "internal/session_orchestrator.py",
+    "public/contracts.py",
+    "public/service.py"
+  ],
+  "notes": "Read session_orchestrator together with continuation_policy and SessionArtifactStore. Session-visible phase is surfaced through task_progress; kernel PhaseManager remains the phase SSOT and is bridged through canonical turn history and checkpoint state, not role-profile schema."
 }

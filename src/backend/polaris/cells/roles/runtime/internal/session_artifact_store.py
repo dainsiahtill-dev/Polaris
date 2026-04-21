@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -160,6 +161,15 @@ class SessionArtifactStore:
 
 
 async def _async_write_text(path: Path, content: str, mode: str = "w") -> None:
+    if mode == "w":
+        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+        with open(tmp_path, mode, encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        return
+
     try:
         import aiofiles
 
