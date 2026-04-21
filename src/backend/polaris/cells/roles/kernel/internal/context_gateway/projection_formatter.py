@@ -247,6 +247,9 @@ class ProjectionFormatter:
         Within same route, prefers higher routing_confidence.
         High-priority dialog acts (affirm, deny, pause, redirect, clarify) get boosted priority.
         """
+        import logging
+
+        _logger = logging.getLogger(__name__)
         messages: list[dict[str, Any]] = []
 
         # Add head anchor (summary of context state)
@@ -261,6 +264,16 @@ class ProjectionFormatter:
 
         # Sort active_window by routing priority
         sorted_events = cls.sort_events_by_routing_priority(projection.active_window)
+        _route_counts: dict[str, int] = {}
+        for evt in sorted_events:
+            _route_counts[evt.route] = _route_counts.get(evt.route, 0) + 1
+        _logger.debug(
+            "[DEBUG][ProjectionFormatter] messages_from_projection: active_window=%d sorted=%d routes=%s run_card_goal=%r",
+            len(projection.active_window),
+            len(sorted_events),
+            _route_counts,
+            projection.run_card.current_goal if projection.run_card else "<none>",
+        )
 
         # Add active window events with routing-aware processing
         for event in sorted_events:
@@ -336,7 +349,17 @@ class ProjectionFormatter:
         # BUG FIX: Deduplicate messages by content hash to remove duplicate
         # events that accumulate through _merge_transcript and session_turn_events.
         # This prevents the LLM from seeing the same assistant content N times.
+        before_dedupe = len(messages)
         messages = cls.dedupe_messages(messages)
+        _logger.debug(
+            "[DEBUG][ProjectionFormatter] messages_from_projection end: before_dedupe=%d after_dedupe=%d system=%d user=%d assistant=%d tool=%d",
+            before_dedupe,
+            len(messages),
+            sum(1 for m in messages if m.get("role") == "system"),
+            sum(1 for m in messages if m.get("role") == "user"),
+            sum(1 for m in messages if m.get("role") == "assistant"),
+            sum(1 for m in messages if m.get("role") == "tool"),
+        )
 
         return messages
 

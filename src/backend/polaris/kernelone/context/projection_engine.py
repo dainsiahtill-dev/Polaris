@@ -427,6 +427,14 @@ class ProjectionEngine:
         receipt_store: ReceiptStore,
     ) -> list[dict[str, Any]]:
         cleaned = self._strip_control_plane_noise(projection)
+        _turns_count = len(cleaned.get("turns", []))
+        logger.debug(
+            "[DEBUG][ProjectionEngine] project start: turns=%d system_hint=%s tail_hint=%s run_card=%s",
+            _turns_count,
+            "yes" if cleaned.get("system_hint") else "no",
+            "yes" if cleaned.get("tail_hint") else "no",
+            "yes" if cleaned.get("run_card") else "no",
+        )
         messages: list[dict[str, Any]] = []
         normalized_turns: list[dict[str, Any]] = []
 
@@ -474,4 +482,12 @@ class ProjectionEngine:
             # historical run-card hints never override current-turn intent.
             messages.append(trailing_user_turn)
 
+        logger.debug(
+            "[DEBUG][ProjectionEngine] project end: messages=%d system=%d user=%d assistant=%d tool=%d",
+            len(messages),
+            sum(1 for m in messages if m.get("role") == "system"),
+            sum(1 for m in messages if m.get("role") == "user"),
+            sum(1 for m in messages if m.get("role") == "assistant"),
+            sum(1 for m in messages if m.get("role") == "tool"),
+        )
         return messages

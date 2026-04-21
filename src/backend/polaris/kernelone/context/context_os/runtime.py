@@ -528,6 +528,17 @@ class StateFirstContextOS:
             if isinstance(existing_snapshot, ContextOSSnapshot)
             else ContextOSSnapshot.from_mapping(existing_snapshot)
         )
+        _has_snapshot = snapshot is not None
+        _existing_tx_len = len(snapshot.transcript_log) if snapshot is not None else 0
+        logger.debug(
+            "[DEBUG][ContextOS] _project_via_pipeline start: has_snapshot=%s existing_tx=%d incoming_msgs=%d recent_window=%d focus=%r",
+            _has_snapshot,
+            _existing_tx_len,
+            len(messages) if messages else 0,
+            recent_window_messages,
+            focus,
+        )
+
         snapshot_payload = existing_snapshot if isinstance(existing_snapshot, dict) else None
         if snapshot_payload is not None:
             self._receipt_store.import_receipts(snapshot_payload.get("_receipt_store_export"))
@@ -574,6 +585,19 @@ class StateFirstContextOS:
         self._projection_engine.build_turns(projection.active_window, self._receipt_store)
 
         self._notify_projection_lifecycle_deltas(snapshot, projection)
+
+        _route_counts: dict[str, int] = {}
+        for evt in projection.snapshot.transcript_log:
+            _route_counts[evt.route] = _route_counts.get(evt.route, 0) + 1
+        logger.debug(
+            "[DEBUG][ContextOS] _project_via_pipeline end: tx_events=%d active_window=%d artifacts=%d episodes=%d routes=%s run_card_goal=%r",
+            len(projection.snapshot.transcript_log),
+            len(projection.active_window),
+            len(projection.snapshot.artifact_store),
+            len(projection.snapshot.episode_store),
+            _route_counts,
+            projection.run_card.current_goal if projection.run_card else "<none>",
+        )
 
         return projection
 
@@ -638,9 +662,7 @@ class StateFirstContextOS:
             if item.artifact_id and normalized_route != RoutingClass.ARCHIVE:
                 metadata["archived_artifact_id"] = item.artifact_id
             # Use model_copy() for Pydantic models instead of replace()
-            replaced = item.model_copy(
-                update={"route": normalized_route, "metadata": metadata}
-            )
+            replaced = item.model_copy(update={"route": normalized_route, "metadata": metadata})
             transcript.append(replaced)
         if not found:
             raise StateNotFoundError(
@@ -683,9 +705,7 @@ class StateFirstContextOS:
                 continue
             target_episode = ep
             updated_episodes.append(
-                ep.model_copy(
-                    update={"status": "reopened", "reopened_at": now, "reopen_reason": normalized_reason}
-                )
+                ep.model_copy(update={"status": "reopened", "reopened_at": now, "reopen_reason": normalized_reason})
             )
         if target_episode is None:
             raise StateNotFoundError(
@@ -858,6 +878,11 @@ class StateFirstContextOS:
         existing: tuple[TranscriptEvent, ...],
         messages: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     ) -> tuple[TranscriptEvent, ...]:
+        logger.debug(
+            "[DEBUG][ContextOS] _merge_transcript start: existing=%d incoming_msgs=%d",
+            len(existing),
+            len(messages) if messages else 0,
+        )
         merged: dict[str, TranscriptEvent] = {item.event_id: item for item in existing}
         next_sequence = max((item.sequence for item in existing), default=-1) + 1
 
@@ -1036,7 +1061,17 @@ class StateFirstContextOS:
             if callable(notify):
                 notify(event)
             self._notify_observers("on_event_created", event)
-        return tuple(sorted(merged.values(), key=lambda item: (item.sequence, item.event_id)))
+        result = tuple(sorted(merged.values(), key=lambda item: (item.sequence, item.event_id)))
+        _role_counts: dict[str, int] = {}
+        for item in result:
+            _role_counts[item.role] = _role_counts.get(item.role, 0) + 1
+        logger.debug(
+            "[DEBUG][ContextOS] _merge_transcript end: merged_total=%d roles=%s next_sequence=%d",
+            len(result),
+            _role_counts,
+            next_sequence,
+        )
+        return result
 
     def _canonicalize_and_offload(
         self,
@@ -1290,6 +1325,17 @@ class StateFirstContextOS:
             )
 
         artifacts = tuple(sorted(artifact_by_id.values(), key=lambda item: item.artifact_id))
+        _route_dist: dict[str, int] = {}
+        for evt in updated_events:
+            _route_dist[evt.route] = _route_dist.get(evt.route, 0) + 1
+        logger.debug(
+            "[DEBUG][ContextOS] _canonicalize_and_offload end: events=%d artifacts=%d pending=%s routes=%s hints=%d",
+            len(updated_events),
+            len(artifacts),
+            pending_followup.status if pending_followup else "none",
+            _route_dist,
+            len(state_hints_by_event_id),
+        )
         return tuple(updated_events), artifacts, pending_followup, state_hints_by_event_id
 
     def _patch_working_state(
@@ -1492,6 +1538,15 @@ class StateFirstContextOS:
             temporal_facts=deduped_temporal_facts,
             state_history=state_history,
         )
+        logger.debug(
+            "[DEBUG][ContextOS] _patch_working_state: goal=%r open_loops=%d blocked=%d decisions=%d active_entities=%d artifacts=%d",
+            working_state.task_state.current_goal.value if working_state.task_state.current_goal else "<none>",
+            len(working_state.task_state.open_loops),
+            len(working_state.task_state.blocked_on),
+            len(working_state.decision_log),
+            len(working_state.active_entities),
+            len(working_state.active_artifacts),
+        )
 
         # === Hook: on_context_patched ===
         # Call registered hooks after working state is patched
@@ -1543,7 +1598,7 @@ class StateFirstContextOS:
                 f"({expected_next_input_tokens}) exceeds model_context_window "
                 f"({window}) by {overrun} tokens"
             )
-        return BudgetPlan(
+        plan = BudgetPlan(
             model_context_window=window,
             output_reserve=output_reserve,
             tool_reserve=tool_reserve,
@@ -1559,6 +1614,17 @@ class StateFirstContextOS:
             planned_retrieval_tokens=int(self.policy.planned_retrieval_tokens),
             validation_error=validation_error,
         )
+        logger.debug(
+            "[DEBUG][ContextOS] _plan_budget: window=%d input=%d soft=%d hard=%d emergency=%d expected=%d current=%d",
+            plan.model_context_window,
+            plan.input_budget,
+            plan.soft_limit,
+            plan.hard_limit,
+            plan.emergency_limit,
+            plan.expected_next_input_tokens,
+            plan.current_input_tokens,
+        )
+        return plan
 
     def _collect_active_window(
         self,
@@ -1666,7 +1732,16 @@ class StateFirstContextOS:
             pinned_item = replace(item, content=item_content) if item_content != item.content else item
             pinned_events[item.event_id] = pinned_item
             token_count += estimated
-        return tuple(sorted(pinned_events.values(), key=lambda item: (item.sequence, item.event_id)))
+        result = tuple(sorted(pinned_events.values(), key=lambda item: (item.sequence, item.event_id)))
+        logger.debug(
+            "[DEBUG][ContextOS] _collect_active_window: recent_limit=%d pinned=%d token_count=%d/%d budget=%s",
+            recent_limit,
+            len(result),
+            token_count,
+            token_budget,
+            budget_plan.input_budget if budget_plan else 0,
+        )
+        return result
 
     def _seal_closed_episodes(
         self,
@@ -1944,7 +2019,7 @@ class StateFirstContextOS:
             if not latest_resolved_now:
                 visible_followup = None
 
-        return RunCard(
+        run_card = RunCard(
             current_goal=current_goal,
             hard_constraints=_extract_hard_constraints(working_state),
             open_loops=open_loops,
@@ -1958,6 +2033,15 @@ class StateFirstContextOS:
             pending_followup_status=visible_followup.status if visible_followup else "",
             last_turn_outcome=last_turn_outcome,
         )
+        logger.debug(
+            "[DEBUG][ContextOS] _build_run_card: goal=%r open_loops=%d decisions=%d last_outcome=%r pending=%s",
+            current_goal,
+            len(open_loops),
+            len(recent_decisions),
+            last_turn_outcome,
+            visible_followup.status if visible_followup else "none",
+        )
+        return run_card
 
     def _build_context_slice_plan(
         self,
@@ -2072,7 +2156,7 @@ class StateFirstContextOS:
         elif budget_plan.expected_next_input_tokens >= budget_plan.soft_limit:
             pressure_level = "soft"
 
-        return ContextSlicePlan(
+        plan = ContextSlicePlan(
             plan_id=f"slice_{hashlib.sha256('|'.join(included_refs or {'empty'}).encode('utf-8')).hexdigest()[:10]}",
             budget_tokens=budget_plan.input_budget,
             roots=tuple(roots),
@@ -2080,6 +2164,14 @@ class StateFirstContextOS:
             excluded=tuple(excluded[: max(12, self.policy.max_active_window_messages)]),
             pressure_level=pressure_level,
         )
+        logger.debug(
+            "[DEBUG][ContextOS] _build_context_slice_plan: included=%d excluded=%d roots=%s pressure=%s",
+            len(plan.included),
+            len(plan.excluded),
+            plan.roots,
+            plan.pressure_level,
+        )
+        return plan
 
     def _build_head_anchor(
         self,

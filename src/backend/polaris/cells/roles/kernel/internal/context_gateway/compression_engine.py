@@ -68,16 +68,39 @@ class CompressionEngine:
         - 其他策略：抛出 ContextOverflowError
         """
         max_tokens = self.max_context_tokens
+        logger.debug(
+            "[DEBUG][CompressionEngine] apply_compression start: messages=%d current_tokens=%d max_tokens=%d strategy=%s",
+            len(messages),
+            current_tokens,
+            max_tokens,
+            self.compression_strategy,
+        )
 
         # L2 物理截断：作为绝对安全网（使用自适应阈值）
         if current_tokens > max_tokens:
             adaptive_ratio = self.compute_adaptive_threshold(max_tokens, current_tokens)
+            logger.debug(
+                "[DEBUG][CompressionEngine] token over budget: current=%d max=%d adaptive_ratio=%.2f",
+                current_tokens,
+                max_tokens,
+                adaptive_ratio,
+            )
             messages, new_tokens = self.smart_content_truncation(
                 messages,
                 current_tokens - int(max_tokens * adaptive_ratio),
             )
+            logger.debug(
+                "[DEBUG][CompressionEngine] after smart_content_truncation: messages=%d new_tokens=%d",
+                len(messages),
+                new_tokens,
+            )
             if new_tokens > max_tokens:
                 messages, new_tokens = self.emergency_fallback(messages)
+                logger.debug(
+                    "[DEBUG][CompressionEngine] after emergency_fallback: messages=%d new_tokens=%d",
+                    len(messages),
+                    new_tokens,
+                )
                 if new_tokens > max_tokens:
                     # FIX: 当无法压缩到限制以下时，返回连续性摘要而不是抛出异常
                     # 这确保测试和极端情况下总能返回有效消息
@@ -92,9 +115,19 @@ class CompressionEngine:
                         "content": content,
                         "name": "continuity_summary",
                     }
+                    logger.debug("[DEBUG][CompressionEngine] compression failed, returning minimal continuity summary")
                     return [minimal_msg], self._token_estimator.estimate([minimal_msg])
+            logger.debug(
+                "[DEBUG][CompressionEngine] apply_compression end: messages=%d final_tokens=%d",
+                len(messages),
+                new_tokens,
+            )
             return messages, new_tokens
 
+        logger.debug(
+            "[DEBUG][CompressionEngine] apply_compression: no compression needed, tokens=%d",
+            current_tokens,
+        )
         return messages, current_tokens
 
     def adaptive_sliding_window(

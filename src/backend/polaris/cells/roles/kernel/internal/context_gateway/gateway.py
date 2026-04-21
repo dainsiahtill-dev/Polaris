@@ -199,9 +199,22 @@ class RoleContextGateway:
             elif isinstance(item, (list, tuple)) and len(item) >= 2:
                 proj_input.append({"role": item[0], "content": item[1]})
 
+        logger.debug(
+            "[DEBUG][ContextGateway] _build_context_impl: has_snapshot=%s proj_input=%d max_history=%d focus=%r",
+            has_snapshot,
+            len(proj_input),
+            self.policy.max_history_turns,
+            getattr(request, "focus", "") or "",
+        )
         if has_snapshot:
             _snapshot = cast("dict[str, Any]", context_os_snapshot)
             snapshot = ContextOSSnapshot.from_mapping(_snapshot)
+            logger.debug(
+                "[DEBUG][ContextGateway] snapshot restored: tx_events=%d artifacts=%d episodes=%d",
+                len(snapshot.transcript_log) if snapshot else 0,
+                len(snapshot.artifact_store) if snapshot else 0,
+                len(snapshot.episode_store) if snapshot else 0,
+            )
             _projection = await self._context_os.project(
                 messages=proj_input,
                 existing_snapshot=snapshot,
@@ -297,6 +310,14 @@ class RoleContextGateway:
         # Record latency metric
         record_metric(METRIC_CONTEXT_LATENCY_P95, duration_ms)
 
+        logger.debug(
+            "[DEBUG][ContextGateway] _build_context_impl end: messages=%d token_estimate=%d/%d compression=%s sources=%s",
+            len(messages),
+            token_estimate,
+            self.policy.max_context_tokens,
+            compression_applied,
+            sources,
+        )
         return ContextResult(
             messages=tuple(messages),
             token_estimate=token_estimate,
@@ -421,7 +442,14 @@ class RoleContextGateway:
             supplemental_turns=supplemental_turns,
             user_message=user_message,
         )
-
+        logger.debug(
+            "[DEBUG][ContextGateway] _build_projection_dict: active_window=%d supplemental=%d sources=%s head_len=%d tail_len=%d",
+            len(sorted_events),
+            len(supplemental_turns),
+            sources,
+            len(projection.head_anchor),
+            len(projection.tail_anchor),
+        )
         return proj_dict, receipt_store, sources
 
     def _messages_from_projection(self, projection: Any) -> list[dict[str, Any]]:
