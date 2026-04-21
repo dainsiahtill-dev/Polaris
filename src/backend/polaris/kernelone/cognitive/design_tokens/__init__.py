@@ -5,8 +5,8 @@
 """
 
 from polaris.kernelone.cognitive.design_tokens.motion import (
-    MotionPresetLibrary,
     MotionPresetKey,
+    MotionPresetLibrary,
     MotionToken,
 )
 from polaris.kernelone.cognitive.design_tokens.palette import (

@@ -14,7 +14,6 @@ from polaris.kernelone.cognitive.validators.dispatcher import (
     ValidationViolation,
 )
 
-
 # ---------------------------------------------------------------------------
 # 统一协议
 # ---------------------------------------------------------------------------
@@ -101,17 +100,15 @@ def _hex_to_hsl(hex_color: str) -> tuple[int, int, int] | None:
     diff = max_c - min_c
 
     # Lightness
-    l = (max_c + min_c) / 2
+    lum = (max_c + min_c) / 2
 
     # Saturation
-    if diff == 0:
-        s = 0
-    else:
-        s = diff / (1 - abs(2 * l - 1))
+    s = 0 if diff == 0 else diff / (1 - abs(2 * lum - 1))
 
     # Hue
+    h: float
     if diff == 0:
-        h = 0
+        h = 0.0
     elif max_c == r:
         h = (60 * ((g - b) / diff) + 360) % 360
     elif max_c == g:
@@ -119,7 +116,7 @@ def _hex_to_hsl(hex_color: str) -> tuple[int, int, int] | None:
     else:
         h = (60 * ((r - g) / diff) + 240) % 360
 
-    return (int(round(h)), int(round(s * 100)), int(round(l * 100)))
+    return (round(h), round(s * 100), round(lum * 100))
 
 
 def _all_hex_colors(content: str) -> list[tuple[str, str | None]]:

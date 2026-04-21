@@ -403,9 +403,14 @@ class CognitiveValidatorDispatcher:
         domain: GenerationDomain,
         config: ValidationConfig,
     ) -> list[ValidationViolation]:
-        """Anti-Slop 验证占位 — P0-B 将注入真实实现。"""
-        # TODO(P0-B): 注入 OutputAntiSlopValidator
-        return []
+        """Anti-Slop 验证 — 字体、颜色、内容、布局、动画五维检测。"""
+        from polaris.kernelone.cognitive.validators.output_antislop import OutputAntiSlopValidator
+
+        validator = self._validators.get("antislop")
+        if validator is None:
+            validator = OutputAntiSlopValidator()
+            self._validators["antislop"] = validator
+        return validator.validate(content, {"domain": domain.value})
 
     def _run_completeness(
         self,
@@ -413,9 +418,14 @@ class CognitiveValidatorDispatcher:
         domain: GenerationDomain,
         config: ValidationConfig,
     ) -> list[ValidationViolation]:
-        """完整性验证占位 — P0-C 将注入真实实现。"""
-        # TODO(P0-C): 注入 OutputCompletenessEnforcer
-        return []
+        """完整性验证 — 检测 AI 截断、骨架输出与占位符。"""
+        from polaris.kernelone.cognitive.validators.completeness_enforcer import OutputCompletenessEnforcer
+
+        validator = self._validators.get("completeness")
+        if validator is None:
+            validator = OutputCompletenessEnforcer()
+            self._validators["completeness"] = validator
+        return validator.validate(content, {"domain": domain.value})
 
     # -----------------------------------------------------------------------
     # 统计与观测

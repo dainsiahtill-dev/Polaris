@@ -12,6 +12,27 @@ from polaris.kernelone.cognitive.design_quality import (
     MotionPresetKey,
     SpacingTier,
 )
+from polaris.kernelone.cognitive.design_system import (
+    AntiPatternsSpec,
+    ColorRole,
+    ColorToken,
+    ComponentSpec,
+    DesignSystemExporter,
+    DesignSystemSpec,
+    LayoutSpec,
+    MotionSpec,
+    TypographySpec,
+)
+from polaris.kernelone.cognitive.design_tokens import (
+    ColorPaletteGenerator,
+    MotionPresetLibrary,
+    MotionToken,
+    Palette,
+    PaletteTone,
+    TypographyScale,
+    TypographyToken,
+    TypographyTokenSystem,
+)
 from polaris.kernelone.cognitive.governance import CognitiveGovernance, VCResult
 from polaris.kernelone.cognitive.governance_gate import CognitiveGovernanceGate
 from polaris.kernelone.cognitive.middleware import (
@@ -35,6 +56,7 @@ from polaris.kernelone.cognitive.validators import (
 
 __all__ = [
     "ActingOutput",
+    "AntiPatternsSpec",
     "ClarityLevel",
     "CognitiveContext",
     "CognitiveGovernance",
@@ -45,16 +67,32 @@ __all__ = [
     "CognitiveResponse",
     "CognitiveSessionManager",
     "CognitiveValidatorDispatcher",
+    "ColorPaletteGenerator",
+    "ColorRole",
+    "ColorToken",
+    "ComponentSpec",
     "ConversationTurn",
     "DesignQualityDials",
+    "DesignSystemExporter",
+    "DesignSystemSpec",
     "ExecutionPath",
     "GenerationDomain",
     "LayoutMode",
+    "LayoutSpec",
     "MotionPresetKey",
+    "MotionPresetLibrary",
+    "MotionSpec",
+    "MotionToken",
+    "Palette",
+    "PaletteTone",
     "PersonalityIntegrator",
     "RiskLevel",
     "SpacingTier",
     "ThinkingOutput",
+    "TypographyScale",
+    "TypographySpec",
+    "TypographyToken",
+    "TypographyTokenSystem",
     "VCResult",
     "ValidationConfig",
     "ValidationSeverity",

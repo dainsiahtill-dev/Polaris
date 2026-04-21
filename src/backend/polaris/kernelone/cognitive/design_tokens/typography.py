@@ -17,7 +17,6 @@ from typing import Any
 
 from polaris.kernelone.cognitive.design_quality import DesignQualityDials, SpacingTier
 
-
 # ---------------------------------------------------------------------------
 # 令牌类型
 # ---------------------------------------------------------------------------
