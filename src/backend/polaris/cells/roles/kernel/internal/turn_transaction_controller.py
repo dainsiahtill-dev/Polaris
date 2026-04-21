@@ -1258,24 +1258,38 @@ class TurnTransactionController:
         messages.append({"role": "system", "content": single_batch_guard, "metadata": {"plane": "control"}})
 
 
-        # 修复：MATERIALIZE_CHANGES 模式下不再追加 TASK CONTRACT（HARD GATE 反读规则），
-        # 因为它与 SYSTEM CONSTRAINT 的多回合先读后写规则冲突，导致 LLM 陷入精神分裂：
-        # 规则 A 允许先读，规则 B 恐吓"只读即拒绝"。只在非 MATERIALIZE 模式追加。
+        # FIX-20250421: 在 MATERIALIZE_CHANGES 模式下也注入 Task Contract 的正例模板和恢复协议。
+        # 根因：CLI 模式下 MATERIALIZE_CHANGES 跳过 Task Contract，导致模型缺乏正例指导。
+        # 修复：只注入 POSITIVE 模板（序列模板 + 恢复协议），不注入 NEGATIVE 的 HARD GATE 规则，
+        # 避免与多回合先读后写规则冲突。
         is_materialize = ledger is not None and getattr(ledger.delivery_contract, "mode", None) in {
             DeliveryMode.MATERIALIZE_CHANGES,
             DeliveryMode.PROPOSE_PATCH,
         }
-        if not is_materialize:
-            task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(
-                context, tool_definitions
-            )
-            if task_contract_hint:
+        task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(
+            context, tool_definitions
+        )
+        if task_contract_hint:
+            if is_materialize:
+                # MATERIALIZE 模式：只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
+                positive_lines = []
+                for line in task_contract_hint.split("\n"):
+                    # 跳过 NEGATIVE 规则行（包含 "INVALID", "HARD GATE", "rejected" 等）
+                    if any(marker in line for marker in ("INVALID", "HARD GATE", "rejected", "Do not stop", "read-only")):
+                        continue
+                    positive_lines.append(line)
+                if positive_lines:
+                    messages.append({
+                        "role": "system",
+                        "content": "\n".join(positive_lines),
+                        "metadata": {"plane": "control", "kind": "task_contract_positive"},
+                    })
+            else:
                 messages.append({"role": "system", "content": task_contract_hint})
 
         # 【修复根因 C】：implementing 阶段追加 HARD GATE 强制约束。
-        # 根因：MATERIALIZE_CHANGES 模式下 TASK CONTRACT 被跳过（避免与多回合规则冲突），
-        # 导致 implementing 阶段缺乏强制写工具的"牙齿"。
-        # 通过检测 continuation prompt 中的 task_progress，在 implementing 阶段注入不可逃避的约束。
+        # FIX-20250421: 允许 read_file/repo_read_head（针对目标文件的定向读取），
+        # 只禁止 broad exploration（glob/repo_tree/repo_rg），避免模型因缺乏上下文而盲写。
         _is_implementing_turn = any(
             "当前阶段: implementing" in str(m.get("content", ""))
             for m in context
@@ -1287,10 +1301,13 @@ class TurnTransactionController:
                 "You MUST call at least one write tool (edit_file, write_file, create_file, etc.) in this turn. "
                 "Text-only responses, plan outlines, or 'I will now...' are INVALID and will be rejected. "
                 "DO NOT ask for confirmation. DO NOT output code blocks in text. Use tools immediately.\n"
-                "CRITICAL: Calling exploration tools (glob, repo_rg, repo_tree, read_file) in this phase is FORBIDDEN. "
+                "CRITICAL: Broad exploration tools (glob, repo_rg, repo_tree) are FORBIDDEN in this phase. "
                 "You have already gathered enough context. Proceed directly to write.\n"
-                "强制约束（修改阶段）：你当前处于执行修改阶段，本回合必须调用至少一个写工具。"
-                "严禁调用探索工具（glob/repo_rg/repo_tree/read_file 等）——已有足够上下文，直接写入！"
+                "ALLOWED: You may call read_file or repo_read_head on SPECIFIC target files "
+                "if you need to verify exact content before editing. But prioritize write tools.\n"
+                "强制约束（修改阶段）：本回合必须调用至少一个写工具。"
+                "严禁调用 broad 探索工具（glob/repo_rg/repo_tree）——直接写入。"
+                "允许：如需确认目标文件内容，可调用 read_file/repo_read_head 读取特定文件，但优先写工具。"
             )
             messages.append(
                 {

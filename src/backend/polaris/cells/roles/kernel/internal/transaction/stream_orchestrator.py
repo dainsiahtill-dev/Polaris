@@ -96,25 +96,48 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
     return reads
 
 
-def _build_continue_visible_content(read_tools: list[str]) -> str:
+def _build_continue_visible_content(read_tools: list[str], current_progress: str = "implementing") -> str:
     """构建 continue_multi_turn 的 visible_content，内嵌 SESSION_PATCH。
 
     利用 ADR-0080 机制：Orchestrator 会自动提取 <SESSION_PATCH> 块并注入
     structured_findings，使下一回合的 _build_continuation_prompt 能包含
     recent_reads 信息。
+
+    Args:
+        read_tools: 已调用的读工具列表
+        current_progress: 当前 task_progress（implementing/verifying/done等）
     """
+    # 根据当前 progress 动态生成 instruction，不再强制重置为 implementing
+    if current_progress == "verifying":
+        instruction = (
+            "验证阶段。请运行测试或手动验证修复效果，确保无回归。严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
+        )
+        visible_prefix = "验证阶段继续"
+    elif current_progress == "implementing":
+        instruction = (
+            "读阶段已完成，现在请调用写工具（edit_file / write_file 等）执行修改。"
+            "严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
+        )
+        visible_prefix = "写阶段继续"
+    elif current_progress == "done":
+        instruction = "任务已完成。请汇总结果并以 END_SESSION 结束。"
+        visible_prefix = "完成阶段"
+    else:
+        instruction = "继续执行任务。"
+        visible_prefix = f"继续（{current_progress}）"
+
     patch: dict[str, Any] = {
-        "task_progress": "implementing",
-        "instruction": "读阶段已完成，现在请调用写工具（edit_file / write_file 等）执行修改。严禁调用探索工具（glob/repo_rg/repo_tree 等）。",
+        # FIX-20250421: 不再强制覆盖 task_progress，保持当前阶段
+        # 只在有读工具时记录 recent_reads
     }
     if read_tools:
         patch["recent_reads"] = read_tools
     import json
 
     return (
-        "[系统提示] 多回合工作流继续：读阶段已完成，进入写阶段。\n"
-        "严禁调用探索工具（glob/repo_rg/repo_tree/read_file/repo_read_head 等）。\n"
-        "严禁输出文字计划或代码块。必须调用 write_file 工具！\n"
+        f"[系统提示] 多回合工作流继续：{visible_prefix}。\n"
+        f"{instruction}\n"
+        "严禁输出文字计划或代码块。必须调用工具！\n"
         f"<SESSION_PATCH>\n{json.dumps(patch, ensure_ascii=False)}\n</SESSION_PATCH>"
     )
 

@@ -211,6 +211,7 @@ class ToolBatchExecutor:
             if receipt_store is not None and hasattr(receipt_store, "get_by_batch_idempotency_key"):
                 # Defensive: avoid creating un-awaited coroutines from mocks
                 import inspect
+
                 getter = receipt_store.get_by_batch_idempotency_key
                 if inspect.iscoroutinefunction(getter):
                     return None
@@ -305,9 +306,7 @@ class ToolBatchExecutor:
             if has_read and has_write:
                 overlap = set(read_tools_invoked) & set(write_tools_invoked)
                 if overlap:
-                    logger.warning(
-                        "Tool %s is marked as both read and write, bypassing strict barrier", overlap
-                    )
+                    logger.warning("Tool %s is marked as both read and write, bypassing strict barrier", overlap)
                 else:
                     raise RuntimeError(
                         "single_batch_contract_violation: Cannot mix Read tools "
@@ -321,13 +320,70 @@ class ToolBatchExecutor:
                 turn_id,
             )
 
+        # FIX-20250421: Implementing Phase Broad Exploration Block.
+        # Detect implementing phase from context and block broad exploration tools
+        # (glob/repo_tree/repo_rg/grep/search_code) when no write tools are present.
+        # This prevents the infinite explore loop seen in CLI mode.
+        _is_implementing_phase = any(
+            "当前阶段: implementing" in str(m.get("content", ""))
+            for m in context
+            if str(m.get("role", "")).strip().lower() == "user"
+        )
+        _is_verifying_phase = any(
+            "当前阶段: verifying" in str(m.get("content", ""))
+            for m in context
+            if str(m.get("role", "")).strip().lower() == "user"
+        )
+        _broad_exploration_tools = {"glob", "repo_tree", "repo_rg", "grep", "search_code", "ripgrep", "find"}
+        _verification_tools = {"execute_command", "pytest", "npm_test", "run_tests", "python", "node"}
+        _has_broad_exploration = any(
+            extract_invocation_tool_name(inv) in _broad_exploration_tools for inv in invocations
+        )
+        _has_write = tool_batch_has_write_invocation(invocations)
+
+        if _is_implementing_phase and _has_broad_exploration and not _has_write:
+            # FIX-20250421: Hard block — remove blocked tools instead of marking them
+            filtered_invocations = [
+                inv for inv in invocations if extract_invocation_tool_name(inv) not in _broad_exploration_tools
+            ]
+            if filtered_invocations:
+                invocations = filtered_invocations
+            else:
+                # All tools were broad exploration — raise to force write tool
+                raise RuntimeError(
+                    "implementing-phase-block: in implementing phase, broad exploration tools "
+                    "(glob/repo_tree/repo_rg) are not allowed. Use write_file/edit_file to materialize changes."
+                )
+
+        # FIX-20250421: Verifying Phase Hard Constraint
+        # In verifying phase, if no verification tools (execute_command, pytest, etc.) are invoked,
+        # raise an error to force session termination. This prevents infinite loops where
+        # the LLM keeps calling read-only tools (glob/repo_tree) instead of running tests.
+        if _is_verifying_phase:
+            tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
+            has_verification = any(t in _verification_tools for t in tool_names)
+            has_write = tool_batch_has_write_invocation(invocations)
+            if not has_verification and not has_write:
+                # No verification tools AND no write tools — verify phase MUST end session
+                raise RuntimeError(
+                    "verifying-phase-requires-verification: In verifying phase, "
+                    "you must call execute_command to run tests (pytest, npm test, etc.) "
+                    "or verify the fix manually. Glob/repo_tree are not allowed. "
+                    "No verification detected — ending session."
+                )
+
         latest_user_request = extract_latest_user_message(context)
         requires_mutation = enforce_mutation_write_guard and self.requires_mutation_intent(latest_user_request)
         guard_mode = str(getattr(self.config, "mutation_guard_mode", "warn"))
+        # FIX-20250421: Upgrade to strict in implementing phase if broad exploration was attempted
+        if _is_implementing_phase and _has_broad_exploration and not _has_write:
+            guard_mode = "strict"
         if requires_mutation and not tool_batch_has_write_invocation(invocations):
             if guard_mode == "strict":
                 raise RuntimeError(
-                    "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch"
+                    "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch. "
+                    "In implementing phase, you must emit at least one write tool (edit_file, write_file, etc.). "
+                    "Use read_file only for specific target file verification."
                 )
             elif guard_mode == "warn":
                 logger.warning(
