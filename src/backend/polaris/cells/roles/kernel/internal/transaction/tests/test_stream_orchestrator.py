@@ -2,11 +2,17 @@
 
 import json
 
+import pytest
+
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
+from polaris.cells.roles.kernel.internal.transaction.read_strategy import ReadStrategy
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import (
+    ReadStrategyAdapter,
     _build_continue_visible_content,
+    _detect_truncation_heuristics,
     _extract_read_tools_from_receipt,
     _resolve_continuation_delivery_contract,
+    _should_use_slice_mode,
 )
 
 
@@ -123,3 +129,102 @@ class TestResolveContinuationDeliveryContract:
             parsed_progress="exploring",
         )
         assert contract.mode == DeliveryMode.MATERIALIZE_CHANGES
+
+
+class TestShouldUseSliceMode:
+    """测试 _should_use_slice_mode 函数。"""
+
+    def test_small_file_returns_false(self):
+        result = _should_use_slice_mode("test.py", 1024)
+        assert result is False
+
+    def test_large_file_returns_true(self):
+        result = _should_use_slice_mode("test.py", 200 * 1024)
+        assert result is True
+
+    def test_exact_threshold_boundary(self):
+        # 正好在阈值边界（100KB）
+        result = _should_use_slice_mode("test.py", 100 * 1024)
+        assert result is False
+
+    def test_one_byte_over_threshold(self):
+        result = _should_use_slice_mode("test.py", 100 * 1024 + 1)
+        assert result is True
+
+
+class TestDetectTruncationHeuristics:
+    """测试 _detect_truncation_heuristics 函数。"""
+
+    def test_no_truncation(self):
+        result = _detect_truncation_heuristics("complete content")
+        assert result is False
+
+    def test_truncated_by_dots(self):
+        result = _detect_truncation_heuristics("some content...")
+        assert result is True
+
+    def test_truncated_by_marker(self):
+        result = _detect_truncation_heuristics("content [truncated]")
+        assert result is True
+
+    def test_truncated_by_metadata(self):
+        result = _detect_truncation_heuristics(
+            "content", {"truncated": True}
+        )
+        assert result is True
+
+    def test_not_truncated_by_metadata(self):
+        result = _detect_truncation_heuristics(
+            "content", {"truncated": False}
+        )
+        assert result is False
+
+
+class TestReadStrategyAdapter:
+    """测试 ReadStrategyAdapter 类。"""
+
+    def test_init(self):
+        adapter = ReadStrategyAdapter()
+        assert adapter.threshold_bytes == 100 * 1024
+
+    def test_analyze_non_read_file_tool(self):
+        adapter = ReadStrategyAdapter()
+        result = adapter.analyze_tool_result("write_file", {"ok": True})
+        assert result is None
+
+    def test_analyze_normal_read_file(self):
+        adapter = ReadStrategyAdapter()
+        result = adapter.analyze_tool_result(
+            "read_file",
+            {"ok": True, "file": "test.py", "content": "small content", "truncated": False}
+        )
+        assert result is not None
+        assert result.use_slice_mode is False
+
+    def test_analyze_truncated_read_file(self):
+        adapter = ReadStrategyAdapter()
+        result = adapter.analyze_tool_result(
+            "read_file",
+            {"ok": True, "file": "test.py", "content": "content...", "truncated": True}
+        )
+        assert result is not None
+        assert result.use_slice_mode is True
+
+    def test_analyze_large_read_file(self):
+        adapter = ReadStrategyAdapter()
+        large_content = "x" * (200 * 1024)
+        result = adapter.analyze_tool_result(
+            "read_file",
+            {"ok": True, "file": "test.py", "content": large_content}
+        )
+        assert result is not None
+        assert result.use_slice_mode is True
+
+    def test_build_slice_replacements(self):
+        adapter = ReadStrategyAdapter()
+        replacements = adapter.build_slice_replacements("test.py", total_lines=500, slice_size=200)
+        assert len(replacements) == 3
+        assert replacements[0]["tool_name"] == "repo_read_slice"
+        assert replacements[0]["arguments"]["file"] == "test.py"
+        assert replacements[0]["arguments"]["start"] == 1
+        assert replacements[0]["arguments"]["end"] == 200

@@ -28,6 +28,11 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import De
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase
+from polaris.cells.roles.kernel.internal.transaction.read_strategy import (
+    ReadStrategy,
+    determine_optimal_strategy,
+    is_content_truncated,
+)
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_continuation_prompt_metadata,
@@ -50,6 +55,28 @@ from polaris.cells.roles.kernel.public.turn_events import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Delivery Resolver 关键词配置
+# ---------------------------------------------------------------------------
+
+# 中文关键词列表：当 prompt 中包含这些词，且已读取目标文件时，
+# 自动推断为 MATERIALIZE_CHANGES 交付模式。
+# 支持变体：完善/完善化/修改/改动/优化/改进/补充
+_MATERIALIZE_KEYWORDS: list[str] = [
+    "完善",
+    "完善化",
+    "修改",
+    "改动",
+    "优化",
+    "改进",
+    "补充",
+]
+
+# 预编译正则表达式，支持关键词变体匹配
+_MATERIALIZE_KEYWORDS_RE: re.Pattern[str] = re.compile(
+    "|".join(re.escape(kw) for kw in _MATERIALIZE_KEYWORDS)
+)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +135,119 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
             seen.add(name)
             reads.append(name)
     return reads
+
+
+# ---------------------------------------------------------------------------
+# Read Strategy 自动切换
+# ---------------------------------------------------------------------------
+
+
+def _should_use_slice_mode(file_path: str, content_length: int) -> bool:
+    """判断是否应该使用分段读取模式。
+
+    当文件大小超过阈值（默认100KB）时，建议使用 repo_read_slice 分段读取。
+
+    Args:
+        file_path: 文件路径
+        content_length: 内容长度（字节）
+
+    Returns:
+        True 如果应该使用分段读取模式
+    """
+    from polaris.cells.roles.kernel.internal.transaction.read_strategy import _should_use_slice_mode as _check_slice
+
+    should_slice, _ = _check_slice(file_path, content_length=content_length)
+    return should_slice
+
+
+def _detect_truncation_heuristics(content: str | None, result_metadata: dict[str, Any] | None = None) -> bool:
+    """检测内容是否被截断的启发式函数。
+
+    检查返回内容是否以 "..." 或 "[truncated]" 结尾，
+    或检查 result_metadata 中的 truncated 标记。
+
+    Args:
+        content: 读取到的内容字符串
+        result_metadata: 工具返回的元数据字典，可选
+
+    Returns:
+        True 如果内容被截断
+    """
+    is_truncated, _ = is_content_truncated(content, result_metadata)
+    return is_truncated
+
+
+class ReadStrategyAdapter:
+    """Read Strategy 适配器 —— 在工具结果返回后自动决策读取策略。"""
+
+    def __init__(self, threshold_bytes: int = 100 * 1024) -> None:
+        self.threshold_bytes = threshold_bytes
+
+    def analyze_tool_result(self, tool_name: str, result: dict[str, Any]) -> ReadStrategy | None:
+        """分析工具执行结果，决定是否需要切换读取策略。
+
+        Args:
+            tool_name: 工具名称
+            result: 工具执行结果
+
+        Returns:
+            ReadStrategy 如果需要切换策略，None 如果保持当前策略
+        """
+        # 只处理 read_file 工具的截断情况
+        if tool_name != "read_file":
+            return None
+
+        content = result.get("content")
+        file_path = result.get("file", "")
+        content_length = len(content.encode("utf-8")) if content else 0
+
+        # 使用 read_strategy 模块的决策逻辑
+        strategy = determine_optimal_strategy(
+            file_path=file_path,
+            content=content,
+            result_metadata=result,
+            file_size_bytes=content_length,
+        )
+
+        if strategy.use_slice_mode:
+            logger.info(
+                "read_strategy_switch: file=%s reason=%s",
+                file_path,
+                strategy.reason,
+            )
+
+        return strategy
+
+    def build_slice_replacements(
+        self,
+        file_path: str,
+        total_lines: int,
+        slice_size: int = 200,
+    ) -> list[dict[str, Any]]:
+        """构��分段读取的替换工具调用列表。
+
+        Args:
+            file_path: 文件路径
+            total_lines: 文件总行数
+            slice_size: 每段读取的行数
+
+        Returns:
+            工具调用参数列表
+        """
+        from polaris.cells.roles.kernel.internal.transaction.read_strategy import calculate_slice_ranges
+
+        ranges = calculate_slice_ranges(total_lines, slice_size)
+        return [
+            {
+                "tool_name": "repo_read_slice",
+                "arguments": {
+                    "file": file_path,
+                    "start": start,
+                    "end": end,
+                },
+            }
+            for start, end in ranges
+        ]
 
 
 def _build_continue_visible_content(
@@ -218,12 +358,27 @@ def _resolve_continuation_delivery_contract(
     raw_user: str,
     original_delivery_mode: str | None,
     parsed_progress: str,
+    recent_reads: list[str] | None = None,
 ) -> DeliveryContract:
     """Resolve continuation turn delivery contract from prompt metadata first.
 
     The continuation prompt is the canonical contract surface for follow-up turns.
     When it carries explicit delivery_mode metadata, use it directly instead of
     relying on a fresh ledger carrying prior frozen state.
+
+    Args:
+        raw_user: 原始用户 prompt 文本
+        original_delivery_mode: 原始的交付模式（用于回退）
+        parsed_progress: 解析出的当前进度阶段
+        recent_reads: 已读取的文件列表（用于关键词检测），可选
+
+    Returns:
+        DeliveryContract: 解析出的交付契约
+
+    新增逻辑（关键词检测）：
+        当满足以下条件时，自动推断为 MATERIALIZE_CHANGES 模式：
+        1. prompt 中包含中文关键词（完善/修改/优化/补充等变体）
+        2. recent_reads 非空（表示已读取目标文件）
     """
     continuation_metadata = extract_continuation_prompt_metadata(raw_user)
     explicit_delivery_mode = str(continuation_metadata.get("delivery_mode") or "").strip().lower()
@@ -285,6 +440,17 @@ def _resolve_continuation_delivery_contract(
             parsed_progress,
         )
         return _build_delivery_contract_from_mode(DeliveryMode.PROPOSE_PATCH)
+
+    # FIX-20250421-v3: 关键词检测分支
+    # 当 prompt 中包含中文关键词（完善/修改/优化/补充等），且已读取目标文件时，
+    # 自动推断为 MATERIALIZE_CHANGES 模式
+    if recent_reads and _MATERIALIZE_KEYWORDS_RE.search(raw_user):
+        logger.debug(
+            "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (keyword_detected: recent_reads=%d)",
+            parsed_progress,
+            len(recent_reads),
+        )
+        return _build_delivery_contract_from_mode(DeliveryMode.MATERIALIZE_CHANGES)
 
     if parsed_progress == "implementing":
         logger.debug(
@@ -611,10 +777,14 @@ class StreamOrchestrator:
         if _is_continuation_prompt:
             _progress_match = re.search(r"当前阶段:\s*(\w+)", _raw_user)
             _parsed_progress = _progress_match.group(1) if _progress_match else "exploring"
+            # 提取 recent_reads 用于关键词检测
+            _continuation_metadata = extract_continuation_prompt_metadata(_raw_user)
+            _recent_reads = _continuation_metadata.get("recent_reads")
             delivery_contract = _resolve_continuation_delivery_contract(
                 raw_user=_raw_user,
                 original_delivery_mode=ledger._original_delivery_mode,
                 parsed_progress=_parsed_progress,
+                recent_reads=_recent_reads if isinstance(_recent_reads, list) else None,
             )
         else:
             # SLM 优先、regex 兜底
