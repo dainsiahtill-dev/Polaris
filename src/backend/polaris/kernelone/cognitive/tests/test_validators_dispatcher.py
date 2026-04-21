@@ -236,7 +236,21 @@ class TestValidateBatch:
             ("README.md", "# Hello"),
             (
                 None,
-                "import React from 'react';\nimport { useState } from 'react';\nexport default function App() { return <div className='app'>Hello</div>; }",
+                "import React from 'react';\n"
+                "import { useState } from 'react';\n"
+                "import { useEffect } from 'react';\n"
+                "export default function App() {\n"
+                "  const [count, setCount] = useState(0);\n"
+                "  useEffect(() => {\n"
+                "    document.title = `Count: ${count}`;\n"
+                "  }, [count]);\n"
+                "  return (\n"
+                "    <div className='app'>\n"
+                "      <button onClick={() => setCount(count + 1)}>Increment</button>\n"
+                "      <p>Count: {count}</p>\n"
+                "    </div>\n"
+                "  );\n"
+                "}",
             ),  # inline, no path
         ]
         results = dispatcher.validate_batch(items)

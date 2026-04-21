@@ -845,6 +845,38 @@ cells:
       gaps:
         - Factory archive API compatibility routes are still being standardized.
 
+  - id: polaris.compatibility
+    title: Compatibility Layer
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: polaris
+    purpose: >
+      TRANSITIONAL - Compatibility cell for managing deprecated
+      interfaces and transitional adapters. This cell provides
+      backward compatibility shims while migration to new cell
+      boundaries is completed.
+    current_modules: []
+    owned_paths:
+      - polaris/cells/compatibility/**
+    public_contracts:
+      modules:
+        - polaris.cells.compatibility
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on: []
+    subgraphs: []
+    state_owners: []
+    effects_allowed: []
+    verification:
+      tests: []
+      gaps:
+        - "TRANSITIONAL: Cell pending completion or removal"
+        - No public contracts defined yet
+
   - id: context.engine
     title: Context Engine
     kind: capability
@@ -871,17 +903,6 @@ cells:
     owned_paths:
       - polaris/cells/context/engine/internal/search_gateway.py
       - polaris/cells/context/engine/internal/precision_mode.py
-      - polaris/kernelone/context/context_os/models.py
-      - polaris/kernelone/context/context_os/models_v2.py
-      - polaris/kernelone/context/context_os/content_store.py
-      - polaris/kernelone/context/context_os/receipt_store.py
-      - polaris/kernelone/context/context_os/runtime.py
-      - polaris/kernelone/context/context_os/storage.py
-      - polaris/kernelone/context/context_os/snapshot.py
-      - polaris/kernelone/context/context_os/budget_optimizer.py
-      - polaris/kernelone/context/context_os/classifier.py
-      - polaris/kernelone/context/context_os/policies.py
-      - polaris/kernelone/context/context_os/ports.py
     public_contracts:
       modules:
         - polaris.cells.context.engine.public.contracts
@@ -897,6 +918,7 @@ cells:
         - ContextEngineErrorV1
     depends_on:
       - context.catalog
+      - kernelone.core
       - policy.workspace_guard
       - roles.session
     subgraphs: []
@@ -909,6 +931,53 @@ cells:
         - tests/architecture/test_architecture_invariants.py
       gaps:
         - Context assembly logic is still distributed across role adapters.
+
+  - id: cognitive.knowledge_distiller
+    title: Cognitive Knowledge Distiller
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: cognitive
+    purpose: >
+      Distill patterns from completed sessions and retrieve relevant
+      distilled knowledge for future task execution. Provides session
+      post-processing and knowledge retrieval capabilities.
+    current_modules:
+      - polaris.cells.cognitive.knowledge_distiller.internal.distillation
+      - polaris.cells.cognitive.knowledge_distiller.internal.knowledge_search
+      - polaris.cells.cognitive.knowledge_distiller.internal.pattern_analysis
+      - polaris.cells.cognitive.knowledge_distiller.public.service
+    owned_paths:
+      - polaris/cells/cognitive/knowledge_distiller/**
+    public_contracts:
+      modules:
+        - polaris.cells.cognitive.knowledge_distiller.public.contracts
+      commands:
+        - DistillSessionCommandV1
+      queries:
+        - RetrieveKnowledgeQueryV1
+      events:
+        - KnowledgeDistilledEventV1
+      results:
+        - DistillationResultV1
+        - KnowledgeRetrievalResultV1
+      errors:
+        - KnowledgeDistillerErrorV1
+    depends_on:
+      - roles.session
+      - context.catalog
+    subgraphs: []
+    state_owners:
+      - workspace/.polaris/knowledge_distiller/*
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.write:workspace/.polaris/knowledge_distiller/*
+    verification:
+      tests:
+        - polaris/cells/cognitive/knowledge_distiller/internal/tests/**
+      gaps:
+        - Cell newly created with basic structure
+        - Integration with roles.session pending
 
   - id: llm.control_plane
     title: LLM Control Plane
@@ -1902,7 +1971,6 @@ cells:
       - polaris/application/cognitive_runtime/**
       - polaris/infrastructure/cognitive_runtime/**
       - polaris/cells/factory/cognitive_runtime/**
-      - polaris/bootstrap/cognitive_runtime/**
       - polaris/delivery/http/routers/cognitive_runtime.py
     public_contracts:
       modules:
@@ -2323,6 +2391,43 @@ cells:
           instead of director.execution.internal, (c) update director.execution/internal
           star re-exports once Facade is cut over.'
 
+  - id: director.task_consumer
+    title: Director Task Consumer
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: director
+    purpose: >
+      DEPRECATED - Use DirectorPool instead.
+      Poll task market for PENDING_EXEC tasks and coordinate execution
+      with Safe Parallel support. Provides ScopeConflictDetector for
+      detecting scope path conflicts with other in-progress tasks.
+    current_modules:
+      - polaris.cells.director.task_consumer.internal.director_consumer
+    owned_paths:
+      - polaris/cells/director/task_consumer/**
+    public_contracts:
+      modules:
+        - polaris.cells.director.task_consumer
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - runtime.task_market
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:runtime/task_market/*
+      - fs.read:workspace/**
+    verification:
+      tests:
+        - polaris/cells/director/task_consumer/internal/tests/**
+      gaps:
+        - "DEPRECATED: Cell marked for removal"
+        - DirectorPool integration pending
+
   - id: director.tasking
     title: Director Tasking
     kind: workflow
@@ -2378,7 +2483,6 @@ cells:
       and the KernelOne tool chain execution capability.
     owned_paths:
       - polaris/cells/director/runtime/**
-      - polaris/kernelone/tools/**
     public_contracts:
       modules:
         - polaris.cells.director.runtime.public.contracts
@@ -2388,7 +2492,6 @@ cells:
       results: []
       errors: []
     depends_on:
-      - kernelone.tools
       - audit.evidence
       - policy.workspace_guard
       - workspace.integrity
@@ -2799,12 +2902,11 @@ cells:
     stateful: true
     owner: orchestration
     purpose: >
-      Owns the KernelOne WorkflowEngine — a self-hosted DAG/sequential workflow executor
-      with retry, fail-fast, pause/resume, and signal support.  Provides the HandlerRegistry
-      protocol for Cell-internal registry injection.  This cell owns the engine runtime
-      and is the only cell that may modify kernelone/workflow/engine.py.
+      Provides the HandlerRegistry protocol for Cell-internal registry injection.
+      Depends on kernelone.core for the actual WorkflowEngine implementation
+      through explicit contracts.
     owned_paths:
-      - polaris/kernelone/workflow/engine.py
+      - polaris/cells/orchestration/workflow_engine/**
     public_contracts:
       modules:
         - polaris.cells.orchestration.workflow_engine.public.contracts
@@ -2814,9 +2916,7 @@ cells:
       results: []
       errors: []
     depends_on:
-      - kernelone.process
-      - kernelone.trace
-      - infrastructure.db
+      - kernelone.core
     subgraphs:
       - execution_governance_pipeline
     state_owners: []
@@ -2973,6 +3073,93 @@ cells:
         - tests/test_storage_layout_v4.py
       gaps:
         - Some runtime path lookups still bypass storage.layout contracts.
+
+  - id: values.alignment
+    title: Values Alignment
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: values
+    purpose: >
+      Implement 4-dimensional value evaluation matrix for assessing
+      user long-term interest, system integrity, others impact, and
+      future amplification of actions.
+    current_modules:
+      - polaris.cells.values.alignment_service
+    owned_paths:
+      - polaris/cells/values/**
+    public_contracts:
+      modules:
+        - polaris.cells.values
+      commands: []
+      queries:
+        - EvaluateValueAlignmentQueryV1
+      events: []
+      results:
+        - ValueAlignmentResultV1
+      errors:
+        - ValueAlignmentErrorV1
+    depends_on:
+      - kernelone.security
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+    verification:
+      tests: []
+      gaps:
+        - Cell newly created from alignment_service.py
+        - Full test coverage pending
+
+  - id: kernelone.core
+    title: KernelOne Core
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: kernelone
+    purpose: >
+      Core kernel capabilities for Context OS, Workflow Engine, and shared
+      kernel utilities. This cell provides the foundational OS-level
+      capabilities used by business cells through explicit contracts.
+    current_modules:
+      - polaris.kernelone.context.context_os.models
+      - polaris.kernelone.context.context_os.models_v2
+      - polaris.kernelone.context.context_os.content_store
+      - polaris.kernelone.context.context_os.receipt_store
+      - polaris.kernelone.context.context_os.runtime
+      - polaris.kernelone.context.context_os.storage
+      - polaris.kernelone.context.context_os.snapshot
+      - polaris.kernelone.context.context_os.budget_optimizer
+      - polaris.kernelone.context.context_os.classifier
+      - polaris.kernelone.context.context_os.policies
+      - polaris.kernelone.context.context_os.ports
+      - polaris.kernelone.workflow.engine
+    owned_paths:
+      - polaris/kernelone/context/context_os/**
+      - polaris/kernelone/workflow/engine.py
+    public_contracts:
+      modules:
+        - polaris.kernelone.context.context_os
+        - polaris.kernelone.workflow
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on: []
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - fs.read:runtime/**
+    verification:
+      tests:
+        - polaris/kernelone/context/context_os/tests/**
+        - polaris/kernelone/workflow/tests/**
+      gaps:
+        - Cell newly created to consolidate kernelone paths
+        - Context OS contracts not yet fully defined
+        - Workflow engine contracts not yet fully defined
 
   - id: kernelone.traceability
     title: Traceability Kernel

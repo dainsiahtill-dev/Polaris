@@ -28,7 +28,7 @@ BANNED_PLACEHOLDER_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"<!--\s*\.\.\.\s*-->", "placeholder_ellipsis_html_comment"),
     (r"#\s*\.\.\.", "placeholder_ellipsis_hash_comment"),  # Python/Ruby/Shell
     (r"\{\s*\.\.\.\s*\}", "placeholder_ellipsis_braces"),  # JSX/JSON
-    (r"//\s*TODO\s*$", "placeholder_empty_todo"),
+    (r"//\s*TODO\s*(?:\n|$)", "placeholder_empty_todo"),
     (r"the rest follows the same pattern", "placeholder_same_pattern"),
     (r"for brevity", "placeholder_brevity"),
     (r"I can provide more details", "placeholder_offer_details"),

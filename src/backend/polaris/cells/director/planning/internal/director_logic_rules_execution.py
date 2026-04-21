@@ -1,131 +1,19 @@
-"""Director logic rules (Cell Implementation)."""
+"""Director logic rules (Cell Implementation).
+
+Shared director logic utilities have been extracted to
+``polaris.domain.services.director_logic_service``.
+"""
 
 from __future__ import annotations
 
 import fnmatch
-import hashlib
 import json
 import logging
 import os
 import re
 from typing import Any
 
-from polaris.domain.entities import DEFAULT_DEFECT_TICKET_FIELDS
-from polaris.kernelone.utils.json_utils import parse_json_payload
-
 logger = logging.getLogger(__name__)
-
-
-def _parse_pass_fail(value: str) -> bool | None:
-    """Return True for PASS, False for FAIL, None otherwise."""
-    normalized = value.strip().upper()
-    if normalized == "PASS":
-        return True
-    if normalized == "FAIL":
-        return False
-    return None
-
-
-def parse_acceptance(qa_text: str) -> bool | None:
-    """Parse acceptance decision from QA output with strict format."""
-    if not qa_text:
-        return None
-
-    # 1) Try structured JSON
-    payload = parse_json_payload(qa_text)
-    if isinstance(payload, dict) and "acceptance" in payload:
-        value = payload["acceptance"]
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            result = _parse_pass_fail(value)
-            if result is not None:
-                return result
-
-    # 2) Look for explicit marker lines
-    for line in qa_text.splitlines():
-        stripped = line.strip()
-        for prefix in ("ACCEPTANCE_DECISION:", "ACCEPTANCE:"):
-            if stripped.startswith(prefix):
-                result = _parse_pass_fail(stripped.split(":", 1)[1])
-                if result is not None:
-                    return result
-
-    # 3) Fuzzy fallback: scan for pass/fail keywords
-    lower = qa_text.lower()
-    has_pass = "pass" in lower
-    has_fail = "fail" in lower
-
-    # Prefer lines containing "acceptance decision"
-    for line in lower.splitlines():
-        if "acceptance decision" in line:
-            if "fail" in line:
-                return False
-            if "pass" in line:
-                return True
-
-    # Whole-text ambiguity check
-    if has_fail and not has_pass:
-        return False
-    if has_pass and not has_fail:
-        return True
-
-    return None
-
-
-def _normalize_ticket_value(value: Any) -> Any:
-    if isinstance(value, list):
-        normalized = [str(item).strip() for item in value if str(item).strip()]
-        return normalized
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def extract_defect_ticket(payload: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {}
-    source = payload.get("defect_ticket")
-    if not isinstance(source, dict):
-        source = payload
-    ticket: dict[str, Any] = {}
-    for field in DEFAULT_DEFECT_TICKET_FIELDS:
-        value = _normalize_ticket_value(source.get(field))
-        if isinstance(value, list):
-            if value:
-                ticket[field] = value
-        elif isinstance(value, str) and value:
-            ticket[field] = value
-    if "defect_id" not in ticket:
-        summary = str(payload.get("summary") or "").strip()
-        findings = payload.get("findings")
-        findings_text = ""
-        if isinstance(findings, list):
-            findings_text = "|".join(str(item).strip() for item in findings if str(item).strip())
-        seed = f"{summary}|{findings_text}".strip("|")
-        if seed:
-            digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
-            ticket["defect_id"] = f"DEFECT-{digest.upper()}"
-    return ticket
-
-
-def validate_defect_ticket(
-    payload: dict[str, Any] | None,
-    required_fields: list[str] | None = None,
-) -> tuple[bool, dict[str, Any], list[str]]:
-    ticket = extract_defect_ticket(payload)
-    fields = required_fields or DEFAULT_DEFECT_TICKET_FIELDS
-    normalized_fields = [str(field).strip() for field in fields if str(field).strip()]
-    missing: list[str] = []
-    for field in normalized_fields:
-        value = ticket.get(field)
-        if isinstance(value, list):
-            if not value:
-                missing.append(field)
-            continue
-        if not isinstance(value, str) or not value.strip():
-            missing.append(field)
-    return len(missing) == 0, ticket, missing
 
 
 def _truncate_text(text: str, max_chars: int) -> str:

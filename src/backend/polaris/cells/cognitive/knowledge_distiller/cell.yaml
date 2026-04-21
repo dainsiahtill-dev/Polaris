@@ -1,0 +1,48 @@
+# cell.yaml - Cognitive Knowledge Distiller Cell
+# ARCH-001: Created to declare previously undeclared cell
+cell_id: cognitive.knowledge_distiller
+title: Cognitive Knowledge Distiller
+kind: capability
+visibility: public
+stateful: true
+owner: cognitive
+purpose: >
+  Distill patterns from completed sessions and retrieve relevant
+  distilled knowledge for future task execution. Provides session
+  post-processing and knowledge retrieval capabilities.
+current_modules:
+  - polaris.cells.cognitive.knowledge_distiller.internal.distillation
+  - polaris.cells.cognitive.knowledge_distiller.internal.knowledge_search
+  - polaris.cells.cognitive.knowledge_distiller.internal.pattern_analysis
+  - polaris.cells.cognitive.knowledge_distiller.public.service
+owned_paths:
+  - polaris/cells/cognitive/knowledge_distiller/**
+public_contracts:
+  modules:
+    - polaris.cells.cognitive.knowledge_distiller.public.contracts
+  commands:
+    - DistillSessionCommandV1
+  queries:
+    - RetrieveKnowledgeQueryV1
+  events:
+    - KnowledgeDistilledEventV1
+  results:
+    - DistillationResultV1
+    - KnowledgeRetrievalResultV1
+  errors:
+    - KnowledgeDistillerErrorV1
+depends_on:
+  - roles.session
+  - context.catalog
+subgraphs: []
+state_owners:
+  - workspace/.polaris/knowledge_distiller/*
+effects_allowed:
+  - fs.read:workspace/**
+  - fs.write:workspace/.polaris/knowledge_distiller/*
+verification:
+  tests:
+    - polaris/cells/cognitive/knowledge_distiller/internal/tests/**
+  gaps:
+    - Cell newly created with basic structure
+    - Integration with roles.session pending

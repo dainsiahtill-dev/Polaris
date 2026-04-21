@@ -1505,3 +1505,59 @@ class SnapshotSummaryView:
             "has_pending_followup": snapshot.pending_followup is not None,
             "content_map_entries": len(getattr(snapshot, "content_map", {})),
         }
+
+
+# === DEPRECATED: Compatibility aliases for v1 → v2 migration ===
+# These aliases allow consumer code to migrate incrementally from v1 to v2.
+# The v1 classes themselves are deprecated; use the V2 classes directly when possible.
+#
+# Migration guide:
+#   OLD: from polaris.kernelone.context.context_os.models import ArtifactRecord
+#   NEW: from polaris.kernelone.context.context_os.models_v2 import ArtifactRecordV2
+#
+import warnings as _warnings
+
+try:
+    from .models_v2 import (
+        ArtifactRecordV2 as ArtifactRecord,
+        TranscriptEventV2 as TranscriptEvent,
+        ContextOSSnapshotV2 as ContextOSSnapshot,
+        WorkingStateV2 as WorkingState,
+        StateEntryV2 as StateEntry,
+        DecisionEntryV2 as DecisionEntry,
+        UserProfileStateV2 as UserProfileState,
+        TaskStateViewV2 as TaskStateView,
+        ContextOSProjectionV2 as ContextOSProjection,
+        EpisodeCardV2 as EpisodeCard,
+        BudgetPlanV2 as BudgetPlan,
+        RunCardV2 as RunCard,
+        PendingFollowUpV2 as PendingFollowUp,
+        DialogActResultV2 as DialogActResult,
+        ContextSliceSelectionV2 as ContextSliceSelection,
+        ContextSlicePlanV2 as ContextSlicePlan,
+    )
+except ImportError:
+    pass
+
+__all__ = [
+    "ArtifactRecord",
+    "TranscriptEvent",
+    "ContextOSSnapshot",
+    "WorkingState",
+    "StateEntry",
+    "DecisionEntry",
+    "UserProfileState",
+    "TaskStateView",
+    "ContextOSProjection",
+    "EpisodeCard",
+    "BudgetPlan",
+    "RunCard",
+    "PendingFollowUp",
+    "DialogActResult",
+    "ContextSliceSelection",
+    "ContextSlicePlan",
+    "DialogAct",
+    "DialogActResult",
+    "StateFirstContextOSPolicy",
+    "SnapshotSummaryView",
+]

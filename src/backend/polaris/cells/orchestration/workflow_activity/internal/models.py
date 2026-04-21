@@ -17,6 +17,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from polaris.domain.entities.workflow import (  # noqa: F401
+    DirectorWorkflowResult,
+    ExecutionMode,
+    PMWorkflowResult,
+    _coerce_execution_mode,
+    _coerce_positive_int,
+)
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -173,31 +180,6 @@ class PMWorkflowInput:
 
 
 @dataclass(frozen=True)
-class PMWorkflowResult:
-    """Result produced by the top-level PM workflow."""
-
-    run_id: str
-    tasks: list[TaskContract]
-    director_status: str
-    qa_status: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-def _coerce_positive_int(value: Any, default: int) -> int:
-    try:
-        return max(1, int(value))
-    except (RuntimeError, ValueError):
-        return max(1, int(default))
-
-
-def _coerce_execution_mode(value: Any, default: str = "parallel") -> str:
-    token = str(value or "").strip().lower()
-    if token in {"serial", "parallel"}:
-        return token
-    return default
-
-
-@dataclass(frozen=True)
 class DirectorWorkflowInput:
     """Input payload for the Director workflow."""
 
@@ -246,17 +228,6 @@ class DirectorWorkflowInput:
             task_timeout_seconds=_coerce_positive_int(raw_task_timeout, MAX_WORKFLOW_TIMEOUT_SECONDS),
             metadata=metadata,
         )
-
-
-@dataclass(frozen=True)
-class DirectorWorkflowResult:
-    """Aggregated Director workflow result."""
-
-    run_id: str
-    status: str
-    completed_tasks: int
-    failed_tasks: int
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

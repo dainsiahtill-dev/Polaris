@@ -1,0 +1,38 @@
+# cell.yaml - Values Alignment Cell
+# ARCH-001: Created to declare previously undeclared cell
+cell_id: values.alignment
+title: Values Alignment
+kind: capability
+visibility: public
+stateful: false
+owner: values
+purpose: >
+  Implement 4-dimensional value evaluation matrix for assessing
+  user long-term interest, system integrity, others impact, and
+  future amplification of actions.
+current_modules:
+  - polaris.cells.values.alignment_service
+owned_paths:
+  - polaris/cells/values/**
+public_contracts:
+  modules:
+    - polaris.cells.values
+  commands: []
+  queries:
+    - EvaluateValueAlignmentQueryV1
+  events: []
+  results:
+    - ValueAlignmentResultV1
+  errors:
+    - ValueAlignmentErrorV1
+depends_on:
+  - kernelone.security
+subgraphs: []
+state_owners: []
+effects_allowed:
+  - fs.read:workspace/**
+verification:
+  tests: []
+  gaps:
+    - Cell newly created from alignment_service.py
+    - Full test coverage pending

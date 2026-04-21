@@ -415,6 +415,72 @@ class WorkingStateV2(BaseModel):
             "state_history": [item.to_dict() for item in self.state_history],
         }
 
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any] | None) -> WorkingStateV2:
+        """Create WorkingStateV2 from dict payload, compatible with v1 API."""
+        if not isinstance(payload, dict):
+            return cls()
+        from .models_v2 import (
+            DecisionEntryV2,
+            StateEntryV2,
+            TaskStateViewV2,
+            UserProfileStateV2,
+        )
+
+        def _parse_state_entry(v: dict[str, Any] | None) -> StateEntryV2 | None:
+            return StateEntryV2.from_mapping(v) if isinstance(v, dict) else None
+
+        def _parse_decision_entry(v: dict[str, Any] | None) -> DecisionEntryV2 | None:
+            return DecisionEntryV2.from_mapping(v) if isinstance(v, dict) else None
+
+        ws_payload = payload if payload else {}
+        user_profile_payload = ws_payload.get("user_profile", {})
+        task_state_payload = ws_payload.get("task_state", {})
+
+        return cls(
+            user_profile=UserProfileStateV2(
+                preferences=tuple(
+                    s for s in (_parse_state_entry(v) for v in user_profile_payload.get("preferences", [])) if s is not None
+                ),
+                style=tuple(
+                    s for s in (_parse_state_entry(v) for v in user_profile_payload.get("style", [])) if s is not None
+                ),
+                persistent_facts=tuple(
+                    s
+                    for s in (_parse_state_entry(v) for v in user_profile_payload.get("persistent_facts", []))
+                    if s is not None
+                ),
+            ),
+            task_state=TaskStateViewV2(
+                current_goal=_parse_state_entry(task_state_payload.get("current_goal")),
+                accepted_plan=tuple(
+                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("accepted_plan", [])) if s is not None
+                ),
+                open_loops=tuple(
+                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("open_loops", [])) if s is not None
+                ),
+                blocked_on=tuple(
+                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("blocked_on", [])) if s is not None
+                ),
+                deliverables=tuple(
+                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("deliverables", [])) if s is not None
+                ),
+            ),
+            decision_log=tuple(
+                s for s in (_parse_decision_entry(v) for v in ws_payload.get("decision_log", [])) if s is not None
+            ),
+            active_entities=tuple(
+                s for s in (_parse_state_entry(v) for v in ws_payload.get("active_entities", [])) if s is not None
+            ),
+            active_artifacts=tuple(v for v in ws_payload.get("active_artifacts", []) if v),
+            temporal_facts=tuple(
+                s for s in (_parse_state_entry(v) for v in ws_payload.get("temporal_facts", [])) if s is not None
+            ),
+            state_history=tuple(
+                s for s in (_parse_state_entry(v) for v in ws_payload.get("state_history", [])) if s is not None
+            ),
+        )
+
 
 class DecisionEntryV2(BaseModel):
     """DecisionEntry V2 - Pydantic 验证版本"""

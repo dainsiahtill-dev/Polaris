@@ -15,9 +15,9 @@ if TYPE_CHECKING:
         IntentGraph,
         IntentNode,
     )
-    from polaris.kernelone.context.context_os.models import (
-        ContextOSSnapshot,
-        TranscriptEvent,
+    from polaris.kernelone.context.context_os.models_v2 import (
+        ContextOSSnapshotV2 as ContextOSSnapshot,
+        TranscriptEventV2 as TranscriptEvent,
     )
 
 
@@ -229,7 +229,7 @@ def merge_intent_graph_into_snapshot(
     from dataclasses import replace
     from datetime import datetime, timezone
 
-    from polaris.kernelone.context.context_os.models import StateEntry
+    from polaris.kernelone.context.context_os.models_v2 import StateEntryV2 as StateEntry
 
     updates = intent_graph_to_run_card_updates(graph)
     working_state = snapshot.working_state

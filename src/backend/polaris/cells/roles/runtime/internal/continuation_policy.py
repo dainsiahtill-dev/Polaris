@@ -414,7 +414,7 @@ class ContinuationPolicy:
             - is_verification_confirmed=True 表示验证真正通过
             - evidence_string 包含成功/失败的简短证据（用于日志/审计）
         """
-        from polaris.cells.roles.kernel.internal.transaction.constants import (
+        from polaris.cells.roles.kernel.public.transaction_contracts import (
             VERIFICATION_TOOLS,
             get_verification_patterns,
         )

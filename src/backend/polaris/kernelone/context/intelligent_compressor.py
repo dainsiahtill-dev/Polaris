@@ -29,7 +29,7 @@ from polaris.kernelone.context._token_estimator import estimate_tokens as _estim
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from polaris.kernelone.context.context_os.models import ContextOSProjection
+    from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
     from polaris.kernelone.llm.engine.client import LLMProvider
 
 # Constants for importance scoring

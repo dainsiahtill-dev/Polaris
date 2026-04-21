@@ -14,9 +14,9 @@ from polaris.kernelone.cognitive.hooks import (
     hookimpl,
 )
 from polaris.kernelone.cognitive.reasoning.engine import CriticalThinkingEngine
-from polaris.kernelone.context.context_os.models import (
-    TranscriptEvent,
-    WorkingState,
+from polaris.kernelone.context.context_os.models_v2 import (
+    TranscriptEventV2 as TranscriptEvent,
+    WorkingStateV2 as WorkingState,
 )
 
 if TYPE_CHECKING:

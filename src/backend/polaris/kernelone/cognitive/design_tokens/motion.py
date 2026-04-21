@@ -93,10 +93,19 @@ class MotionToken:
     def to_framer_motion(self) -> dict[str, Any]:
         """生成 Framer Motion transition 对象。"""
         if self.easing.startswith("spring") or "stiffness" in self.easing:
+            import re
+
+            match = re.search(r"spring\((\d+),\s*(\d+)\)", self.easing)
+            if match:
+                stiffness = int(match.group(1))
+                damping = int(match.group(2))
+            else:
+                stiffness = 100
+                damping = 20
             return {
                 "type": "spring",
-                "stiffness": 100,
-                "damping": 20,
+                "stiffness": stiffness,
+                "damping": damping,
             }
         return {
             "duration": self.duration_ms / 1000,

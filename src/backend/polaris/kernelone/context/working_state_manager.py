@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from polaris.kernelone.context.context_os.models import WorkingState
+from polaris.kernelone.context.context_os.models_v2 import WorkingStateV2 as WorkingState
 
 
 class WorkingStateManager:

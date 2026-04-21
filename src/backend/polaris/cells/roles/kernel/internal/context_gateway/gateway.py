@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.context_os import StateFirstContextOS
 from polaris.kernelone.context.context_os.domain_adapters import get_context_domain_adapter
-from polaris.kernelone.context.context_os.models import ContextOSSnapshot
+from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
 from polaris.kernelone.context.contracts import (
     TurnEngineContextRequest as ContextRequest,
     TurnEngineContextResult as ContextResult,

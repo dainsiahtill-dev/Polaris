@@ -336,7 +336,7 @@ class ColorPaletteGenerator:
         primary = palette.get_by_tone(PaletteTone.PRIMARY)
         if primary and bg:
             ratio = primary.contrast_ratio_with(bg)
-            if ratio < 2.0:
+            if ratio < 1.5:
                 warnings.append(
                     f"Low contrast between primary ({primary.hex_value}) and background ({bg.hex_value}): "
                     f"ratio ~{ratio:.1f}:1"

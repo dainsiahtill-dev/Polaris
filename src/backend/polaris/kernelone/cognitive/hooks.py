@@ -10,9 +10,9 @@ import logging
 from typing import Any
 
 import pluggy
-from polaris.kernelone.context.context_os.models import (
-    TranscriptEvent,
-    WorkingState,
+from polaris.kernelone.context.context_os.models_v2 import (
+    TranscriptEventV2 as TranscriptEvent,
+    WorkingStateV2 as WorkingState,
 )
 
 logger = logging.getLogger(__name__)

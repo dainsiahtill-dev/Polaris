@@ -58,7 +58,7 @@ from polaris.cells.roles.profile.public.service import (
 )
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter, get_writer
-from polaris.kernelone.context.context_os.models import TranscriptEvent
+from polaris.kernelone.context.context_os.models_v2 import TranscriptEventV2 as TranscriptEvent
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.trace import get_tracer

@@ -16,16 +16,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.kernel.internal.development_workflow_runtime import (
-    DevelopmentWorkflowRuntime,
-)
-from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-    resolve_delivery_mode,
-)
-from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+from polaris.cells.roles.kernel.public.transaction_contracts import (
     Phase,
     PhaseManager,
     extract_tool_results_from_batch_receipt,
+    resolve_delivery_mode,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import (
     FailureClass,
@@ -41,6 +36,9 @@ from polaris.cells.roles.kernel.public.turn_events import (
     SessionWaitingHumanEvent,
     TurnEvent,
     TurnPhaseEvent,
+)
+from polaris.cells.roles.kernel.public.workflow_contracts import (
+    DevelopmentWorkflowRuntime,
 )
 from polaris.cells.roles.runtime.internal.continuation_policy import (
     ContinuationPolicy,
@@ -438,7 +436,7 @@ class RoleSessionOrchestrator:
 
                 # Build tool definitions from role whitelist
                 try:
-                    from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+                    from polaris.cells.roles.kernel.public.llm_caller_contracts import (
                         build_native_tool_schemas,
                     )
 
@@ -516,7 +514,7 @@ class RoleSessionOrchestrator:
                 await self._slm_warmup_task
         # 清理 CognitiveGateway 单例资源（warmup task 等）
         try:
-            from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
+            from polaris.cells.roles.kernel.public.transaction_contracts import (
                 CognitiveGateway,
             )
 
@@ -537,7 +535,7 @@ class RoleSessionOrchestrator:
 
         if self.state.turn_count == 0:
             try:
-                from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
+                from polaris.cells.roles.kernel.public.transaction_contracts import (
                     CognitiveGateway,
                 )
 

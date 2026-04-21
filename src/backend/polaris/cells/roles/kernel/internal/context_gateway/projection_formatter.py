@@ -10,7 +10,7 @@ import hashlib
 from typing import Any
 
 from polaris.kernelone.context.context_os.helpers import get_metadata_value
-from polaris.kernelone.context.context_os.models import ContextOSProjection
+from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 
 from .constants import HIGH_PRIORITY_DIALOG_ACTS, ROUTE_PRIORITY
 
