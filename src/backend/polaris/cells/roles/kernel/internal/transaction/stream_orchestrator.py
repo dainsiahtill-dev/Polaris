@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -23,10 +24,15 @@ from typing import Any, Literal, cast
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
 from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScopedTaskGroup
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
+from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
+    extract_continuation_prompt_metadata,
+    extract_latest_user_message,
+)
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -105,7 +111,10 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
 
 
 def _build_continue_visible_content(
-    read_tools: list[str], current_progress: str = "content_gathered", force_read_required: bool = False
+    read_tools: list[str],
+    current_progress: str = "content_gathered",
+    force_read_required: bool = False,
+    delivery_mode: str | None = None,
 ) -> str:
     """构建 continue_multi_turn 的 visible_content，内嵌 SESSION_PATCH。
 
@@ -115,6 +124,7 @@ def _build_continue_visible_content(
     Args:
         read_tools: 已调用的读工具列表（真正的 read_file，不是 glob）
         current_progress: PhaseManager 的当前阶段值
+        delivery_mode: continuation prompt contract 的显式交付模式
     """
     # FIX-20250421: 使用 PhaseManager 的阶段生成约束提示
     try:
@@ -163,9 +173,10 @@ def _build_continue_visible_content(
         # FIX-20250421: 不再强制覆盖 task_progress，保持当前阶段
         # 只在有读工具时记录 recent_reads
     }
+    if delivery_mode:
+        patch["delivery_mode"] = delivery_mode
     if read_tools:
         patch["recent_reads"] = read_tools
-    import json
 
     return (
         f"[系统提示] 多回合工作流继续：{visible_prefix}。\n"
@@ -173,6 +184,97 @@ def _build_continue_visible_content(
         "严禁输出文字计划或代码块。必须调用工具！\n"
         f"<SESSION_PATCH>\n{json.dumps(patch, ensure_ascii=False)}\n</SESSION_PATCH>"
     )
+
+
+def _build_delivery_contract_from_mode(mode: DeliveryMode) -> DeliveryContract:
+    """根据显式 delivery_mode 构建 delivery contract。"""
+    if mode == DeliveryMode.MATERIALIZE_CHANGES:
+        return DeliveryContract(
+            mode=DeliveryMode.MATERIALIZE_CHANGES,
+            requires_mutation=True,
+            requires_verification=False,
+            allow_inline_code=False,
+            allow_patch_proposal=False,
+        )
+    if mode == DeliveryMode.PROPOSE_PATCH:
+        return DeliveryContract(
+            mode=DeliveryMode.PROPOSE_PATCH,
+            requires_mutation=False,
+            requires_verification=False,
+            allow_inline_code=True,
+            allow_patch_proposal=True,
+        )
+    return DeliveryContract(
+        mode=DeliveryMode.ANALYZE_ONLY,
+        requires_mutation=False,
+        requires_verification=False,
+        allow_inline_code=True,
+        allow_patch_proposal=False,
+    )
+
+
+def _resolve_continuation_delivery_contract(
+    *,
+    raw_user: str,
+    original_delivery_mode: str | None,
+    parsed_progress: str,
+) -> DeliveryContract:
+    """Resolve continuation turn delivery contract from prompt metadata first.
+
+    The continuation prompt is the canonical contract surface for follow-up turns.
+    When it carries explicit delivery_mode metadata, use it directly instead of
+    relying on a fresh ledger carrying prior frozen state.
+    """
+    continuation_metadata = extract_continuation_prompt_metadata(raw_user)
+    explicit_delivery_mode = str(continuation_metadata.get("delivery_mode") or "").strip().lower()
+    if explicit_delivery_mode:
+        try:
+            mode = DeliveryMode(explicit_delivery_mode)
+        except ValueError:
+            logger.warning(
+                "continuation_prompt_delivery_mode_invalid: progress=%s raw_mode=%s",
+                parsed_progress,
+                explicit_delivery_mode,
+            )
+        else:
+            logger.debug(
+                "continuation_prompt_delivery_mode: progress=%s mode=%s (prompt_metadata)",
+                parsed_progress,
+                mode.name,
+            )
+            return _build_delivery_contract_from_mode(mode)
+
+    if original_delivery_mode == DeliveryMode.MATERIALIZE_CHANGES.value:
+        logger.debug(
+            "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (original_preserved)",
+            parsed_progress,
+        )
+        return _build_delivery_contract_from_mode(DeliveryMode.MATERIALIZE_CHANGES)
+    if original_delivery_mode == DeliveryMode.ANALYZE_ONLY.value:
+        logger.debug(
+            "continuation_prompt_delivery_mode: progress=%s mode=ANALYZE_ONLY (original_preserved)",
+            parsed_progress,
+        )
+        return _build_delivery_contract_from_mode(DeliveryMode.ANALYZE_ONLY)
+    if original_delivery_mode == DeliveryMode.PROPOSE_PATCH.value:
+        logger.debug(
+            "continuation_prompt_delivery_mode: progress=%s mode=PROPOSE_PATCH (original_preserved)",
+            parsed_progress,
+        )
+        return _build_delivery_contract_from_mode(DeliveryMode.PROPOSE_PATCH)
+
+    if parsed_progress == "implementing":
+        logger.debug(
+            "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (fallback)",
+            parsed_progress,
+        )
+        return _build_delivery_contract_from_mode(DeliveryMode.MATERIALIZE_CHANGES)
+
+    logger.debug(
+        "continuation_prompt_delivery_mode: progress=%s mode=ANALYZE_ONLY (fallback)",
+        parsed_progress,
+    )
+    return _build_delivery_contract_from_mode(DeliveryMode.ANALYZE_ONLY)
 
 
 # ---------------------------------------------------------------------------
@@ -432,9 +534,6 @@ class StreamOrchestrator:
             has_available_write_tool,
             is_mutation_contract_violation,
         )
-        from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
-            extract_latest_user_message,
-        )
 
         # H2 物理熔断器：session 级 turn 硬限制，防止无限循环
         self._session_turn_count += 1
@@ -478,7 +577,7 @@ class StreamOrchestrator:
 
         latest_user_request = extract_latest_user_message(context)
         # Guard: 如果 context 包含 orchestrator 续写 prompt（<Goal>/<Progress> XML 块），
-        # 说明这是 continuation turn，直接返回 ANALYZE_ONLY，不走 SLM 路由（防止死循环）。
+        # 说明这是 continuation turn，delivery_mode 必须从 prompt contract 中恢复。
         _raw_user = str(
             next(
                 (m.get("content", "") for m in reversed(context) if str(m.get("role", "")).strip().lower() == "user"),
@@ -487,66 +586,13 @@ class StreamOrchestrator:
         )
         _is_continuation_prompt = "<Goal>" in _raw_user and "<Progress>" in _raw_user
         if _is_continuation_prompt:
-            from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
-                DeliveryContract,
-                DeliveryMode,
-            )
-
-            # FIX-20250421-v3: continuation prompt 交付模式持久化。
-            # 根因：Session-level delivery_mode 一旦设定不可变更。
-            # exploration / verifying 都是 MATERIALIZE_CHANGES 的子阶段，不应降级为 ANALYZE_ONLY。
             _progress_match = re.search(r"当前阶段:\s*(\w+)", _raw_user)
             _parsed_progress = _progress_match.group(1) if _progress_match else "exploring"
-
-            # FIX-20250421-v3: 优先使用 Turn 0 冻结的原始 delivery_mode（不可变更）
-            if ledger._original_delivery_mode == DeliveryMode.MATERIALIZE_CHANGES.value:
-                delivery_contract = DeliveryContract(
-                    mode=DeliveryMode.MATERIALIZE_CHANGES,
-                    requires_mutation=True,
-                    requires_verification=False,
-                    allow_inline_code=False,
-                    allow_patch_proposal=False,
-                )
-                logger.debug(
-                    "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (original_preserved)",
-                    _parsed_progress,
-                )
-            elif ledger._original_delivery_mode == DeliveryMode.ANALYZE_ONLY.value:
-                delivery_contract = DeliveryContract(
-                    mode=DeliveryMode.ANALYZE_ONLY,
-                    requires_mutation=False,
-                    requires_verification=False,
-                    allow_inline_code=True,
-                    allow_patch_proposal=False,
-                )
-                logger.debug(
-                    "continuation_prompt_delivery_mode: progress=%s mode=ANALYZE_ONLY (original_preserved)",
-                    _parsed_progress,
-                )
-            elif _parsed_progress == "implementing":
-                delivery_contract = DeliveryContract(
-                    mode=DeliveryMode.MATERIALIZE_CHANGES,
-                    requires_mutation=True,
-                    requires_verification=False,
-                    allow_inline_code=False,
-                    allow_patch_proposal=False,
-                )
-                logger.debug(
-                    "continuation_prompt_delivery_mode: progress=%s mode=MATERIALIZE_CHANGES (fallback)",
-                    _parsed_progress,
-                )
-            else:
-                delivery_contract = DeliveryContract(
-                    mode=DeliveryMode.ANALYZE_ONLY,
-                    requires_mutation=False,
-                    requires_verification=False,
-                    allow_inline_code=True,
-                    allow_patch_proposal=False,
-                )
-                logger.debug(
-                    "continuation_prompt_delivery_mode: progress=%s mode=ANALYZE_ONLY (fallback)",
-                    _parsed_progress,
-                )
+            delivery_contract = _resolve_continuation_delivery_contract(
+                raw_user=_raw_user,
+                original_delivery_mode=ledger._original_delivery_mode,
+                parsed_progress=_parsed_progress,
+            )
         else:
             # SLM 优先、regex 兜底
             try:
@@ -805,6 +851,7 @@ class StreamOrchestrator:
                 read_tools,
                 current_progress=_current_progress,
                 force_read_required=_force_read_required,
+                delivery_mode=ledger.delivery_contract.mode.value,
             )
 
         visible_content = result.get("visible_content", "")

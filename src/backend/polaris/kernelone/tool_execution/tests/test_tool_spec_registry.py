@@ -1,5 +1,7 @@
 """Unit tests for ToolSpecRegistry - the single source of truth for tool definitions."""
 
+from contextvars import Context
+
 import pytest
 from polaris.kernelone.tool_execution.tool_spec_registry import (
     ToolSpec,
@@ -236,6 +238,16 @@ class TestToolSpecRegistry:
         assert "tool1" in names
         assert "tool2" in names
         assert len(names) == 2
+
+    def test_new_context_receives_builtin_registry(self) -> None:
+        """A fresh ContextVar execution context should still expose built-in tools."""
+        ToolSpecRegistry.clear()
+
+        fresh_context = Context()
+        names = fresh_context.run(ToolSpecRegistry.get_all_canonical_names)
+
+        assert "repo_read_head" in names
+        assert "repo_rg" in names
 
     def test_get_all_tools_deduplicates(self) -> None:
         """Test that get_all_tools returns unique specs (not aliases)."""

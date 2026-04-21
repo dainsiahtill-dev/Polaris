@@ -1023,23 +1023,6 @@ class LLMInvoker:
             }
             return
 
-        # Emit debug event with actual LLM request content (only when debug stream is enabled)
-        with contextlib.suppress(TypeError, AttributeError, RuntimeError):
-            emit_debug_event(
-                category="llm_request",
-                label="invoke_request",
-                source="polaris.kernelone.llm.invoker",
-                payload={
-                    "trace_id": run_id,
-                    "role": role_id,
-                    "model": model,
-                    "call_id": call_id,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "messages": [],
-                },
-            )
-
         try:
             # Import here to avoid circular dependency
             from .caller import LLMCaller
@@ -1056,6 +1039,31 @@ class LLMInvoker:
                 max_tokens=max_tokens,
                 stream=True,
             )
+            resolved_provider_id = str(
+                getattr(prepared.ai_request, "provider_id", None) or getattr(profile, "provider_id", "") or ""
+            )
+            resolved_model = str(getattr(prepared.ai_request, "model", None) or model or "")
+            prepared_messages = list(prepared.messages)
+
+            with contextlib.suppress(TypeError, AttributeError, RuntimeError):
+                emit_debug_event(
+                    category="llm_request",
+                    label="invoke_request",
+                    source="polaris.kernelone.llm.invoker",
+                    payload={
+                        "trace_id": run_id,
+                        "role": role_id,
+                        "provider_id": resolved_provider_id,
+                        "model": resolved_model,
+                        "call_id": call_id,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "message_count": len(prepared_messages),
+                        "messages": prepared_messages,
+                    },
+                )
+
+            model = resolved_model or model
 
             async for event in self._stream_engine.run_stream(
                 profile=profile,

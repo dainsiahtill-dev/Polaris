@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -68,20 +69,45 @@ def _tool_requires_existing_file(tool_name: str) -> bool:
     }
 
 
-def _resolve_existing_workspace_file(*, workspace: str, raw_path: str) -> str | None:
-    import os
+def _normalize_file_reference_path(raw_path: str) -> str:
+    """规范化工具调用中的文件路径字符串。
+
+    处理 Windows 常见的混合格式：
+    - file:// URI
+    - 反斜杠分隔符
+    - 误带前导斜杠的绝对盘符路径，例如 /C:/workspace/file.txt
+    """
 
     normalized = str(raw_path or "").strip().replace("\\", "/")
     if not normalized:
-        return None
+        return ""
     if normalized.startswith("file://"):
         normalized = normalized[len("file://") :].lstrip("/")
+    if len(normalized) >= 4 and normalized[0] == "/" and normalized[2:4] == ":/" and normalized[1].isalpha():
+        normalized = normalized[1:]
+    return normalized
+
+
+def _is_path_within_workspace(*, workspace_real: str, candidate_real: str) -> bool:
+    try:
+        return os.path.commonpath([workspace_real, candidate_real]) == workspace_real
+    except ValueError:
+        return False
+
+
+def _resolve_existing_workspace_file(*, workspace: str, raw_path: str) -> str | None:
+    normalized = _normalize_file_reference_path(raw_path)
+    if not normalized:
+        return None
 
     workspace_real = os.path.realpath(workspace or ".")
-    full_path = os.path.realpath(os.path.join(workspace_real, normalized))
+    if os.path.isabs(normalized):
+        full_path = os.path.realpath(normalized)
+    else:
+        full_path = os.path.realpath(os.path.join(workspace_real, normalized))
 
     # 防御目录遍历：解析后的路径必须在 workspace 内部
-    if not (full_path.startswith(workspace_real + os.sep) or full_path == workspace_real):
+    if not _is_path_within_workspace(workspace_real=workspace_real, candidate_real=full_path):
         logger.warning("Path traversal attempt blocked: %s", raw_path)
         return None
 

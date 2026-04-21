@@ -1,4 +1,4 @@
-﻿"""Session Orchestrator - 服务端会话编排器。
+"""Session Orchestrator - 服务端会话编排器。
 
 负责回合级状态机轮转、ContinuationPolicy 仲裁、ShadowEngine 跨 Turn 预热，
 以及 DevelopmentWorkflowRuntime 的 handoff 路由。
@@ -122,9 +122,39 @@ class SessionStateReducer:
         else:
             self.phase_manager = PhaseManager()
 
+    def mutation_obligation_satisfied(self, batch_receipt: Any | None = None) -> bool:
+        """Return True when a successful write receipt has already been observed."""
+        if self._has_successful_write_receipt(batch_receipt):
+            return True
+        return any(
+            self._has_successful_write_receipt(record.get("batch_receipt")) for record in self.state.turn_history
+        )
+
+    def is_successful_read_only_execution(self, batch_receipt: Any | None) -> bool:
+        """Return True only for successful read-only tool execution."""
+        tool_results = extract_tool_results_from_batch_receipt(self._normalize_batch_receipt(batch_receipt))
+        if not tool_results:
+            return False
+        return all(
+            result.success and not result.is_write and result.tool_name in _READ_TOOL_NAMES for result in tool_results
+        )
+
+    @staticmethod
+    def _has_successful_write_receipt(batch_receipt: Any | None) -> bool:
+        tool_results = extract_tool_results_from_batch_receipt(
+            SessionStateReducer._normalize_batch_receipt(batch_receipt)
+        )
+        return any(result.success and result.is_write for result in tool_results)
+
+    def _is_materialize_changes_mode(self) -> bool:
+        """Return True when the current session is running in mutation mode."""
+        return str(self.state.delivery_mode or "").lower() == "materialize_changes"
+
     def enforce_materialize_changes_guard(self, envelope: TurnOutcomeEnvelope) -> TurnOutcomeEnvelope:
         """Prevent premature final answers before a materialized task actually mutates state."""
-        if self.state.delivery_mode != "MATERIALIZE_CHANGES":
+        if not self._is_materialize_changes_mode():
+            return envelope
+        if self.mutation_obligation_satisfied(envelope.turn_result.batch_receipt):
             return envelope
         current_phase = self.phase_manager.current_phase
         if current_phase not in {Phase.EXPLORING, Phase.CONTENT_GATHERED}:
@@ -583,6 +613,20 @@ class RoleSessionOrchestrator:
                     first_prompt[:60],
                 )
 
+        if first_prompt and self.state.turn_count == 0 and not self.state.session_invariants.is_frozen():
+            contract = resolve_delivery_mode(first_prompt)
+            delivery_mode = contract.mode.value
+            self.state.delivery_mode = delivery_mode
+            original_goal = self.state.original_goal or self.state.goal or first_prompt
+            if not self.state.original_goal:
+                self.state.original_goal = original_goal
+            initial_phase = self.state.task_progress or "exploring"
+            self.state.session_invariants.freeze(
+                delivery_mode=delivery_mode,
+                original_goal=original_goal,
+                phase=initial_phase,
+            )
+
         try:
             while True:
                 is_first_turn = self.state.turn_count == 0
@@ -616,7 +660,9 @@ class RoleSessionOrchestrator:
                 await self._checkpoint_session()
 
                 if self._shadow_engine is not None:
-                    has_spec = getattr(self._shadow_engine, "has_valid_speculation", lambda _sid: False)(self.session_id)
+                    has_spec = getattr(self._shadow_engine, "has_valid_speculation", lambda _sid: False)(
+                        self.session_id
+                    )
                     if has_spec:
                         pre_warmed = await getattr(
                             self._shadow_engine, "consume_speculation", self._noop_consume_speculation
@@ -658,20 +704,6 @@ class RoleSessionOrchestrator:
                 envelope = self._apply_read_only_termination_exemption(envelope)
 
                 self.state.turn_count += 1
-                if self.state.turn_count == 1 and not self.state.session_invariants.is_frozen():
-                    contract = resolve_delivery_mode(first_prompt)
-                    delivery_mode = contract.mode.value
-                    self.state.delivery_mode = delivery_mode
-                    original_goal = self.state.original_goal or self.state.goal or first_prompt
-                    if not self.state.original_goal:
-                        self.state.original_goal = original_goal
-                    initial_phase = self.state.task_progress or "exploring"
-                    self.state.session_invariants.freeze(
-                        delivery_mode=delivery_mode,
-                        original_goal=original_goal,
-                        phase=initial_phase,
-                    )
-
                 if envelope.artifacts_to_persist:
                     await self._artifact_store.persist(envelope.artifacts_to_persist)
                     self.state.artifacts.update(self._artifact_store.get_artifact_map())
@@ -769,7 +801,11 @@ class RoleSessionOrchestrator:
                     error_type="CheckpointPersistenceError",
                     message=str(exc),
                 )
-                if session_completed_reason is None and session_terminal_event is None and not suppress_session_completion:
+                if (
+                    session_completed_reason is None
+                    and session_terminal_event is None
+                    and not suppress_session_completion
+                ):
                     session_completed_reason = "checkpoint_persistence_error"
             try:
                 await self.close()
@@ -793,6 +829,12 @@ class RoleSessionOrchestrator:
             return envelope
 
         receipt = self._state_reducer._normalize_batch_receipt(envelope.turn_result.batch_receipt)
+        if self._state_reducer._is_materialize_changes_mode() and not self._state_reducer.mutation_obligation_satisfied(
+            receipt
+        ):
+            return envelope
+        if not self._state_reducer.is_successful_read_only_execution(receipt):
+            return envelope
         results = receipt.get("results", [])
         has_write_tool = any(
             isinstance(result, dict) and str(result.get("tool_name", "")) in _WRITE_TOOL_NAMES for result in results
@@ -1338,4 +1380,3 @@ class RoleSessionOrchestrator:
         if "read" in intent or "查看" in intent:
             predicted.append({"tool_name": "read_file", "arguments": {"path": ""}})
         return predicted
-

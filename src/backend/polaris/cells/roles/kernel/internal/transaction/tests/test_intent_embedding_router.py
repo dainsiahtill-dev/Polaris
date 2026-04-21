@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from polaris.cells.roles.kernel.internal.transaction.intent_embedding_router import (
@@ -11,7 +12,7 @@ from polaris.cells.roles.kernel.internal.transaction.intent_embedding_router imp
     _cosine_similarity,
     classify_with_embedding_fallback,
 )
-from polaris.kernelone.llm.embedding import KernelEmbeddingPort
+from polaris.kernelone.llm.embedding import KernelEmbeddingPort, reset_default_embedding_port
 
 
 class FakeEmbeddingPort(KernelEmbeddingPort):
@@ -41,6 +42,7 @@ class FakeEmbeddingPort(KernelEmbeddingPort):
 @pytest.fixture(autouse=True)
 def _reset_router_singleton() -> None:
     IntentEmbeddingRouter.reset_default()
+    reset_default_embedding_port()
 
 
 @pytest.fixture
@@ -122,6 +124,17 @@ class TestIntentEmbeddingRouter:
         # classify should return None when centroids unavailable
         result = asyncio.run(router.classify("anything"))
         assert result is None
+
+    def test_missing_default_embedding_port_skips_with_info_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        router = IntentEmbeddingRouter()
+
+        with caplog.at_level(logging.INFO):
+            router._warmup_centroids()
+
+        assert router._warmup_done is True
+        assert router._centroids is None
+        assert "IntentEmbeddingRouter warmup skipped: embedding port not configured" in caplog.text
+        assert "IntentEmbeddingRouter centroid warmup failed" not in caplog.text
 
 
 class TestClassifyWithEmbeddingFallback:

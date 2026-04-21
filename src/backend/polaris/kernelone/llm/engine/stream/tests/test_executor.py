@@ -96,6 +96,45 @@ class TestStreamExecutorInvokeStreamErrors:
         error_events = [e for e in events if e.type.value == "error"]
         assert len(error_events) >= 1
 
+    @pytest.mark.asyncio
+    async def test_invoke_stream_debug_event_uses_resolved_provider_and_model(self, monkeypatch) -> None:
+        """invoke_start debug event must use resolved provider/model, not empty request fields."""
+        executor = StreamExecutor()
+        captured_debug_events: list[dict[str, object]] = []
+
+        def _capture_debug_event(**kwargs: object) -> None:
+            captured_debug_events.append(dict(kwargs))
+
+        monkeypatch.setattr(
+            executor,
+            "_resolve_provider_model",
+            lambda _request: ("resolved-provider", "resolved-model"),
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {})
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._debug_stream_module.emit_debug_event",
+            _capture_debug_event,
+        )
+
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="test",
+            input="hello",
+            provider_id=None,
+            model=None,
+        )
+
+        events = []
+        async for event in executor.invoke_stream(request):
+            events.append(event)
+
+        assert any(event.type.value == "error" for event in events)
+        invoke_start = next(item for item in captured_debug_events if item.get("label") == "invoke_start")
+        payload = invoke_start.get("payload")
+        assert isinstance(payload, dict)
+        assert payload["provider_id"] == "resolved-provider"
+        assert payload["model"] == "resolved-model"
+
 
 class TestProviderSupportsStructuredStream:
     """Tests for _provider_supports_structured_stream detection."""

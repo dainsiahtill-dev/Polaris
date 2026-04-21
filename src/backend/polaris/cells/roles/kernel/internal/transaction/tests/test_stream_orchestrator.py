@@ -2,9 +2,11 @@
 
 import json
 
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import (
     _build_continue_visible_content,
     _extract_read_tools_from_receipt,
+    _resolve_continuation_delivery_contract,
 )
 
 
@@ -66,13 +68,14 @@ class TestBuildContinueVisibleContent:
         assert "</SESSION_PATCH>" in content
 
     def test_session_patch_json_valid(self):
-        content = _build_continue_visible_content(["read_file"])
+        content = _build_continue_visible_content(["read_file"], delivery_mode="materialize_changes")
         # 提取 JSON
         start = content.index("<SESSION_PATCH>") + len("<SESSION_PATCH>")
         end = content.index("</SESSION_PATCH>")
         json_str = content[start:end].strip()
         patch = json.loads(json_str)
         # FIX-20250421: task_progress 不再强制覆盖，保持当前阶段
+        assert patch["delivery_mode"] == "materialize_changes"
         assert "recent_reads" in patch
         assert patch["recent_reads"] == ["read_file"]
 
@@ -89,3 +92,34 @@ class TestBuildContinueVisibleContent:
         # FIX-20250421: 基于 PhaseManager 阶段生成提示语
         assert "内容已收集（CONTENT_GATHERED）" in content
         assert "write_file/edit_file" in content
+
+    def test_visible_content_carries_explicit_delivery_mode(self):
+        content = _build_continue_visible_content(["read_file"], delivery_mode="materialize_changes")
+        start = content.index("<SESSION_PATCH>") + len("<SESSION_PATCH>")
+        end = content.index("</SESSION_PATCH>")
+        patch = json.loads(content[start:end].strip())
+        assert patch["delivery_mode"] == "materialize_changes"
+
+
+class TestResolveContinuationDeliveryContract:
+    def test_prefers_prompt_metadata_over_missing_ledger_state(self):
+        raw_prompt = _build_continue_visible_content(
+            ["read_file"],
+            current_progress="exploring",
+            delivery_mode="materialize_changes",
+        )
+        contract = _resolve_continuation_delivery_contract(
+            raw_user=raw_prompt,
+            original_delivery_mode=None,
+            parsed_progress="exploring",
+        )
+        assert contract.mode == DeliveryMode.MATERIALIZE_CHANGES
+
+    def test_falls_back_to_original_delivery_mode(self):
+        raw_prompt = _build_continue_visible_content(["read_file"], current_progress="exploring")
+        contract = _resolve_continuation_delivery_contract(
+            raw_user=raw_prompt,
+            original_delivery_mode="materialize_changes",
+            parsed_progress="exploring",
+        )
+        assert contract.mode == DeliveryMode.MATERIALIZE_CHANGES

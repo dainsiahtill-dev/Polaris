@@ -273,24 +273,6 @@ class StreamExecutor:
             except (ConnectionError, TimeoutError, RuntimeError) as exc:  # noqa: B025
                 logger.warning("[stream-executor] telemetry record_invoke_start failed (unexpected): %s", exc)
 
-        try:
-            _debug_stream_module.emit_debug_event(
-                category="llm_call",
-                label="invoke_start",
-                source="polaris.kernelone.llm.stream_executor",
-                payload={
-                    "trace_id": trace_id,
-                    "role": str(request.role or ""),
-                    "provider_id": str(request.provider_id or ""),
-                    "model": str(request.model or ""),
-                    "input_length": len(str(request.input or "")),
-                },
-            )
-        except (TypeError, AttributeError, RuntimeError) as exc:
-            logger.debug("[stream-executor] emit_debug_event (invoke_start) failed: %s", exc)
-        except (ConnectionError, TimeoutError, RuntimeError) as exc:  # noqa: B025
-            logger.debug("[stream-executor] emit_debug_event (invoke_start) failed (unexpected): %s", exc)
-
         provider_id, model = self._resolve_provider_model(request)
         if not provider_id or not model:
             try:
@@ -309,6 +291,24 @@ class StreamExecutor:
 
         request.provider_id = provider_id
         request.model = model
+
+        try:
+            _debug_stream_module.emit_debug_event(
+                category="llm_call",
+                label="invoke_start",
+                source="polaris.kernelone.llm.stream_executor",
+                payload={
+                    "trace_id": trace_id,
+                    "role": str(request.role or ""),
+                    "provider_id": provider_id,
+                    "model": model,
+                    "input_length": len(str(request.input or "")),
+                },
+            )
+        except (TypeError, AttributeError, RuntimeError) as exc:
+            logger.debug("[stream-executor] emit_debug_event (invoke_start) failed: %s", exc)
+        except (ConnectionError, TimeoutError, RuntimeError) as exc:  # noqa: B025
+            logger.debug("[stream-executor] emit_debug_event (invoke_start) failed (unexpected): %s", exc)
 
         provider_cfg = self._get_provider_config(provider_id)
         provider_type = str(provider_cfg.get("type") or "").strip().lower()

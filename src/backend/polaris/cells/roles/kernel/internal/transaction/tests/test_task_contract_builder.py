@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     _extract_instruction_from_continuation_prompt,
+    extract_continuation_prompt_metadata,
     extract_latest_user_message,
 )
 
@@ -63,3 +64,39 @@ class TestExtractLatestUserMessage:
     def test_empty_content_returns_empty(self) -> None:
         context = [{"role": "user", "content": "   "}]
         assert extract_latest_user_message(context) == ""
+
+    def test_continuation_prompt_with_session_patch_preserves_instruction(self) -> None:
+        prompt = (
+            "<Goal>\nRefactor the transaction flow\n</Goal>\n"
+            "<Progress>\n当前阶段: exploring | 回合: 1 / 6\n</Progress>\n"
+            "<WorkingMemory>\n</WorkingMemory>\n"
+            "<Instruction>\n请继续读取 session_orchestrator.py\n</Instruction>\n"
+            "<SESSION_PATCH>\n"
+            '{"delivery_mode": "materialize_changes", "recent_reads": ["read_file"]}'
+            "\n</SESSION_PATCH>"
+        )
+        assert (
+            extract_latest_user_message([{"role": "user", "content": prompt}]) == "请继续读取 session_orchestrator.py"
+        )
+
+
+class TestExtractContinuationPromptMetadata:
+    def test_extracts_delivery_mode_from_session_patch(self) -> None:
+        prompt = (
+            "<Goal>\nFix the bug\n</Goal>\n"
+            "<Progress>\n当前阶段: exploring | 回合: 1 / 6\n</Progress>\n"
+            "<WorkingMemory>\n</WorkingMemory>\n"
+            "<Instruction>\n继续执行\n</Instruction>\n"
+            "<SESSION_PATCH>\n"
+            '{"delivery_mode": "materialize_changes", "task_progress": "exploring", "recent_reads": ["read_file"]}'
+            "\n</SESSION_PATCH>"
+        )
+        metadata = extract_continuation_prompt_metadata(prompt)
+        assert metadata["delivery_mode"] == "materialize_changes"
+        assert metadata["task_progress"] == "exploring"
+        assert metadata["recent_reads"] == ["read_file"]
+
+    def test_returns_empty_for_invalid_or_missing_patch(self) -> None:
+        assert extract_continuation_prompt_metadata("Hello world") == {}
+        prompt = "<SESSION_PATCH>{not-json}</SESSION_PATCH>"
+        assert extract_continuation_prompt_metadata(prompt) == {}

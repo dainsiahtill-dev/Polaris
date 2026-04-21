@@ -176,9 +176,17 @@ class TestIsNativeToolCallingUnsupported:
 class TestBuildNativeToolSchemas:
     """build_native_tool_schemas should expose canonical tool contracts."""
 
-    def test_builds_repo_contract_schema_when_registry_missing(self) -> None:
+    def test_builds_repo_contract_schema_when_registry_missing(self, monkeypatch) -> None:
         profile = MockProfile(role_id="director")
         profile.tool_policy = SimpleNamespace(whitelist=["repo_read_head", "repo_rg"])
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.toolkit.definitions.create_default_registry",
+            lambda: SimpleNamespace(get=lambda _name: None),
+        )
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.toolkit.tool_normalization.normalize_tool_name",
+            lambda name: str(name),
+        )
 
         schemas = build_native_tool_schemas(cast("RoleProfile", profile))
         names = {str((item.get("function") or {}).get("name") or "") for item in schemas if isinstance(item, dict)}
@@ -186,9 +194,17 @@ class TestBuildNativeToolSchemas:
         assert "repo_read_head" in names
         assert "repo_rg" in names
 
-    def test_repo_read_head_schema_exposes_alias_params(self) -> None:
+    def test_repo_read_head_schema_exposes_alias_params(self, monkeypatch) -> None:
         profile = MockProfile(role_id="director")
         profile.tool_policy = SimpleNamespace(whitelist=["repo_read_head"])
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.toolkit.definitions.create_default_registry",
+            lambda: SimpleNamespace(get=lambda _name: None),
+        )
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.toolkit.tool_normalization.normalize_tool_name",
+            lambda name: str(name),
+        )
 
         schemas = build_native_tool_schemas(cast("RoleProfile", profile))
         function_payload = next(
@@ -935,3 +951,58 @@ class TestLifecycleAndCacheGuards:
 
         assert any(event["type"] == "complete" for event in events)
         assert captured["prompt_tokens"] == 123
+
+    @pytest.mark.asyncio
+    async def test_invoker_stream_debug_event_uses_prepared_request_payload(self, monkeypatch) -> None:
+        invoker = LLMInvoker(workspace="C:/workspace")
+        profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
+        captured_debug_events: list[dict[str, Any]] = []
+
+        async def _prepare_llm_request(self, **_kwargs):
+            return SimpleNamespace(
+                context_result=SimpleNamespace(
+                    token_estimate=12,
+                    compression_strategy="none",
+                    compression_applied=False,
+                ),
+                messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "hello"}],
+                native_tool_mode="disabled",
+                response_format_mode="plain_text",
+                native_tool_schemas=[],
+                ai_request=SimpleNamespace(provider_id="openai", model="gpt-5-resolved"),
+            )
+
+        async def _run_stream(**_kwargs):
+            yield {"type": "complete", "content": ""}
+
+        def _capture_debug_event(**kwargs: Any) -> None:
+            captured_debug_events.append(kwargs)
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.llm_caller.caller.LLMCaller._prepare_llm_request",
+            _prepare_llm_request,
+        )
+        monkeypatch.setattr(invoker._stream_engine, "run_stream", _run_stream)
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.emit_debug_event",
+            _capture_debug_event,
+        )
+
+        async for _event in invoker.call_stream(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system prompt",
+            context=cast("ContextRequest", SimpleNamespace(task_id=None)),
+            temperature=0.2,
+            max_tokens=64,
+        ):
+            pass
+
+        invoke_request = next(item for item in captured_debug_events if item.get("label") == "invoke_request")
+        payload = cast("dict[str, Any]", invoke_request["payload"])
+        assert payload["provider_id"] == "openai"
+        assert payload["model"] == "gpt-5-resolved"
+        assert payload["message_count"] == 2
+        assert payload["messages"] == [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "hello"},
+        ]

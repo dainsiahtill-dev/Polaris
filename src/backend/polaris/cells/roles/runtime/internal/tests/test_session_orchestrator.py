@@ -5,8 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnContinuationMode,
+    TurnOutcomeEnvelope,
     TurnResult,
 )
 from polaris.cells.roles.kernel.public.turn_events import (
@@ -146,6 +148,152 @@ class TestRoleSessionOrchestrator:
         assert isinstance(events[-1], SessionWaitingHumanEvent)
         assert events[-1].session_id == "sess-1"
         assert not any(isinstance(e, SessionCompletedEvent) for e in events)
+
+    @pytest.mark.asyncio
+    async def test_read_only_termination_exemption_rejects_failed_read_only_turn(self, tmp_workspace):
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t0",
+                kind="final_answer",
+                visible_content="analysis text",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "error",
+                            "result": {"message": "File not found"},
+                        }
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        result = orch._apply_read_only_termination_exemption(envelope)
+
+        assert result.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
+        assert result.turn_result.kind == "final_answer"
+
+    @pytest.mark.asyncio
+    async def test_materialize_changes_guard_blocks_final_answer_without_write_receipt(self, tmp_workspace):
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t0",
+                kind="final_answer",
+                visible_content="read result",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "success",
+                            "result": {"content": "ok"},
+                        }
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.END_SESSION,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        result = orch._state_reducer.enforce_materialize_changes_guard(envelope)
+
+        assert result.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
+        assert result.turn_result.kind == "continue_multi_turn"
+
+    @pytest.mark.asyncio
+    async def test_materialize_changes_failed_read_only_turn_keeps_session_open(self, tmp_workspace, monkeypatch):
+        kernel = MockKernel(
+            [
+                [CompletionEvent(turn_id="t0", status="success")],
+                [CompletionEvent(turn_id="t1", status="success")],
+            ]
+        )
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=kernel,
+            workspace=tmp_workspace,
+            max_auto_turns=5,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.roles.runtime.internal.session_orchestrator.resolve_delivery_mode",
+            lambda _prompt: SimpleNamespace(mode=DeliveryMode.MATERIALIZE_CHANGES),
+        )
+
+        def _build_envelope(event):
+            if event.turn_id == "t0":
+                return TurnOutcomeEnvelope(
+                    turn_result=TurnResult(
+                        turn_id="t0",
+                        kind="final_answer",
+                        visible_content="failed read-only analysis",
+                        decision={},
+                        batch_receipt={
+                            "results": [
+                                {
+                                    "tool_name": "read_file",
+                                    "status": "error",
+                                    "result": {"message": "File not found"},
+                                }
+                            ]
+                        },
+                    ),
+                    continuation_mode=TurnContinuationMode.END_SESSION,
+                    next_intent="read_file failed",
+                    session_patch={},
+                    artifacts_to_persist=[],
+                    speculative_hints={},
+                )
+            return TurnOutcomeEnvelope(
+                turn_result=TurnResult(
+                    turn_id="t1",
+                    kind="final_answer",
+                    visible_content="write committed",
+                    decision={},
+                    batch_receipt={
+                        "results": [
+                            {
+                                "tool_name": "write_file",
+                                "status": "success",
+                                "result": {"path": "src/auth.py"},
+                            }
+                        ]
+                    },
+                ),
+                continuation_mode=TurnContinuationMode.END_SESSION,
+                next_intent=None,
+                session_patch={},
+                artifacts_to_persist=[],
+                speculative_hints={},
+            )
+
+        orch._build_envelope_from_completion = _build_envelope
+
+        events = [e async for e in orch.execute_stream("请修改登录修复代码")]
+
+        assert kernel.call_count == 2
+        assert orch.state.turn_history[0]["continuation_mode"] == "auto_continue"
+        assert orch.state.turn_history[1]["continuation_mode"] == "end_session"
+        assert isinstance(events[-1], SessionCompletedEvent)
 
     @pytest.mark.asyncio
     async def test_max_turns_exceeded(self, tmp_workspace):

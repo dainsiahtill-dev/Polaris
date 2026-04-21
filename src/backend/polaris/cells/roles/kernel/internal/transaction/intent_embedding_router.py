@@ -127,6 +127,11 @@ class IntentEmbeddingRouter:
                     "IntentEmbeddingRouter centroids warmed up: %d intents",
                     len(self._centroids),
                 )
+        except RuntimeError as exc:
+            if self._embedding_port_override is None and "Default KernelEmbeddingPort not set" in str(exc):
+                logger.info("IntentEmbeddingRouter warmup skipped: embedding port not configured")
+            else:
+                logger.warning("IntentEmbeddingRouter centroid warmup failed: %s", exc)
         except Exception as exc:  # noqa: BLE001
             logger.warning("IntentEmbeddingRouter centroid warmup failed: %s", exc)
         finally:

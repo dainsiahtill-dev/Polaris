@@ -1,4 +1,3 @@
-# ruff: noqa: RUF002, RUF003
 """
 ToolSpecRegistry - 单一权威源头 for LLM Tool定义
 
@@ -109,27 +108,58 @@ class ToolSpecRegistry:
     _canonical_names_var: ContextVar[set[str] | None] = ContextVar("tool_spec_canonical_names", default=None)
 
     @classmethod
+    def _ensure_initialized(cls) -> None:
+        """Lazily populate built-in tool specs for the current execution context."""
+        registry = cls._registry_var.get()
+        specs = cls._specs_var.get()
+        canonical_names = cls._canonical_names_var.get()
+        if registry is not None and specs is not None and canonical_names is not None:
+            return
+
+        initialized_registry: dict[str, dict[str, Any]] = {}
+        initialized_specs: dict[str, ToolSpec] = {}
+        initialized_canonical_names: set[str] = set()
+
+        for tool_name, spec_dict in _BUILTIN_REGISTRY.items():
+            initialized_registry[tool_name] = dict(spec_dict)
+            spec = _build_tool_spec_from_dict(tool_name, spec_dict)
+            initialized_specs[tool_name] = spec
+            initialized_canonical_names.add(tool_name)
+
+        for tool_name in _BUILTIN_REGISTRY:
+            spec = initialized_specs[tool_name]
+            for alias in spec.aliases:
+                alias_lower = alias.lower()
+                if alias_lower in _BUILTIN_REGISTRY:
+                    continue
+                initialized_specs[alias_lower] = spec
+
+        cls._registry_var.set(initialized_registry)
+        cls._specs_var.set(initialized_specs)
+        cls._canonical_names_var.set(initialized_canonical_names)
+
+    @classmethod
     def _get_registry(cls) -> dict[str, dict[str, Any]]:
+        cls._ensure_initialized()
         val = cls._registry_var.get()
         if val is None:
-            val = {}
-            cls._registry_var.set(val)
+            raise RuntimeError("ToolSpecRegistry registry failed to initialize")
         return val
 
     @classmethod
     def _get_specs(cls) -> dict[str, ToolSpec]:
+        cls._ensure_initialized()
         val = cls._specs_var.get()
         if val is None:
-            val = {}
-            cls._specs_var.set(val)
+            raise RuntimeError("ToolSpecRegistry specs failed to initialize")
         return val
 
     @classmethod
     def _get_canonical_names(cls) -> set[str]:
+        cls._ensure_initialized()
         val = cls._canonical_names_var.get()
         if val is None:
-            val = set()
-            cls._canonical_names_var.set(val)
+            raise RuntimeError("ToolSpecRegistry canonical names failed to initialize")
         return val
 
     @classmethod
@@ -433,7 +463,12 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "aliases": ["patch_session", "update_working_memory"],
         "arg_aliases": {},
         "arguments": [
-            {"name": "task_progress", "type": "string", "required": True, "enum": ["exploring", "investigating", "implementing", "verifying", "done"]},
+            {
+                "name": "task_progress",
+                "type": "string",
+                "required": True,
+                "enum": ["exploring", "investigating", "implementing", "verifying", "done"],
+            },
             {"name": "confidence", "type": "string", "required": True, "enum": ["hypothesis", "likely", "confirmed"]},
             {"name": "action_taken", "type": "string", "required": True},
             {"name": "error_summary", "type": "string", "required": False},
@@ -441,7 +476,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
             {"name": "patched_files", "type": "array", "items": {"type": "string"}, "required": False},
             {"name": "verified_results", "type": "array", "items": {"type": "string"}, "required": False},
             {"name": "pending_files", "type": "array", "items": {"type": "string"}, "required": False},
-            {"name": "superseded", "type": "boolean", "required": False}
+            {"name": "superseded", "type": "boolean", "required": False},
         ],
         "response_format_hint": "Session state updated successfully",
         "required_any": [("task_progress",), ("confidence",), ("action_taken",)],

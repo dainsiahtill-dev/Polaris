@@ -30,9 +30,27 @@ class TestResolveExistingWorkspaceFile:
             result = _resolve_existing_workspace_file(workspace=tmpdir, raw_path="test.txt")
             assert result == "test.txt"
 
+    def test_windows_absolute_path_inside_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested_file = Path(tmpdir) / "nested" / "a.txt"
+            nested_file.parent.mkdir(parents=True, exist_ok=True)
+            nested_file.write_text("hello")
+            result = _resolve_existing_workspace_file(workspace=tmpdir, raw_path=nested_file.as_posix())
+            assert result == "nested/a.txt"
+
+    def test_windows_absolute_path_with_leading_slash_inside_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested_file = Path(tmpdir) / "nested" / "b.txt"
+            nested_file.parent.mkdir(parents=True, exist_ok=True)
+            nested_file.write_text("hello")
+            result = _resolve_existing_workspace_file(workspace=tmpdir, raw_path=f"/{nested_file.as_posix()}")
+            assert result == "nested/b.txt"
+
     def test_path_traversal_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = _resolve_existing_workspace_file(workspace=tmpdir, raw_path="../etc/passwd")
+            outside_file = Path(tmpdir).parent / f"outside-{Path(tmpdir).name}.txt"
+            outside_file.write_text("secret")
+            result = _resolve_existing_workspace_file(workspace=tmpdir, raw_path=f"../{outside_file.name}")
             assert result is None
 
     def test_symlink_outside_workspace_blocked(self) -> None:
@@ -73,6 +91,24 @@ class TestRewriteExistingFilePathsInInvocations:
         result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace="/tmp", invocations=invocations)
         assert result == invocations
 
+    def test_rewrite_windows_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested_file = Path(tmpdir) / "nested" / "a.txt"
+            nested_file.parent.mkdir(parents=True, exist_ok=True)
+            nested_file.write_text("a")
+            invocations: list[Any] = [{"tool_name": "read_file", "arguments": {"path": nested_file.as_posix()}}]
+            result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace=tmpdir, invocations=invocations)
+            assert result[0]["arguments"]["path"] == "nested/a.txt"
+
+    def test_rewrite_malformed_windows_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested_file = Path(tmpdir) / "nested" / "b.txt"
+            nested_file.parent.mkdir(parents=True, exist_ok=True)
+            nested_file.write_text("b")
+            invocations: list[Any] = [{"tool_name": "read_file", "arguments": {"path": f"/{nested_file.as_posix()}"}}]
+            result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace=tmpdir, invocations=invocations)
+            assert result[0]["arguments"]["path"] == "nested/b.txt"
+
     def test_rewrite_normal_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / "a.txt").write_text("a")
@@ -80,12 +116,23 @@ class TestRewriteExistingFilePathsInInvocations:
             result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace=tmpdir, invocations=invocations)
             assert result[0]["arguments"]["path"] == "a.txt"
 
+    def test_rewrite_workspace_relative_path_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested_file = Path(tmpdir) / "nested" / "c.txt"
+            nested_file.parent.mkdir(parents=True, exist_ok=True)
+            nested_file.write_text("c")
+            invocations: list[Any] = [{"tool_name": "read_file", "arguments": {"path": "nested/c.txt"}}]
+            result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace=tmpdir, invocations=invocations)
+            assert result[0]["arguments"]["path"] == "nested/c.txt"
+
     def test_rewrite_traversal_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            invocations: list[Any] = [{"tool_name": "read_file", "arguments": {"path": "../etc/passwd"}}]
+            outside_file = Path(tmpdir).parent / f"outside-{Path(tmpdir).name}.txt"
+            outside_file.write_text("secret")
+            invocations: list[Any] = [{"tool_name": "read_file", "arguments": {"path": f"../{outside_file.name}"}}]
             result = rewrite_existing_file_paths_in_invocations(turn_id="t1", workspace=tmpdir, invocations=invocations)
             # 路径验证失败，应保持原始路径
-            assert result[0]["arguments"]["path"] == "../etc/passwd"
+            assert result[0]["arguments"]["path"] == f"../{outside_file.name}"
 
     def test_rewrite_symlink_outside_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

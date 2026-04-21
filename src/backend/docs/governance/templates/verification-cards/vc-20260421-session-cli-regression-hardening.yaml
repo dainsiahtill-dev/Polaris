@@ -1,0 +1,153 @@
+﻿card_id: "vc-20260421-session-cli-regression-hardening"
+bug_summary: >
+  Director CLI sessions can fail deterministically on Windows-style file paths and then terminate
+  incorrectly. The current chain combines malformed path normalization, continuation delivery-mode
+  drift, and a session-level read-only termination exemption that ignores failed tool execution.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/runtime/internal/session_orchestrator.py"
+  method: "RoleSessionOrchestrator.execute_stream"
+  symptom: "A MATERIALIZE_CHANGES CLI task degrades into analysis-only output and ends the session after a failed read"
+
+assumptions:
+  - id: "A1"
+    statement: "Windows absolute paths inside the workspace should be normalized, not rejected as traversal."
+    status: verified_true
+    evidence: "tool_batch_executor.py rewrites existing file paths before tool execution, proving normalization is an intended behavior."
+
+  - id: "A2"
+    statement: "Continuation turns must preserve the original delivery contract for session-level tasks."
+    status: verified_true
+    evidence: "stream_orchestrator.py already contains special continuation logic and tries to reuse frozen original delivery mode."
+
+  - id: "A3"
+    statement: "Visible analysis text after a failed read is not sufficient evidence to end a materialize-changes session."
+    status: verified_true
+    evidence: "session_orchestrator.py currently exempts read-only auto-continue turns without checking receipt success or unsatisfied mutation obligation."
+
+pre_mortem:
+  failure_point: >
+    The highest risk is over-correcting termination behavior and accidentally trapping legitimate
+    analyze-only tasks in extra turns, or weakening traversal protection while fixing Windows path normalization.
+  risk_zone:
+    - "polaris/cells/roles/runtime/internal/session_orchestrator.py"
+    - "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
+    - "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    - "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py"
+      description: "Failed read-only turns must not terminate materialize-changes sessions"
+      expected: "All targeted session orchestrator regressions pass"
+      status: passed
+
+    - file: "polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py"
+      description: "Continuation turns preserve materialize-changes delivery mode"
+      expected: "All targeted stream orchestrator regressions pass"
+      status: passed
+
+    - file: "polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py"
+      description: "Continuation prompt metadata remains parseable and instruction extraction stays correct"
+      expected: "All targeted continuation prompt contract tests pass"
+      status: passed
+
+    - file: "polaris/cells/roles/kernel/internal/transaction/tests/test_path_security.py"
+      description: "Windows-style file references are normalized without weakening traversal protection"
+      expected: "All targeted path normalization regressions pass"
+      status: passed
+
+    - file: "polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      description: "LLM invoker debug payload emits prepared messages and resolved model metadata"
+      expected: "All targeted llm caller regressions pass"
+      status: passed
+
+    - file: "polaris/kernelone/llm/engine/stream/tests/test_executor.py"
+      description: "Stream executor debug payload emits resolved provider/model metadata"
+      expected: "All targeted stream executor regressions pass"
+      status: passed
+
+    - file: "polaris/kernelone/tool_execution/tests/test_tool_spec_registry.py"
+      description: "Built-in tool specs initialize correctly in fresh ContextVar execution contexts"
+      expected: "ToolSpecRegistry lazy initialization and context isolation regressions pass"
+      status: passed
+
+    - file: "polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py"
+      description: "Missing default embedding port degrades with an info-level skip instead of a misleading warmup failure warning"
+      expected: "Intent embedding warmup remains graceful in plain console mode"
+      status: passed
+
+  integration_tests:
+    - description: "Director console orchestrator regression"
+      command: "python -m pytest -q polaris/delivery/cli/director/tests/test_console_host_orchestrator.py polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "Runtime host continuity regression"
+      command: "python -m pytest -q polaris/cells/roles/runtime/tests/test_host_session_continuity.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "Core runtime/kernel regression batch"
+      command: "python -m pytest -q polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_path_security.py polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py polaris/kernelone/llm/engine/stream/tests/test_executor.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "LLM caller regression gate"
+      command: "python -m pytest -q polaris/cells/roles/kernel/tests/test_llm_caller.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "Combined runtime/kernel regression batch"
+      command: "python -m pytest -q polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_path_security.py polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py polaris/cells/roles/kernel/tests/test_llm_caller.py polaris/kernelone/llm/engine/stream/tests/test_executor.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "ToolSpecRegistry context initialization regression gate"
+      command: "python -m pytest -q polaris/kernelone/tool_execution/tests/test_tool_spec_registry.py"
+      expected: "0 failed"
+      status: passed
+
+    - description: "Intent embedding router graceful-degradation gate"
+      command: "python -m pytest -q polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py"
+      expected: "0 failed"
+      status: passed
+
+  quality_gates:
+    - description: "Ruff lint/fix"
+      command: "python -m ruff check polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_path_security.py polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py polaris/cells/roles/kernel/internal/llm_caller/invoker.py polaris/cells/roles/kernel/tests/test_llm_caller.py polaris/kernelone/llm/engine/stream/executor.py polaris/kernelone/llm/engine/stream/tests/test_executor.py --fix"
+      expected: "0 diagnostics"
+      status: passed
+
+    - description: "Ruff format"
+      command: "python -m ruff format polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_path_security.py polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py polaris/cells/roles/kernel/internal/llm_caller/invoker.py polaris/cells/roles/kernel/tests/test_llm_caller.py polaris/kernelone/llm/engine/stream/executor.py polaris/kernelone/llm/engine/stream/tests/test_executor.py"
+      expected: "formatted or already clean"
+      status: passed
+
+    - description: "Mypy targeted"
+      command: "python -m mypy polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py polaris/cells/roles/kernel/internal/llm_caller/invoker.py polaris/kernelone/llm/engine/stream/executor.py"
+      expected: "Success: no issues found"
+      status: passed
+
+    - description: "ToolSpecRegistry lint and typing gate"
+      command: "python -m ruff check polaris/kernelone/tool_execution/tool_spec_registry.py polaris/kernelone/tool_execution/tests/test_tool_spec_registry.py --fix && python -m ruff format polaris/kernelone/tool_execution/tool_spec_registry.py polaris/kernelone/tool_execution/tests/test_tool_spec_registry.py && python -m mypy polaris/kernelone/tool_execution/tool_spec_registry.py"
+      expected: "0 diagnostics and Success: no issues found"
+      status: passed
+
+    - description: "Intent embedding router lint and typing gate"
+      command: "python -m ruff check polaris/cells/roles/kernel/internal/transaction/intent_embedding_router.py polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py --fix && python -m ruff format polaris/cells/roles/kernel/internal/transaction/intent_embedding_router.py polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py && python -m mypy polaris/cells/roles/kernel/internal/transaction/intent_embedding_router.py"
+      expected: "0 diagnostics and Success: no issues found"
+      status: passed
+
+related_adrs:
+  - "ADR-0071"
+  - "ADR-0082"
+
+sign_off:
+  completed_by: "Codex"
+  completed_at: "2026-04-21"
+  verified_by: "Codex"
+  verified_at: "2026-04-21"
+  regression_result: "passed-targeted-combined-and-adjacent-regressions"

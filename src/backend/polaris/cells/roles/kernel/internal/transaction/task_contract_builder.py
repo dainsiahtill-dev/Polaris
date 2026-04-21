@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -35,6 +36,7 @@ from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates imp
 # Sentinel prefix that marks the start of injected Benchmark boilerplate.
 # Everything from this marker onwards is framework metadata, not user intent.
 _BENCHMARK_CONTRACT_MARKER: str = "[Benchmark Tool Contract]"
+_SESSION_PATCH_BLOCK_RE = re.compile(r"<SESSION_PATCH>\s*(.*?)\s*</SESSION_PATCH>", flags=re.DOTALL)
 
 
 def _strip_benchmark_boilerplate(text: str) -> str:
@@ -79,6 +81,43 @@ def _extract_instruction_from_continuation_prompt(content: str) -> str | None:
         return None
     instruction = content[start:end].strip()
     return instruction if instruction else None
+
+
+def extract_continuation_prompt_metadata(content: str) -> dict[str, Any]:
+    """从 continuation prompt 中提取显式元数据。
+
+    当前仅消费 <SESSION_PATCH> 块，以便 kernel 在续跑 turn 时不依赖
+    fresh ledger 的历史冻结态即可恢复 delivery_mode 等 continuation contract。
+    """
+    match = _SESSION_PATCH_BLOCK_RE.search(content)
+    if match is None:
+        return {}
+    raw_patch = match.group(1).strip()
+    if not raw_patch:
+        return {}
+    try:
+        patch = json.loads(raw_patch)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(patch, dict):
+        return {}
+
+    metadata: dict[str, Any] = {}
+    delivery_mode = str(patch.get("delivery_mode") or "").strip().lower()
+    if delivery_mode:
+        metadata["delivery_mode"] = delivery_mode
+
+    task_progress = str(patch.get("task_progress") or "").strip().lower()
+    if task_progress:
+        metadata["task_progress"] = task_progress
+
+    recent_reads = patch.get("recent_reads")
+    if isinstance(recent_reads, list):
+        normalized_reads = [str(item).strip() for item in recent_reads if str(item).strip()]
+        if normalized_reads:
+            metadata["recent_reads"] = normalized_reads
+
+    return metadata
 
 
 def extract_latest_user_message(context: list[dict]) -> str:
