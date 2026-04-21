@@ -27,6 +27,28 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_verification_intent,
 )
 
+# Sentinel prefix that marks the start of injected Benchmark boilerplate.
+# Everything from this marker onwards is framework metadata, not user intent.
+_BENCHMARK_CONTRACT_MARKER: str = "[Benchmark Tool Contract]"
+
+
+def _strip_benchmark_boilerplate(text: str) -> str:
+    """Return only the real task instruction, stripping Benchmark Tool Contract boilerplate.
+
+    The evaluator appends a ``[Benchmark Tool Contract]`` section to every
+    benchmark user message.  That section contains words like ``replace``,
+    ``edit``, ``emit``, ``build`` and Chinese config/devops terms that
+    mislead ``requires_mutation_intent`` into a false-positive classification
+    for purely read-only tasks.
+
+    Stripping the boilerplate before intent classification ensures the
+    classifier sees only the genuine task description.
+    """
+    idx = text.find(_BENCHMARK_CONTRACT_MARKER)
+    if idx == -1:
+        return text
+    return text[:idx].strip()
+
 
 def _extract_instruction_from_continuation_prompt(content: str) -> str | None:
     """从 orchestrator continuation prompt 中提取 <Instruction> 块内容。
@@ -123,8 +145,12 @@ def build_single_batch_task_contract_hint(
         seen_targets.add(key)
         dedup_target_files.append(token)
 
-    _requires_write = requires_mutation_intent(latest_user)
-    _requires_verify = requires_verification_intent(latest_user)
+    # BUG-04 fix: classify intent on the *real* task instruction only.
+    # Benchmark boilerplate contains mutation-adjacent English tokens that
+    # trigger false-positive DEVOPS/STRONG_MUTATION classification.
+    _task_instruction = _strip_benchmark_boilerplate(latest_user)
+    _requires_write = requires_mutation_intent(_task_instruction)
+    _requires_verify = requires_verification_intent(_task_instruction)
 
     # --- 构建可用工具映射（必须在 required_tools 解析之前）---
     available_tools: list[str] = []
@@ -292,11 +318,12 @@ def build_single_batch_task_contract_hint(
             lines.append(
                 "HARD GATE: plain-text-only completion without any tool call is invalid for this mutation request."
             )
-            lines.append(
-                "MULTI-TURN WORKFLOW: for code modification, you may use read_file in the first turn "
-                "to inspect context, then use write tools in subsequent turns to materialize changes. "
-                "Do NOT output code in text — always use tools for mutations."
-            )
+            # BUG-01 compound fix: removed the self-contradicting
+            # "MULTI-TURN WORKFLOW: first turn read_file" paragraph.
+            # That line told the model it may defer writes to a later turn,
+            # directly contradicting the HARD GATE "no write = rejected" rule
+            # that immediately precedes it.  In single-batch benchmark mode
+            # there is no later turn, so the paragraph caused silent failures.
             lines.append(
                 "INVALID completion: plain-text code dump without any tool call (rejected as inline patch escape)."
             )
@@ -309,8 +336,8 @@ def build_single_batch_task_contract_hint(
                 "'Here is the plan...' — these are rejected. Only tool calls are accepted."
             )
             lines.append(
-                "VALID pattern: Turn 1 [read_file] -> Turn 2 [edit_file] or [write_file] "
-                "(mutations must go through tools)."
+                "VALID pattern: emit [search/read tool] then [write tool] in the same batch "
+                "(all steps must complete in this single tool-call batch)."
             )
         else:
             lines.append("This request requires mutation. Do not stop after read-only tools.")

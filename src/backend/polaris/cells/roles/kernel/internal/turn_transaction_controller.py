@@ -1218,20 +1218,45 @@ class TurnTransactionController:
         if not tool_definitions:
             return messages
 
-        single_batch_guard = (
-            "SYSTEM CONSTRAINT (Execution): This turn supports multi-turn workflow. "
-            "For code modification tasks, follow the 'inspect-then-modify' pattern across turns:\n"
-            "1. First turn: You may call read_file to inspect existing code. "
-            "2. Subsequent turns: You MUST call write/edit tools (edit_file, write_file, etc.) to materialize changes.\n"
-            "3. NEVER output large code blocks in text — always use tools to write files.\n"
-            "4. DO NOT ask the user for confirmation, approval, or plan review. "
-            "The user has already authorized execution. Proceed immediately with tool calls.\n"
-            "系统约束 (执行层): 当前回合支持多回合工作流. 代码修改任务遵循'先勘察后修改': "
-            "第一轮允许调用 read_file 了解现状, 后续回合必须调用写工具落盘修改. "
-            "严禁在对话中直接输出大段代码替代工具调用. "
-            "严禁请求用户确认或等待批准——用户已授权执行，请立即调用工具实施修改。"
-        )
+        # BUG-01 fix: detect benchmark single-batch mode from user message.
+        # When [Benchmark Tool Contract] is present the execution is always
+        # single-turn; the multi-turn "first turn read_file" wording must NOT
+        # be used because it gives the model explicit permission to defer
+        # writes to a non-existent next turn.
+        _latest_user_for_guard = ""
+        for _m in reversed(context):
+            if isinstance(_m, dict) and str(_m.get("role", "")).strip().lower() == "user":
+                _latest_user_for_guard = str(_m.get("content", ""))
+                break
+        _is_benchmark_single_batch = "[Benchmark Tool Contract]" in _latest_user_for_guard
+
+        if _is_benchmark_single_batch:
+            single_batch_guard = (
+                "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH execution. "
+                "ALL required tool calls MUST be emitted in this single turn. "
+                "Do NOT defer any tool call (especially write/edit tools) to a subsequent turn — "
+                "there is no subsequent turn in this benchmark run.\\n"
+                "Complete the entire workflow (search → read → write if required) in one batch. "
+                "Proceed immediately with tool calls; do not ask for confirmation.\\n"
+                "系统约束 (单批次): 本次执行为单轮单批次。所有工具调用必须在本轮一次性完成，"
+                "严禁将写入工具推迟到下一轮——本 benchmark 不存在下一轮。"
+            )
+        else:
+            single_batch_guard = (
+                "SYSTEM CONSTRAINT (Execution): This turn supports multi-turn workflow. "
+                "For code modification tasks, follow the 'inspect-then-modify' pattern across turns:\\n"
+                "1. First turn: You may call read_file to inspect existing code. "
+                "2. Subsequent turns: You MUST call write/edit tools (edit_file, write_file, etc.) to materialize changes.\\n"
+                "3. NEVER output large code blocks in text — always use tools to write files.\\n"
+                "4. DO NOT ask the user for confirmation, approval, or plan review. "
+                "The user has already authorized execution. Proceed immediately with tool calls.\\n"
+                "系统约束 (执行层): 当前回合支持多回合工作流. 代码修改任务遵循'先勘察后修改': "
+                "第一轮允许调用 read_file 了解现状, 后续回合必须调用写工具落盘修改. "
+                "严禁在对话中直接输出大段代码替代工具调用. "
+                "严禁请求用户确认或等待批准——用户已授权执行，请立即调用工具实施修改。"
+            )
         messages.append({"role": "system", "content": single_batch_guard, "metadata": {"plane": "control"}})
+
 
         # 修复：MATERIALIZE_CHANGES 模式下不再追加 TASK CONTRACT（HARD GATE 反读规则），
         # 因为它与 SYSTEM CONSTRAINT 的多回合先读后写规则冲突，导致 LLM 陷入精神分裂：

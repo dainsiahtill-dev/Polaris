@@ -314,9 +314,12 @@ TESTING_SIGNALS: tuple[str, ...] = (
 )
 
 # 6. 环境、配置与基建 (DevOps — 可能改变系统状态)
+# 注意：「配置」单字被移除，因为它作为名词（如「API_HOST 配置的文件」）
+# 会造成对只读查询的假阳性 DEVOPS 分类。实际 DevOps 配置变更意图
+# 通常以动词（如「修改配置」「更新配置」）组合出现，已由 STRONG_MUTATION
+# 和 WEAK_MUTATION 路径覆盖。
 DEVOPS_CONFIG_SIGNALS: tuple[str, ...] = (
     "安装",
-    "配置",
     "部署",
     "打包",
     "构建",
