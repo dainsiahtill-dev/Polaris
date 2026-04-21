@@ -402,7 +402,9 @@ class RoleContextGateway:
         # 4. Add Context OS state summary as supplemental system message (optional)
         if projection is not None and projection.snapshot is not None:
             proj_snapshot = projection.snapshot
-            if proj_snapshot.artifact_store or proj_snapshot.pending_followup:
+            _has_artifacts = bool(getattr(proj_snapshot, "artifact_store", ()))
+            _has_pending = bool(getattr(proj_snapshot, "pending_followup", None))
+            if _has_artifacts or _has_pending:
                 from polaris.kernelone.context.context_os.models import SnapshotSummaryView
 
                 summary_dict = SnapshotSummaryView.from_snapshot(proj_snapshot)

@@ -1146,10 +1146,22 @@ class RoleSessionOrchestrator:
                             content = str(result_data.get("content", ""))
                     elif isinstance(result_data, str):
                         content = result_data
-                    # 截断过长内容避免 token 爆炸
-                    if len(content) > 2000:
-                        content = content[:2000] + f"\n... [truncated, total {len(content)} chars]"
-                    tool_result_lines.append(f"  文件 `{path}` ({len(content)} chars):\n{content}")
+                    # FIX-20250422: 避免在 WorkingMemory 中显示截断标记，防止 LLM 误判为未完整读取
+                    # 对于大文件，只显示前 500 字符的预览 + 明确说明已完整读取
+                    content_len = len(content)
+                    if content_len > 500:
+                        preview = content[:500]
+                        # 确保预览在行边界截断
+                        last_newline = preview.rfind("\n")
+                        if last_newline > 400:
+                            preview = preview[:last_newline]
+                        tool_result_lines.append(
+                            f"  文件 `{path}` (已完整读取 {content_len} 字符):\n"
+                            f"{preview}\n"
+                            f"  ... [以上为前 {len(preview)} 字符预览，完整内容已通过工具读取，可直接用于修改]"
+                        )
+                    else:
+                        tool_result_lines.append(f"  文件 `{path}` ({content_len} chars):\n{content}")
                 elif tool_name == "repo_rg" and success:
                     pattern = ""
                     if isinstance(args, dict):

@@ -558,16 +558,6 @@ class ToolBatchExecutor:
         # FIX-20250421: Upgrade to strict in implementing phase if broad exploration was attempted
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
             guard_mode = "strict"
-        # FIX-20250422: CONTENT_GATHERED phase without write tools → strict
-        # Prevents infinite read loops when model keeps re-reading same file
-        _is_content_gathered_phase = _current_phase == Phase.CONTENT_GATHERED
-        if _is_content_gathered_phase and not _has_write:
-            guard_mode = "strict"
-            logger.debug(
-                "[DEBUG][FIX-20250422] guard_mode upgraded to strict: "
-                "phase=CONTENT_GATHERED no_write_tools turn_id=%s",
-                turn_id,
-            )
         if requires_mutation and not tool_batch_has_write_invocation(invocations):
             if guard_mode == "strict":
                 raise RuntimeError(
@@ -609,9 +599,11 @@ class ToolBatchExecutor:
                 ledger=ledger,
             )
 
-        # FIX-20250422: Block redundant reads of files already read in this session
-        # This prevents the dead loop where model keeps re-reading the same file
-        # because WorkingMemory shows truncated content
+        # FIX-20250422: Log redundant reads for debugging but do NOT block them.
+        # The prompt truncation happens in the context assembler (not the tool),
+        # so a file may appear "fully read" to the tool but truncated to the model.
+        # Blocking re-reads causes dead loops. Phase timeout (max 3 turns in
+        # CONTENT_GATHERED) prevents infinite loops instead.
         _redundant_reads: list[str] = []
         for invocation in invocations:
             tname = extract_invocation_tool_name(invocation)
@@ -621,27 +613,12 @@ class ToolBatchExecutor:
                     normalized_target = target_file.replace("\\", "/").lower()
                     if normalized_target in self._session_read_files:
                         _redundant_reads.append(target_file)
-        if _redundant_reads and _is_content_gathered_phase and not _has_write:
+        if _redundant_reads:
             logger.debug(
-                "[DEBUG][FIX-20250422] redundant_read_blocked: files=%s phase=%s turn_id=%s",
+                "[DEBUG][FIX-20250422] redundant_read_detected (not blocked): files=%s phase=%s turn_id=%s",
                 _redundant_reads[:3],
                 _current_phase.value if hasattr(_current_phase, "value") else str(_current_phase),
                 turn_id,
-            )
-            self._raise_contract_violation(
-                turn_id=turn_id,
-                error_type="redundant_read_blocked",
-                message=(
-                    "single_batch_contract_violation: redundant_read_blocked; "
-                    f"Files already read in this session: {_redundant_reads[:3]}. "
-                    "Do NOT call read_file again on files you have already read. "
-                    "The file content is already in your working memory. "
-                    "Proceed directly to write_file/edit_file to materialize changes."
-                ),
-                metadata={
-                    "redundant_files": _redundant_reads[:3],
-                    "session_read_count": len(self._session_read_files),
-                },
             )
         logger.debug(
             "[DEBUG][FIX-20250422] session_read_files count=%s turn_id=%s",
@@ -738,7 +715,11 @@ class ToolBatchExecutor:
         record_receipts_to_ledger(receipts_as_dicts, ledger)
 
         # FIX-20250422: Track successfully read files in session state
-        # to prevent redundant read loops across turns
+        # Only track files that were NOT truncated — truncated reads are NOT
+        # "successful" reads from the model's perspective, and the model needs
+        # to re-read (often with range params) to get the full content before
+        # it can materialize changes. Blocking re-reads of truncated files
+        # causes the infinite loop in MATERIALIZE_CHANGES mode.
         for receipt in receipts_as_dicts:
             if not isinstance(receipt, dict):
                 continue
@@ -750,14 +731,22 @@ class ToolBatchExecutor:
                 tname = str(result_item.get("tool_name", ""))
                 if tname in _DIRECT_READ_TOOLS:
                     result_data = result_item.get("result") or {}
-                    file_path = str(result_data.get("file", "")) if isinstance(result_data, dict) else ""
-                    if file_path:
-                        normalized_fp = file_path.replace("\\", "/").lower()
-                        if normalized_fp not in self._session_read_files:
-                            self._session_read_files.add(normalized_fp)
+                    if isinstance(result_data, dict):
+                        file_path = str(result_data.get("file", ""))
+                        is_truncated = bool(result_data.get("truncated", False))
+                        if file_path and not is_truncated:
+                            normalized_fp = file_path.replace("\\", "/").lower()
+                            if normalized_fp not in self._session_read_files:
+                                self._session_read_files.add(normalized_fp)
+                                logger.debug(
+                                    "[DEBUG][FIX-20250422] session_read_files added: %s turn_id=%s",
+                                    normalized_fp,
+                                    turn_id,
+                                )
+                        elif file_path and is_truncated:
                             logger.debug(
-                                "[DEBUG][FIX-20250422] session_read_files added: %s turn_id=%s",
-                                normalized_fp,
+                                "[DEBUG][FIX-20250422] session_read_files SKIP (truncated): %s turn_id=%s",
+                                file_path.replace("\\", "/").lower(),
                                 turn_id,
                             )
 

@@ -593,8 +593,8 @@ class StateFirstContextOS:
             "[DEBUG][ContextOS] _project_via_pipeline end: tx_events=%d active_window=%d artifacts=%d episodes=%d routes=%s run_card_goal=%r",
             len(projection.snapshot.transcript_log),
             len(projection.active_window),
-            len(projection.snapshot.artifact_store),
-            len(projection.snapshot.episode_store),
+            len(getattr(projection.snapshot, "artifact_store", ())),
+            len(getattr(projection.snapshot, "episode_store", ())),
             _route_counts,
             projection.run_card.current_goal if projection.run_card else "<none>",
         )
