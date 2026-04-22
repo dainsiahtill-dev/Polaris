@@ -1838,6 +1838,7 @@ def _run_super_turn(
             handoff_message = build_director_handoff_message(
                 original_request=message,
                 pm_output=last_result.final_content,
+                extracted_tasks=pm_tasks,
             )
         turn_message = handoff_message
         if next_role in {"pm", "architect", "chief_engineer", "qa"}:
@@ -1916,6 +1917,12 @@ def _persist_super_tasks_to_board(
 
     task_ids: list[int] = []
     run_id = str(uuid.uuid4())
+    logger.info(
+        "SUPER_MODE_PERSIST_START: workspace=%s tasks=%d run_id=%s",
+        workspace,
+        len(tasks),
+        run_id,
+    )
     try:
         from polaris.cells.runtime.task_market.internal.service import (
             TaskMarketService,
@@ -1929,8 +1936,14 @@ def _persist_super_tasks_to_board(
 
         board = TaskBoard(workspace=workspace)
         market = TaskMarketService()
+        logger.info("SUPER_MODE_PERSIST_INIT: TaskBoard and TaskMarket initialized")
 
-        for task in tasks:
+        for idx, task in enumerate(tasks, 1):
+            logger.info(
+                "SUPER_MODE_PERSIST_TASK: idx=%d subject=%s",
+                idx,
+                task.subject,
+            )
             created = board.create(
                 subject=task.subject,
                 description=task.description,
@@ -1952,23 +1965,22 @@ def _persist_super_tasks_to_board(
 
             # Publish to TaskMarket for Director pickup
             trace_id = str(uuid.uuid4())
-            market.publish_work_item(
-                PublishTaskWorkItemCommandV1(
-                    workspace=workspace,
-                    trace_id=trace_id,
-                    run_id=run_id,
-                    task_id=str(created.id),
-                    stage="pending_exec",
-                    priority="high",
-                    payload={
-                        "subject": created.subject,
-                        "description": created.description,
-                        "target_files": list(task.target_files),
-                    },
-                    source_role="pm",
-                    max_attempts=3,
-                )
+            cmd = PublishTaskWorkItemCommandV1(
+                workspace=workspace,
+                trace_id=trace_id,
+                run_id=run_id,
+                task_id=str(created.id),
+                stage="pending_exec",
+                priority="high",
+                payload={
+                    "subject": created.subject,
+                    "description": created.description,
+                    "target_files": list(task.target_files),
+                },
+                source_role="pm",
+                max_attempts=3,
             )
+            market.publish_work_item(cmd)
             logger.info(
                 "SUPER_MODE_TASK_PUBLISHED: id=%d stage=pending_exec trace=%s",
                 created.id,
@@ -1976,7 +1988,16 @@ def _persist_super_tasks_to_board(
             )
 
     except Exception as exc:
-        logger.exception("SUPER_MODE_TASK_PERSIST_FAILED: %s", exc)
+        logger.exception(
+            "SUPER_MODE_TASK_PERSIST_FAILED: %s (task_ids_so_far=%s)",
+            exc,
+            task_ids,
+        )
+    logger.info(
+        "SUPER_MODE_PERSIST_END: created=%d task_ids=%s",
+        len(task_ids),
+        task_ids,
+    )
     return task_ids
 
 
