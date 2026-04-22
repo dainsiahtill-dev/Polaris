@@ -48,7 +48,7 @@
 Level 1: Embedding cosine similarity  -----> 零延迟 fast path
     | (未 warmup / 阈值不足 则降级)
     v
-Level 2: SLMCoprocessor (Ollama@192.168.1.2:11434)
+Level 2: SLMCoprocessor (Ollama@120.24.117.59:11434)
     | (健康检查失败 / slm_enabled=false 则降级)
     v
 Level 3: classify_intent_regex (硬编码正则)
@@ -134,7 +134,7 @@ class SLMCoprocessor:
 
 - 默认 provider: `ollama`
 - 默认模型: `glm-4.7-flash:latest`
-- 默认地址: `http://192.168.1.2:11434` (或 `OLLAMA_HOST` 环境变量)
+- 默认地址: `http://120.24.117.59:11434` (或 `OLLAMA_HOST` 环境变量)
 - 所有同步 I/O (`requests.post`) 通过 `asyncio.to_thread` offload 到线程池
 
 ---
@@ -280,7 +280,7 @@ result = await gateway.execute_task("INTENT_CLASSIFY", "修改代码")
 
 ### 12.2 为什么用 Ollama 作为默认 SLM Provider
 
-- 局域网部署 (`http://192.168.1.2:11434`)，零公网依赖
+- 局域网部署 (`http://120.24.117.59:11434`)，零公网依赖
 - 模型切换灵活 (`glm-4.7-flash:latest` 默认)
 - 通过 `ProviderManager` 统一接入，未来可扩展为其他本地 provider
 

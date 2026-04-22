@@ -616,9 +616,14 @@ class ToolBatchExecutor:
             ledger._implementing_phase_block_triggered = True
 
         # FIX-20250421: Verifying Phase Hard Constraint — verification REQUIRED, write not enough
+        # FIX-20250422-SUPER: SUPER_MODE bypass — CLI SUPER mode already has PM-generated plan
+        # and QA will verify separately. Director should not be blocked here.
         from polaris.cells.roles.kernel.internal.transaction.constants import VERIFICATION_TOOLS
+        from polaris.cells.roles.kernel.internal.transaction.modification_contract import (
+            _conversation_has_super_mode_markers,
+        )
 
-        if _is_verifying_phase:
+        if _is_verifying_phase and not _conversation_has_super_mode_markers(context):
             tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
             has_verification = any(t in VERIFICATION_TOOLS for t in tool_names)
             if not has_verification:

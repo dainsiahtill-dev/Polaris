@@ -348,7 +348,7 @@ class TestOllamaProvider:
         assert config["use_chat"] is False
 
     def test_validate_config(self):
-        valid_config = {"base_url": "http://192.168.1.2:11434", "timeout": 10}
+        valid_config = {"base_url": "http://120.24.117.59:11434", "timeout": 10}
         result = OllamaProvider.validate_config(valid_config)
         assert result.valid is True
 
@@ -372,7 +372,7 @@ class TestOllamaProvider:
             "hello",
             "qwen3",
             {
-                "base_url": "http://192.168.1.2:11434",
+                "base_url": "http://120.24.117.59:11434",
                 "api_path": "/api/chat",
                 "tools": [
                     {
@@ -442,7 +442,7 @@ class TestOllamaProvider:
                 "hello",
                 "qwen3",
                 {
-                    "base_url": "http://192.168.1.2:11434",
+                    "base_url": "http://120.24.117.59:11434",
                     "api_path": "/api/generate",
                     "timeout": 7,
                     "system_prompt": "system guard",

@@ -73,7 +73,7 @@ class TestComputeLlMConfigSyncUpdates:
             "providers": {
                 "ollama_local": {
                     "type": "ollama",
-                    "base_url": "http://192.168.1.2:11434",
+                    "base_url": "http://120.24.117.59:11434",
                 },
             },
         }

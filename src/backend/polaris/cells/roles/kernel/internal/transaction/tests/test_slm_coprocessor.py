@@ -60,7 +60,7 @@ class TestSLMCoprocessorEnabled:
             slm_enabled=True,
             slm_provider="ollama",
             slm_model_name="glm-4.7-flash:latest",
-            slm_base_url="http://192.168.1.2:11434",
+            slm_base_url="http://120.24.117.59:11434",
         )
         return SLMCoprocessor(config=config, provider_manager=manager)
 
@@ -146,7 +146,7 @@ class TestSLMCoprocessorConfigPropagation:
         manager = FakeProviderManager(client)
         config = TransactionConfig(
             slm_enabled=True,
-            slm_base_url="http://192.168.1.2:11434",
+            slm_base_url="http://120.24.117.59:11434",
             slm_model_name="glm-4.7-flash:latest",
             slm_timeout=45,
         )
@@ -157,7 +157,7 @@ class TestSLMCoprocessorConfigPropagation:
 
         assert manager.get_calls == ["ollama"]
         _prompt, _model, call_config = client.calls[0]
-        assert call_config["base_url"] == "http://192.168.1.2:11434"
+        assert call_config["base_url"] == "http://120.24.117.59:11434"
         assert call_config["timeout"] == 45
 
     async def test_intent_embedding_disabled_returns_none(self) -> None:

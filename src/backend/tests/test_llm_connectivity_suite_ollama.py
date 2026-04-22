@@ -77,7 +77,7 @@ def test_connectivity_suite_ollama_runs_real_invoke(monkeypatch):
     model = "glm-4.7-flash:latest
     provider_cfg = {
         "type": "ollama",
-        "base_url": "http://192.168.1.2:11434",
+        "base_url": "http://120.24.117.59:11434",
         "options": {"num_ctx": 131072},
     }
 
@@ -113,7 +113,7 @@ def test_connectivity_suite_ollama_fails_when_model_not_installed(monkeypatch):
 
     result = asyncio.run(
         run_connectivity_suite(
-            {"type": "ollama", "base_url": "http://192.168.1.2:11434"},
+            {"type": "ollama", "base_url": "http://120.24.117.59:11434"},
             "glm-4.7-flash:latest",
         )
     )

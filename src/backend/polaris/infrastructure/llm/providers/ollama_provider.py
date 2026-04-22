@@ -26,7 +26,7 @@ from .provider_helpers import get_stream_session, iter_sse_data_payloads
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-DEFAULT_BASE_URL = "http://192.168.1.2:11434"
+DEFAULT_BASE_URL = "http://120.24.117.59:11434"
 DEFAULT_TAGS_PATH = "/api/tags"
 DEFAULT_CHAT_PATH = "/api/chat"
 DEFAULT_GENERATE_PATH = "/api/generate"

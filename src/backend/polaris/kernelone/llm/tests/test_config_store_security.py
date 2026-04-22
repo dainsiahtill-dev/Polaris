@@ -161,7 +161,7 @@ class TestSchemaMigration:
         from polaris.kernelone.llm.config_store import migrate_config
 
         # v1 config with single 'provider' field
-        v1_config = {"schema_version": 1, "provider": {"type": "ollama", "base_url": "http://192.168.1.2:11434"}}
+        v1_config = {"schema_version": 1, "provider": {"type": "ollama", "base_url": "http://120.24.117.59:11434"}}
 
         migrated = migrate_config(v1_config, target_version=2)
 
@@ -612,7 +612,7 @@ class TestMigrationIntegration:
         # Create v1 config with provider field (v1 schema)
         v1_config = {
             "schema_version": 1,
-            "provider": {"type": "ollama", "base_url": "http://192.168.1.2:11434"},
+            "provider": {"type": "ollama", "base_url": "http://120.24.117.59:11434"},
             "roles": {
                 "pm": {"provider_id": "ollama", "model": "test"},
                 "director": {"provider_id": "ollama", "model": "test"},
@@ -630,7 +630,7 @@ class TestMigrationIntegration:
         # Role provider_ids must reference the new provider key ("default"), not the old type ("ollama").
         update = {
             "schema_version": 1,
-            "provider": {"type": "ollama", "base_url": "http://192.168.1.2:11434"},
+            "provider": {"type": "ollama", "base_url": "http://120.24.117.59:11434"},
             "roles": {
                 "pm": {"provider_id": "default", "model": "test"},
                 "director": {"provider_id": "default", "model": "test"},

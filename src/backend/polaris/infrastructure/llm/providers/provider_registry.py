@@ -336,7 +336,7 @@ class ProviderManager:
             return "gemini_api"
         elif "api.openai.com" in base_url:
             return "openai_compat"
-        elif "192.168.1.2:11434" in base_url or "192.168.1.2:11434" in base_url:
+        elif "120.24.117.59:11434" in base_url or "120.24.117.59:11434" in base_url:
             return "ollama"
         elif "anthropic" in base_url:
             return "anthropic_compat"

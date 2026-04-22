@@ -611,7 +611,7 @@ def build_default_config(settings: Any | None = None) -> dict[str, Any]:
         },
         "ollama": {
             "type": "ollama",
-            "base_url": "http://192.168.1.2:11434",
+            "base_url": "http://120.24.117.59:11434",
             "timeout": 60,
         },
         "openai_compat": {

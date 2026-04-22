@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ENV_OLLAMA_HOST = "OLLAMA_HOST"
-_DEFAULT_OLLAMA_HOST = "http://192.168.1.2:11434"
+_DEFAULT_OLLAMA_HOST = "http://120.24.117.59:11434"
 _DEFAULT_GENERATE_TIMEOUT_SECONDS = 300
 _DEFAULT_EMBED_TIMEOUT_SECONDS = 30
 _DEFAULT_EMBED_MODEL = "nomic-embed-text"

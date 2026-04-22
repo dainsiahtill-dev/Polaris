@@ -94,7 +94,7 @@ class SLMCoprocessor:
 
     def _build_slm_config(self) -> dict[str, Any]:
         """构建调用 SLM 时的 provider config。"""
-        base_url = self.config.slm_base_url or os.environ.get("OLLAMA_HOST", "http://192.168.1.2:11434")
+        base_url = self.config.slm_base_url or os.environ.get("OLLAMA_HOST", "http://120.24.117.59:11434")
         cfg: dict[str, Any] = {
             "base_url": base_url,
             "timeout": self.config.slm_timeout,

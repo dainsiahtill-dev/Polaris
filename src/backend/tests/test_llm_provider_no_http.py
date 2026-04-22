@@ -175,7 +175,7 @@ def test_resolve_llm_test_context_raises_validation_error_when_model_missing() -
         resolve_llm_test_execution_context(
             "/tmp/fake_ws",
             "",
-            {"role": "connectivity", "base_url": "http://192.168.1.2:11434"},
+            {"role": "connectivity", "base_url": "http://120.24.117.59:11434"},
         )
     assert exc_info.value.code == "provider_config_validation_error"
 

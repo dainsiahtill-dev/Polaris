@@ -43,6 +43,7 @@ roles:
         - repo_read_tail
         - repo_read_around
         - repo_tree
+        - repo_rg
         - search_code
         - grep
         - ripgrep
@@ -128,6 +129,7 @@ roles:
         - repo_read_tail
         - repo_read_around
         - repo_tree
+        - repo_rg
         - search_code
         - grep
         - ripgrep
@@ -214,6 +216,7 @@ roles:
         - repo_read_tail
         - repo_read_around
         - repo_tree
+        - repo_rg
         - search_code
         - grep
         - ripgrep
@@ -451,4 +454,6 @@ roles:
       forbidden_libraries: []
       version_constraints: {}
 
+    version: "1.0.0"
+    version: "1.0.0"
     version: "1.0.0"

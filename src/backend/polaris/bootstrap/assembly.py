@@ -118,7 +118,7 @@ def _inject_embedding_port(settings: Settings) -> None:
         requests = None
     if requests is not None:
         try:
-            host = os.environ.get("OLLAMA_HOST", "http://192.168.1.2:11434")
+            host = os.environ.get("OLLAMA_HOST", "http://120.24.117.59:11434")
             resp = requests.get(f"{host}/api/tags", timeout=2)
             if resp.status_code == 200:
                 set_default_ollama_adapter(OllamaRuntimeAdapter())

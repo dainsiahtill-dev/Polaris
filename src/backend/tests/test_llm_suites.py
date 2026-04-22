@@ -277,7 +277,7 @@ class TestRunConnectivitySuite:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
-                provider_cfg={"type": "ollama", "base_url": "http://192.168.1.2:11434"},
+                provider_cfg={"type": "ollama", "base_url": "http://120.24.117.59:11434"},
                 model="llama2",
             )
 
@@ -302,7 +302,7 @@ class TestRunConnectivitySuite:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
-                provider_cfg={"type": "ollama", "base_url": "http://192.168.1.2:11434"},
+                provider_cfg={"type": "ollama", "base_url": "http://120.24.117.59:11434"},
                 model="llama2",
             )
 
@@ -330,7 +330,7 @@ class TestRunConnectivitySuite:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
-                provider_cfg={"type": "ollama", "base_url": "http://192.168.1.2:11434"},
+                provider_cfg={"type": "ollama", "base_url": "http://120.24.117.59:11434"},
                 model="llama2:latest",
             )
 
@@ -360,7 +360,7 @@ class TestRunConnectivitySuite:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
-                provider_cfg={"type": "ollama", "base_url": "http://192.168.1.2:11434"},
+                provider_cfg={"type": "ollama", "base_url": "http://120.24.117.59:11434"},
                 model="llama2",
             )
 
@@ -1351,7 +1351,7 @@ class TestSuiteIntegration:
             result = await run_connectivity_suite(
                 provider_cfg={
                     "type": "ollama",
-                    "base_url": "http://192.168.1.2:11434",
+                    "base_url": "http://120.24.117.59:11434",
                 },
                 model="llama2:latest",
                 api_key="test-key",

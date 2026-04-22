@@ -13,7 +13,7 @@ class OllamaEmbeddingAdapter(KernelEmbeddingPort):
 
     def __init__(self, default_model: str = "nomic-embed-text") -> None:
         self.default_model = str(default_model or "nomic-embed-text").strip()
-        self.host = str(os.environ.get("OLLAMA_HOST", "http://192.168.1.2:11434")).strip()
+        self.host = str(os.environ.get("OLLAMA_HOST", "http://120.24.117.59:11434")).strip()
         self._runtime = OllamaRuntimeAdapter()
 
     def get_embedding(self, text: str, model: str | None = None) -> list[float]:
