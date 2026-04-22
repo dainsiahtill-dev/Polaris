@@ -87,10 +87,10 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     resolve_delivery_mode,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import PhaseManager
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import StreamOrchestrator
-from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     build_single_batch_task_contract_hint,
     extract_latest_user_message,
@@ -977,6 +977,32 @@ class TurnTransactionController:
                     }
                 )
 
+        if delivery_contract.mode == DeliveryMode.MATERIALIZE_CHANGES and not has_available_write_tool(
+            tool_definitions
+        ):
+            logger.warning(
+                "delivery-contract-downgraded-no-write-tools: turn_id=%s latest_msg=%r "
+                "downgrading MATERIALIZE_CHANGES -> PROPOSE_PATCH",
+                turn_id,
+                latest_user_request,
+            )
+            delivery_contract = DeliveryContract(
+                mode=DeliveryMode.PROPOSE_PATCH,
+                requires_mutation=False,
+                requires_verification=delivery_contract.requires_verification,
+                allow_inline_code=True,
+                allow_patch_proposal=True,
+                enrichment=delivery_contract.enrichment,
+            )
+            ledger.anomaly_flags.append(
+                {
+                    "type": "DELIVERY_CONTRACT_DOWNGRADED_NO_WRITE_TOOLS",
+                    "turn_id": turn_id,
+                    "reason": "no_write_tools_exposed_for_current_role",
+                    "latest_request": latest_user_request,
+                }
+            )
+
         ledger.set_delivery_contract(delivery_contract)
         ledger.mutation_obligation.target_files_known = self._detect_target_files_known(context)
         logger.debug(
@@ -1043,28 +1069,44 @@ class TurnTransactionController:
         requires_mutation_by_contract = ledger.delivery_contract.requires_mutation
         requires_mutation_by_intent = await self._requires_mutation_intent_hybrid(latest_user_request)
         # 两套系统不一致时，以"需要 mutation"为准，自动升级 delivery contract
+        # FIX-20250422: 但如果当前角色没有写工具，不能升级，否则会导致死循环
         if requires_mutation_by_intent and not requires_mutation_by_contract:
-            logger.warning(
-                "delivery-contract-upgrade: intent_classifier detected mutation but delivery_contract was not "
-                "MATERIALIZE_CHANGES. Upgrading for turn_id=%s",
-                turn_id,
-            )
-            ledger.delivery_contract = DeliveryContract(
-                mode=DeliveryMode.MATERIALIZE_CHANGES,
-                requires_mutation=True,
-                requires_verification=ledger.delivery_contract.requires_verification,
-                allow_inline_code=False,
-                allow_patch_proposal=False,
-            )
-            requires_mutation_by_contract = True
-            ledger.anomaly_flags.append(
-                {
-                    "type": "DELIVERY_CONTRACT_AUTO_UPGRADED",
-                    "turn_id": turn_id,
-                    "reason": "intent_classifier_mismatch",
-                    "user_request": latest_user_request,
-                }
-            )
+            if not has_available_write_tool(tool_definitions):
+                logger.warning(
+                    "delivery-contract-upgrade-blocked: intent_classifier detected mutation but "
+                    "current role has no write tools. Keeping PROPOSE_PATCH for turn_id=%s",
+                    turn_id,
+                )
+                ledger.anomaly_flags.append(
+                    {
+                        "type": "DELIVERY_CONTRACT_UPGRADE_BLOCKED",
+                        "turn_id": turn_id,
+                        "reason": "no_write_tools_for_intent",
+                        "user_request": latest_user_request,
+                    }
+                )
+            else:
+                logger.warning(
+                    "delivery-contract-upgrade: intent_classifier detected mutation but delivery_contract was not "
+                    "MATERIALIZE_CHANGES. Upgrading for turn_id=%s",
+                    turn_id,
+                )
+                ledger.delivery_contract = DeliveryContract(
+                    mode=DeliveryMode.MATERIALIZE_CHANGES,
+                    requires_mutation=True,
+                    requires_verification=ledger.delivery_contract.requires_verification,
+                    allow_inline_code=False,
+                    allow_patch_proposal=False,
+                )
+                requires_mutation_by_contract = True
+                ledger.anomaly_flags.append(
+                    {
+                        "type": "DELIVERY_CONTRACT_AUTO_UPGRADED",
+                        "turn_id": turn_id,
+                        "reason": "intent_classifier_mismatch",
+                        "user_request": latest_user_request,
+                    }
+                )
 
         if (
             decision_kind != TurnDecisionKind.TOOL_BATCH

@@ -40,6 +40,7 @@ from polaris.delivery.cli.super_mode import (
     SUPER_ROLE,
     SuperModeRouter,
     build_director_handoff_message,
+    build_super_readonly_message,
 )
 from polaris.kernelone.fs.encoding import enforce_utf8
 
@@ -1788,11 +1789,17 @@ def _run_super_turn(
                 original_request=message,
                 pm_output=last_result.final_content,
             )
+        turn_message = handoff_message
+        if next_role in {"pm", "architect", "chief_engineer", "qa"}:
+            turn_message = build_super_readonly_message(
+                role=next_role,
+                original_request=handoff_message,
+            )
         last_result = _run_streaming_turn(
             host,
             role=next_role,
             session_id=next_session_id,
-            message=handoff_message,
+            message=turn_message,
             json_render=json_render,
             debug=debug,
             spinner_label=prompt_renderer.render_spinner_label(

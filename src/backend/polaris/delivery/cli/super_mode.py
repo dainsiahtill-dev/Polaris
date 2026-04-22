@@ -106,6 +106,24 @@ def _has_code_artifact_hint(text: str) -> bool:
     return bool(re.search(r"[a-zA-Z_][\w/.-]*\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)\b", text))
 
 
+def build_super_readonly_message(*, role: str, original_request: str) -> str:
+    clean_request = str(original_request or "").strip()
+    clean_role = str(role or "").strip() or "unknown"
+    return (
+        "[mode:analyze]\n"
+        "[SUPER_MODE_READONLY_STAGE]\n"
+        f"stage_role: {clean_role}\n"
+        "stage_type: readonly_planning\n\n"
+        "instructions:\n"
+        "- This stage is read-only.\n"
+        "- Do not attempt to satisfy a write contract in this stage.\n"
+        "- Use only tools exposed to your current role.\n"
+        "- Produce role-appropriate planning or analysis output for the next stage or the user.\n\n"
+        f"original_user_request:\n{clean_request}\n"
+        "[/SUPER_MODE_READONLY_STAGE]"
+    )
+
+
 class SuperModeRouter:
     """Deterministic intent router for CLI SUPER mode."""
 
@@ -155,6 +173,7 @@ def build_director_handoff_message(*, original_request: str, pm_output: str) -> 
     clean_request = str(original_request or "").strip()
     clean_pm_output = str(pm_output or "").strip() or "(pm produced no textual plan)"
     return (
+        "[mode:materialize]\n"
         "[SUPER_MODE_HANDOFF]\n"
         f"original_user_request:\n{clean_request}\n\n"
         "planning_role: pm\n"
@@ -173,4 +192,5 @@ __all__ = [
     "SuperModeRouter",
     "SuperRouteDecision",
     "build_director_handoff_message",
+    "build_super_readonly_message",
 ]

@@ -1,0 +1,87 @@
+card_id: "vc-20260422-super-mode-role-capability-convergence"
+bug_summary: >
+  SUPER mode can route a mutation request into a read-only role (especially PM), while the
+  transaction kernel still treats that turn as MATERIALIZE_CHANGES. This creates an impossible
+  contract: continuation and retry logic demand write progress from a role with no write tools,
+  leading to dead loops.
+
+classification: structural
+
+bug_path:
+  file: "polaris/delivery/cli/terminal_console.py"
+  method: "_run_super_turn"
+  symptom: "SUPER code-delivery request loops inside PM planning stage instead of converging to Director execution"
+
+assumptions:
+  - id: "A1"
+    statement: "PM/Architect/Chief Engineer/QA are read-only roles by profile and must not be forced into MATERIALIZE_CHANGES."
+    status: verified_true
+    evidence: "core_roles.yaml sets allow_code_write=false for PM/Architect/Chief Engineer and exposes only read-only tool whitelists."
+
+  - id: "A2"
+    statement: "SUPER currently passes the raw mutation request into PM without stage-specific contract override."
+    status: verified_true
+    evidence: "_run_super_turn() forwards the original message directly to PM before Director handoff."
+
+  - id: "A3"
+    statement: "The transaction kernel can detect write capability from tool definitions."
+    status: verified_true
+    evidence: "contract_guards.has_available_write_tool(tool_definitions) already exists and is used by mutation guard paths."
+
+pre_mortem:
+  failure_point: >
+    Highest risk is weakening mutation enforcement for Director while trying to stop PM loops.
+    The fix must only downgrade turns that expose no write tools, and must keep Director on
+    MATERIALIZE_CHANGES.
+  risk_zone:
+    - "polaris/delivery/cli/super_mode.py"
+    - "polaris/delivery/cli/terminal_console.py"
+    - "polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/delivery/cli/tests/test_super_mode.py"
+      description: "SUPER planning/execution wrappers carry explicit mode markers"
+      expected: "new regression tests pass"
+      status: pending
+
+    - file: "polaris/delivery/cli/tests/test_terminal_console.py"
+      description: "SUPER code-delivery route sends analyze-only PM message and materialize director handoff"
+      expected: "new regression tests pass"
+      status: pending
+
+    - file: "polaris/cells/roles/kernel/tests/test_transaction_controller.py"
+      description: "read-only tool set downgrades MATERIALIZE_CHANGES to PROPOSE_PATCH"
+      expected: "new regression test passes"
+      status: pending
+
+  quality_gates:
+    - description: "Ruff lint/fix"
+      command: "python -m ruff check --fix <changed_paths>"
+      expected: "0 diagnostics"
+      status: pending
+
+    - description: "Ruff format"
+      command: "python -m ruff format <changed_paths>"
+      expected: "formatted or already clean"
+      status: pending
+
+    - description: "Mypy targeted"
+      command: "python -m mypy <changed_paths>"
+      expected: "Success: no issues found"
+      status: pending
+
+    - description: "Pytest targeted"
+      command: "python -m pytest -q <targeted_tests>"
+      expected: "0 failed"
+      status: pending
+
+related_adrs:
+  - "ADR-0071"
+
+sign_off:
+  completed_by: "Codex"
+  completed_at: "2026-04-22"
+  verified_by: "Codex"
+  verified_at: "pending"
+  regression_result: "pending"

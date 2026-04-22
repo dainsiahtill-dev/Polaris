@@ -16,7 +16,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.metrics import MetricsCollector
-from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     CompletionEvent,
     TransactionConfig,
@@ -113,6 +115,39 @@ class TestFinalAnswerPath:
         assert "DECISION_DECODED" in states
         assert "FINAL_ANSWER_READY" in states
         assert "COMPLETED" in states
+
+    @pytest.mark.asyncio
+    async def test_mutation_request_without_write_tools_downgrades_to_propose_patch(
+        self, mock_llm_provider, mock_tool_runtime
+    ) -> None:
+        mock_llm_provider.return_value = {
+            "content": "planning-only response",
+            "model": "claude",
+            "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+        }
+        controller = TurnTransactionController(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            config=TransactionConfig(domain="code"),
+        )
+        state_machine = TurnStateMachine(turn_id="turn_readonly_downgrade")
+        ledger = TurnLedger(turn_id="turn_readonly_downgrade")
+
+        result = await controller._execute_turn(
+            turn_id="turn_readonly_downgrade",
+            context=[{"role": "user", "content": "请进一步完善 Session Orchestrator"}],
+            tool_definitions=[
+                {"type": "function", "function": {"name": "read_file"}},
+                {"type": "function", "function": {"name": "glob"}},
+            ],
+            state_machine=state_machine,
+            ledger=ledger,
+            stream=False,
+        )
+
+        assert result["kind"] == "final_answer"
+        assert ledger.delivery_contract.mode == DeliveryMode.PROPOSE_PATCH
+        assert any(flag.get("type") == "DELIVERY_CONTRACT_DOWNGRADED_NO_WRITE_TOOLS" for flag in ledger.anomaly_flags)
 
     @pytest.mark.asyncio
     async def test_final_answer_no_llm_continuation(
@@ -238,8 +273,14 @@ class TestToolBatchExecution:
         # 使用包含 mutation 意图的 context，避免被 delivery-mode-filter 过滤
         mutation_context = [{"role": "user", "content": "写入 out.py 文件"}]
 
+        # 提供包含 write 工具的 tool_definitions，避免 MATERIALIZE_CHANGES 被降级为 PROPOSE_PATCH
+        write_tool_definitions = [
+            {"name": "read_file", "description": "Read a file", "parameters": {}},
+            {"name": "write_file", "description": "Write a file", "parameters": {}},
+        ]
+
         result = await controller.execute(
-            turn_id="turn_write", context=mutation_context, tool_definitions=basic_tool_definitions
+            turn_id="turn_write", context=mutation_context, tool_definitions=write_tool_definitions
         )
 
         assert result["batch_receipt"] is not None

@@ -4,7 +4,11 @@ import argparse
 from pathlib import Path
 
 from polaris.delivery.cli import router as cli_router
-from polaris.delivery.cli.super_mode import SuperModeRouter, build_director_handoff_message
+from polaris.delivery.cli.super_mode import (
+    SuperModeRouter,
+    build_director_handoff_message,
+    build_super_readonly_message,
+)
 
 
 def test_super_mode_router_routes_code_delivery_to_pm_then_director() -> None:
@@ -57,10 +61,22 @@ def test_build_director_handoff_message_contains_original_request_and_pm_plan() 
         original_request="进一步完善 Session Orchestrator 相关代码",
         pm_output="1. inspect target file\n2. implement fix\n3. run tests",
     )
+    assert "[mode:materialize]" in handoff
     assert "[SUPER_MODE_HANDOFF]" in handoff
     assert "进一步完善 Session Orchestrator 相关代码" in handoff
     assert "inspect target file" in handoff
     assert "execution_role: director" in handoff
+
+
+def test_build_super_readonly_message_forces_analyze_mode() -> None:
+    message = build_super_readonly_message(
+        role="pm",
+        original_request="进一步完善 Session Orchestrator 相关代码",
+    )
+    assert "[mode:analyze]" in message
+    assert "[SUPER_MODE_READONLY_STAGE]" in message
+    assert "stage_role: pm" in message
+    assert "进一步完善 Session Orchestrator 相关代码" in message
 
 
 def test_route_console_passes_super_flag(monkeypatch, tmp_path: Path) -> None:

@@ -557,6 +557,9 @@ def test_run_role_console_super_mode_routes_code_change_pm_to_director(monkeypat
 
     async def _stream_factory(**kwargs):
         if kwargs["role"] == "pm":
+            assert "[mode:analyze]" in kwargs["message"]
+            assert "[SUPER_MODE_READONLY_STAGE]" in kwargs["message"]
+            assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
             yield {
                 "type": "complete",
                 "data": {
@@ -565,6 +568,7 @@ def test_run_role_console_super_mode_routes_code_change_pm_to_director(monkeypat
             }
             return
         assert kwargs["role"] == "director"
+        assert "[mode:materialize]" in kwargs["message"]
         assert "[SUPER_MODE_HANDOFF]" in kwargs["message"]
         assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
         assert "inspect session_orchestrator" in kwargs["message"]
@@ -595,6 +599,8 @@ def test_run_role_console_super_mode_routes_architecture_to_architect_only(monke
 
     async def _stream_factory(**kwargs):
         assert kwargs["role"] == "architect"
+        assert "[mode:analyze]" in kwargs["message"]
+        assert "[SUPER_MODE_READONLY_STAGE]" in kwargs["message"]
         yield {"type": "complete", "data": {"content": "architecture response"}}
 
     _FakeRoleConsoleHost.instances.clear()
