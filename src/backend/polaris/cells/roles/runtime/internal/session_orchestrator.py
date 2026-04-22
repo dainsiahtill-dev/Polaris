@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.kernel.public.transaction_contracts import (
+    ModificationContract,
     Phase,
     PhaseManager,
-    TaskContract,
     extract_tool_results_from_batch_receipt,
     resolve_delivery_mode,
 )
@@ -111,7 +111,18 @@ class SessionStateReducer:
 
     state: OrchestratorSessionState
     phase_manager: PhaseManager = field(default_factory=PhaseManager)
-    task_contract: TaskContract = field(default_factory=TaskContract)
+    # Canonical field name kept as task_contract for backward compatibility
+    # with checkpoint payloads and downstream continuation logic.
+    task_contract: ModificationContract = field(default_factory=ModificationContract)
+
+    @property
+    def modification_contract(self) -> ModificationContract:
+        """Compatibility alias used by newer mutation-guard naming."""
+        return self.task_contract
+
+    @modification_contract.setter
+    def modification_contract(self, value: ModificationContract) -> None:
+        self.task_contract = value
 
     def current_phase(self) -> Phase:
         """Return the authoritative session phase."""
@@ -134,11 +145,15 @@ class SessionStateReducer:
             self.phase_manager = PhaseManager()
 
     def restore_task_contract(self, payload: dict[str, Any] | None) -> None:
-        """Restore TaskContract from checkpoint payload (schema >= 5)."""
+        """Restore ModificationContract from checkpoint payload (schema >= 5)."""
         if payload and isinstance(payload, dict):
-            self.task_contract = TaskContract.from_dict(payload)
+            self.task_contract = ModificationContract.from_dict(payload)
         else:
-            self.task_contract = TaskContract()
+            self.task_contract = ModificationContract()
+
+    def restore_modification_contract(self, payload: dict[str, Any] | None) -> None:
+        """Compatibility wrapper for old call-sites."""
+        self.restore_task_contract(payload)
 
     def mutation_obligation_satisfied(self, batch_receipt: Any | None = None) -> bool:
         """Return True when a successful write receipt has already been observed."""

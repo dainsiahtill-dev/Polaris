@@ -16,6 +16,15 @@ def test_super_mode_router_routes_code_delivery_to_pm_then_director() -> None:
     assert decision.reason == "code_delivery"
 
 
+def test_super_mode_router_routes_orchestrator_improve_request_to_pm_then_director() -> None:
+    decision = SuperModeRouter().decide(
+        "进一步完善 Session Orchestrator",
+        fallback_role="director",
+    )
+    assert decision.roles == ("pm", "director")
+    assert decision.reason == "code_delivery"
+
+
 def test_super_mode_router_routes_architecture_request_to_architect() -> None:
     decision = SuperModeRouter().decide(
         "请给我一个 session orchestrator 的架构蓝图",

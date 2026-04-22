@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 SUPER_ROLE = "super"
@@ -34,6 +35,18 @@ _CODE_TARGET_KEYWORDS = (
     ".py",
     ".ts",
     ".js",
+)
+_CODE_ARTIFACT_HINTS = (
+    "orchestrator",
+    "controller",
+    "service",
+    "runtime",
+    "session",
+    "pipeline",
+    "adapter",
+    "handler",
+    "kernel",
+    "cli",
 )
 _ARCHITECT_KEYWORDS = (
     "架构",
@@ -85,23 +98,32 @@ def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
+def _has_code_artifact_hint(text: str) -> bool:
+    if _contains_any(text, _CODE_TARGET_KEYWORDS):
+        return True
+    if _contains_any(text, _CODE_ARTIFACT_HINTS):
+        return True
+    return bool(re.search(r"[a-zA-Z_][\w/.-]*\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)\b", text))
+
+
 class SuperModeRouter:
     """Deterministic intent router for CLI SUPER mode."""
 
     def decide(self, message: str, *, fallback_role: str) -> SuperRouteDecision:
         text = str(message or "").strip().lower()
 
-        code_delivery = _contains_any(text, _CODE_ACTION_KEYWORDS) and _contains_any(text, _CODE_TARGET_KEYWORDS)
-        if code_delivery:
-            return SuperRouteDecision(
-                roles=("pm", "director"),
-                reason="code_delivery",
-                fallback_role=fallback_role,
-            )
         if _contains_any(text, _ARCHITECT_KEYWORDS):
             return SuperRouteDecision(
                 roles=("architect",),
                 reason="architecture_design",
+                fallback_role=fallback_role,
+            )
+
+        code_delivery = _contains_any(text, _CODE_ACTION_KEYWORDS) and _has_code_artifact_hint(text)
+        if code_delivery:
+            return SuperRouteDecision(
+                roles=("pm", "director"),
+                reason="code_delivery",
                 fallback_role=fallback_role,
             )
         if _contains_any(text, _CHIEF_ENGINEER_KEYWORDS):

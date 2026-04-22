@@ -1308,6 +1308,10 @@ async def _stream_turn(
                 break
 
             payload = _as_mapping(event.get("data"))
+            if event_type == "error" and not payload:
+                fallback_error = _safe_text(event.get("error"))
+                if fallback_error:
+                    payload = {"error": fallback_error}
 
             if event_type == "content_chunk":
                 _show_ttft_if_first_token()

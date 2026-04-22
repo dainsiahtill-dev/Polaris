@@ -635,3 +635,32 @@ def test_run_role_console_super_mode_session_command_reports_super_role(monkeypa
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "role=super fallback_role=director" in captured.out
+
+
+def test_run_role_console_prints_top_level_error_payload(monkeypatch, capsys) -> None:
+    import polaris.delivery.cli.director.console_host as console_host_module
+
+    async def _stream_factory(**_kwargs):
+        yield {
+            "type": "error",
+            "error": "[请求不够明确] Director 只接收可执行的具体任务。",
+        }
+
+    _FakeRoleConsoleHost.instances.clear()
+    _FakeRoleConsoleHost.stream_factory = _stream_factory
+    monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    scripted_inputs = iter(["hello", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
+
+    try:
+        exit_code = terminal_console.run_role_console(
+            workspace=".",
+            role="director",
+        )
+    finally:
+        _FakeRoleConsoleHost.stream_factory = None
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "[请求不够明确]" in captured.err
+    assert "unknown streaming error" not in captured.err

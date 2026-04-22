@@ -24,31 +24,31 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     resolve_delivery_mode,
 )
+from polaris.cells.roles.kernel.internal.transaction.modification_contract import (
+    ModificationContract,
+    ModificationContractStatus,
+    ModificationIntent,
+    ReadinessVerdict,
+    evaluate_modification_readiness,
+)
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
     Phase,
     PhaseManager,
     ToolResult,
     extract_tool_results_from_batch_receipt,
 )
-from polaris.cells.roles.kernel.internal.transaction.task_contract import (
-    ModificationIntent,
-    ReadinessVerdict,
-    TaskContract,
-    TaskContractStatus,
-    evaluate_readiness,
-)
 
 __all__ = [
     "VERIFICATION_TOOLS",
     "CognitiveGateway",
+    "ModificationContract",
+    "ModificationContractStatus",
     "ModificationIntent",
     "Phase",
     "PhaseManager",
     "ReadinessVerdict",
-    "TaskContract",
-    "TaskContractStatus",
     "ToolResult",
-    "evaluate_readiness",
+    "evaluate_modification_readiness",
     "extract_tool_results_from_batch_receipt",
     "get_verification_patterns",
     "resolve_delivery_mode",

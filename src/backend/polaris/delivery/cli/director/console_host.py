@@ -4,6 +4,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,15 +98,31 @@ def _assess_director_request_clarity(request: str) -> str:
         return RequestClarity.VAGUE
 
     # Check for target file patterns (common code file extensions)
-    has_target_file = bool(
-        re.search(r"[\w/\\.-]+\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)", token)
-    )
+    has_target_file = bool(re.search(r"[\w/\\.-]+\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)", token))
 
     # Check for specific action keywords
     action_keywords = [
-        "添加", "修复", "删除", "修改", "替换", "插入", "更新",
-        "add", "fix", "delete", "remove", "modify", "replace", "insert", "update",
-        "implement", "create", "refactor", "优化", "重构", "实现",
+        "添加",
+        "修复",
+        "删除",
+        "修改",
+        "替换",
+        "插入",
+        "更新",
+        "add",
+        "fix",
+        "delete",
+        "remove",
+        "modify",
+        "replace",
+        "insert",
+        "update",
+        "implement",
+        "create",
+        "refactor",
+        "优化",
+        "重构",
+        "实现",
     ]
     has_specific_action = any(kw in token.lower() for kw in action_keywords)
 
@@ -114,9 +131,21 @@ def _assess_director_request_clarity(request: str) -> str:
 
     # Vague keywords that suggest exploration rather than execution
     vague_keywords = [
-        "完善", "改进", "优化", "看看", "了解一下", "分析一下",
-        "improve", "enhance", "optimize", "explore", "investigate",
-        "看看", "检查一下", "了解一下", "分析一下",
+        "完善",
+        "改进",
+        "优化",
+        "看看",
+        "了解一下",
+        "分析一下",
+        "improve",
+        "enhance",
+        "optimize",
+        "explore",
+        "investigate",
+        "看看",
+        "检查一下",
+        "了解一下",
+        "分析一下",
     ]
     has_vague_keyword = any(kw in token.lower() for kw in vague_keywords)
 
