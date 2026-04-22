@@ -36,8 +36,13 @@ roles:
 
     tool_policy:
       whitelist:
-        # 12个标准化工具 - 只读类（PM 仅分析不执行）
+        # 只读类工具（PM 仅分析不执行）
         - read_file
+        - repo_read_head
+        - repo_read_slice
+        - repo_read_tail
+        - repo_read_around
+        - repo_tree
         - search_code
         - grep
         - ripgrep
@@ -116,8 +121,13 @@ roles:
 
     tool_policy:
       whitelist:
-        # 12个标准化工具 - 只读类（Architect 仅分析不执行）
+        # 只读类工具（Architect 仅分析不执行）
         - read_file
+        - repo_read_head
+        - repo_read_slice
+        - repo_read_tail
+        - repo_read_around
+        - repo_tree
         - search_code
         - grep
         - ripgrep
@@ -197,8 +207,13 @@ roles:
 
     tool_policy:
       whitelist:
-        # 12个标准化工具 - 只读类（CE 仅分析不执行）
+        # 只读类工具（CE 仅分析不执行）
         - read_file
+        - repo_read_head
+        - repo_read_slice
+        - repo_read_tail
+        - repo_read_around
+        - repo_tree
         - search_code
         - grep
         - ripgrep
