@@ -136,6 +136,35 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
     return reads
 
 
+# FIX-20250422-v4: 检测当前 turn 是否有写工具执行
+_WRITE_TOOL_NAMES = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "edit_blocks",
+        "precision_edit",
+        "repo_apply_diff",
+        "search_replace",
+        "append_to_file",
+    }
+)
+
+
+def _has_write_tools_in_receipt(batch_receipt: dict[str, Any] | None) -> bool:
+    """检测 batch_receipt 中是否包含成功的写工具调用。"""
+    if not batch_receipt:
+        return False
+    results = batch_receipt.get("results") or batch_receipt.get("raw_results") or []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("tool_name") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if name in _WRITE_TOOL_NAMES and status == "success":
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Read Strategy 自动切换
 # ---------------------------------------------------------------------------
@@ -258,6 +287,7 @@ def _build_continue_visible_content(
     max_turns_per_phase: int = 3,
     modification_contract_status: str = "empty",
     conversation_context: list[dict[str, Any]] | None = None,
+    batch_receipt: dict[str, Any] | None = None,
 ) -> str:
     """构建 continue_multi_turn 的 visible_content，内嵌 SESSION_PATCH。
 
@@ -269,6 +299,7 @@ def _build_continue_visible_content(
         current_progress: PhaseManager 的当前阶段值
         delivery_mode: continuation prompt contract 的显式交付模式
         conversation_context: 对话上下文，用于检测 SUPER_MODE 标记
+        batch_receipt: 当前 turn 的 batch receipt，用于检测写工具执行
     """
     # FIX-20250422-SUPER: 检测 SUPER_MODE 标记 — CLI SUPER 模式已提供完整计划，
     # 不应要求 LLM 再次声明 modification_plan。
@@ -294,28 +325,61 @@ def _build_continue_visible_content(
     except ValueError:
         phase = Phase.EXPLORING
 
+    # FIX-20250422-v4: SUPER_MODE + MATERIALIZE_CHANGES 强制写工具检测
+    # 如果当前 turn 没有写工具且处于 VERIFYING/IMPLEMENTING 阶段，强制回到 IMPLEMENTING
+    _is_materialize = str(delivery_mode or "").lower() == "materialize_changes"
+    _has_write_this_turn = _has_write_tools_in_receipt(batch_receipt)
+    _force_implementing = _is_super_mode and _is_materialize and not _has_write_this_turn and phase in (
+        Phase.VERIFYING,
+        Phase.IMPLEMENTING,
+    )
+
     # 基于 Phase 的约束提示
-    if phase == Phase.VERIFYING:
+    if phase == Phase.VERIFYING and not _force_implementing:
         instruction = (
             "当前阶段：验证（VERIFYING）。请运行测试或手动验证修复效果。严禁调用探索工具（glob/repo_rg/repo_tree 等）。"
         )
         visible_prefix = "验证阶段继续"
-    elif phase == Phase.IMPLEMENTING:
-        instruction = (
-            "当前阶段：实现（IMPLEMENTING）。你正在执行代码修改。"
-            "MANDATORY: 调用 write_file/edit_file/apply_diff 完成修改。"
-            "严禁调用 glob/repo_rg/repo_tree 等探索工具。"
-        )
-        visible_prefix = "写阶段继续"
+    elif phase == Phase.IMPLEMENTING or _force_implementing:
+        if _force_implementing:
+            # FIX-20250422-v4: 强制写模式 — LLM 尚未执行任何写操作，必须立即写入
+            instruction = (
+                "当前阶段：强制执行（IMPLEMENTING）。你尚未执行任何文件修改。"
+                "MANDATORY: 立即调用 write_file/edit_file/edit_blocks/append_to_file 实施修改。"
+                "严禁继续读取文件。严禁输出文字分析。严禁调用 execute_command 逃避写操作。"
+                "HARD GATE: 无写工具调用 = 拒绝。文本-only 完成 = 拒绝。"
+                "\n\n【工具调用示例】"
+                "\n示例1 - 创建新文件: write_file(file='path/to/file.py', content='...')"
+                "\n示例2 - 编辑文件: edit_file(file='path/to/file.py', old_string='...', new_string='...')"
+                "\n示例3 - 追加内容: append_to_file(file='path/to/file.py', content='...')"
+                "\n\n立即执行上述工具之一，不要输出任何文字分析！"
+            )
+            visible_prefix = "强制写阶段 — 立即执行修改"
+        else:
+            instruction = (
+                "当前阶段：实现（IMPLEMENTING）。你正在执行代码修改。"
+                "MANDATORY: 调用 write_file/edit_file/apply_diff 完成修改。"
+                "严禁调用 glob/repo_rg/repo_tree 等探索工具。"
+            )
+            visible_prefix = "写阶段继续"
     elif phase == Phase.CONTENT_GATHERED:
         # FIX-20250422-v3: 基于 ModificationContract 状态生成认知指令
         # FIX-20250422-SUPER: SUPER_MODE 下跳过 plan 要求，直接执行
         if modification_contract_status == "ready" or _is_super_mode:
-            instruction = (
-                "当前阶段：执行准备就绪（CONTENT_GATHERED + PLAN READY）。"
-                "你的修改计划已确认。MANDATORY: 立即调用 write_file/edit_file 按计划执行修改。"
-                "禁止继续读取文件。"
-            )
+            if _is_super_mode:
+                instruction = (
+                    "当前阶段：SUPER_MODE 执行阶段（CONTENT_GATHERED）。"
+                    "PM 已生成完整计划，你的唯一职责是执行。"
+                    "MANDATORY: 立即调用 write_file/edit_file/edit_blocks 实施修改。"
+                    "禁止继续读取文件。禁止输出文字计划。禁止询问确认。"
+                    "HARD GATE: 无写工具调用 = 拒绝。文本-only 完成 = 拒绝。"
+                )
+            else:
+                instruction = (
+                    "当前阶段：执行准备就绪（CONTENT_GATHERED + PLAN READY）。"
+                    "你的修改计划已确认。MANDATORY: 立即调用 write_file/edit_file 按计划执行修改。"
+                    "禁止继续读取文件。"
+                )
             visible_prefix = "计划就绪，开始执行"
         else:
             instruction = (
@@ -1163,6 +1227,7 @@ class StreamOrchestrator:
                 max_turns_per_phase=ledger.phase_manager._max_turns_per_phase,
                 modification_contract_status=ledger.modification_contract.status.value,
                 conversation_context=context,
+                batch_receipt=result.get("batch_receipt"),
             )
 
         visible_content = result.get("visible_content", "")

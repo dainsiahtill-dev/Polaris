@@ -1027,7 +1027,10 @@ class RoleSessionOrchestrator:
         # --- Zone 1: Goal ---
         # FIX-20250421: 强制置顶原始目标，不可变更
         # FIX-20250421-v4: 注入 delivery_mode，确保跨 Turn 不丢失
+        # FIX-20250422-SUPER: SUPER_MODE handoff 强制使用 materialize_changes
         _delivery_mode = getattr(self.state, "delivery_mode", None) or "unknown"
+        if "[SUPER_MODE_HANDOFF]" in goal or "[/SUPER_MODE_HANDOFF]" in goal:
+            _delivery_mode = "materialize_changes"
         goal_block = f"【核心任务 - 不可变更】\n{goal}\n\n当前执行目标: {self.state.goal or goal}\n<DeliveryMode>{_delivery_mode}</DeliveryMode>"
 
         # --- Zone 2: Progress ---

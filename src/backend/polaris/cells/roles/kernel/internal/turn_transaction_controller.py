@@ -1355,14 +1355,20 @@ class TurnTransactionController:
         # 根因：CLI 模式下 MATERIALIZE_CHANGES 跳过 Task Contract，导致模型缺乏正例指导。
         # 修复：只注入 POSITIVE 模板（序列模板 + 恢复协议），不注入 NEGATIVE 的 HARD GATE 规则，
         # 避免与多回合先读后写规则冲突。
+        # FIX-20250422-SUPER: SUPER_MODE 下保留 HARD GATE，Director 必须立即执行写操作。
         is_materialize = ledger is not None and getattr(ledger.delivery_contract, "mode", None) in {
             DeliveryMode.MATERIALIZE_CHANGES,
             DeliveryMode.PROPOSE_PATCH,
         }
+        _is_super_mode = any(
+            marker in str(m.get("content", ""))
+            for m in context
+            for marker in ("[SUPER_MODE_HANDOFF]", "[/SUPER_MODE_HANDOFF]", "[SUPER_MODE_DIRECTOR_CONTINUE]", "[/SUPER_MODE_DIRECTOR_CONTINUE]")
+        )
         task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(context, tool_definitions)
         if task_contract_hint:
-            if is_materialize:
-                # MATERIALIZE 模式：只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
+            if is_materialize and not _is_super_mode:
+                # MATERIALIZE 模式（非 SUPER）: 只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
                 positive_lines = []
                 for line in task_contract_hint.split("\n"):
                     # 跳过 NEGATIVE 规则行（包含 "INVALID", "HARD GATE", "rejected" 等）
@@ -1380,6 +1386,7 @@ class TurnTransactionController:
                         }
                     )
             else:
+                # SUPER_MODE 或非 MATERIALIZE: 保留完整 Task Contract（含 HARD GATE）
                 messages.append({"role": "system", "content": task_contract_hint})
 
         # 【修复根因 C】：implementing 阶段追加 HARD GATE 强制约束。
