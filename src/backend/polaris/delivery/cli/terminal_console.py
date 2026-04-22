@@ -1912,7 +1912,10 @@ def _persist_super_tasks_to_board(
 
     Returns list of created task IDs.
     """
+    import uuid
+
     task_ids: list[int] = []
+    run_id = str(uuid.uuid4())
     try:
         from polaris.cells.runtime.task_market.internal.service import (
             TaskMarketService,
@@ -1931,7 +1934,7 @@ def _persist_super_tasks_to_board(
             created = board.create(
                 subject=task.subject,
                 description=task.description,
-                priority=2,
+                priority="high",
                 tags=["super_mode", "auto_generated"],
                 estimated_hours=task.estimated_hours,
                 metadata={
@@ -1948,12 +1951,15 @@ def _persist_super_tasks_to_board(
             )
 
             # Publish to TaskMarket for Director pickup
+            trace_id = str(uuid.uuid4())
             market.publish_work_item(
                 PublishTaskWorkItemCommandV1(
                     workspace=workspace,
+                    trace_id=trace_id,
+                    run_id=run_id,
                     task_id=str(created.id),
                     stage="pending_exec",
-                    priority=created.priority.value if hasattr(created.priority, "value") else str(created.priority),
+                    priority="high",
                     payload={
                         "subject": created.subject,
                         "description": created.description,
@@ -1964,8 +1970,9 @@ def _persist_super_tasks_to_board(
                 )
             )
             logger.info(
-                "SUPER_MODE_TASK_PUBLISHED: id=%d stage=pending_exec",
+                "SUPER_MODE_TASK_PUBLISHED: id=%d stage=pending_exec trace=%s",
                 created.id,
+                trace_id,
             )
 
     except Exception as exc:
