@@ -39,8 +39,10 @@ from polaris.delivery.cli.context_status import (
 from polaris.delivery.cli.super_mode import (
     SUPER_ROLE,
     SuperModeRouter,
+    SuperTaskItem,
     build_director_handoff_message,
     build_super_readonly_message,
+    extract_task_list_from_pm_output,
 )
 from polaris.kernelone.fs.encoding import enforce_utf8
 
@@ -1788,6 +1790,7 @@ def _run_super_turn(
     )
     handoff_message = message
     last_result: _TurnExecutionResult | None = None
+    pm_tasks: list[SuperTaskItem] = []
     for index, next_role in enumerate(decision.roles):
         next_session_id = role_sessions.get(next_role) or _resolve_role_session(
             host,
@@ -1802,10 +1805,7 @@ def _run_super_turn(
             if last_result.saw_error:
                 guard_reason = f"pm_saw_error (role={last_result.role})"
             elif not last_result.final_content.strip():
-                guard_reason = (
-                    f"pm_final_content_empty (role={last_result.role}, "
-                    f"len={len(last_result.final_content)})"
-                )
+                guard_reason = f"pm_final_content_empty (role={last_result.role}, len={len(last_result.final_content)})"
             if guard_reason:
                 logger.info(
                     "SUPER_MODE_HANDOFF_BLOCKED: reason=%s pm_role=%s pm_session=%s",
@@ -1820,6 +1820,21 @@ def _run_super_turn(
                 last_result.session_id,
                 next_session_id,
             )
+            # FIX-20250422-v4: Extract structured tasks from PM output and
+            # persist to TaskBoard + TaskMarket for durable execution.
+            pm_tasks = extract_task_list_from_pm_output(last_result.final_content)
+            if pm_tasks:
+                logger.info(
+                    "SUPER_MODE_TASK_EXTRACT: %d tasks from PM output",
+                    len(pm_tasks),
+                )
+                _persist_super_tasks_to_board(
+                    workspace=str(workspace_path),
+                    tasks=pm_tasks,
+                    original_request=message,
+                )
+            else:
+                logger.info("SUPER_MODE_NO_TASKS: no structured tasks found, falling back to text handoff")
             handoff_message = build_director_handoff_message(
                 original_request=message,
                 pm_output=last_result.final_content,
@@ -1846,10 +1861,6 @@ def _run_super_turn(
             output_format=output_format,
             enable_cognitive=enable_cognitive,
         )
-    # FIX-20250422-v4: If PM produced empty output but we're in code_delivery,
-    # degrade gracefully by sending the original request directly to Director
-    # instead of returning an error. This prevents the CLI from appearing to
-    # "hang" when PM's readonly stage yields no plan.
     if last_result is None:
         active_session_id = role_sessions.get(fallback_role) or _resolve_role_session(
             host,
@@ -1859,8 +1870,7 @@ def _run_super_turn(
             session_title=session_title,
         )
         return _TurnExecutionResult(role=fallback_role, session_id=active_session_id, saw_error=True)
-    # If we broke out of the loop early (e.g., PM empty output) but the
-    # decision included director, attempt a degraded handoff with original msg.
+    # Degraded handoff when PM output was empty but director is in the pipeline
     if last_result.role != "director" and "director" in decision.roles and not last_result.saw_error:
         logger.info("SUPER_MODE_DEGRADED_HANDOFF: pm_output_empty, sending original request to director")
         director_session_id = role_sessions.get("director") or _resolve_role_session(
@@ -1891,6 +1901,76 @@ def _run_super_turn(
             enable_cognitive=enable_cognitive,
         )
     return last_result
+
+
+def _persist_super_tasks_to_board(
+    workspace: str,
+    tasks: list[SuperTaskItem],
+    original_request: str,
+) -> list[int]:
+    """Persist extracted SUPER-mode tasks to TaskBoard and TaskMarket.
+
+    Returns list of created task IDs.
+    """
+    task_ids: list[int] = []
+    try:
+        from polaris.cells.runtime.task_market.internal.service import (
+            TaskMarketService,
+        )
+        from polaris.cells.runtime.task_market.public.contracts import (
+            PublishTaskWorkItemCommandV1,
+        )
+        from polaris.cells.runtime.task_runtime.internal.task_board import (
+            TaskBoard,
+        )
+
+        board = TaskBoard(workspace=workspace)
+        market = TaskMarketService()
+
+        for task in tasks:
+            created = board.create(
+                subject=task.subject,
+                description=task.description,
+                priority=2,
+                tags=["super_mode", "auto_generated"],
+                estimated_hours=task.estimated_hours,
+                metadata={
+                    "source": "super_mode_cli",
+                    "original_request": original_request,
+                    "target_files": list(task.target_files),
+                },
+            )
+            task_ids.append(created.id)
+            logger.info(
+                "SUPER_MODE_TASK_CREATED: id=%d subject=%s",
+                created.id,
+                created.subject,
+            )
+
+            # Publish to TaskMarket for Director pickup
+            market.publish_work_item(
+                PublishTaskWorkItemCommandV1(
+                    workspace=workspace,
+                    task_id=str(created.id),
+                    stage="pending_exec",
+                    priority=created.priority.value if hasattr(created.priority, "value") else str(created.priority),
+                    payload={
+                        "subject": created.subject,
+                        "description": created.description,
+                        "target_files": list(task.target_files),
+                    },
+                    source_role="pm",
+                    max_attempts=3,
+                )
+            )
+            logger.info(
+                "SUPER_MODE_TASK_PUBLISHED: id=%d stage=pending_exec",
+                created.id,
+            )
+
+    except Exception as exc:
+        logger.exception("SUPER_MODE_TASK_PERSIST_FAILED: %s", exc)
+    return task_ids
 
 
 class PolarisRoleConsole:

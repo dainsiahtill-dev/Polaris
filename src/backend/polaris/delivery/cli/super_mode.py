@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import dataclass
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 SUPER_ROLE = "super"
 
@@ -118,7 +123,21 @@ def build_super_readonly_message(*, role: str, original_request: str) -> str:
         "- This stage is read-only.\n"
         "- Do not attempt to satisfy a write contract in this stage.\n"
         "- Use only tools exposed to your current role.\n"
-        "- Produce role-appropriate planning or analysis output for the next stage or the user.\n\n"
+        "- Produce role-appropriate planning or analysis output for the next stage or the user.\n"
+        "- IMPORTANT: End your response with a structured TASK_LIST in JSON format.\n\n"
+        "structured_output_format:\n"
+        "```json\n"
+        "{\n"
+        '  "tasks": [\n'
+        "    {\n"
+        '      "subject": "concise task title",\n'
+        '      "description": "detailed implementation steps",\n'
+        '      "target_files": ["path/to/file.py"],\n'
+        '      "estimated_hours": 0.5\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "```\n\n"
         f"original_user_request:\n{clean_request}\n"
         "[/SUPER_MODE_READONLY_STAGE]"
     )
@@ -187,10 +206,111 @@ def build_director_handoff_message(*, original_request: str, pm_output: str) -> 
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SuperTaskItem:
+    """Structured task extracted from PM output."""
+
+    subject: str
+    description: str
+    target_files: tuple[str, ...]
+    estimated_hours: float
+
+
+def extract_task_list_from_pm_output(pm_output: str) -> list[SuperTaskItem]:
+    """Extract structured task list from PM's JSON output.
+
+    Looks for ```json blocks containing a 'tasks' array, or inline JSON.
+    Returns empty list if no valid task structure found.
+    """
+    text = str(pm_output or "").strip()
+    if not text:
+        return []
+
+    # Try fenced json block first
+    fenced_match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text)
+    if fenced_match:
+        try:
+            data = json.loads(fenced_match.group(1))
+            return _parse_task_data(data)
+        except json.JSONDecodeError:
+            logger.debug("extract_task_list: fenced JSON parse failed")
+
+    # Try inline JSON object with tasks key (balanced bracket matching)
+    tasks_start = text.find('"tasks"')
+    if tasks_start == -1:
+        tasks_start = text.find("'tasks'")
+    if tasks_start != -1:
+        colon_idx = text.find(":", tasks_start)
+        if colon_idx != -1:
+            bracket_start = text.find("[", colon_idx)
+            if bracket_start != -1:
+                depth = 0
+                bracket_end = -1
+                for i, ch in enumerate(text[bracket_start:], start=bracket_start):
+                    if ch == "[":
+                        depth += 1
+                    elif ch == "]":
+                        depth -= 1
+                        if depth == 0:
+                            bracket_end = i + 1
+                            break
+                if bracket_end != -1:
+                    try:
+                        data = {"tasks": json.loads(text[bracket_start:bracket_end])}
+                        return _parse_task_data(data)
+                    except json.JSONDecodeError:
+                        logger.debug("extract_task_list: inline JSON parse failed")
+
+    # Fallback: try to find any JSON object in the last 2KB of output
+    last_chunk = text[-2048:]
+    brace_match = re.search(r"(\{[\s\S]*\"tasks\"[\s\S]*\})", last_chunk)
+    if brace_match:
+        try:
+            data = json.loads(brace_match.group(1))
+            return _parse_task_data(data)
+        except json.JSONDecodeError:
+            logger.debug("extract_task_list: fallback JSON parse failed")
+
+    return []
+
+
+def _parse_task_data(data: dict[str, Any]) -> list[SuperTaskItem]:
+    """Parse task list from decoded JSON data."""
+    items: list[SuperTaskItem] = []
+    raw_tasks = data.get("tasks")
+    if not isinstance(raw_tasks, list):
+        return items
+    for task in raw_tasks:
+        if not isinstance(task, dict):
+            continue
+        subject = str(task.get("subject", "")).strip()
+        if not subject:
+            continue
+        description = str(task.get("description", "")).strip()
+        target_files = task.get("target_files", [])
+        if isinstance(target_files, str):
+            target_files = [target_files]
+        elif not isinstance(target_files, list):
+            target_files = []
+        estimated = float(task.get("estimated_hours", 0.0) or 0.0)
+        items.append(
+            SuperTaskItem(
+                subject=subject,
+                description=description,
+                target_files=tuple(str(f).strip() for f in target_files if str(f).strip()),
+                estimated_hours=estimated,
+            )
+        )
+    logger.info("extract_task_list: parsed %d tasks from PM output", len(items))
+    return items
+
+
 __all__ = [
     "SUPER_ROLE",
     "SuperModeRouter",
     "SuperRouteDecision",
+    "SuperTaskItem",
     "build_director_handoff_message",
     "build_super_readonly_message",
+    "extract_task_list_from_pm_output",
 ]
