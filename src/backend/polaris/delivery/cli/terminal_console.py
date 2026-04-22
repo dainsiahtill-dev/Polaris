@@ -1477,8 +1477,22 @@ async def _stream_turn(
 
     if dry_run:
         _dry_run_summary(dry_run_count)
-    if not final_content and content_parts:
-        final_content = "".join(content_parts)
+    # FIX-20250422-v4: Always aggregate content_parts into final_content.
+    # The old guard "if not final_content and content_parts" only fired when
+    # final_content was exactly falsy (""). If complete.content was a whitespace
+    # string, final_content would be non-empty but content_parts might have more
+    # content. We now always prefer the union of both sources.
+    aggregated = "".join(content_parts)
+    _has_aggregated = bool(aggregated)
+    _has_final = bool(final_content.strip())
+    if _has_aggregated and not _has_final:
+        final_content = aggregated
+    elif _has_aggregated and _has_final and aggregated.strip() != final_content.strip():
+        logger.debug(
+            "stream_content_divergence: complete_len=%d chunks_len=%d",
+            len(final_content),
+            len(aggregated),
+        )
     return _TurnExecutionResult(
         role=role,
         session_id=session_id,
@@ -1783,19 +1797,21 @@ def _run_super_turn(
             session_title=session_title,
         )
         if index > 0 and next_role == "director":
+            assert last_result is not None
             guard_reason = ""
-            if last_result is None:
-                guard_reason = "last_result_is_none"
-            elif last_result.saw_error:
+            if last_result.saw_error:
                 guard_reason = f"pm_saw_error (role={last_result.role})"
             elif not last_result.final_content.strip():
-                guard_reason = f"pm_final_content_empty (role={last_result.role}, len={len(last_result.final_content)})"
+                guard_reason = (
+                    f"pm_final_content_empty (role={last_result.role}, "
+                    f"len={len(last_result.final_content)})"
+                )
             if guard_reason:
                 logger.info(
                     "SUPER_MODE_HANDOFF_BLOCKED: reason=%s pm_role=%s pm_session=%s",
                     guard_reason,
-                    last_result.role if last_result else "none",
-                    last_result.session_id if last_result else "none",
+                    last_result.role,
+                    last_result.session_id,
                 )
                 break
             logger.info(
@@ -1830,6 +1846,10 @@ def _run_super_turn(
             output_format=output_format,
             enable_cognitive=enable_cognitive,
         )
+    # FIX-20250422-v4: If PM produced empty output but we're in code_delivery,
+    # degrade gracefully by sending the original request directly to Director
+    # instead of returning an error. This prevents the CLI from appearing to
+    # "hang" when PM's readonly stage yields no plan.
     if last_result is None:
         active_session_id = role_sessions.get(fallback_role) or _resolve_role_session(
             host,
@@ -1839,6 +1859,37 @@ def _run_super_turn(
             session_title=session_title,
         )
         return _TurnExecutionResult(role=fallback_role, session_id=active_session_id, saw_error=True)
+    # If we broke out of the loop early (e.g., PM empty output) but the
+    # decision included director, attempt a degraded handoff with original msg.
+    if last_result.role != "director" and "director" in decision.roles and not last_result.saw_error:
+        logger.info("SUPER_MODE_DEGRADED_HANDOFF: pm_output_empty, sending original request to director")
+        director_session_id = role_sessions.get("director") or _resolve_role_session(
+            host,
+            role="director",
+            role_sessions=role_sessions,
+            host_kind=host_kind,
+            session_title=session_title,
+        )
+        degraded_handoff = build_director_handoff_message(
+            original_request=message,
+            pm_output="(PM planning stage produced no output; proceeding with original request)",
+        )
+        last_result = _run_streaming_turn(
+            host,
+            role="director",
+            session_id=director_session_id,
+            message=degraded_handoff,
+            json_render=json_render,
+            debug=debug,
+            spinner_label=prompt_renderer.render_spinner_label(
+                role="director",
+                session_id=director_session_id,
+                workspace=workspace_path,
+            ),
+            dry_run=dry_run,
+            output_format=output_format,
+            enable_cognitive=enable_cognitive,
+        )
     return last_result
 
 
