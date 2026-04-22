@@ -471,6 +471,7 @@ class ToolBatchExecutor:
 
         if _is_content_gathered_phase and _is_materialize and not _has_write:
             if _enable_modification_contract:
+                # FIX-20250422-SUPER: 传递对话上下文以检测 SUPER_MODE 标记
                 _verdict = evaluate_modification_readiness(
                     contract=ledger.modification_contract,
                     phase_value=_current_phase.value,
@@ -479,6 +480,7 @@ class ToolBatchExecutor:
                     else str(ledger.delivery_contract.mode),
                     turns_in_phase=ledger.phase_manager._turns_in_current_phase,
                     max_turns_per_phase=ledger.phase_manager._max_turns_per_phase,
+                    conversation_context=context,
                 )
                 if _verdict == ReadinessVerdict.READY_TO_WRITE:
                     # 契约已就绪，强制 LLM 使用写工具

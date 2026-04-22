@@ -410,3 +410,92 @@ class TestBackwardCompatibility:
         """TurnLedger has modification_contract field with default EMPTY status."""
         ledger = TurnLedger(turn_id="test")
         assert ledger.modification_contract.status == ModificationContractStatus.EMPTY
+
+
+# ===========================================================================
+# 5. SUPER_MODE Bypass Tests (FIX-20250422-SUPER)
+# ===========================================================================
+
+
+class TestSuperModeBypass:
+    """SUPER_MODE marker detection and readiness bypass tests."""
+
+    def test_super_mode_handoff_bypasses_empty_contract(self) -> None:
+        """[SUPER_MODE_HANDOFF] in context bypasses EMPTY contract -> READY_TO_WRITE."""
+        tc = ModificationContract(status=ModificationContractStatus.EMPTY)
+        context = [{"role": "user", "content": "[SUPER_MODE_HANDOFF]\nExecute plan\n[/SUPER_MODE_HANDOFF]"}]
+        verdict = evaluate_modification_readiness(
+            tc, "content_gathered", "materialize_changes", 2, 3, conversation_context=context
+        )
+        assert verdict == ReadinessVerdict.READY_TO_WRITE
+
+    def test_super_mode_continue_bypasses_empty_contract(self) -> None:
+        """[SUPER_MODE_DIRECTOR_CONTINUE] in context bypasses EMPTY contract -> READY_TO_WRITE."""
+        tc = ModificationContract(status=ModificationContractStatus.EMPTY)
+        context = [{"role": "user", "content": "[SUPER_MODE_DIRECTOR_CONTINUE]\nKeep going\n[/SUPER_MODE_DIRECTOR_CONTINUE]"}]
+        verdict = evaluate_modification_readiness(
+            tc, "content_gathered", "materialize_changes", 2, 3, conversation_context=context
+        )
+        assert verdict == ReadinessVerdict.READY_TO_WRITE
+
+    def test_no_super_mode_markers_uses_normal_rules(self) -> None:
+        """No SUPER_MODE markers -> normal rules apply (EMPTY -> NEEDS_PLAN)."""
+        tc = ModificationContract(status=ModificationContractStatus.EMPTY)
+        context = [{"role": "user", "content": "完善代码"}]
+        verdict = evaluate_modification_readiness(
+            tc, "content_gathered", "materialize_changes", 2, 3, conversation_context=context
+        )
+        assert verdict == ReadinessVerdict.NEEDS_PLAN
+
+    def test_super_mode_bypass_with_none_context(self) -> None:
+        """None context -> normal rules apply."""
+        tc = ModificationContract(status=ModificationContractStatus.EMPTY)
+        verdict = evaluate_modification_readiness(
+            tc, "content_gathered", "materialize_changes", 2, 3, conversation_context=None
+        )
+        assert verdict == ReadinessVerdict.NEEDS_PLAN
+
+    def test_super_mode_bypass_with_empty_context(self) -> None:
+        """Empty list context -> normal rules apply."""
+        tc = ModificationContract(status=ModificationContractStatus.EMPTY)
+        verdict = evaluate_modification_readiness(
+            tc, "content_gathered", "materialize_changes", 2, 3, conversation_context=[]
+        )
+        assert verdict == ReadinessVerdict.NEEDS_PLAN
+
+    def test_super_mode_marker_in_assistant_message(self) -> None:
+        """SUPER_MODE marker in assistant message also triggers bypass."""
+        tc = ModificationContract(status=ModificationContractStatus.EMPTY)
+        context = [
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "[SUPER_MODE_HANDOFF]\nplan\n[/SUPER_MODE_HANDOFF]"},
+        ]
+        verdict = evaluate_modification_readiness(
+            tc, "content_gathered", "materialize_changes", 2, 3, conversation_context=context
+        )
+        assert verdict == ReadinessVerdict.READY_TO_WRITE
+
+    @pytest.mark.asyncio
+    async def test_pre_execution_gate_bypasses_for_super_mode(
+        self, mock_emit_event: Any, mock_guard_assert: Any
+    ) -> None:
+        """ToolBatchExecutor bypasses readiness gate when SUPER_MODE markers present.
+
+        When SUPER_MODE is detected, the readiness evaluator returns READY_TO_WRITE,
+        which means read tools are blocked and write tools are required. So we use
+        write_file (a write tool) to verify the gate allows execution.
+        """
+        executor = _make_executor(mock_emit_event, mock_guard_assert)
+        # Use write_file (write tool) instead of read_file — SUPER_MODE says "ready to write"
+        decision = _make_tool_batch_decision("turn_sm_1", "batch_sm_1", "write_file", {"file": "a.py", "content": "x"})
+        sm = _make_state_machine("turn_sm_1")
+        ledger = _make_ledger_in_content_gathered(
+            "turn_sm_1",
+            turns_in_phase=1,
+            contract_status=ModificationContractStatus.EMPTY,
+        )
+        context = [{"role": "user", "content": "[SUPER_MODE_HANDOFF]\nExecute this plan immediately\n[/SUPER_MODE_HANDOFF]"}]
+
+        # Should NOT raise — SUPER_MODE bypasses the readiness gate, allowing write tools
+        result = await executor.execute_tool_batch(decision, sm, ledger, context, stream=False)
+        assert result.get("turn_id") == "turn_sm_1"

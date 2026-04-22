@@ -223,37 +223,73 @@ class ModificationContract:
 # ---------------------------------------------------------------------------
 
 
+# SUPER_MODE 标记，用于检测 CLI SUPER 模式注入的指令
+_SUPER_MODE_MARKERS: tuple[str, ...] = (
+    "[SUPER_MODE_HANDOFF]",
+    "[/SUPER_MODE_HANDOFF]",
+    "[SUPER_MODE_DIRECTOR_CONTINUE]",
+    "[/SUPER_MODE_DIRECTOR_CONTINUE]",
+)
+
+
+def _conversation_has_super_mode_markers(context: list[dict[str, Any]] | None) -> bool:
+    """检测对话上下文中是否包含 SUPER_MODE 标记。
+
+    CLI SUPER 模式通过 [SUPER_MODE_HANDOFF] 和 [SUPER_MODE_DIRECTOR_CONTINUE]
+    标记向 Director 传递"立即执行，无需计划"的指令。当这些标记存在时，
+    ModificationContract 的 plan 要求应当被绕过。
+    """
+    if not context:
+        return False
+    for message in context:
+        if not isinstance(message, dict):
+            continue
+        content = str(message.get("content", ""))
+        for marker in _SUPER_MODE_MARKERS:
+            if marker in content:
+                return True
+    return False
+
+
 def evaluate_modification_readiness(
     contract: ModificationContract,
     phase_value: str,
     delivery_mode_value: str,
     turns_in_phase: int,
     max_turns_per_phase: int,
+    conversation_context: list[dict[str, Any]] | None = None,
 ) -> ReadinessVerdict:
     """判断 LLM 是否已准备好执行写操作。
 
     使用字符串值（而非枚举）避免跨模块循环导入。
 
     规则：
-    1. 非 MATERIALIZE_CHANGES → READY_TO_WRITE（不设门禁）
-    2. 非 CONTENT_GATHERED → READY_TO_WRITE（门禁仅在此阶段生效）
-    3. contract.status == READY → READY_TO_WRITE
-    4. contract.status == DRAFT 且有 target_files + 非空 action → 自动提升为 READY
-    5. 否则 → NEEDS_PLAN
+    1. SUPER_MODE 模式 → READY_TO_WRITE（CLI SUPER 模式已提供完整计划）
+    2. 非 MATERIALIZE_CHANGES → READY_TO_WRITE（不设门禁）
+    3. 非 CONTENT_GATHERED → READY_TO_WRITE（门禁仅在此阶段生效）
+    4. contract.status == READY → READY_TO_WRITE
+    5. contract.status == DRAFT 且有 target_files + 非空 action → 自动提升为 READY
+    6. 否则 → NEEDS_PLAN
     """
-    # Rule 1: 非 MATERIALIZE_CHANGES 模式不设门禁
+    # Rule 1: SUPER_MODE 绕过 — CLI SUPER 模式通过 PM 已生成完整计划，
+    # Director 的唯一职责是执行，不应被 plan 门禁阻塞。
+    if _conversation_has_super_mode_markers(conversation_context):
+        logger.debug("modification_readiness: SUPER_MODE bypass — READY_TO_WRITE")
+        return ReadinessVerdict.READY_TO_WRITE
+
+    # Rule 2: 非 MATERIALIZE_CHANGES 模式不设门禁
     if delivery_mode_value != "materialize_changes":
         return ReadinessVerdict.READY_TO_WRITE
 
-    # Rule 2: 非 CONTENT_GATHERED 阶段不设门禁
+    # Rule 3: 非 CONTENT_GATHERED 阶段不设门禁
     if phase_value != "content_gathered":
         return ReadinessVerdict.READY_TO_WRITE
 
-    # Rule 3: 契约已就绪
+    # Rule 4: 契约已就绪
     if contract.status == ModificationContractStatus.READY:
         return ReadinessVerdict.READY_TO_WRITE
 
-    # Rule 4: DRAFT 自动提升检查
+    # Rule 5: DRAFT 自动提升检查
     if contract.status == ModificationContractStatus.DRAFT:
         has_targets = bool(contract.target_files)
         has_actions = any(m.action for m in contract.modifications)
@@ -262,5 +298,5 @@ def evaluate_modification_readiness(
             logger.info("modification_contract_auto_promoted: DRAFT -> READY")
             return ReadinessVerdict.READY_TO_WRITE
 
-    # Rule 5: 契约不足
+    # Rule 6: 契约不足
     return ReadinessVerdict.NEEDS_PLAN

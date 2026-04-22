@@ -257,6 +257,7 @@ def _build_continue_visible_content(
     turns_in_phase: int = 0,
     max_turns_per_phase: int = 3,
     modification_contract_status: str = "empty",
+    conversation_context: list[dict[str, Any]] | None = None,
 ) -> str:
     """构建 continue_multi_turn 的 visible_content，内嵌 SESSION_PATCH。
 
@@ -267,7 +268,26 @@ def _build_continue_visible_content(
         read_tools: 已调用的读工具列表（真正的 read_file，不是 glob）
         current_progress: PhaseManager 的当前阶段值
         delivery_mode: continuation prompt contract 的显式交付模式
+        conversation_context: 对话上下文，用于检测 SUPER_MODE 标记
     """
+    # FIX-20250422-SUPER: 检测 SUPER_MODE 标记 — CLI SUPER 模式已提供完整计划，
+    # 不应要求 LLM 再次声明 modification_plan。
+    _is_super_mode = False
+    if conversation_context:
+        _super_markers = (
+            "[SUPER_MODE_HANDOFF]",
+            "[/SUPER_MODE_HANDOFF]",
+            "[SUPER_MODE_DIRECTOR_CONTINUE]",
+            "[/SUPER_MODE_DIRECTOR_CONTINUE]",
+        )
+        for message in conversation_context:
+            if not isinstance(message, dict):
+                continue
+            content = str(message.get("content", ""))
+            if any(m in content for m in _super_markers):
+                _is_super_mode = True
+                break
+
     # FIX-20250421: 使用 PhaseManager 的阶段生成约束提示
     try:
         phase = Phase(current_progress)
@@ -289,7 +309,8 @@ def _build_continue_visible_content(
         visible_prefix = "写阶段继续"
     elif phase == Phase.CONTENT_GATHERED:
         # FIX-20250422-v3: 基于 ModificationContract 状态生成认知指令
-        if modification_contract_status == "ready":
+        # FIX-20250422-SUPER: SUPER_MODE 下跳过 plan 要求，直接执行
+        if modification_contract_status == "ready" or _is_super_mode:
             instruction = (
                 "当前阶段：执行准备就绪（CONTENT_GATHERED + PLAN READY）。"
                 "你的修改计划已确认。MANDATORY: 立即调用 write_file/edit_file 按计划执行修改。"
@@ -1141,6 +1162,7 @@ class StreamOrchestrator:
                 turns_in_phase=ledger.phase_manager._turns_in_current_phase,
                 max_turns_per_phase=ledger.phase_manager._max_turns_per_phase,
                 modification_contract_status=ledger.modification_contract.status.value,
+                conversation_context=context,
             )
 
         visible_content = result.get("visible_content", "")
