@@ -455,6 +455,110 @@ class ToolBatchExecutor:
         )
         has_direct_read = any(name in _DIRECT_READ_TOOLS for name in non_empty_tool_names)
 
+        # FIX-20250422-v3: CONTENT_GATHERED + MATERIALIZE_CHANGES 的就绪门禁。
+        # 取代 FIX-20250422-v2 的机械式 turns_in_phase >= 2 硬阻断。
+        # 新逻辑：通过 ModificationContract 评估 LLM 是否已准备好写操作：
+        # - READY_TO_WRITE（有修改计划）→ 强制写（阻断读）
+        # - NEEDS_PLAN（无计划）+ turns < max → 允许读（由 continuation prompt 注入规划指令）
+        # - NEEDS_PLAN + turns >= max → 降级到 phase timeout（现有行为）
+        from polaris.cells.roles.kernel.internal.transaction.modification_contract import (
+            ReadinessVerdict,
+            evaluate_modification_readiness,
+        )
+
+        _is_content_gathered_phase = _current_phase == Phase.CONTENT_GATHERED
+        _enable_modification_contract = getattr(self.config, "enable_modification_contract", True)
+
+        if _is_content_gathered_phase and _is_materialize and not _has_write:
+            if _enable_modification_contract:
+                _verdict = evaluate_modification_readiness(
+                    contract=ledger.modification_contract,
+                    phase_value=_current_phase.value,
+                    delivery_mode_value=ledger.delivery_contract.mode.value
+                    if hasattr(ledger.delivery_contract.mode, "value")
+                    else str(ledger.delivery_contract.mode),
+                    turns_in_phase=ledger.phase_manager._turns_in_current_phase,
+                    max_turns_per_phase=ledger.phase_manager._max_turns_per_phase,
+                )
+                if _verdict == ReadinessVerdict.READY_TO_WRITE:
+                    # 契约已就绪，强制 LLM 使用写工具
+                    self._raise_contract_violation(
+                        turn_id=turn_id,
+                        error_type="content_gathered_write_required",
+                        message=(
+                            "single_batch_contract_violation: CONTENT_GATHERED phase requires write tools. "
+                            "Your modification plan is confirmed. "
+                            "You MUST call write_file/edit_file to execute your plan now. "
+                            "Reading more files is blocked."
+                        ),
+                        metadata={
+                            "phase": "content_gathered",
+                            "verdict": _verdict.value,
+                            "contract_status": ledger.modification_contract.status.value,
+                            "turns_in_phase": ledger.phase_manager._turns_in_current_phase,
+                            "tool_names": non_empty_tool_names,
+                            "has_write": _has_write,
+                        },
+                    )
+                else:
+                    # NEEDS_PLAN: 检查是否已超过 max_turns_per_phase → 降级到 timeout
+                    if ledger.phase_manager._turns_in_current_phase >= ledger.phase_manager._max_turns_per_phase:
+                        logger.warning(
+                            "modification_contract_timeout_degradation: contract still %s after %d turns. "
+                            "Falling back to phase timeout hard block. turn_id=%s",
+                            ledger.modification_contract.status.value,
+                            ledger.phase_manager._turns_in_current_phase,
+                            turn_id,
+                        )
+                        self._raise_contract_violation(
+                            turn_id=turn_id,
+                            error_type="content_gathered_write_required",
+                            message=(
+                                "single_batch_contract_violation: CONTENT_GATHERED phase timeout. "
+                                "You have spent too many turns reading without declaring a modification plan. "
+                                "You MUST call write_file/edit_file to materialize changes NOW. "
+                                "Reading more files is blocked."
+                            ),
+                            metadata={
+                                "phase": "content_gathered",
+                                "verdict": _verdict.value,
+                                "contract_status": ledger.modification_contract.status.value,
+                                "turns_in_phase": ledger.phase_manager._turns_in_current_phase,
+                                "tool_names": non_empty_tool_names,
+                                "has_write": _has_write,
+                                "degraded": True,
+                            },
+                        )
+                    else:
+                        # 允许读操作，由 continuation prompt 注入规划指令
+                        logger.info(
+                            "modification_contract_needs_plan: allowing read tools in CONTENT_GATHERED. "
+                            "contract_status=%s turns_in_phase=%d max=%d turn_id=%s",
+                            ledger.modification_contract.status.value,
+                            ledger.phase_manager._turns_in_current_phase,
+                            ledger.phase_manager._max_turns_per_phase,
+                            turn_id,
+                        )
+            else:
+                # 功能禁用：回退到 FIX-20250422-v2 的 turns_in_phase >= 2 硬阻断
+                if ledger.phase_manager._turns_in_current_phase >= 2:
+                    self._raise_contract_violation(
+                        turn_id=turn_id,
+                        error_type="content_gathered_write_required",
+                        message=(
+                            "single_batch_contract_violation: CONTENT_GATHERED phase requires write tools. "
+                            "You have already read file contents for multiple turns. "
+                            "You MUST call write_file/edit_file to materialize changes. "
+                            "Reading more files is blocked. Emit write tools now."
+                        ),
+                        metadata={
+                            "phase": "content_gathered",
+                            "turns_in_phase": ledger.phase_manager._turns_in_current_phase,
+                            "tool_names": non_empty_tool_names,
+                            "has_write": _has_write,
+                        },
+                    )
+
         _exploration_streak_hard_block = "EXPLORATION_STREAK_HARD_BLOCK" in _latest_user_for_barrier
         if (
             _exploration_streak_hard_block
@@ -938,14 +1042,31 @@ class ToolBatchExecutor:
             return False
         if ledger.mutation_obligation.mutation_satisfied:
             return False
+        # FIX-20250422-v2: Phase timeout 后必须允许 LLM_ONCE 收口，不能再 continue_multi_turn。
+        # 根因：return True = "block finalization" = force continue_multi_turn，
+        # 旧代码 return True 导致 phase timeout 后反而无限循环。
+        # 修复：return False = "allow finalization" = LLM_ONCE proceeds → turn completes。
+        if ledger.mutation_obligation.blocked_reason == BlockedReason.PHASE_TIMEOUT:
+            logger.warning(
+                "intent-mismatch-allow-finalization: phase timeout detected. "
+                "Allowing LLM_ONCE finalization to break infinite loop. turn_id=%s",
+                ledger.turn_id,
+            )
+            return False
         contract = ledger.delivery_contract
-        if ledger.tool_batch_count <= 2:
+        # FIX-20250422-v2: 使用 PhaseManager 的 session 级阶段停留计数器，
+        # 而非 per-turn 的 tool_batch_count。tool_batch_count 每 turn 重置为 0，
+        # 导致 <= 2 的宽限期永远不会过期，LLM 可以无限探索。
+        # PhaseManager._turns_in_current_phase 跨 turn 持久化（通过 _session_phase_manager），
+        # 正确反映 session 级的阶段停留轮数。
+        session_turns_in_phase = ledger.phase_manager._turns_in_current_phase
+        if session_turns_in_phase <= 2:
             logger.debug(
                 "intent-mismatch-allow-exploration: intent detected mutation but "
-                "delivery contract mode=%s and tool_batch_count=%d <= 2. "
+                "delivery contract mode=%s and session_turns_in_phase=%d <= 2. "
                 "Allowing exploration before enforcing MATERIALIZE_CHANGES. turn_id=%s",
                 contract.mode.value if hasattr(contract.mode, "value") else contract.mode,
-                ledger.tool_batch_count,
+                session_turns_in_phase,
                 ledger.turn_id,
             )
             ledger.delivery_contract = replace(

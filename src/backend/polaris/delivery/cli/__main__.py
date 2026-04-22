@@ -158,7 +158,13 @@ def create_parser() -> argparse.ArgumentParser:
         "--role",
         choices=list(_ALLOWED_ROLES),
         default="director",
-        help="Role to launch (default: director)",
+        help="Fallback role to launch (default: director). When --super is enabled, used as fallback route.",
+    )
+    console_parser.add_argument(
+        "--super",
+        action="store_true",
+        default=False,
+        help="Enable SUPER mode: dynamically route each request across PM/Director/Architect/QA by intent.",
     )
     console_parser.add_argument(
         "--session-title",

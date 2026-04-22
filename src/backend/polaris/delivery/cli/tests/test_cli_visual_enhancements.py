@@ -127,6 +127,7 @@ class TestRolePromptSymbols:
         assert "architect" in tc.ROLE_PROMPT_SYMBOLS
         assert "chief_engineer" in tc.ROLE_PROMPT_SYMBOLS
         assert "qa" in tc.ROLE_PROMPT_SYMBOLS
+        assert "super" in tc.ROLE_PROMPT_SYMBOLS
 
     def test_role_prompt_symbol_returns_unicode(self):
         """Role symbols should be unicode characters."""

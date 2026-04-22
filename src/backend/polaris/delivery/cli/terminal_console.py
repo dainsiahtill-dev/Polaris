@@ -36,6 +36,11 @@ from polaris.delivery.cli.context_status import (
     ContextStats,
     render_context_panel,
 )
+from polaris.delivery.cli.super_mode import (
+    SUPER_ROLE,
+    SuperModeRouter,
+    build_director_handoff_message,
+)
 from polaris.kernelone.fs.encoding import enforce_utf8
 
 # Optional readline import for keyboard mode support
@@ -72,6 +77,7 @@ ROLE_PROMPT_SYMBOLS: dict[str, str] = {
     "architect": "◇",
     "chief_engineer": "◈",
     "qa": "◎",
+    "super": "✦",
 }
 
 
@@ -159,6 +165,7 @@ _ONBOARD_WELCOME_PANEL_RICH = """[bold cyan]Interactive Commands:[/bold cyan]
 [bold cyan]Tips:[/bold cyan]
   • Tab to complete commands
   • Up/Down arrows for command history
+  • Launch with --super for intent-based multi-role orchestration
   • --json=pretty-color for colored diff output
   • --debug for verbose LLM stream"""
 
@@ -177,6 +184,7 @@ Interactive Commands:
 Tips:
   • Tab to complete commands
   • Up/Down arrows for command history
+  • Launch with --super for intent-based multi-role orchestration
   • --json=pretty-color for colored diff output
   • --debug for verbose LLM stream
 
@@ -406,6 +414,9 @@ _HELP_TEXT = """Commands:
   /keymode [mode]    Show/switch keyboard mode (vi|emacs)
   /dryrun [on|off]   Toggle or query dry-run mode (no tool execution)
   /exit              Exit console
+
+Launch option:
+  --super            Enable intent-based SUPER mode (auto routes PM/Director/etc.)
 """
 
 
@@ -579,8 +590,9 @@ def _resolve_output_format(explicit_format: str | None | object) -> str:
         # PolarisRoleConsole case or explicit None: default to text
         return "text"
     # Actual format string
-    normalized = _normalize_output_format(explicit_format)
-    if normalized != "text" or explicit_format == "text":
+    explicit_format_token = explicit_format if isinstance(explicit_format, str) else None
+    normalized = _normalize_output_format(explicit_format_token)
+    if normalized != "text" or explicit_format_token == "text":
         return normalized
     return "text"
 
@@ -953,6 +965,14 @@ class _ConsoleRenderState:
     omp_executable: str = "oh-my-posh"
 
 
+@dataclass(slots=True)
+class _TurnExecutionResult:
+    role: str
+    session_id: str
+    final_content: str = ""
+    saw_error: bool = False
+
+
 class _PromptRenderer:
     def __init__(self, state: _ConsoleRenderState) -> None:
         self._state = state
@@ -1172,7 +1192,7 @@ async def _stream_turn(
     dry_run: bool = False,
     output_format: str = "text",
     enable_cognitive: bool | None = None,
-) -> None:
+) -> _TurnExecutionResult:
     # Determine if we're in structured JSON output mode
     use_json_output = output_format in ("json", "json-pretty")
     json_output_pretty = output_format == "json-pretty"
@@ -1206,6 +1226,9 @@ async def _stream_turn(
     # Dry-run state
     dry_run_count = 0
     dry_run_done = False
+    saw_error = False
+    content_parts: list[str] = []
+    final_content = ""
 
     def _dry_run_banner() -> None:
         print(f"{_ANSI_YELLOW}=== DRY-RUN MODE: No tools will be executed ==={_ANSI_RESET}")
@@ -1290,6 +1313,7 @@ async def _stream_turn(
                 _show_ttft_if_first_token()
                 chunk = str(payload.get("content") or "")
                 if chunk and not _EMPTY_TOOL_BLOCK_RE.match(chunk):
+                    content_parts.append(chunk)
                     if use_json_output:
                         _print_structured_json_event(
                             _build_structured_json_event("content_chunk", {"content": chunk}),
@@ -1373,6 +1397,7 @@ async def _stream_turn(
                 continue
 
             if event_type == "error":
+                saw_error = True
                 if use_json_output:
                     error_text = _tool_error(payload) or "unknown streaming error"
                     _print_error_event({"error": error_text})
@@ -1389,6 +1414,8 @@ async def _stream_turn(
                     _write_thinking_chunk(thinking)
                 _close_thinking_stream()
                 content = str(payload.get("content") or "")
+                if content:
+                    final_content = content
                 if content and not saw_content_chunk:
                     if use_json_output:
                         _print_structured_json_event(
@@ -1445,6 +1472,14 @@ async def _stream_turn(
 
     if dry_run:
         _dry_run_summary(dry_run_count)
+    if not final_content and content_parts:
+        final_content = "".join(content_parts)
+    return _TurnExecutionResult(
+        role=role,
+        session_id=session_id,
+        final_content=final_content,
+        saw_error=saw_error,
+    )
 
 
 def _run_streaming_turn(
@@ -1459,9 +1494,9 @@ def _run_streaming_turn(
     dry_run: bool = False,
     output_format: str = "text",
     enable_cognitive: bool | None = None,
-) -> None:
+) -> _TurnExecutionResult:
     try:
-        asyncio.run(
+        return asyncio.run(
             _stream_turn(
                 host,
                 role=role,
@@ -1477,7 +1512,7 @@ def _run_streaming_turn(
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
         # User interrupted or task cancelled - graceful shutdown
-        pass
+        return _TurnExecutionResult(role=role, session_id=session_id, saw_error=True)
     except Exception as exc:
         # Surface unexpected errors so users know *why* the turn aborted.
         logger.exception("Streaming turn aborted unexpectedly: %s", exc)
@@ -1704,6 +1739,79 @@ def _build_role_capability_profile(*, role: str, host_kind: str) -> dict[str, An
     return profile
 
 
+def _console_display_role(*, role: str, super_mode: bool) -> str:
+    return SUPER_ROLE if super_mode else role
+
+
+def _run_super_turn(
+    host: RoleConsoleHost,
+    *,
+    fallback_role: str,
+    role_sessions: dict[str, str],
+    host_kind: str,
+    session_title: str | None,
+    workspace_path: Path,
+    render_state: _ConsoleRenderState,
+    prompt_renderer: _PromptRenderer,
+    message: str,
+    json_render: str,
+    debug: bool,
+    dry_run: bool,
+    output_format: str,
+    enable_cognitive: bool | None = None,
+) -> _TurnExecutionResult:
+    decision = SuperModeRouter().decide(message, fallback_role=fallback_role)
+    logger.debug(
+        "super_mode decision: fallback_role=%s reason=%s roles=%s",
+        fallback_role,
+        decision.reason,
+        ",".join(decision.roles),
+    )
+    handoff_message = message
+    last_result: _TurnExecutionResult | None = None
+    for index, next_role in enumerate(decision.roles):
+        next_session_id = role_sessions.get(next_role) or _resolve_role_session(
+            host,
+            role=next_role,
+            role_sessions=role_sessions,
+            host_kind=host_kind,
+            session_title=session_title,
+        )
+        if index > 0 and next_role == "director":
+            if last_result is None or last_result.saw_error or not last_result.final_content.strip():
+                break
+            handoff_message = build_director_handoff_message(
+                original_request=message,
+                pm_output=last_result.final_content,
+            )
+        last_result = _run_streaming_turn(
+            host,
+            role=next_role,
+            session_id=next_session_id,
+            message=handoff_message,
+            json_render=json_render,
+            debug=debug,
+            spinner_label=prompt_renderer.render_spinner_label(
+                role=next_role,
+                session_id=next_session_id,
+                workspace=workspace_path,
+            ),
+            dry_run=dry_run,
+            output_format=output_format,
+            enable_cognitive=enable_cognitive,
+        )
+    if last_result is None:
+        active_session_id = role_sessions.get(fallback_role) or _resolve_role_session(
+            host,
+            role=fallback_role,
+            role_sessions=role_sessions,
+            host_kind=host_kind,
+            session_title=session_title,
+        )
+        return _TurnExecutionResult(role=fallback_role, session_id=active_session_id, saw_error=True)
+    return last_result
+
+
 class PolarisRoleConsole:
     """Compatibility wrapper object for app-style console invocation."""
 
@@ -1723,6 +1831,7 @@ class PolarisRoleConsole:
         model: str | None = None,
         dry_run: bool = False,
         output_format: str | None = "text",
+        super_mode: bool = False,
     ) -> None:
         self.workspace = str(Path(workspace).resolve())
         self.role = _normalize_role(role)
@@ -1737,6 +1846,7 @@ class PolarisRoleConsole:
         self.model = model
         self.dry_run = bool(dry_run)
         self.output_format = output_format
+        self.super_mode = bool(super_mode)
 
     def run(self) -> int:
         return run_role_console(
@@ -1753,6 +1863,7 @@ class PolarisRoleConsole:
             model=self.model,
             dry_run=self.dry_run,
             output_format=self.output_format,
+            super_mode=self.super_mode,
         )
 
 
@@ -1854,6 +1965,7 @@ def run_role_console(
     dry_run: bool = False,
     output_format: str | None = None,
     enable_cognitive: bool | None = None,
+    super_mode: bool = False,
 ) -> int:
     # Enforce UTF-8 encoding for Chinese characters and other Unicode output
     enforce_utf8()
@@ -1925,9 +2037,9 @@ def run_role_console(
         previous_log_levels = _suppress_infrastructure_logs()
         _print_banner(
             workspace=workspace_path,
-            role=role_token,
+            role=_console_display_role(role=role_token, super_mode=super_mode),
             session_id=active_session_id,
-            allowed_roles=allowed_roles,
+            allowed_roles=allowed_roles | (frozenset({SUPER_ROLE}) if super_mode else frozenset()),
             render_state=render_state,
         )
         _restore_infrastructure_logs(previous_log_levels)
@@ -1947,6 +2059,24 @@ def run_role_console(
         batch_message = sys.stdin.read().strip()
         if not batch_message:
             return 0
+        if super_mode:
+            result = _run_super_turn(
+                host,
+                fallback_role=role_token,
+                role_sessions=role_sessions,
+                host_kind=host_kind,
+                session_title=session_title,
+                workspace_path=workspace_path,
+                render_state=render_state,
+                prompt_renderer=prompt_renderer,
+                message=batch_message,
+                json_render=render_state.json_render,
+                debug=debug_enabled,
+                dry_run=dry_run,
+                output_format=render_state.output_format,
+                enable_cognitive=enable_cognitive,
+            )
+            return 1 if result.saw_error else 0
         return _run_batch_mode(
             host,
             role=role_token,
@@ -1965,7 +2095,7 @@ def run_role_console(
     prompt_session = None
     if sys.stdout.isatty():
         prompt_session = create_prompt_session(
-            role=current_role,
+            role=_console_display_role(role=current_role, super_mode=super_mode),
             session_id=active_session_id,
             workspace=str(workspace_path),
             omp_config=render_state.omp_config,
@@ -1975,7 +2105,7 @@ def run_role_console(
     while True:
         # Update session role if changed
         if prompt_session is not None:
-            prompt_session.set_role(current_role)
+            prompt_session.set_role(_console_display_role(role=current_role, super_mode=super_mode))
 
         try:
             if prompt_session is not None:
@@ -1985,7 +2115,7 @@ def run_role_console(
                 # Non-TTY or fallback: use readline_input
                 raw = readline_input(
                     prompt_renderer.render(
-                        role=current_role,
+                        role=_console_display_role(role=current_role, super_mode=super_mode),
                         session_id=active_session_id,
                         workspace=workspace_path,
                     ),
@@ -2011,7 +2141,10 @@ def run_role_console(
             print(_HELP_TEXT)
             continue
         if message == "/session":
-            print(f"role={current_role} session={active_session_id}")
+            if super_mode:
+                print(f"role={SUPER_ROLE} fallback_role={current_role} session={active_session_id}")
+            else:
+                print(f"role={current_role} session={active_session_id}")
             continue
         if message.startswith("/new"):
             title = _safe_text(message.removeprefix("/new")) or None
@@ -2031,7 +2164,10 @@ def run_role_console(
             if not active_session_id:
                 raise RuntimeError("failed to create role session")
             role_sessions[current_role] = active_session_id
-            print(f"role={current_role} session={active_session_id}")
+            if super_mode:
+                print(f"role={SUPER_ROLE} fallback_role={current_role} session={active_session_id}")
+            else:
+                print(f"role={current_role} session={active_session_id}")
             continue
         if message.startswith("/role"):
             next_role = _safe_text(message.removeprefix("/role")).lower()
@@ -2051,7 +2187,10 @@ def run_role_console(
                 role_sessions=role_sessions,
                 host_kind=host_kind,
             )
-            print(f"role={current_role} session={active_session_id}")
+            if super_mode:
+                print(f"role={SUPER_ROLE} fallback_role={current_role} session={active_session_id}")
+            else:
+                print(f"role={current_role} session={active_session_id}")
             continue
         if message.startswith("/json"):
             next_mode = _safe_text(message.removeprefix("/json")).lower()
@@ -2128,22 +2267,41 @@ def run_role_console(
             continue
 
         try:
-            _run_streaming_turn(
-                host,
-                role=current_role,
-                session_id=active_session_id,
-                message=raw,
-                json_render=render_state.json_render,
-                debug=debug_enabled,
-                spinner_label=prompt_renderer.render_spinner_label(
+            if super_mode:
+                result = _run_super_turn(
+                    host,
+                    fallback_role=current_role,
+                    role_sessions=role_sessions,
+                    host_kind=host_kind,
+                    session_title=session_title,
+                    workspace_path=workspace_path,
+                    render_state=render_state,
+                    prompt_renderer=prompt_renderer,
+                    message=raw,
+                    json_render=render_state.json_render,
+                    debug=debug_enabled,
+                    dry_run=current_dry_run,
+                    output_format=render_state.output_format,
+                    enable_cognitive=enable_cognitive,
+                )
+                active_session_id = result.session_id
+            else:
+                _run_streaming_turn(
+                    host,
                     role=current_role,
                     session_id=active_session_id,
-                    workspace=workspace_path,
-                ),
-                dry_run=current_dry_run,
-                output_format=render_state.output_format,
-                enable_cognitive=enable_cognitive,
-            )
+                    message=raw,
+                    json_render=render_state.json_render,
+                    debug=debug_enabled,
+                    spinner_label=prompt_renderer.render_spinner_label(
+                        role=current_role,
+                        session_id=active_session_id,
+                        workspace=workspace_path,
+                    ),
+                    dry_run=current_dry_run,
+                    output_format=render_state.output_format,
+                    enable_cognitive=enable_cognitive,
+                )
         except KeyboardInterrupt:
             print()
             print("[console] interrupted current turn", file=sys.stderr)
@@ -2166,6 +2324,7 @@ def run_director_console(
     model: str | None = None,
     dry_run: bool = False,
     enable_cognitive: bool | None = None,
+    super_mode: bool = False,
 ) -> int:
     """Legacy alias retained for compatibility with Director entry points."""
     return run_role_console(
@@ -2182,6 +2341,7 @@ def run_director_console(
         model=model,
         dry_run=dry_run,
         enable_cognitive=enable_cognitive,
+        super_mode=super_mode,
     )
 
 

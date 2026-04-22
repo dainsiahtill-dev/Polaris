@@ -423,8 +423,8 @@ class TestRoleSessionOrchestrator:
         data = json.loads(checkpoint.read_text(encoding="utf-8"))
 
         # 验证所有降维字段都持久化到 checkpoint
-        # FIX-20250421-v4: schema_version 升级到 4，并包含 canonical turn history / phase_manager
-        assert data["schema_version"] == 4
+        # FIX-20250421-v5: schema_version 升级到 5，并包含 canonical turn history / phase_manager / task_contract
+        assert data["schema_version"] == 5
         assert data["task_progress"] == "implementing"
         assert data["structured_findings"]["error_summary"] == "DB timeout"
         assert "auth.py" in str(data["structured_findings"]["suspected_files"])

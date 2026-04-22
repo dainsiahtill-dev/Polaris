@@ -18,6 +18,9 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     MutationObligationState,
 )
+from polaris.cells.roles.kernel.internal.transaction.modification_contract import (
+    ModificationContract,
+)
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
     PhaseManager,
 )
@@ -76,6 +79,11 @@ class TransactionConfig:
 
     # === Inline Patch Escape 阈值 ===
     inline_patch_escape_threshold: float = 0.60
+
+    # === ModificationContract 认知就绪门禁 ===
+    # True: 使用 ModificationContract 就绪评估替代机械式 turns_in_phase 检查
+    # False: 回退到 FIX-20250422-v2 的 turns_in_phase >= 2 硬阻断
+    enable_modification_contract: bool = True
 
     # === 重试配置 ===
     max_retry_attempts: int = 4
@@ -145,6 +153,8 @@ class TurnLedger:
     _implementing_phase_block_triggered: bool = field(default=False)
     # FIX-20250421: PhaseManager — 基于事实的阶段管理器
     phase_manager: PhaseManager = field(default_factory=PhaseManager)
+    # FIX-20250422-v3: ModificationContract — 修改契约认知子状态
+    modification_contract: ModificationContract = field(default_factory=ModificationContract)
 
     def set_delivery_contract(self, contract: DeliveryContract) -> None:
         """设置交付契约。

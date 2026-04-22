@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 try:
     from prompt_toolkit import PromptSession
@@ -51,6 +51,7 @@ _ROLE_SYMBOLS = {
     "architect": "◇",
     "chief_engineer": "◈",
     "qa": "◎",
+    "super": "✦",
 }
 
 
@@ -168,7 +169,7 @@ class PromptInputSession:
             return input("› ")
 
         try:
-            session = PromptSession(
+            session: Any = PromptSession(
                 message=self._build_prompt(),
                 style=_get_prompt_style(),
                 lexer=SimpleLexer(),

@@ -255,12 +255,13 @@ roles:
     display_name: "工部侍郎 (Director)"
     description: "代码执行角色，负责代码修改和验证"
     responsibilities:
-      - 根据蓝图执行代码修改
+      - 根据蓝图执行代码修改（Director 只接收明确的、可执行的任务）
       - 生成SEARCH/REPLACE格式的补丁
       - 验证修改的正确性
       - 执行测试和命令
       - 报告执行结果和证据
       - 在scope约束内工作
+      - "【CRITICAL】当收到模糊需求（如'完善XXX'、'改进YYY'）时，Director 不应自行探索，必须要求用户提供：1) 目标文件路径，2) 具体修改内容。Director 的职责是执行，不是规划或探索。"
 
     prompt_policy:
       core_template_id: director
@@ -286,22 +287,12 @@ roles:
 
     tool_policy:
       whitelist:
-        # Canonical repo/intel tools (优先)
+        # 读取工具（用于确认目标文件内容）
         - read_file
         - repo_read_head
         - repo_read_slice
         - repo_read_tail
         - repo_read_around
-        - repo_tree
-        - repo_rg
-        - repo_map
-        - repo_symbols_index
-        - repo_diff
-        # 文件定位/存在性（矩阵 L3/L7 需要）
-        - file_exists
-        - glob
-        - list_directory
-        - search_code
         # Canonical 编辑能力
         - edit_blocks  # RECOMMENDED: Aider-style SEARCH/REPLACE format
         - precision_edit  # DEPRECATED: use edit_blocks instead
@@ -311,8 +302,11 @@ roles:
         - search_replace
         - edit_file
         - append_to_file
-        # 执行类
+        # 执行类（运行测试、验证修改）
         - execute_command
+        # NOTE: Director 不负责探索/搜索。
+        # repo_tree, repo_rg, glob, search_code 等探索工具已移除。
+        # 模糊需求应由 PM/Architect 先制定蓝图，Director 只执行明确任务。
       blacklist:
         - delete_file              # 默认禁止删除
       allow_code_write: true       # Director允许代码写入

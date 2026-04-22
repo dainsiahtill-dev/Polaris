@@ -550,3 +550,88 @@ def test_stream_turn_spinner_ignores_fingerprint_until_visible_event(monkeypatch
         _FakeRoleConsoleHost.stream_factory = None
 
     assert spinner.stops == ["content_chunk"]
+
+
+def test_run_role_console_super_mode_routes_code_change_pm_to_director(monkeypatch) -> None:
+    import polaris.delivery.cli.director.console_host as console_host_module
+
+    async def _stream_factory(**kwargs):
+        if kwargs["role"] == "pm":
+            yield {
+                "type": "complete",
+                "data": {
+                    "content": "1. inspect session_orchestrator\n2. patch the implementation\n3. run targeted tests",
+                },
+            }
+            return
+        assert kwargs["role"] == "director"
+        assert "[SUPER_MODE_HANDOFF]" in kwargs["message"]
+        assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
+        assert "inspect session_orchestrator" in kwargs["message"]
+        yield {"type": "complete", "data": {"content": "director executed the plan"}}
+
+    _FakeRoleConsoleHost.instances.clear()
+    _FakeRoleConsoleHost.stream_factory = _stream_factory
+    monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    scripted_inputs = iter(["进一步完善 Session Orchestrator 相关代码", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
+
+    try:
+        exit_code = terminal_console.run_role_console(
+            workspace=".",
+            role="director",
+            super_mode=True,
+        )
+    finally:
+        _FakeRoleConsoleHost.stream_factory = None
+
+    assert exit_code == 0
+    host = _FakeRoleConsoleHost.instances[0]
+    assert [call["role"] for call in host.stream_calls] == ["pm", "director"]
+
+
+def test_run_role_console_super_mode_routes_architecture_to_architect_only(monkeypatch) -> None:
+    import polaris.delivery.cli.director.console_host as console_host_module
+
+    async def _stream_factory(**kwargs):
+        assert kwargs["role"] == "architect"
+        yield {"type": "complete", "data": {"content": "architecture response"}}
+
+    _FakeRoleConsoleHost.instances.clear()
+    _FakeRoleConsoleHost.stream_factory = _stream_factory
+    monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    scripted_inputs = iter(["请给我一个 session orchestrator 重构蓝图", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
+
+    try:
+        exit_code = terminal_console.run_role_console(
+            workspace=".",
+            role="director",
+            super_mode=True,
+        )
+    finally:
+        _FakeRoleConsoleHost.stream_factory = None
+
+    assert exit_code == 0
+    host = _FakeRoleConsoleHost.instances[0]
+    assert len(host.stream_calls) == 1
+    assert host.stream_calls[0]["role"] == "architect"
+
+
+def test_run_role_console_super_mode_session_command_reports_super_role(monkeypatch, capsys) -> None:
+    import polaris.delivery.cli.director.console_host as console_host_module
+
+    _FakeRoleConsoleHost.instances.clear()
+    monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    scripted_inputs = iter(["/session", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
+
+    exit_code = terminal_console.run_role_console(
+        workspace=".",
+        role="director",
+        super_mode=True,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "role=super fallback_role=director" in captured.out

@@ -14,7 +14,7 @@ def test_role_symbols_defined():
     """Test role symbols are defined for all standard roles."""
     from polaris.delivery.cli.cli_prompt import _ROLE_SYMBOLS
 
-    expected_roles = {"director", "pm", "architect", "chief_engineer", "qa"}
+    expected_roles = {"director", "pm", "architect", "chief_engineer", "qa", "super"}
     assert expected_roles.issubset(_ROLE_SYMBOLS.keys())
     for role in expected_roles:
         assert _ROLE_SYMBOLS[role], f"Symbol for {role} should not be empty"

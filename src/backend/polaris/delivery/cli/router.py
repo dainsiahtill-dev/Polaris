@@ -21,6 +21,7 @@ All handlers return an int exit code (0 = success, non-zero = failure).
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import glob
 import json
@@ -148,6 +149,7 @@ def _route_console(args: argparse.Namespace) -> int:
     json_render = str(getattr(args, "json_render", "raw") or "raw").strip().lower() or "raw"
     debug = bool(getattr(args, "debug", False))
     dry_run = bool(getattr(args, "dry_run", False))
+    super_mode = bool(getattr(args, "super", False))
 
     # Batch mode: explicit flag OR auto-detect (stdin AND stdout both not tty)
     explicit_batch = bool(getattr(args, "batch", False))
@@ -174,6 +176,7 @@ def _route_console(args: argparse.Namespace) -> int:
             debug=debug,
             batch=batch,
             dry_run=dry_run,
+            super_mode=super_mode,
         )
     except (RuntimeError, ValueError) as exc:
         logger.warning("console route failed: %s", exc)
@@ -566,140 +569,133 @@ def _route_ingest(args: argparse.Namespace) -> int:
             mime = detector.detect_from_path(fpath)
         file_mimes.append((fpath, mime))
 
-    # Set up output
-    output_handle: typing.TextIO | None = None
-    if output_file:
-        try:
-            output_handle = open(output_file, "w", encoding="utf-8")
-        except OSError as exc:
-            print(f"Error: cannot open output file {output_file}: {exc}", file=sys.stderr)
-            return 1
-
     import sys as _sys
 
-    def _print(msg: str) -> None:
-        if output_handle:
-            output_handle.write(msg + "\n")
-        else:
-            _sys.stdout.write(msg + "\n")
+    with contextlib.ExitStack() as exit_stack:
+        output_handle: typing.TextIO | None = None
+        if output_file:
+            try:
+                output_handle = exit_stack.enter_context(Path(output_file).open("w", encoding="utf-8"))
+            except OSError as exc:
+                print(f"Error: cannot open output file {output_file}: {exc}", file=sys.stderr)
+                return 1
 
-    # Import pipeline components
-    try:
-        from polaris.kernelone.akashic.knowledge_pipeline import (
-            DocumentInput,
-            DocumentPipeline,
-            EmbeddingComputer,
-            KnowledgeLanceDB,
-            LanceDBVectorAdapter,
-            get_default_registry,
-        )
-        from polaris.kernelone.llm.embedding import get_default_embedding_port
-    except (RuntimeError, ValueError) as exc:
-        print(f"Error: failed to import knowledge pipeline: {exc}", file=_sys.stderr)
-        return 1
+        def _print(msg: str) -> None:
+            if output_handle:
+                output_handle.write(msg + "\n")
+            else:
+                _sys.stdout.write(msg + "\n")
 
-    # Build registry (use default, it already has all extractors)
-    registry = get_default_registry()
-
-    # Set up vector store
-    vector_store = None
-    embedding_computer = None
-
-    if vector_store_type == "lancedb":
+        # Import pipeline components
         try:
-            lancedb = KnowledgeLanceDB(workspace=str(workspace))
-            embedding_port = get_default_embedding_port()
-            embedding_computer = EmbeddingComputer(
-                embedding_port=embedding_port,
-                max_batch_size=32,
+            from polaris.kernelone.akashic.knowledge_pipeline import (
+                DocumentInput,
+                DocumentPipeline,
+                EmbeddingComputer,
+                KnowledgeLanceDB,
+                LanceDBVectorAdapter,
+                get_default_registry,
             )
-            vector_store = LanceDBVectorAdapter(lancedb, embedding_computer)
+            from polaris.kernelone.llm.embedding import get_default_embedding_port
         except (RuntimeError, ValueError) as exc:
-            print(f"Error: could not initialize LanceDB vector store: {exc}", file=_sys.stderr)
+            print(f"Error: failed to import knowledge pipeline: {exc}", file=_sys.stderr)
             return 1
 
-    # Create pipeline
-    try:
-        pipeline = DocumentPipeline(
-            workspace=str(workspace),
-            extractor_registry=registry,
-            vector_store=vector_store,
-        )
-    except (RuntimeError, ValueError) as exc:
-        print(f"Error: failed to create pipeline: {exc}", file=_sys.stderr)
-        return 1
+        # Build registry (use default, it already has all extractors)
+        registry = get_default_registry()
 
-    # Build DocumentInputs
-    documents: list[DocumentInput] = []
-    for fpath, mime in file_mimes:
-        try:
-            with open(fpath, "rb") as f:
-                content = f.read()
-            documents.append(
-                DocumentInput(
-                    source=fpath,
-                    mime_type=mime,
-                    content=content,
-                    metadata={"ingest_path": str(fpath)},
+        # Set up vector store
+        vector_store = None
+        embedding_computer = None
+
+        if vector_store_type == "lancedb":
+            try:
+                lancedb = KnowledgeLanceDB(workspace=str(workspace))
+                embedding_port = get_default_embedding_port()
+                embedding_computer = EmbeddingComputer(
+                    embedding_port=embedding_port,
+                    max_batch_size=32,
                 )
+                vector_store = LanceDBVectorAdapter(lancedb, embedding_computer)
+            except (RuntimeError, ValueError) as exc:
+                print(f"Error: could not initialize LanceDB vector store: {exc}", file=_sys.stderr)
+                return 1
+
+        # Create pipeline
+        try:
+            pipeline = DocumentPipeline(
+                workspace=str(workspace),
+                extractor_registry=registry,
+                vector_store=vector_store,
             )
-        except OSError as exc:
-            logger.warning("Could not read %s: %s", fpath, exc)
-            if output_format != "quiet":
-                _print(f"WARNING: skipping {fpath}: {exc}")
+        except (RuntimeError, ValueError) as exc:
+            print(f"Error: failed to create pipeline: {exc}", file=_sys.stderr)
+            return 1
 
-    if not documents:
-        print("No readable files to ingest.", file=_sys.stderr)
-        if output_handle:
-            output_handle.close()
-        return 1
+        # Build DocumentInputs
+        documents: list[DocumentInput] = []
+        for fpath, mime in file_mimes:
+            try:
+                with open(fpath, "rb") as f:
+                    content = f.read()
+                documents.append(
+                    DocumentInput(
+                        source=fpath,
+                        mime_type=mime,
+                        content=content,
+                        metadata={"ingest_path": str(fpath)},
+                    )
+                )
+            except OSError as exc:
+                logger.warning("Could not read %s: %s", fpath, exc)
+                if output_format != "quiet":
+                    _print(f"WARNING: skipping {fpath}: {exc}")
 
-    # Run pipeline
-    import asyncio
+        if not documents:
+            print("No readable files to ingest.", file=_sys.stderr)
+            return 1
 
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Run pipeline
+        import asyncio
 
-    try:
-        results = loop.run_until_complete(pipeline.run(documents))
-    except (RuntimeError, ValueError) as exc:
-        print(f"Error: pipeline execution failed: {exc}", file=_sys.stderr)
-        if output_handle:
-            output_handle.close()
-        return 1
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-    # Output results
-    total_chunks = sum(r.chunks_processed for r in results)
-    total_errors = sum(1 for r in results if r.errors)
+        try:
+            results = loop.run_until_complete(pipeline.run(documents))
+        except (RuntimeError, ValueError) as exc:
+            print(f"Error: pipeline execution failed: {exc}", file=_sys.stderr)
+            return 1
 
-    if output_format == "json":
-        import json
+        # Output results
+        total_chunks = sum(r.chunks_processed for r in results)
+        total_errors = sum(1 for r in results if r.errors)
 
-        output_data = [
-            {
-                "document_id": r.document_id,
-                "chunks_processed": r.chunks_processed,
-                "status": r.status,
-                "errors": r.errors,
-            }
-            for r in results
-        ]
-        _print(json.dumps(output_data, ensure_ascii=False, indent=2))
-    elif output_format != "quiet":
-        _print(f"[knowledge-pipeline] Ingested {len(results)} file(s), {total_chunks} chunk(s) created")
-        for r in results:
-            if r.errors:
-                _print(f"  ERROR {r.document_id}: {r.errors[0]}")
-            else:
-                _print(f"  OK {r.document_id} -> {r.chunks_processed} chunk(s)")
+        if output_format == "json":
+            import json
 
-    if output_handle:
-        output_handle.close()
+            output_data = [
+                {
+                    "document_id": r.document_id,
+                    "chunks_processed": r.chunks_processed,
+                    "status": r.status,
+                    "errors": r.errors,
+                }
+                for r in results
+            ]
+            _print(json.dumps(output_data, ensure_ascii=False, indent=2))
+        elif output_format != "quiet":
+            _print(f"[knowledge-pipeline] Ingested {len(results)} file(s), {total_chunks} chunk(s) created")
+            for r in results:
+                if r.errors:
+                    _print(f"  ERROR {r.document_id}: {r.errors[0]}")
+                else:
+                    _print(f"  OK {r.document_id} -> {r.chunks_processed} chunk(s)")
 
-    return 0 if total_errors == 0 else 1
+        return 0 if total_errors == 0 else 1
 
 
 def _route_sync(args: argparse.Namespace) -> int:

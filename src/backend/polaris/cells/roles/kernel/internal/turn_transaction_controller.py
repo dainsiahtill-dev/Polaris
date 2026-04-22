@@ -90,6 +90,7 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionCo
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import PhaseManager
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import StreamOrchestrator
+from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     build_single_batch_task_contract_hint,
     extract_latest_user_message,
@@ -251,6 +252,8 @@ class TurnTransactionController:
         # FIX-20250422: Session-level PhaseManager persistence across turns
         # TurnLedger is recreated per-turn, but phase must survive across turns
         self._session_phase_manager: PhaseManager | None = None
+        # FIX-20250422-v3: Session-level ModificationContract persistence across turns
+        self._session_modification_contract: ModificationContract | None = None
 
         self._retry_orchestrator = RetryOrchestrator(
             tool_runtime=self.tool_runtime,
@@ -837,6 +840,12 @@ class TurnTransactionController:
                 turn_id,
             )
 
+        # FIX-20250422-v3: Restore session-level ModificationContract
+        if self._session_modification_contract is not None:
+            ledger.modification_contract = self._session_modification_contract
+        else:
+            self._session_modification_contract = ledger.modification_contract
+
         try:
             logger.debug("[DEBUG] turn_execute_start: turn_id=%s mode=run", turn_id)
             result = await self._execute_turn(turn_id, context, tool_definitions, state_machine, ledger, stream=False)
@@ -905,6 +914,12 @@ class TurnTransactionController:
                 ledger.phase_manager.current_phase.value,
                 turn_id,
             )
+
+        # FIX-20250422-v3: Restore session-level ModificationContract
+        if self._session_modification_contract is not None:
+            ledger.modification_contract = self._session_modification_contract
+        else:
+            self._session_modification_contract = ledger.modification_contract
 
         try:
             async for event in self._execute_turn_stream(turn_id, context, tool_definitions, state_machine, ledger):
@@ -1294,7 +1309,6 @@ class TurnTransactionController:
             )
         messages.append({"role": "system", "content": single_batch_guard, "metadata": {"plane": "control"}})
 
-
         # FIX-20250421: 在 MATERIALIZE_CHANGES 模式下也注入 Task Contract 的正例模板和恢复协议。
         # 根因：CLI 模式下 MATERIALIZE_CHANGES 跳过 Task Contract，导致模型缺乏正例指导。
         # 修复：只注入 POSITIVE 模板（序列模板 + 恢复协议），不注入 NEGATIVE 的 HARD GATE 规则，
@@ -1303,24 +1317,26 @@ class TurnTransactionController:
             DeliveryMode.MATERIALIZE_CHANGES,
             DeliveryMode.PROPOSE_PATCH,
         }
-        task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(
-            context, tool_definitions
-        )
+        task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(context, tool_definitions)
         if task_contract_hint:
             if is_materialize:
                 # MATERIALIZE 模式：只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
                 positive_lines = []
                 for line in task_contract_hint.split("\n"):
                     # 跳过 NEGATIVE 规则行（包含 "INVALID", "HARD GATE", "rejected" 等）
-                    if any(marker in line for marker in ("INVALID", "HARD GATE", "rejected", "Do not stop", "read-only")):
+                    if any(
+                        marker in line for marker in ("INVALID", "HARD GATE", "rejected", "Do not stop", "read-only")
+                    ):
                         continue
                     positive_lines.append(line)
                 if positive_lines:
-                    messages.append({
-                        "role": "system",
-                        "content": "\n".join(positive_lines),
-                        "metadata": {"plane": "control", "kind": "task_contract_positive"},
-                    })
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": "\n".join(positive_lines),
+                            "metadata": {"plane": "control", "kind": "task_contract_positive"},
+                        }
+                    )
             else:
                 messages.append({"role": "system", "content": task_contract_hint})
 

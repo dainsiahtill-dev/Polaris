@@ -14,30 +14,42 @@ Public exports:
 
 from __future__ import annotations
 
+from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
+    CognitiveGateway,
+)
+from polaris.cells.roles.kernel.internal.transaction.constants import (
+    VERIFICATION_TOOLS,
+    get_verification_patterns,
+)
+from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
+    resolve_delivery_mode,
+)
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
     Phase,
     PhaseManager,
     ToolResult,
     extract_tool_results_from_batch_receipt,
 )
-from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-    resolve_delivery_mode,
-)
-from polaris.cells.roles.kernel.internal.transaction.constants import (
-    VERIFICATION_TOOLS,
-    get_verification_patterns,
-)
-from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
-    CognitiveGateway,
+from polaris.cells.roles.kernel.internal.transaction.task_contract import (
+    ModificationIntent,
+    ReadinessVerdict,
+    TaskContract,
+    TaskContractStatus,
+    evaluate_readiness,
 )
 
 __all__ = [
+    "VERIFICATION_TOOLS",
+    "CognitiveGateway",
+    "ModificationIntent",
     "Phase",
     "PhaseManager",
+    "ReadinessVerdict",
+    "TaskContract",
+    "TaskContractStatus",
     "ToolResult",
+    "evaluate_readiness",
     "extract_tool_results_from_batch_receipt",
-    "resolve_delivery_mode",
-    "VERIFICATION_TOOLS",
     "get_verification_patterns",
-    "CognitiveGateway",
+    "resolve_delivery_mode",
 ]

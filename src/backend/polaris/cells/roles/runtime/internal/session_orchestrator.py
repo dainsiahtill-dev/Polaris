@@ -19,6 +19,7 @@ from typing import Any
 from polaris.cells.roles.kernel.public.transaction_contracts import (
     Phase,
     PhaseManager,
+    TaskContract,
     extract_tool_results_from_batch_receipt,
     resolve_delivery_mode,
 )
@@ -110,6 +111,7 @@ class SessionStateReducer:
 
     state: OrchestratorSessionState
     phase_manager: PhaseManager = field(default_factory=PhaseManager)
+    task_contract: TaskContract = field(default_factory=TaskContract)
 
     def current_phase(self) -> Phase:
         """Return the authoritative session phase."""
@@ -130,6 +132,13 @@ class SessionStateReducer:
             self.phase_manager = PhaseManager.from_dict({"current_phase": normalized})
         else:
             self.phase_manager = PhaseManager()
+
+    def restore_task_contract(self, payload: dict[str, Any] | None) -> None:
+        """Restore TaskContract from checkpoint payload (schema >= 5)."""
+        if payload and isinstance(payload, dict):
+            self.task_contract = TaskContract.from_dict(payload)
+        else:
+            self.task_contract = TaskContract()
 
     def mutation_obligation_satisfied(self, batch_receipt: Any | None = None) -> bool:
         """Return True when a successful write receipt has already been observed."""
@@ -205,6 +214,9 @@ class SessionStateReducer:
         session_patch = dict(envelope.session_patch)
         if session_patch:
             apply_session_patch(self.state, session_patch)
+            # FIX-20250422-v3: 从 SESSION_PATCH 提取 modification_plan 更新 TaskContract
+            if session_patch.get("modification_plan"):
+                self.task_contract.update_from_session_patch(session_patch, turn_index)
 
         self._remember_read_files(batch_receipt)
         self._update_materialize_exploration_streak(batch_receipt)
@@ -228,7 +240,7 @@ class SessionStateReducer:
     def checkpoint_payload(self) -> dict[str, Any]:
         """Build the canonical checkpoint payload."""
         return {
-            "schema_version": 4,
+            "schema_version": 5,
             "session_id": self.state.session_id,
             "turn_count": self.state.turn_count,
             "goal": self.state.goal,
@@ -244,6 +256,7 @@ class SessionStateReducer:
             "delivery_mode": self.state.delivery_mode,
             "session_invariants": self.state.session_invariants.to_dict(),
             "phase_manager": self.phase_manager.to_dict(),
+            "task_contract": self.task_contract.to_dict(),
         }
 
     def _derive_task_progress(
@@ -1064,6 +1077,10 @@ class RoleSessionOrchestrator:
             wm_parts.append("强制推进要求:")
             wm_parts.append(f"  - {mandatory_instruction}")
 
+        # FIX-20250422-v3: 注入 TaskContract 状态到 WorkingMemory
+        if self._state_reducer.task_contract.status.value != "empty":
+            wm_parts.append(self._state_reducer.task_contract.format_for_prompt())
+
         # 【关键修复】注入上回合 LLM 自己的 visible_content 到 WorkingMemory。
         # 根因：跨回合时 LLM 面对空 WorkingMemory，丢失自己上一回合的分析结论、
         # 实施步骤、错误码字典等关键上下文，导致每次 turn 都从零开始。
@@ -1252,27 +1269,52 @@ class RoleSessionOrchestrator:
         else:
             _materialize_exploring_instruction = "请继续探索和分析。优先确认问题根因，收集必要信息后再决定修复方案。"
 
+        # FIX-20250422: 角色专业化提示词
+        # Director 只负责执行，不负责探索；Architect/PM 负责规划和探索
+        _role_hint = ""
+        if self.role == "director":
+            _role_hint = (
+                "【角色定位】你是 Director（工部侍郎），职责是执行代码修改，不是探索或规划。"
+                "你只使用 read_file 确认已知文件内容，然后立即用 write_file/edit_file 执行修改。"
+                "严禁使用 repo_tree/repo_rg/glob/list_directory 等探索工具。"
+            )
+        elif self.role == "architect":
+            _role_hint = (
+                "【角色定位】你是 Architect（中书令），职责是架构设计和蓝图制定。"
+                "你可以使用探索工具了解代码库结构，然后输出清晰的设计文档和修改计划。"
+            )
+        elif self.role == "pm":
+            _role_hint = (
+                "【角色定位】你是 PM（尚书令），职责是任务分解和项目管理。"
+                "你可以使用探索工具了解项目状态，然后输出可执行的任务列表和验收标准。"
+            )
+
         instruction_map = {
             "exploring": (
-                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_materialize_exploring_instruction}"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_materialize_exploring_instruction}\n{_role_hint}"
             ),
             "content_gathered": (
-                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n"
-                f"你已经完成必要读取。现在必须直接执行写入修改，禁止继续用 glob/repo_rg 扩散探索。"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_role_hint}\n"
+                + (
+                    "你的修改计划已确认。现在必须直接执行写入修改，禁止继续用 glob/repo_rg 扩散探索。"
+                    if self._state_reducer.task_contract.status.value == "ready"
+                    else "你已经完成必要读取。请在 SESSION_PATCH 中声明 modification_plan "
+                    '（格式: [{"target_file": "path", "action": "描述"}]），然后执行写入修改。'
+                )
             ),
             "investigating": (
-                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n继续深入调查。已识别疑似文件，关注错误栈和调用链。"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_role_hint}\n继续深入调查。已识别疑似文件，关注错误栈和调用链。"
             ),
             "implementing": (
-                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_role_hint}\n"
                 f"现在进入修复阶段。请按最小改动原则执行修改，使用 write_file/edit_file 等工具落实代码变更。"
                 f"严禁继续调用 repo_tree/read_file/glob/repo_rg 等探索工具——直接执行写入。"
             ),
             "verifying": (
-                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n验证阶段。请运行测试或手动验证修复效果，确保无回归。"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_role_hint}\n验证阶段。请运行测试或手动验证修复效果，确保无回归。"
             ),
             "done": (
-                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n任务已完成。请汇总结果并以 END_SESSION 结束。"
+                f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_role_hint}\n任务已完成。请汇总结果并以 END_SESSION 结束。"
             ),
         }
         instruction = instruction_map.get(
@@ -1524,7 +1566,7 @@ class RoleSessionOrchestrator:
             data: dict[str, Any] = json.load(handle)
 
         schema_version = data.get("schema_version")
-        if schema_version not in {2, 3, 4}:
+        if schema_version not in {2, 3, 4, 5}:
             raise ValueError(f"Unsupported checkpoint schema_version: {schema_version}")
 
         # 恢复 state 字段
@@ -1552,6 +1594,11 @@ class RoleSessionOrchestrator:
         self._state_reducer.restore_phase_manager(
             data.get("phase_manager") if schema_version >= 4 else None,
             fallback_progress=self.state.task_progress,
+        )
+
+        # Schema v5: restore TaskContract
+        self._state_reducer.restore_task_contract(
+            data.get("task_contract") if schema_version >= 5 else None,
         )
 
     @staticmethod

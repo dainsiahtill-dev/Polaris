@@ -112,6 +112,7 @@ class PromptBuilder:
     "verified_results": ["本回合验证通过的结论"],
     "pending_files": ["待进一步验证的文件路径"],
     "action_taken": "本回合采取的关键行动（1-2句）",
+    "modification_plan": [{"target_file": "要修改的文件路径", "action": "具体修改描述"}],
     "superseded": false,
     "key_file_snapshots": {"文件路径": "本回合该文件的快照指纹（可选）"}
 }
@@ -128,6 +129,7 @@ class PromptBuilder:
 - `suspected_files`：`task_progress` 仍为 exploring/investigating 时追加；进入 implementing 后停止追加。
 - `patched_files`：`task_progress` 进入 implementing 后填写。
 - `pending_files`：需要下一回合继续验证的假设。
+- `modification_plan`：当你准备好执行代码修改时，声明具体的修改计划。每项包含 `target_file`（目标文件路径）和 `action`（具体修改描述）。系统会根据此计划判断你是否已准备好进入执行阶段。
 - `remove_keys`：当发现之前的怀疑是伪线索时，用此字段撤销（如 `{"suspected_files": ["fake.py"]}`）。
 
 **置信度升级示例**：

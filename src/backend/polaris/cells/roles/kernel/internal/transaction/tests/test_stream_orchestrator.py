@@ -93,10 +93,13 @@ class TestBuildContinueVisibleContent:
         assert "recent_reads" not in patch
 
     def test_visible_content_has_system_hint(self):
-        content = _build_continue_visible_content(["read_file"])
+        # FIX-20250422: 当 modification_contract_status 为 ready 时，提示执行写操作
+        content = _build_continue_visible_content(
+            ["read_file"], modification_contract_status="ready"
+        )
         assert "多回合工作流继续" in content
         # FIX-20250421: 基于 PhaseManager 阶段生成提示语
-        assert "内容已收集（CONTENT_GATHERED）" in content
+        assert "CONTENT_GATHERED" in content
         assert "write_file/edit_file" in content
 
     def test_visible_content_carries_explicit_delivery_mode(self):

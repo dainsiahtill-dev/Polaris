@@ -72,6 +72,77 @@ def _normalize_user_message_token(value: Any) -> str:
     return token
 
 
+class RequestClarity:
+    """Request clarity levels for Director role."""
+
+    EXECUTABLE = "executable"
+    SEMI_CLEAR = "semi_clear"
+    VAGUE = "vague"
+
+
+def _assess_director_request_clarity(request: str) -> str:
+    """Assess if a request is clear enough for Director to execute.
+
+    Director should only receive requests that specify:
+    1. Target file(s) or specific location
+    2. Specific modification/action to perform
+
+    Returns:
+        RequestClarity.EXECUTABLE: Clear enough to execute
+        RequestClarity.SEMI_CLEAR: Might need clarification
+        RequestClarity.VAGUE: Too vague, should be rejected
+    """
+    token = str(request or "").strip()
+    if not token:
+        return RequestClarity.VAGUE
+
+    # Check for target file patterns (common code file extensions)
+    has_target_file = bool(
+        re.search(r"[\w/\\.-]+\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)", token)
+    )
+
+    # Check for specific action keywords
+    action_keywords = [
+        "添加", "修复", "删除", "修改", "替换", "插入", "更新",
+        "add", "fix", "delete", "remove", "modify", "replace", "insert", "update",
+        "implement", "create", "refactor", "优化", "重构", "实现",
+    ]
+    has_specific_action = any(kw in token.lower() for kw in action_keywords)
+
+    # Check for line numbers or specific locations
+    has_location = bool(re.search(r"(第\d+行|line\s+\d+|:\d+|函数\w+|类\w+|方法\w+)", token))
+
+    # Vague keywords that suggest exploration rather than execution
+    vague_keywords = [
+        "完善", "改进", "优化", "看看", "了解一下", "分析一下",
+        "improve", "enhance", "optimize", "explore", "investigate",
+        "看看", "检查一下", "了解一下", "分析一下",
+    ]
+    has_vague_keyword = any(kw in token.lower() for kw in vague_keywords)
+
+    # If the request is very short, it's likely vague
+    is_too_short = len(token) < 15
+
+    # Scoring
+    score = 0
+    if has_target_file:
+        score += 40
+    if has_specific_action:
+        score += 40
+    if has_location:
+        score += 20
+    if has_vague_keyword:
+        score -= 30
+    if is_too_short:
+        score -= 20
+
+    if score >= 60:
+        return RequestClarity.EXECUTABLE
+    if score >= 30:
+        return RequestClarity.SEMI_CLEAR
+    return RequestClarity.VAGUE
+
+
 def _message_history(session_payload: Mapping[str, Any], *, limit: int | None = None) -> list[dict[str, Any]]:
     messages = session_payload.get("messages")
     if not isinstance(messages, list):
@@ -1044,6 +1115,31 @@ class RoleConsoleHost:
                             return
                 except (RuntimeError, ValueError) as exc:
                     logger.debug("Cognitive middleware processing failed: %s", exc)
+
+            # FIX-20250422: Director 请求清晰度检查
+            # 防止模糊需求（如"进一步完善XXX"）导致 Director 死循环探索
+            if runtime_role == "director":
+                clarity = _assess_director_request_clarity(message)
+                if clarity == RequestClarity.VAGUE:
+                    logger.warning(
+                        "Director received vague request: %r. Blocking and asking for clarification.",
+                        message,
+                    )
+                    yield {
+                        "type": "error",
+                        "error": (
+                            "[请求不够明确] Director 只接收可执行的具体任务。\n\n"
+                            "你的请求太模糊，Director 无法直接执行。请提供：\n"
+                            "1. 目标文件路径（如：polaris/.../session_orchestrator.py）\n"
+                            "2. 具体修改内容（如：在 _check_intent_mismatch 中添加 PHASE_TIMEOUT 检查）\n\n"
+                            "或者先使用 Architect 角色制定蓝图，再让 Director 执行。"
+                        ),
+                        "metadata": {
+                            "request_clarity": "vague",
+                            "original_request": message,
+                        },
+                    }
+                    return
 
             metadata: dict[str, Any] = {}
             prompt_appendix_token = str(prompt_appendix or "").strip()
