@@ -81,6 +81,44 @@ class RequestClarity:
     VAGUE = "vague"
 
 
+def _is_continuation_intent(request: str) -> bool:
+    """Detect if the user message is a continuation intent (e.g. '继续', 'go on').
+
+    These short messages are NOT vague when there is prior session context;
+    they mean 'continue the previous task'.
+    """
+    token = str(request or "").strip().lower()
+    if not token:
+        return False
+    continuation_markers = {
+        "继续",
+        "continue",
+        "go on",
+        "proceed",
+        "next",
+        "下一步",
+        "接着",
+        "往下",
+        "往下走",
+        "继续执行",
+        "继续干",
+        "继续弄",
+        "继续搞",
+        "继续写",
+        "继续改",
+        "继续修",
+        "ok",
+        "好的",
+        "行",
+        "可以",
+        "没问题",
+        "sure",
+        "yes",
+        "y",
+    }
+    return any(marker in token for marker in continuation_markers)
+
+
 def _assess_director_request_clarity(request: str) -> str:
     """Assess if a request is clear enough for Director to execute.
 
@@ -96,6 +134,12 @@ def _assess_director_request_clarity(request: str) -> str:
     token = str(request or "").strip()
     if not token:
         return RequestClarity.VAGUE
+
+    # FIX-20250422-v6: Continuation intents (e.g. '继续') are not vague when
+    # there is prior session context. The caller checks session history before
+    # blocking, so we treat them as executable here to pass the clarity gate.
+    if _is_continuation_intent(token):
+        return RequestClarity.EXECUTABLE
 
     # Check for target file patterns (common code file extensions)
     has_target_file = bool(re.search(r"[\w/\\.-]+\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)", token))

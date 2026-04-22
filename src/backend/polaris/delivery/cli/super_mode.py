@@ -53,6 +53,17 @@ _CODE_ARTIFACT_HINTS = (
     "kernel",
     "cli",
 )
+_ARCHITECT_DELIVERY_HINTS = (
+    "contextos",
+    "context os",
+    "context plane",
+    "kernelone",
+    "handoff",
+    "contract",
+    "descriptor",
+    "semantic",
+    "governance",
+)
 _ARCHITECT_KEYWORDS = (
     "架构",
     "蓝图",
@@ -111,6 +122,14 @@ def _has_code_artifact_hint(text: str) -> bool:
     return bool(re.search(r"[a-zA-Z_][\w/.-]*\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)\b", text))
 
 
+def _has_explicit_file_target(text: str) -> bool:
+    return bool(re.search(r"[a-zA-Z_][\w/.-]*\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)\b", text))
+
+
+def _should_route_via_architect(text: str) -> bool:
+    return _contains_any(text, _ARCHITECT_DELIVERY_HINTS)
+
+
 def build_super_readonly_message(*, role: str, original_request: str) -> str:
     clean_request = str(original_request or "").strip()
     clean_role = str(role or "").strip() or "unknown"
@@ -156,7 +175,16 @@ class SuperModeRouter:
                 fallback_role=fallback_role,
             )
 
-        code_delivery = _contains_any(text, _CODE_ACTION_KEYWORDS) and _has_code_artifact_hint(text)
+        has_code_action = _contains_any(text, _CODE_ACTION_KEYWORDS)
+        has_explicit_file_target = _has_explicit_file_target(text)
+        code_delivery = has_code_action and _has_code_artifact_hint(text)
+        architect_delivery = has_code_action and not has_explicit_file_target and _should_route_via_architect(text)
+        if architect_delivery:
+            return SuperRouteDecision(
+                roles=("architect", "director"),
+                reason="architect_code_delivery",
+                fallback_role=fallback_role,
+            )
         if code_delivery:
             return SuperRouteDecision(
                 roles=("pm", "director"),

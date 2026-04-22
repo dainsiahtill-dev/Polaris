@@ -1,0 +1,32 @@
+id: vc-20260422-super-mode-readonly-stage-handoff-alignment
+title: Super Mode Readonly Stage Handoff Alignment
+date: 2026-04-22
+status: draft
+classification: structural
+systemic: true
+scope:
+  - polaris/delivery/cli/super_mode.py
+  - polaris/delivery/cli/terminal_console.py
+  - polaris/cells/roles/kernel/internal/turn_transaction_controller.py
+  - polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py
+assumptions:
+  - super readonly stages should not inherit mutation write obligations
+  - planning stages should terminate on the first complete event and hand off immediately
+  - vague high-level engineering requests should be routed through architect before director
+evidence_to_collect:
+  - routing unit tests
+  - decision-message contract unit tests
+  - terminal console super-mode handoff tests
+verification:
+  - command: python -m ruff check polaris/delivery/cli/super_mode.py polaris/delivery/cli/terminal_console.py polaris/cells/roles/kernel/internal/turn_transaction_controller.py polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py polaris/delivery/cli/tests/test_super_mode.py polaris/delivery/cli/tests/test_terminal_console.py polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py --fix
+    expected: pass
+  - command: python -m ruff format polaris/delivery/cli/super_mode.py polaris/delivery/cli/terminal_console.py polaris/cells/roles/kernel/internal/turn_transaction_controller.py polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py polaris/delivery/cli/tests/test_super_mode.py polaris/delivery/cli/tests/test_terminal_console.py polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
+    expected: pass
+  - command: python -m mypy polaris/delivery/cli/super_mode.py polaris/delivery/cli/terminal_console.py polaris/cells/roles/kernel/internal/turn_transaction_controller.py polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py
+    expected: pass
+  - command: python -m pytest -q polaris/delivery/cli/tests/test_super_mode.py polaris/delivery/cli/tests/test_terminal_console.py polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
+    expected: pass
+pre_mortem:
+  - router heuristic may over-match and reroute concrete file edits to architect
+  - readonly-stage suppression may accidentally disable mutation contract for normal non-super requests
+  - first-complete stop may truncate non-super multi-turn sessions if the flag leaks

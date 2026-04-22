@@ -1781,6 +1781,7 @@ _DIRECTOR_DONE_MARKER = (
     "已完成",
     "执行完毕",
     "all tasks complete",
+    "all_tasks_complete",
     "all done",
     "finished",
     "completed",
@@ -1933,6 +1934,20 @@ def _run_super_turn(
                     last_result.session_id,
                 )
                 break
+            # FIX-20250422-v5: Force a fresh Director session on SUPER_MODE handoff
+            # so that [mode:materialize] in the handoff message takes effect.
+            # Reusing an existing Director session would keep its old delivery_mode
+            # (likely analyze_only from a previous vague request).
+            if "director" in role_sessions:
+                del role_sessions["director"]
+                logger.debug("SUPER_MODE_FRESH_DIRECTOR_SESSION: cleared cached director session")
+            next_session_id = _resolve_role_session(
+                host,
+                role=next_role,
+                role_sessions=role_sessions,
+                host_kind=host_kind,
+                session_title=session_title,
+            )
             logger.info(
                 "SUPER_MODE_HANDOFF: pm_output_len=%d pm_session=%s director_session=%s",
                 len(last_result.final_content),

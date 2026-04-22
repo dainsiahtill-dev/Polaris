@@ -37,6 +37,11 @@ from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates imp
 # Everything from this marker onwards is framework metadata, not user intent.
 _BENCHMARK_CONTRACT_MARKER: str = "[Benchmark Tool Contract]"
 _SESSION_PATCH_BLOCK_RE = re.compile(r"<SESSION_PATCH>\s*(.*?)\s*</SESSION_PATCH>", flags=re.DOTALL)
+_SUPER_READONLY_STAGE_MARKERS: tuple[str, ...] = (
+    "[SUPER_MODE_READONLY_STAGE]",
+    "[/SUPER_MODE_READONLY_STAGE]",
+    "stage_type: readonly_planning",
+)
 
 
 def _strip_benchmark_boilerplate(text: str) -> str:
@@ -173,6 +178,8 @@ def build_single_batch_task_contract_hint(
     """
     latest_user = extract_latest_user_message(context)
     if not latest_user:
+        return "", {}
+    if any(marker in latest_user for marker in _SUPER_READONLY_STAGE_MARKERS):
         return "", {}
 
     target_file_tokens = [

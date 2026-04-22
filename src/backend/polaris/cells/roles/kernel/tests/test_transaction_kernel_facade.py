@@ -907,6 +907,41 @@ def test_build_decision_messages_omits_task_contract_for_read_only_request() -> 
     assert not any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
 
 
+def test_build_decision_messages_omits_mutation_contract_for_super_readonly_stage() -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "[mode:analyze]\n"
+                "[SUPER_MODE_READONLY_STAGE]\n"
+                "stage_role: pm\n"
+                "stage_type: readonly_planning\n"
+                "original_user_request:\n"
+                "进一步完善 session_orchestrator.py\n"
+                "[/SUPER_MODE_READONLY_STAGE]"
+            ),
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "glob"}},
+        {"type": "function", "function": {"name": "edit_file"}},
+    ]
+
+    messages = controller._build_decision_messages(context, tool_definitions)
+    system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
+
+    assert any("SUPER readonly planning stage" in text for text in system_messages)
+    assert not any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
+    assert not any("This request requires mutation." in text for text in system_messages)
+    assert not any("subsequent turns: You MUST call write/edit tools" in text for text in system_messages)
+
+
 def test_build_decision_messages_does_not_infer_verify_from_runtime_word() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

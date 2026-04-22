@@ -1323,8 +1323,18 @@ class TurnTransactionController:
                 _latest_user_for_guard = str(_m.get("content", ""))
                 break
         _is_benchmark_single_batch = "[Benchmark Tool Contract]" in _latest_user_for_guard
+        _is_super_readonly_stage = "[SUPER_MODE_READONLY_STAGE]" in _latest_user_for_guard
 
-        if _is_benchmark_single_batch:
+        if _is_super_readonly_stage:
+            single_batch_guard = (
+                "SYSTEM CONSTRAINT (Execution): This is a SUPER readonly planning stage. "
+                "Your role is read-only for this stage. Use only read/exploration tools exposed to your current role. "
+                "Do NOT attempt to satisfy a write contract in this stage. "
+                "Produce planning or analysis output for the next stage, then stop.\\n"
+                "系统约束 (只读规划): 当前为 SUPER 的只读规划阶段。"
+                "只允许使用当前角色暴露的读取/探索工具，禁止尝试写入，禁止把本阶段当成代码落地阶段。"
+            )
+        elif _is_benchmark_single_batch:
             single_batch_guard = (
                 "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH execution. "
                 "ALL required tool calls MUST be emitted in this single turn. "
@@ -1363,10 +1373,15 @@ class TurnTransactionController:
         _is_super_mode = any(
             marker in str(m.get("content", ""))
             for m in context
-            for marker in ("[SUPER_MODE_HANDOFF]", "[/SUPER_MODE_HANDOFF]", "[SUPER_MODE_DIRECTOR_CONTINUE]", "[/SUPER_MODE_DIRECTOR_CONTINUE]")
+            for marker in (
+                "[SUPER_MODE_HANDOFF]",
+                "[/SUPER_MODE_HANDOFF]",
+                "[SUPER_MODE_DIRECTOR_CONTINUE]",
+                "[/SUPER_MODE_DIRECTOR_CONTINUE]",
+            )
         )
         task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(context, tool_definitions)
-        if task_contract_hint:
+        if task_contract_hint and not _is_super_readonly_stage:
             if is_materialize and not _is_super_mode:
                 # MATERIALIZE 模式（非 SUPER）: 只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
                 positive_lines = []

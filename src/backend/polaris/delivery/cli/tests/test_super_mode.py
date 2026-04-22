@@ -38,6 +38,15 @@ def test_super_mode_router_routes_architecture_request_to_architect() -> None:
     assert decision.reason == "architecture_design"
 
 
+def test_super_mode_router_routes_broad_contextos_delivery_to_architect_then_director() -> None:
+    decision = SuperModeRouter().decide(
+        "进一步完善ContextOS",
+        fallback_role="director",
+    )
+    assert decision.roles == ("architect", "director")
+    assert decision.reason == "architect_code_delivery"
+
+
 def test_super_mode_router_routes_review_request_to_chief_engineer() -> None:
     decision = SuperModeRouter().decide(
         "请分析这个问题的根因并做代码审查",

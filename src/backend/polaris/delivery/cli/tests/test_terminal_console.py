@@ -572,7 +572,7 @@ def test_run_role_console_super_mode_routes_code_change_pm_to_director(monkeypat
         assert "[SUPER_MODE_HANDOFF]" in kwargs["message"]
         assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
         assert "inspect session_orchestrator" in kwargs["message"]
-        yield {"type": "complete", "data": {"content": "director executed the plan"}}
+        yield {"type": "complete", "data": {"content": "ALL_TASKS_COMPLETE"}}
 
     _FakeRoleConsoleHost.instances.clear()
     _FakeRoleConsoleHost.stream_factory = _stream_factory
@@ -622,6 +622,43 @@ def test_run_role_console_super_mode_routes_architecture_to_architect_only(monke
     host = _FakeRoleConsoleHost.instances[0]
     assert len(host.stream_calls) == 1
     assert host.stream_calls[0]["role"] == "architect"
+
+
+def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monkeypatch) -> None:
+    import polaris.delivery.cli.director.console_host as console_host_module
+
+    async def _stream_factory(**kwargs):
+        if kwargs["role"] == "pm":
+            yield {
+                "type": "complete",
+                "data": {"content": '{"tasks":[{"subject":"inspect","target_files":["x.py"]}]}'},
+            }
+            yield {
+                "type": "complete",
+                "data": {"content": "this second completion must not be consumed"},
+            }
+            return
+        assert kwargs["role"] == "director"
+        yield {"type": "complete", "data": {"content": "ALL_TASKS_COMPLETE"}}
+
+    _FakeRoleConsoleHost.instances.clear()
+    _FakeRoleConsoleHost.stream_factory = _stream_factory
+    monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    scripted_inputs = iter(["进一步完善 session_orchestrator.py", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
+
+    try:
+        exit_code = terminal_console.run_role_console(
+            workspace=".",
+            role="director",
+            super_mode=True,
+        )
+    finally:
+        _FakeRoleConsoleHost.stream_factory = None
+
+    assert exit_code == 0
+    host = _FakeRoleConsoleHost.instances[0]
+    assert [call["role"] for call in host.stream_calls] == ["pm", "director"]
 
 
 def test_run_role_console_super_mode_session_command_reports_super_role(monkeypatch, capsys) -> None:
