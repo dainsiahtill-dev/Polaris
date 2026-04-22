@@ -388,10 +388,14 @@ def detect_inline_patch_escape(content: str, *, threshold: float | None = None) 
         }
 
     # 提取 ```...``` 代码块（更健壮的正则：支持可选语言标识符、可选换行、末尾无换行）
+    # FIX-20250422: Exclude JSON blocks from inline patch escape detection.
+    # PM outputs structured task lists in ```json blocks which are data, not code patches.
     code_block_pattern = re.compile(r"```(?:[\w]*\s*)\n?(.*?)```", re.DOTALL)
     matches = code_block_pattern.findall(text)
-    code_block_chars = sum(len(m) for m in matches)
-    code_blocks_count = len(matches)
+    # Filter out JSON blocks (start with { or [ after optional whitespace)
+    non_json_matches = [m for m in matches if not re.match(r"\s*[\{\[]", m)]
+    code_block_chars = sum(len(m) for m in non_json_matches)
+    code_blocks_count = len(non_json_matches)
 
     ratio = code_block_chars / total_chars if total_chars > 0 else 0.0
 

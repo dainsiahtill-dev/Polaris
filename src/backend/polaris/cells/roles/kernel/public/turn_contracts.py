@@ -276,6 +276,8 @@ class TurnResult(_FrozenMappingModel):
         "handoff_workflow",
         "ask_user",
         "continue_multi_turn",
+        "inline_patch_escape_blocked",
+        "mutation_bypass_blocked",
     ]
     visible_content: str
     decision: TurnDecision | dict[str, Any]
