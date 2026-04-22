@@ -147,7 +147,7 @@ class TestConsoleHostE2ESmoke:
 
             async def run() -> list[dict[str, Any]]:
                 events: list[dict[str, Any]] = []
-                async for evt in mock_host.stream_turn(None, "hello"):
+                async for evt in mock_host.stream_turn(None, "read file test.py"):
                     events.append(evt)
                 return events
 
@@ -270,7 +270,7 @@ class TestConsoleHostE2ESmoke:
 
             async def run() -> list[dict[str, Any]]:
                 events: list[dict[str, Any]] = []
-                async for evt in mock_host.stream_turn(None, "fix bug"):
+                async for evt in mock_host.stream_turn(None, "fix bug in test.py"):
                     events.append(evt)
                 return events
 

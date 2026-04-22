@@ -229,9 +229,9 @@ class SessionStateReducer:
         session_patch = dict(envelope.session_patch)
         if session_patch:
             apply_session_patch(self.state, session_patch)
-            # FIX-20250422-v3: 从 SESSION_PATCH 提取 modification_plan 更新 TaskContract
+            # FIX-20250422-v3: 从 SESSION_PATCH 提取 modification_plan 更新 ModificationContract
             if session_patch.get("modification_plan"):
-                self.task_contract.update_from_session_patch(session_patch, turn_index)
+                self.modification_contract.update_from_session_patch(session_patch, turn_index)
 
         self._remember_read_files(batch_receipt)
         self._update_materialize_exploration_streak(batch_receipt)
@@ -271,7 +271,7 @@ class SessionStateReducer:
             "delivery_mode": self.state.delivery_mode,
             "session_invariants": self.state.session_invariants.to_dict(),
             "phase_manager": self.phase_manager.to_dict(),
-            "task_contract": self.task_contract.to_dict(),
+            "modification_contract": self.modification_contract.to_dict(),
         }
 
     def _derive_task_progress(
@@ -1092,9 +1092,9 @@ class RoleSessionOrchestrator:
             wm_parts.append("强制推进要求:")
             wm_parts.append(f"  - {mandatory_instruction}")
 
-        # FIX-20250422-v3: 注入 TaskContract 状态到 WorkingMemory
-        if self._state_reducer.task_contract.status.value != "empty":
-            wm_parts.append(self._state_reducer.task_contract.format_for_prompt())
+        # FIX-20250422-v3: 注入 ModificationContract 状态到 WorkingMemory
+        if self._state_reducer.modification_contract.status.value != "empty":
+            wm_parts.append(self._state_reducer.modification_contract.format_for_prompt())
 
         # 【关键修复】注入上回合 LLM 自己的 visible_content 到 WorkingMemory。
         # 根因：跨回合时 LLM 面对空 WorkingMemory，丢失自己上一回合的分析结论、
@@ -1312,7 +1312,7 @@ class RoleSessionOrchestrator:
                 f"{_mandatory_line}{_hint_line}当前任务：{_goal_snippet}。\n{_role_hint}\n"
                 + (
                     "你的修改计划已确认。现在必须直接执行写入修改，禁止继续用 glob/repo_rg 扩散探索。"
-                    if self._state_reducer.task_contract.status.value == "ready"
+                    if self._state_reducer.modification_contract.status.value == "ready"
                     else "你已经完成必要读取。请在 SESSION_PATCH 中声明 modification_plan "
                     '（格式: [{"target_file": "path", "action": "描述"}]），然后执行写入修改。'
                 )
@@ -1611,9 +1611,9 @@ class RoleSessionOrchestrator:
             fallback_progress=self.state.task_progress,
         )
 
-        # Schema v5: restore TaskContract
-        self._state_reducer.restore_task_contract(
-            data.get("task_contract") if schema_version >= 5 else None,
+        # Schema v5: restore ModificationContract
+        self._state_reducer.restore_modification_contract(
+            data.get("modification_contract") if schema_version >= 5 else None,
         )
 
     @staticmethod
