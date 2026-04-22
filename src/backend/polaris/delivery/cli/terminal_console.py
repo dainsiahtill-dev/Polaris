@@ -1764,6 +1764,125 @@ def _console_display_role(*, role: str, super_mode: bool) -> str:
     return SUPER_ROLE if super_mode else role
 
 
+# Sentinel value to detect if Director has more work to do
+_DIRECTOR_CONTINUE_MARKER = (
+    "待执行",
+    "待处理",
+    "remaining",
+    "pending",
+    "next step",
+    "下一步",
+    "继续执行",
+    "未完成",
+    "incomplete",
+)
+_DIRECTOR_DONE_MARKER = (
+    "全部完成",
+    "已完成",
+    "执行完毕",
+    "all tasks complete",
+    "all done",
+    "finished",
+    "completed",
+)
+_MAX_DIRECTOR_LOOPS = 5
+
+
+def _director_output_suggests_more_work(content: str) -> bool:
+    """Heuristic: does Director output suggest there is more work to do?"""
+    text = str(content or "").lower()
+    # If explicitly says done, trust it
+    if any(marker in text for marker in _DIRECTOR_DONE_MARKER):
+        return False
+    # If mentions remaining/pending tasks, continue
+    if any(marker in text for marker in _DIRECTOR_CONTINUE_MARKER):
+        return True
+    # If output is very short (just ack), likely more to do
+    return len(text.strip()) < 200
+
+
+def _run_director_execution_loop(
+    host: RoleConsoleHost,
+    *,
+    session_id: str,
+    original_request: str,
+    pm_output: str,
+    extracted_tasks: list[SuperTaskItem],
+    last_result: _TurnExecutionResult,
+    json_render: str,
+    debug: bool,
+    prompt_renderer: _PromptRenderer,
+    workspace_path: Path,
+    dry_run: bool,
+    output_format: str,
+    enable_cognitive: bool | None = None,
+) -> _TurnExecutionResult:
+    """Run Director in a loop until all tasks are executed or safety limit reached.
+
+    Each iteration sends a continuation prompt that instructs the Director
+    to keep executing remaining tasks without re-planning.
+    """
+    result = last_result
+    for loop_idx in range(1, _MAX_DIRECTOR_LOOPS + 1):
+        if result.saw_error:
+            logger.info(
+                "SUPER_MODE_DIRECTOR_LOOP_BREAK: loop=%d reason=saw_error",
+                loop_idx,
+            )
+            break
+        if not _director_output_suggests_more_work(result.final_content):
+            logger.info(
+                "SUPER_MODE_DIRECTOR_LOOP_BREAK: loop=%d reason=output_suggests_complete",
+                loop_idx,
+            )
+            break
+
+        continuation_message = (
+            "[mode:materialize]\n"
+            "[SUPER_MODE_DIRECTOR_CONTINUE]\n"
+            "instructions:\n"
+            "- The previous turn completed part of the PM plan.\n"
+            "- Do NOT summarize, report, or explain what you already did.\n"
+            "- Do NOT ask the user for confirmation.\n"
+            "- Immediately continue executing the REMAINING tasks from the PM plan.\n"
+            "- Use edit_file, write_file, or str_replace_editor to make changes.\n"
+            "- Just DO the work. No preamble. No conclusion.\n"
+            "- If ALL tasks are truly complete, output exactly: ALL_TASKS_COMPLETE\n\n"
+            f"original_request: {original_request}\n\n"
+            f"pm_plan_summary: {pm_output[:800]}...\n"
+            "[/SUPER_MODE_DIRECTOR_CONTINUE]"
+        )
+        logger.info(
+            "SUPER_MODE_DIRECTOR_LOOP: loop=%d/%d session=%s",
+            loop_idx,
+            _MAX_DIRECTOR_LOOPS,
+            session_id,
+        )
+        result = _run_streaming_turn(
+            host,
+            role="director",
+            session_id=session_id,
+            message=continuation_message,
+            json_render=json_render,
+            debug=debug,
+            spinner_label=prompt_renderer.render_spinner_label(
+                role="director",
+                session_id=session_id,
+                workspace=workspace_path,
+            ),
+            dry_run=dry_run,
+            output_format=output_format,
+            enable_cognitive=enable_cognitive,
+        )
+    logger.info(
+        "SUPER_MODE_DIRECTOR_LOOP_END: loops=%d final_role=%s saw_error=%s",
+        loop_idx,
+        result.role,
+        result.saw_error,
+    )
+    return result
+
+
 def _run_super_turn(
     host: RoleConsoleHost,
     *,
@@ -1862,6 +1981,25 @@ def _run_super_turn(
             output_format=output_format,
             enable_cognitive=enable_cognitive,
         )
+        # FIX-20250422-v5: For Director in SUPER mode, loop until work is complete
+        # or safety limit reached. Directors often need multiple turns to execute
+        # all tasks from a PM plan.
+        if next_role == "director" and decision.reason == "code_delivery":
+            last_result = _run_director_execution_loop(
+                host,
+                session_id=next_session_id,
+                original_request=message,
+                pm_output=last_result.final_content if last_result else "",
+                extracted_tasks=pm_tasks,
+                last_result=last_result,
+                json_render=json_render,
+                debug=debug,
+                prompt_renderer=prompt_renderer,
+                workspace_path=workspace_path,
+                dry_run=dry_run,
+                output_format=output_format,
+                enable_cognitive=enable_cognitive,
+            )
     if last_result is None:
         active_session_id = role_sessions.get(fallback_role) or _resolve_role_session(
             host,
