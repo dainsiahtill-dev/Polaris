@@ -1266,11 +1266,20 @@ class RoleSessionOrchestrator:
         _hint_line = f"【用户最新指令】{_progression_hint}\n" if _progression_hint else ""
         _mandatory_line = f"【系统强制要求】{_mandatory_instruction}\n" if _mandatory_instruction else ""
         _exploration_streak = int(findings.get("_exploration_only_streak", 0) or 0)
+        # FIX-20250422-v4: SUPER_MODE 下跳过探索阶段，直接执行修改
+        _is_super_mode = "[SUPER_MODE_HANDOFF]" in goal or "[/SUPER_MODE_HANDOFF]" in goal
         _materialize_exploring_instruction = (
             "当前任务是代码修改（MATERIALIZE_CHANGES）。本回合必须执行工具动作，禁止纯文本分析。"
         )
         if self._state_reducer._is_materialize_changes_mode():
-            if self.state.read_files:
+            if _is_super_mode:
+                # SUPER_MODE: PM 已提供完整计划，Director 直接执行，无需探索
+                _materialize_exploring_instruction += (
+                    "【SUPER_MODE】PM 已生成完整执行计划，目标文件已明确。"
+                    "MANDATORY: 立即调用 write_file/edit_file/edit_blocks 实施修改。"
+                    "禁止探索。禁止分析。禁止询问确认。"
+                )
+            elif self.state.read_files:
                 _materialize_exploring_instruction += (
                     "你已经有可用读取上下文，下一步必须直接调用 write_file/edit_file 等写工具。"
                     "禁止继续重复 glob/repo_rg。"
