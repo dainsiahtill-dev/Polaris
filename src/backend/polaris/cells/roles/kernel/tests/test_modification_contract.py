@@ -499,3 +499,29 @@ class TestSuperModeBypass:
         # Should NOT raise — SUPER_MODE bypasses the readiness gate, allowing write tools
         result = await executor.execute_tool_batch(decision, sm, ledger, context, stream=False)
         assert result.get("turn_id") == "turn_sm_1"
+
+    @pytest.mark.asyncio
+    async def test_verifying_phase_bypasses_for_super_mode(
+        self, mock_emit_event: Any, mock_guard_assert: Any
+    ) -> None:
+        """ToolBatchExecutor bypasses verifying-phase requirement when SUPER_MODE markers present.
+
+        In VERIFYING phase, normally execute_command is required. But SUPER_MODE
+        should allow the Director to complete without this check since QA verifies separately.
+        """
+        executor = _make_executor(mock_emit_event, mock_guard_assert)
+        # Use read_file (not execute_command) in verifying phase
+        decision = _make_tool_batch_decision("turn_vp_1", "batch_vp_1", "read_file", {"file_path": "a.py"})
+        sm = _make_state_machine("turn_vp_1")
+        ledger = _make_ledger_in_content_gathered(
+            "turn_vp_1",
+            turns_in_phase=1,
+            contract_status=ModificationContractStatus.READY,
+        )
+        # Force phase to VERIFYING
+        ledger.phase_manager._current_phase = Phase.VERIFYING
+        context = [{"role": "user", "content": "[SUPER_MODE_HANDOFF]\nplan\n[/SUPER_MODE_HANDOFF]"}]
+
+        # Should NOT raise — SUPER_MODE bypasses verifying-phase requirement
+        result = await executor.execute_tool_batch(decision, sm, ledger, context, stream=False)
+        assert result.get("turn_id") == "turn_vp_1"
