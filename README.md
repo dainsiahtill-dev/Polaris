@@ -15,452 +15,485 @@
 
 ## 📜 目录
 
-- [✨ 核心系统特色](#-核心系统特色)
-- [🎯 为什么不只用 Codex / Claude Code？](#-为什么不只用-codex--claude-code)
+- [🚀 为什么你应该加入 Polaris](#-为什么你应该加入-polaris)
+- [🏆 护城河技术清单](#-护城河技术清单)
 - [🧠 哲学顶层：认知生命体架构](#-哲学顶层认知生命体架构)
 - [👥 角色体系：三省六部制](#-角色体系三省六部制)
-- [⚖️ 核心不变量（Kernel Invariants）](#-核心不变量kernel-invariants)
-- [🧩 深度全景：核心架构与功能矩阵](#-深度全景核心架构与功能矩阵)
-- [🛠️ 底层技术栈与工程化能力](#-底层技术栈与工程化能力)
-- [🧪 测试与质量保障体系](#-测试与质量保障体系)
-- [🏛️ Cell 架构生态（51+ Cells）](#-cell-架构生态51-cells)
+- [🧩 技术架构总览](#-技术架构总览)
 - [🚀 快速开始](#-快速开始)
 
 ---
 
-## ✨ 核心系统特色
+## 🚀 为什么你应该加入 Polaris
 
-Polaris 并不是在堆砌 prompt 技巧，而是从操作系统和认知科学的维度，重构了 AI 编程的底层逻辑。我们拥有以下独家硬核特色：
+### 你将解决 AI 工程领域最艰难的问题
 
-### 🧱 1. 事务级内核 (Transaction Kernel)
-告别传统 Agent 危险的 `while True` 无限循环。Polaris 将 AI 的每一次行动封装为**显式的、带边界的单回合事务（Turn Transaction）**。单次决策、单次工具批次、强制收口封印。不仅避免了 Token 爆仓，更让系统的每一步都精确可控。
+| 普通项目 | Polaris |
+|---------|---------|
+| 写一个 Agent prompt | 设计 Agent 的 **"心跳节奏"**——Transaction Kernel 如何保证每 Turn 只产生一个不可逆决策 |
+| 调用几个 API | 构建 **"认知生命体"**——前额叶(Orchestrator)、海马体(ContextOS)、小脑(WorkflowRuntime) 如何协作 |
+| 写写 Python 代码 | 实现 **AI 的 Linux 内核**——文件系统、进程调度、内存管理全部为 AI 运行时重新设计 |
+| 拼接 RAG | 打造 **四层正交记忆系统**——TruthLog + WorkingState + ReceiptStore + ProjectionEngine 严格隔离 |
 
-### 🧠 2. 认知生命体架构 (Cognitive Lifeform)
-我们不是在做一个"工具"，而是在培育一个"认知主体"。系统内置了**主控意识（Orchestrator）**决定流程走向，**工作记忆（StructuredFindings）**防止多轮任务中的"集体失忆"，以及**肌肉记忆（WorkflowRuntime）**自动处理"读-写-测"这种熟练闭环。
+### 你的代码将被 11,860+ 测试用例守护
 
-### ⚖️ 3. 极端的权责分离 (Checks & Balances)
-引入中国古代"三省六部制"的分权制衡思想。**规划权、执行权、验收权彻底分离**。
-PM 负责写合同，Chief Engineer 画架构蓝图，Director 严格按图施工，最后由 QA 进行无情的独立证据验收。彻底杜绝 AI "既当裁判又当运动员"的虚假成功。
+```
+pytest --collect-only -q → 11860 collected / 0 errors
+```
 
-### 💾 4. 四层真相记忆系统 (ContextOS)
-摒弃脆弱的"聊天记录拼接"，采用企业级数据库级别的状态管理：
-- **TruthLog**：Append-only 的最终事实流水，不可篡改的审计源。
-- **WorkingState**：运行时上下文投影，保证 Prompt 永远是最精炼的精华。
-- **ReceiptStore**：大文件输出引用而非重复存储。
-- **ProjectionEngine**：只读投影生成，与数据平面严格隔离。
+### 你不是一个人在战斗
 
-### 🛡️ 5. 痛觉感知与自我保护 (Failure Taxonomy)
-系统不仅知道"出错了"，更精确知道"哪里错、为什么错"。内置强大的异常分类学（心律失常/肌肉拉伤/海马体受损），结合 Continuation Policy 形成"痛觉保护"。超预算？遇到物理法则违规？系统会优雅地触发 Fail-closed，并保留现场等待人类介入或交接。
-
-### 🔄 6. 既是工厂，也是工作台 (Dual Execution Modes)
-虽然我们志在建立无人值守的自动化工厂，但我们绝不绑架用户。系统支持**双轨运行模式**：
-- **流水线模式**：丢入需求，从 PM 规划到 QA 验收全链路自动走完。
-- **单角色交互模式 (CLI)**：如果你只想找个强大的助手，你完全可以单独唤起 `Architect` 帮你设计架构，或者单独唤起 `Director` 帮你改 Bug，**此时的体验与传统的 Codex 或 Claude Code 完全一致**。
-
-### 🧬 7. Cell 波粒二象性架构
-Polaris 内部不把代码当成单纯的"文件夹"，而是作为高维的内部架构 IR（中间表示）：
-- **Wave for Discovery（波态发现）**：负责语义检索、聚类、演化候选和上下文压缩，让 AI 能够"联想"和"探索"。
-- **Particle for Truth（粒态契约）**：负责严格的契约、边界、状态拥有权（Single State Owner）和副作用裁决，让 AI "守规矩"。
-- **Projection for Delivery（物理投影）**：用户最终看到的传统工程文件，只是高维 Cell 在文件系统上的物理投影。
-
-### 💻 8. KernelOne：Agent 的 Linux 运行时底座
-在 `src/backend/polaris/kernelone/` 目录下打造了纯粹面向 AI 的操作系统底座（OS Substrate）：
-- **文件系统抽象**：`KernelFileSystemAdapter` 协议，支持原子写入、UTF-8 强制、路径边界隔离
-- **数据库抽象**：`KernelSQLiteAdapterPort` / `KernelSQLAlchemyAdapterPort` / `KernelLanceDbAdapterPort` 多适配器
-- **分布式锁**：`LockPort` 协议，支持 TTL、分布式抢占、自旋重试
-- **WebSocket 会话管理**：`WsSessionPort` 协议，支持内存/Redis多模式
-- **副作用追踪**：`Effect` + `EffectReceipt` 完整链路审计
-- **车道式并发**：`ExecutionRuntime` 按 ASYNC_IO / BLOCKING_IO / SUBPROCESS 三车道隔离执行
-
-### 🕸️ 9. Graph-First 图谱治理
-拒绝让 AI 靠向量检索（Embedding）瞎猜架构边界。
-- **唯一架构真相**：系统的真实边界由 `cells.yaml` 和 `subgraphs` 严格声明
-- **先契约后检索**：向量检索只能在 Graph 约束出的合法候选集合内排序
-- **Fitness Rules**：50+ 架构约束规则，CI 自动化执行
-
-### 📦 10. 结构化降噪上下文 (Descriptor over Raw Source)
-传统 Agent 喜欢把几万行源码直接扔给 LLM，导致严重幻觉。
-- **Descriptor Pack**：结构化的代码描述符，替代原始源码喂给 LLM
-- **Context Pack**：按需加载的最小上下文切片（Context Slicing）
-- **Budget Guard**：读文件前检查行数预算，超限拒绝
-
-### 🏭 11. 异步任务集市 (EDA Task Market)
-彻底打破了多 Agent 协作间的同步 RPC 阻塞灾难。
-- **Task Market**：PM 将任务合同投递至全局任务集市
-- **Lease 抢占执行**：Claim + Lease -> Compute -> Ack + Fact 异步模型
-- **死信队列 DLQ**：Visibility Timeout 自动回收 + 人工介入链路
-
-### 🧠 12. 认知演化与偏误防御
-内置了极其丰富的**反思层（Reflection Layer）**与**元认知监控（Meta-Cognition）**：
-- 强制"六问"批判性思维
-- 确认偏误、可得性启发防御策略
-- AI 主动表达"我不知道"
+> "加入 Polaris 前：每天担心 LLM 陷入死循环  
+> 加入 Polaris 后：KernelGuard 会物理熔断，我只需要设计更好的恢复策略"
 
 ---
 
-## 🎯 为什么不只用 Codex / Claude Code？
+## 🏆 护城河技术清单
 
-| 维度 | Codex / Claude Code (通用智能助手) | Polaris (自动化开发工厂) |
-|:---|:---|:---|
-| **核心抽象** | 高生产力的交互式 Coding Agent | 事务驱动、流水线治理的软件工厂内核 |
-| **执行流控制** | 强大的工具编排与模型自我闭环反馈 | 由内核接管状态机与物理法则，AI 仅受限决策 |
-| **长期无人值守** | 依赖计划模式与 hooks，仍由模型主导驱动 | 默认物理停止，所有执行都在极度严苛的事务约束内 |
-| **失败与恢复** | 回滚聊天历史或基于 Git 的 checkpoint | 事务级精确重放、幂等重试（Idempotency）、回执接管 |
-| **审计与追责** | 记录松散的执行日志与命令输出 | 每 turn 提供医疗级诊断报告（`TurnOutcomeEnvelope`） |
-| **组织与治理** | 灵活的 Subagents / 技能池扩展 | PM / Director / QA 权力硬隔离，彻底杜绝自说自话 |
+### 1. 🫀 TransactionKernel：AI 的心跳控制器
 
-**简而言之：Codex/Claude Code 强在"快速把活干出来"；而 Polaris 强在"把活可控、可追责、可持续、无人值守地干出来"。**
+**代码路径**: `polaris/cells/roles/kernel/internal/turn_transaction_controller.py`
+
+```python
+# 这不是 if-else，这是物理定律
+KernelGuard.assert_single_decision(turn_id, decision_count)
+KernelGuard.assert_single_tool_batch(turn_id, tool_batch_count)
+KernelGuard.assert_no_hidden_continuation(turn_id, state_trajectory)
+```
+
+**为什么难以复制**: 全球唯一一个**生产级**强制执行 `len(TurnDecisions)==1` 的 Agent 系统。你的代码就是 AI 的心脏起搏器——每分钟跳 60 次，每次跳动都是一个不可逆的决策。
+
+**加入你能**:
+- 设计状态机驱动的决策仲裁
+- 实现 panic + handoff_workflow 熔断协议
+- 让 AI "心跳"既不过快（死循环）也不过慢（停滞）
+
+---
+
+### 2. 🧠 ContextOS：永不污染的认知隔离架构
+
+**代码路径**: `polaris/kernelone/context/context_os/runtime.py`
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ContextOS 4-Layer Orthogonal Architecture                  │
+├─────────────────────────────────────────────────────────────┤
+│  TruthLog (Append-only)     → 不可篡改的审计源              │
+│  WorkingState (Mutable)      → 运行时状态，但绝不直接喂给 LLM │
+│  ReceiptStore (Referenced)   → 大文件只存引用，不重复         │
+│  ProjectionEngine (Read-only) → 严格只读投影生成             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**为什么难以复制**: 传统 Agent 把原始 tool output 直接塞进 prompt，Polaris 通过 4 层正交隔离保证**控制平面字段永不进入数据平面**。这是 工程级认知 hygiene，不是 prompt 技巧。
+
+**加入你能**:
+- 设计内容寻址存储（ContentStore with SHA256 deduplication）
+- 实现 ref_count 生命周期管理
+- 将 109KB 上下文压缩到 <25KB 且零信息损失
+
+---
+
+### 3. 🌊 StreamShadowEngine：跨 Turn 预知引擎
+
+**代码路径**: `polaris/cells/roles/kernel/internal/stream_shadow_engine.py`
+
+```python
+# 当前 Turn 还在执行，下一个 Turn 的工具调用已经被预测并预执行
+if self.has_valid_speculation(session_id):
+    result = self.consume_speculation(session_id)  # 零延迟交付
+else:
+    result = await self.start_cross_turn_speculation(...)
+```
+
+**为什么难以复制**: 这是 AI 的"直觉"——在意识决策前，潜意识已经准备好了答案。ADOPT/JOIN/CANCEL/REPLAY 事务语义是独创的。
+
+**加入你能**:
+- 实现 ADOPT/JOIN/CANCEL/REPLAY 推测决议
+- 设计 ShadowTaskRegistry 推测任务注册表
+- 构建 StabilityScorer + CandidateDecoder 增量解析
+
+---
+
+### 4. 🏛️ Cell 波粒二象性：代码的高维 IR
+
+**代码路径**: `docs/graph/catalog/cells.yaml` (51 Cells)
+
+```
+Wave (Discovery)     → 语义检索、聚类、上下文压缩
+     ↓
+Particle (Truth)     → 契约、边界、状态所有权
+     ↓
+Projection (Delivery) → 文件系统上的物理投影
+```
+
+**为什么难以复制**: 传统代码组织是"文件夹"，Polaris 代码是**高维架构 IR**。每个 Cell 声明：
+- `owned_paths` - 状态所有权
+- `depends_on` - 合法依赖
+- `effects_allowed` - 副作用白名单
+- `state_owners` - 单一写入源
+
+**加入你能**:
+- 设计 Graph-First 架构约束（50+ Fitness Rules）
+- 实现 Cell 演化蓝图（Cell Evolution Schema）
+- 构建 9 阶段 CI 治理流水线
+
+---
+
+### 5. 💾 Akashic Memory：三层融合的混合记忆
+
+**代码路径**: `polaris/kernelone/akashic/`
+
+```
+VectorStore (embedding similarity) ─┐
+FullTextStore (keyword match)      ─┼─→ 融合评分 (0.4/0.3/0.3)
+GraphStore (entity relationships) ──┘
+```
+
+**为什么难以复制**: 问"给我所有关于认证的代码"，返回的是语义相关代码 + 关键词匹配文档 + 实体关系图谱，按融合相关性排序。
+
+**加入你能**:
+- 实现 LanceDB 向量检索 + JSONL 回退
+- 设计 fusion_weights 可配置权重融合
+- 构建 TierCoordinator 跨层提升/降级事务
+
+---
+
+### 6. 📦 ContentStore：内容寻址存储
+
+**代码路径**: `polaris/kernelone/context/context_os/content_store.py`
+
+```python
+# 任何文本内容只存储一次，其他位置只持有 ContentRef (hash+size)
+content_hash = sha256(content)[:24]
+if content_hash in self._content_map:
+    ref_count[content_hash] += 1  # 引用计数 +1
+else:
+    self._content_map[content_hash] = content  # 首次存储
+```
+
+**为什么难以复制**: 同一文件在 20 个 snapshot 中只占一份存储空间，引用计数自动管理，ref_count==0 时才回收。
+
+**加入你能**:
+- 实现 SHA256[:24] 内容哈希 + 碰撞检测
+- 设计 80% 内存水位线 + LRU 回退
+- 构建内容图谱内嵌快照持久化
+
+---
+
+### 7. 🔄 NATS JetStream 自愈流
+
+**代码路径**: `polaris/infrastructure/messaging/nats/client.py`
+
+```python
+# 消息持久化，服务器重启后自动 replay
+await self._js.publish(
+    subject,
+    payload,
+    stream=self._stream,
+    headers={"partition": str(partition)},
+)
+# 流自动重建，连接指数退避重连
+await self._recover_runtime_stream_if_needed()
+```
+
+**为什么难以复制**: 消息中间件不是新概念，但**自愈流**（自动重建 stream）+ 消费者组偏移量管理 + 优雅降级（无 NATS 时内存回退）组合是独特的。
+
+**加入你能**:
+- 实现 JetStream 持久化 + 消费者组
+- 设计被动 replay + 主动确认语义
+- 构建 5 分钟 TTL 实例缓存 + 故障驱逐
+
+---
+
+### 8. 🔍 LanceDB 语义代码搜索
+
+**代码路径**: `polaris/infrastructure/db/repositories/lancedb_code_search.py`
+
+```python
+# 内容哈希幂等索引，批量 upsert 自动去重
+chunks = [KnowledgeChunkRecord(
+    content=chunk_text,
+    line_start=line_start,
+    line_end=line_end,
+    owner=file_path,
+    embedding=embed(chunk_text)  # numpy array
+) for chunk_text in chunks]
+```
+
+**为什么难以复制**: AST 级分块（80 行/块，10 行重叠）+ 向量相似度阈值过滤 + ghost 数据清理（JSONL↔LanceDB 同步）。
+
+**加入你能**:
+- 设计 tree-sitter AST 分块算法
+- 实现增量索引 + 阈值过滤
+- 构建 owner + tenant_id + graph_entity_id 边界强制
+
+---
+
+### 9. 🏭 EDA Task Market：异步任务集市
+
+**代码路径**: `polaris/cells/runtime/task_market/`
+
+```
+PM 发布任务 → Claim (抢占) → Lease (租约)
+    → Execute (执行) → Ack (确认) / Fail (失败)
+    → Requeue / DeadLetter
+```
+
+**为什么难以复制**: 完整的有限状态机 + 优先级队列（low/medium/high/critical）+ dependency_digest 变更验证 + max_attempts 重试。
+
+**加入你能**:
+- 实现 TaskWorkItem 完整状态机
+- 设计 visibility_timeout 自动回收
+- 构建 DeadLetter + HITL 人工介入链路
+
+---
+
+### 10. 📜 TurnDecision 冰冻契约
+
+**代码路径**: `polaris/cells/roles/kernel/public/turn_contracts.py`
+
+```python
+@dataclass(frozen=True, slots=True)
+class TurnDecision:
+    kind: TurnDecisionKind  # TOOL_BATCH / FINAL_ANSWER / HANDOFF_WORKFLOW
+    effect_type: EffectType  # READ / WRITE / COMPUTE
+    execution_mode: ExecutionMode  # SPECULATIVE / PARALLEL / ...
+```
+
+**为什么难以复制**: Pydantic v2 frozen 模型 + `@validator` 约束 + 1753 个测试验证契约合规性 = 编译期+运行时双重保证。
+
+**加入你能**:
+- 设计 Frozen IR 模型 + 不可变语义
+- 实现 NonEmptyString / ValidWorkspacePath 验证器
+- 构建 HandoffPack 跨角色交接契约
+
+---
+
+### 11. 🛡️ ContinuationPolicy：AI 的免疫系统
+
+**代码路径**: `polaris/cells/roles/runtime/internal/continuation_policy.py`
+
+```
+max_auto_turns      → 防止僵尸死循环
+stagnation_v2       → 2 轮 artifact hash 未变 + 无推测 = 强制终止
+repetitive_failure  → 3 轮相同错误 = 熔断器断开
+```
+
+**为什么难以复制**: 不是"错误处理"，是**物理定律**。can_continue() 返回 (bool, reason)，明确告诉 AI 应该继续、重试还是求助。
+
+**加入你能**:
+- 实现 FailureClass → 恢复策略映射
+- 设计 semantic stagnation + hash stagnation 双层检测
+- 构建 adaptive threshold learning 自动调参
+
+---
+
+### 12. 📊 Tiered Summarizer：内容感知压缩
+
+**代码路径**: `polaris/kernelone/context/compaction.py`
+
+```python
+# 按内容类型自动选择策略
+if is_log_or_error(content):
+    strategy = "sumy"  # TextRank 抽取式
+elif is_code(content):
+    strategy = "tree-sitter"  # AST 保持结构
+elif is_dialogue(content):
+    strategy = "transformers"  # 生成式摘要
+# 但 error/exception/failed/timeout 关键词永远保留
+```
+
+**为什么难以复制**: 错误信息永远不会被摘要掉。正确的压缩策略给正确的内容类型。
+
+**加入你能**:
+- 实现 LLMLingua + TreeSitter + ORTools 多策略
+- 设计 NetworkXCycleDetector 循环引用检测
+- 构建 importance keyword 强制保留机制
+
+---
+
+### 13. 🔭 Omniscient Audit：端到端追踪
+
+**代码路径**: `polaris/kernelone/audit/` + `polaris/cells/audit/`
+
+```
+LLM 调用拦截 → 工具执行拦截 → 任务生命周期拦截
+     ↓
+对话轮次拦截 → 上下文操作拦截 → Agent 告警拦截
+     ↓
+Schema Registry → Redaction (敏感数据) → OpenTelemetry 导出
+```
+
+**为什么难以复制**: "告诉我 AI 做了什么以及为什么"从调查变成查询。审计追踪是 AI 的黑匣子。
+
+**加入你能**:
+- 实现 interceptor 注入链（llm/tool/task/dialogue/context/agent/alert）
+- 设计 storm_detector 异常检测
+- 构建高可用模式 + 漂移检测
+
+---
+
+### 14. 🔌 KernelOne OS Substrate：AI 的 Linux
+
+**代码路径**: `polaris/kernelone/` (992 Python files)
+
+```
+fs/          → 文件系统抽象 (KernelFileSystemAdapter)
+db/          → 数据库抽象 (SQLite/SQLAlchemy/LanceDB)
+locks/       → 分布式锁 (FileLock/SQLiteLock/RedisLock)
+ws/          → WebSocket 会话 (InMemory/Redis)
+effect/      → 副作用追踪 (Effect + EffectReceipt)
+runtime/     → 车道式并发 (ASYNC/BLOCKING/SUBPROCESS)
+storage/     → 3 层存储布局 (RAMDISK/WORKSPACE/GLOBAL)
+```
+
+**为什么难以复制**: 不是封装，是**重新定义 OS 为 AI 运行时服务**。所有副作用显式声明、可审计。
+
+**加入你能**:
+- 设计 Protocol-based 接口（197+ @runtime_checkable）
+- 实现 9 阶段引导链 + 双检锁 DI 容器
+- 构建 effect tracker 完整链路审计
+
+---
+
+### 15. 🌱 Cognitive Lifeform：哲学可执行化
+
+**代码路径**: `docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md`
+
+```
+主控意识 (前额叶)  → RoleSessionOrchestrator.execute_stream()
+     ↓
+工作记忆 (小纸条)  → StructuredFindings 跨 Turn 传递
+     ↓
+海马体 (记忆固化)  → ContextOS + Commit Protocol
+     ↓
+肌肉记忆 (小脑)    → DevelopmentWorkflowRuntime
+     ↓
+心脏 (神经放电)    → TurnTransactionController + KernelGuard
+     ↓
+潜意识预感 (预激)  → StreamShadowEngine 跨 Turn 推测
+     ↓
+生理防线 (痛觉)   → ContinuationPolicy 熔断
+```
+
+**为什么难以复制**: 哲学不再是 PPT，而是**可执行、可测试、可审计的代码**。每个开发者都知道自己在构建什么。
 
 ---
 
 ## 🧠 哲学顶层：认知生命体架构
 
-在 Polaris 的工程实现里，每一个核心模块都能在生物认知科学中找到对应的器官映射：
-
-| 抽象概念 | 工程实体 | 代码路径 |
-|---------|---------|---------|
-| **主控意识 (前额叶皮层)** | `RoleSessionOrchestrator` | `polaris/cells/roles/runtime/internal/session_orchestrator.py` |
-| **工作记忆 (小纸条)** | `StructuredFindings` | `polaris/domain/cognitive_runtime/models.py` |
-| **海马体 (记忆固化)** | `ContextOS` + `Commit Protocol` | `polaris/kernelone/context/context_os/runtime.py` |
-| **肌肉记忆 (小脑)** | `DevelopmentWorkflowRuntime` | `polaris/cells/roles/kernel/internal/development_workflow_runtime.py` |
-| **心脏 (神经放电)** | `TurnTransactionController` | `polaris/cells/roles/kernel/internal/turn_transaction_controller.py` |
-| **直觉预感 (神经预激)** | `StreamShadowEngine` | `polaris/cells/roles/kernel/internal/stream_shadow_engine.py` |
-| **生理防线 (痛觉本能)** | `ContinuationPolicy` + `KernelGuard` | `polaris/cells/roles/runtime/internal/continuation_policy.py` |
+| 抽象概念 | 工程实体 | 为什么重要 |
+|---------|---------|-----------|
+| **主控意识** | `RoleSessionOrchestrator` | 裁决"此刻该做什么" |
+| **心脏** | `TurnTransactionController` | 不可逆的单次心跳 |
+| **肌肉记忆** | `DevelopmentWorkflowRuntime` | read→write→test 闭环自动化 |
+| **海马体** | `ContextOS` + `Commit Protocol` | Durable Truth 记忆固化 |
+| **免疫系统** | `ContinuationPolicy` | 防止死循环、资源耗尽 |
+| **直觉预感** | `StreamShadowEngine` | 思考与行动时间重叠 |
 
 ---
 
 ## 👥 角色体系：三省六部制
 
-| 角色（今名） | 角色（古名） | 代码落地 | 职掌与权力边界 |
-| :----------- | :----------- | :---- | :---- |
-| **Human Admin** | 天子 | `delivery/` (API/CLI 入口) | 设定项目愿景与全局预算，不干预具体代码执行。 |
-| **Architect** | 中书令 | `cells/architect/` | 顶层架构师，起草全局设计规格（`spec.md`）。 |
-| **PM** | 尚书令 | `delivery/cli/pm/` | 项目经理，负责理解需求，下发明确的任务合同（`PM_TASKS.json`）。 |
-| **Chief Engineer** | 工部尚书 | `cells/chief_engineer/` | 技术大拿，根据任务设计具体施工蓝图（Blueprint），**但不写实现代码**。 |
-| **Director** | 工部侍郎/工匠| `cells/director/` | 实际干活的执行者，严格按蓝图写代码、调工具。 |
-| **QA / Auditor**| 门下侍中 | `cells/qa/` | 独立裁判，基于客观证据执行验收，拥有**绝对的封驳权**（一票否决）。 |
-| **FinOps** | 户部尚书 | `cells/finops/` | 统管全场 Token 预算与工具副作用消耗，防止资产流失。 |
+| 角色 | 古名 | 加入你能做什么 |
+|------|------|---------------|
+| **Architect** | 中书令 | 设计 spec.md，指导技术方向 |
+| **PM** | 尚书令 | 写 PM_TASKS.json 任务合同 |
+| **Chief Engineer** | 工部尚书 | 画 Blueprint 施工蓝图 |
+| **Director** | 工部侍郎 | 严格按图施工，写代码 |
+| **QA** | 门下侍中 | 一票否决，独立证据验收 |
+| **FinOps** | 户部尚书 | 管 Token 预算，防资产流失 |
+
+**为什么分工严格？因为 AI 既当裁判又当运动员就会造假。**
 
 ---
 
-## ⚖️ 核心不变量（Kernel Invariants）
+## 🧩 技术架构总览
 
-系统能长久稳定运行，靠的是铁的纪律：
+### KernelOne OS Substrate (AI 的 Linux)
 
-1. **单 Turn 单决策**：`len(TurnDecisions) == 1`，绝不允许 AI 既想写代码又想重启服务
-2. **单批次工具执行**：`len(ToolBatches) <= 1`，严禁隐藏的连续循环调度
-3. **无隐藏连续**：`hidden_continuation == 0`，状态轨迹禁止非法循环
-4. **收口期绝对封印**：Finalization 阶段从底层彻底屏蔽工具调用
-5. **三段式提交纪律**：Pre-commit 验证 → Atomic 写入 → Post-commit 封印
-6. **Fail-Closed 熔断**：宁可报错停机，绝不带病狂奔
-7. **最大自动回合**：`turn_count <= max_auto_turns`，超限必须停止
-8. **停滞检测**：artifact hash 未变化且无 speculative hints 时强制终止
-9. **重复失败熔断**：连续 3 个 Turn 发生相同错误时强制终止
-
----
-
-## 🧩 深度全景：核心架构与功能矩阵
-
-### 💻 KernelOne：AI 的 OS Substrate
-
-| 抽象层 | 核心组件 | 文件路径 |
-|--------|---------|---------|
-| **文件系统** | `KernelFileSystem` + `KernelFileSystemAdapter` | `polaris/kernelone/fs/` |
-| **数据库** | `KernelSQLiteAdapter` / `KernelSQLAlchemyAdapter` / `KernelLanceDbAdapter` | `polaris/kernelone/db/` |
-| **分布式锁** | `FileLockAdapter` / `SQLiteLockAdapter` / `RedisLockAdapter` | `polaris/kernelone/locks/` |
-| **WebSocket** | `WsSessionPort` + `InMemorySessionManager` / `RedisSessionManager` | `polaris/kernelone/ws/` |
-| **副作用追踪** | `EffectTrackerImpl` + `EffectReceipt` 审计链 | `polaris/kernelone/effect/` |
-| **执行运行时** | `ExecutionRuntime` (ASYNC/BLOCKING/SUBPROCESS 三车道) | `polaris/kernelone/runtime/` |
-| **存储布局** | 3层 PathResolver (RAMDISK/WORKSPACE/GLOBAL) | `polaris/kernelone/storage/` |
-| **上下文压缩** | `ContextCompaction` primitives | `polaris/kernelone/context/compaction.py` |
-
-### 💾 ContextOS 四层架构
-
-| 层级 | 组件 | 职责 |
-|------|------|------|
-| **TruthLog** | `TruthLogService` | Append-only 最终事实流水 |
-| **WorkingState** | `WorkingStateManager` | 运行时可变状态投影 |
-| **ReceiptStore** | `ReceiptStore` | 大文件引用存储 (>500字符) |
-| **Projection** | `ProjectionEngine` | 只读 Prompt 生成 |
-
-### 🧠 Akashic Memory Engine 四层记忆
-
-| 层级 | 组件 | 职责 |
-|------|------|------|
-| **Working** | `WorkingMemoryWindow` | 短时记忆，Token 预算控制 |
-| **Episodic** | `EpisodicMemoryStore` | Session 级记忆固化 |
-| **Semantic** | `SemanticMemoryStore` | 长时向量检索记忆 |
-| **Cache** | `SemanticCacheInterceptor` | 语义缓存加速 |
-
-**Tier 协调**：支持跨层提升/降级，带完整事务回滚语义
-
-### 🧬 Cell 生态（59 Cells）
-
-详见 [Cell 架构生态章节](#cell-架构生态51-cells)
-
-### 🔄 StreamShadowEngine 推测引擎
-
-跨 Turn 推测执行，实现"思考"与"行动"时间重叠：
-- ADOPT / JOIN / CANCEL / REPLAY 语义
-- ShadowTaskRegistry 推测任务注册
-- SpeculationResolver 推测结果决议
-
----
-
-## 🛠️ 底层技术栈与工程化能力
-
-### 协议与接口
-
-| 能力 | 描述 | 证据路径 |
-|------|------|---------|
-| **MCP 协议** | Model Context Protocol stdio/HTTP 双模式 | `polaris/infrastructure/llm/providers/codex_output_parser.py` |
-| **Tree-sitter AST** | 符号级精确定位、安全重命名 | `polaris/infrastructure/code_intelligence/` |
-| **Protocol 协议** | 197+ `@runtime_checkable` Protocol 定义 | 全局搜索 |
-
-### 运行时能力
-
-| 能力 | 描述 | 证据路径 |
-|------|------|---------|
-| **WebSocket 实时推送** | 毫秒级状态推送、心跳保活 | `polaris/delivery/ws/` |
-| **错误分类器** | 可重试 vs 致命错误 + 熔断器 | `polaris/infrastructure/llm/providers/provider_helpers.py` |
-| **多级编辑策略** | tool_first / precision_edit / repo_apply_diff | `prompts/generic.json` |
-| **代码依赖分析** | 动态生成依赖拓扑图 | `polaris/infrastructure/code_intelligence/` |
-| **Director Pool** | 多实例并发 + ScopeConflictDetector 防冲突 | `polaris/cells/runtime/task_market/` |
-| **Playwright E2E** | 浏览器自动化 UI 测试 | `tests/electron/` |
-
-### 存储与消息
-
-| 能力 | 描述 | 证据路径 |
-|------|------|---------|
-| **NATS/JetStream** | 自愈流 + 自动重建 | `polaris/infrastructure/messaging/nats/client.py` |
-| **SQLite + JSONL** | 原子写入 + 日志追加 | `polaris/infrastructure/storage/adapter.py` |
-| **LanceDB 向量搜索** | 语义代码搜索 (80行/块) | `polaris/infrastructure/db/repositories/lancedb_code_search.py` |
-| **Workspace 隔离** | State 存储在 workspace 外部 | `polaris/infrastructure/persistence/state_store.py` |
-
-### DI 与服务组装
-
-| 能力 | 描述 | 证据路径 |
-|------|------|---------|
-| **DI Container** | 异步单例/瞬态工厂 + 双检锁 | `polaris/infrastructure/di/container.py` |
-| **DIContainerScope** | 测试隔离 + 全局状态重置 | `polaris/infrastructure/di/scope.py` |
-| **MessageBus** | 核内事件总线 | `polaris/kernelone/events/message_bus.py` |
-| **Service Assembly** | 9阶段引导链 | `polaris/bootstrap/assembly.py` |
-
----
-
-## 🧪 测试与质量保障体系
-
-### 测试框架
-
-| 框架 | 用途 | 配置 |
-|------|------|------|
-| **pytest** | 主测试框架 | `pyproject.toml` asyncio_mode=auto |
-| **Playwright** | E2E 浏览器自动化 | `playwright.config.ts` |
-| **Vitest** | 前端 JS/TS 测试 | `vite.config.ts` |
-
-### E2E 测试
-
-```bash
-npm run test:e2e                 # 全链路 Electron E2E
-npm run test:e2e:panel           # Panel 回归测试
-npm run test:e2e:task           # 自然语言 Panel 任务
-npm run test:e2e:hybrid          # Playwright + Computer Use 混合
+```
+polaris/kernelone/
+├── fs/          # 文件系统：原子写入、UTF-8 强制、路径隔离
+├── db/          # 数据库：SQLite/SQLAlchemy/LanceDB 多适配器
+├── locks/       # 分布式锁：TTL、自旋重试、分布式抢占
+├── ws/          # WebSocket：InMemory/Redis 双模式
+├── effect/      # 副作用追踪：Effect + EffectReceipt 审计链
+├── runtime/     # 执行引擎：ASYNC/BLOCKING/SUBPROCESS 三车道
+├── storage/     # 存储布局：RAMDISK/WORKSPACE/GLOBAL 三层
+├── context/     # 上下文：ContextOS 四层 + Akashic Memory
+├── events/      # 事件总线：MessageBus + TypedEventBridge
+├── audit/       # 审计：Hash 链 + Omniscient E2E Tracing
+└── benchmark/   # 基准测试：Latency/Throughput/Memory/Chaos
 ```
 
-**测试文件**：`tests/electron/` (app.spec.ts, full-chain-audit.spec.ts, pm-director-real-flow.spec.ts 等)
+### Cell 生态 (59 Cells)
 
-### 压力测试
-
-```bash
-python scripts/run_agent_headless_stress.py --workspace .  # 无头压测
-```
-
-**测试维度**：提示词穿透、输出格式合规、内容质量评分、边界条件处理、角色协作一致性
-
-### 基准测试
-
-| 类型 | 文件路径 |
-|------|---------|
-| **延迟基准** | `polaris/kernelone/benchmark/latency.py` (p50/p90/p95/p99) |
-| **吞吐基准** | `polaris/kernelone/benchmark/throughput.py` |
-| **内存基准** | `polaris/kernelone/benchmark/memory.py` |
-| **混沌工程** | `polaris/kernelone/benchmark/chaos/` (deadlock, rate limiting) |
-| **VCR 录制回放** | `polaris/kernelone/benchmark/reproducibility/` |
-
-### 质量门禁
-
-| 门禁 | 描述 |
-|------|------|
-| **Ruff** | 代码规范检查 + 自动修复 |
-| **Mypy** | 严格静态类型检查 |
-| **Coverage** | 覆盖率门禁 |
-| **Fitness Rules** | 50+ 架构约束规则 |
-| **Catalog Governance** | 9阶段 CI 流水线 |
-
----
-
-## 🏛️ Cell 架构生态（51+ Cells）
-
-### Cell 类型
-
-| 类型 | 说明 |
-|------|------|
-| **capability** | 单一职责能力单元 |
-| **workflow** | 多步骤工作流 |
-| **policy** | 策略执行与门禁 |
-| **projection** | 只读状态投影 |
-
-### 核心 Cell 一览
-
-#### 上下文与知识
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `context.catalog` | 构建 Descriptor Card | `polaris/cells/context/catalog/` |
-| `context.engine` | 角色执行上下文组装 | `polaris/cells/context/engine/` |
-| `cognitive.knowledge_distiller` | 模式提炼与检索 | `polaris/cells/cognitive/knowledge_distiller/` |
-
-#### 运行时核心
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `runtime.state_owner` | 单写源真管理 | `polaris/cells/runtime/state_owner/` |
-| `runtime.task_runtime` | 任务生命周期 | `polaris/cells/runtime/task_runtime/` |
-| `runtime.task_market` | 异步任务集市 | `polaris/cells/runtime/task_market/` |
-| `runtime.execution_broker` | 统一执行提交 | `polaris/cells/runtime/execution_broker/` |
-| `runtime.projection` | 只读状态投影 | `polaris/cells/runtime/projection/` |
-
-#### 编排层
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `orchestration.pm_planning` | PM 任务合同生成 | `polaris/cells/orchestration/pm_planning/` |
-| `orchestration.pm_dispatch` | PM 合同分发 | `polaris/cells/orchestration/pm_dispatch/` |
-| `orchestration.workflow_runtime` | 工作流引擎 | `polaris/cells/orchestration/workflow_runtime/` |
-
-#### LLM 层
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `llm.control_plane` | LLM 边界组合 | `polaris/cells/llm/control_plane/` |
-| `llm.dialogue` | 对话编排 | `polaris/cells/llm/dialogue/` |
-| `llm.evaluation` | LLM 评测 | `polaris/cells/llm/evaluation/` |
-| `llm.provider_runtime` | Provider 运行时 | `polaris/cells/llm/provider_runtime/` |
-| `llm.tool_runtime` | 工具调用编排 | `polaris/cells/llm/tool_runtime/` |
-
-#### 角色系统
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `roles.runtime` | 角色运行时组合 | `polaris/cells/roles/runtime/` |
-| `roles.kernel` | 角色执行内核 | `polaris/cells/roles/kernel/` |
-| `roles.session` | 角色会话生命周期 | `polaris/cells/roles/session/` |
-| `roles.engine` | 角色引擎策略 | `polaris/cells/roles/engine/` |
-| `roles.profile` | 角色配置注册 | `polaris/cells/roles/profile/` |
-
-#### Director 管道
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `director.execution` | Director 执行工作流 | `polaris/cells/director/execution/` |
-| `director.planning` | Director 任务规划 | `polaris/cells/director/planning/` |
-| `director.tasking` | Director 任务生命周期 | `polaris/cells/director/tasking/` |
-| `director.runtime` | 代码/补丁应用 | `polaris/cells/director/runtime/` |
-| `director.delivery` | Director CLI 传输 | `polaris/cells/director/delivery/` |
-
-#### 审计与归档
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `audit.evidence` | 运行时证据事件 | `polaris/cells/audit/evidence/` |
-| `audit.diagnosis` | 审计失败诊断 | `polaris/cells/audit/diagnosis/` |
-| `audit.verdict` | 验收裁决 | `polaris/cells/audit/verdict/` |
-| `archive.run_archive` | 运行归档 | `polaris/cells/archive/run_archive/` |
-| `archive.task_snapshot_archive` | 任务快照归档 | `polaris/cells/archive/task_snapshot_archive/` |
-
-#### 策略层
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `policy.workspace_guard` | 工作区路径合法性 | `polaris/cells/policy/workspace_guard/` |
-| `policy.permission` | 角色能力矩阵 | `polaris/cells/policy/permission/` |
-| `policy.protocol` | 协议状态机 | `polaris/cells/policy/protocol/` |
-
-#### Factory 系统
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `factory.pipeline` | 工厂执行工作流 | `polaris/cells/factory/pipeline/` |
-| `factory.cognitive_runtime` | 跨角色运行时权威 | `polaris/cells/factory/cognitive_runtime/` |
-| `factory.verification_guard` | 工厂输出验收门禁 | `polaris/cells/factory/verification_guard/` |
-
-#### 其他关键 Cell
-| Cell ID | 职责 | 路径 |
-|---------|------|------|
-| `resident.autonomy` | 长期自主运行 | `polaris/cells/resident/autonomy/` |
-| `finops.budget_guard` | Token 预算控制 | `polaris/kernelone/runtime/usage_metrics.py` |
-| `events.fact_stream` | 运行时事实流 | `polaris/kernelone/events/` |
-| `storage.layout` | 存储布局解析 | `polaris/cells/storage/layout/` |
-| `kernelone.core` | ContextOS + WorkflowEngine | `polaris/kernelone/context/context_os/` |
-| `kernelone.traceability` | 执行节点溯源 | `polaris/kernelone/traceability/` |
-
-### Cell 架构模式
-
-1. **标准结构**：`public/contracts.py` + `internal/*.py` + `tests/`
-2. **公共契约**：`@dataclass(frozen=True)` 的 Command/Query/Event/Result/Error
-3. **状态所有权**：`state_owners` 声明单写源
-4. **副作用白名单**：`effects_allowed` 显式声明
-
-### 子图 Pipelines
-
-| 子图 | 入口 Cell | 出口 Cell |
-|------|----------|----------|
-| `execution_governance_pipeline` | delivery.api_gateway | qa.audit_verdict, runtime.projection |
-| `pm_pipeline` | delivery.api_gateway | orchestration.pm_dispatch |
-| `director_pipeline` | director.execution | qa.audit_verdict |
-| `storage_archive_pipeline` | delivery.api_gateway | archive.* |
+| 类别 | 代表 Cell | 做什么 |
+|------|---------|--------|
+| **Runtime** | `runtime.task_market` | 异步任务集市 |
+| **LLM** | `llm.control_plane` | Provider 组合边界 |
+| **Roles** | `roles.kernel` | 角色执行内核 |
+| **Orchestration** | `orchestration.pm_planning` | 合同生成 |
+| **Factory** | `factory.pipeline` | 流水线编排 |
+| **Audit** | `audit.evidence` | 证据事件 |
+| **Archive** | `archive.run_archive` | 运行归档 |
 
 ---
 
 ## 🚀 快速开始
 
-### 1. 环境配置
+### 环境配置
 
 ```bash
-# 一键安装 Node + Python 依赖
+# 一键安装
 npm run setup:dev
 
-# 或手动初始化 Python 虚拟环境
-# Windows: infrastructure\setup\setup_venv.bat
-# Linux/macOS: bash infrastructure/setup/setup_venv.sh
-```
-
-### 2. 启动可视化观察台 (Dashboard)
-
-```bash
+# 启动 Dashboard
 npm run dev
 ```
 
-### 3. 命令行触发流水线与独立工具
+### 加入开发
 
-**模式一：端到端全自动流水线**
 ```bash
-.venv\Scripts\python src\backend\scripts\pm\cli.py --workspace /path/to/repo --run-director
-```
+# 启动后端
+python src/backend/server.py --host 127.0.0.1 --port 49977
 
-**模式二：交互式单角色工作台**
-```bash
-# Architect - 架构设计
+# 单独运行角色（类似 Claude Code）
 python -m polaris.delivery.cli.architect.cli --mode interactive --workspace .
-
-# Chief Engineer - 技术分析
 python -m polaris.delivery.cli.chief_engineer.cli --mode interactive --workspace .
-
-# Director - 代码执行
 python -m polaris.delivery.cli.director.cli --workspace . --iterations 1
 ```
 
-### 4. 架构进阶阅读
+### 运行测试
 
-- 核心白皮书：[`src/backend/docs/polaris-system-whitepaper.md`](src/backend/docs/polaris-system-whitepaper.md)
-- 认知生命体设计稿：[`src/backend/docs/核心重塑：认知生命体.md`](src/backend/docs/%E6%A0%B8%E5%BF%83%E9%87%8D%E5%A1%91%EF%BC%9A%E8%AE%A4%E7%9F%A5%E7%94%9F%E5%91%BD%E4%BD%93.md)
+```bash
+# 全部测试
+pytest --collect-only -q  # 11860 collected
+
+# 运行 lint + typecheck + test
+ruff check . --fix && ruff format . && mypy . && pytest . -q
+```
+
+---
+
+## 📈 项目规模
+
+| 指标 | 数值 |
+|------|------|
+| Python 文件 | ~2501 |
+| Cell 数量 | 59 |
+| 测试用例 | 11860 |
+| 架构约束规则 | 50+ |
+| Protocol 接口 | 197+ |
+| 冰冻数据类 | 1668 |
 
 ---
 
 ## ☕ 请作者喝杯咖啡
 
-如果 Polaris 对你有所帮助，欢迎请作者喝杯咖啡，持续支持项目迭代！
+如果 Polaris 对你有所帮助，欢迎请作者喝杯咖啡！
 
 <table>
   <tr>

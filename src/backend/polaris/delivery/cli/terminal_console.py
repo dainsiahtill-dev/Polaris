@@ -1783,8 +1783,27 @@ def _run_super_turn(
             session_title=session_title,
         )
         if index > 0 and next_role == "director":
-            if last_result is None or last_result.saw_error or not last_result.final_content.strip():
+            guard_reason = ""
+            if last_result is None:
+                guard_reason = "last_result_is_none"
+            elif last_result.saw_error:
+                guard_reason = f"pm_saw_error (role={last_result.role})"
+            elif not last_result.final_content.strip():
+                guard_reason = f"pm_final_content_empty (role={last_result.role}, len={len(last_result.final_content)})"
+            if guard_reason:
+                logger.info(
+                    "SUPER_MODE_HANDOFF_BLOCKED: reason=%s pm_role=%s pm_session=%s",
+                    guard_reason,
+                    last_result.role if last_result else "none",
+                    last_result.session_id if last_result else "none",
+                )
                 break
+            logger.info(
+                "SUPER_MODE_HANDOFF: pm_output_len=%d pm_session=%s director_session=%s",
+                len(last_result.final_content),
+                last_result.session_id,
+                next_session_id,
+            )
             handoff_message = build_director_handoff_message(
                 original_request=message,
                 pm_output=last_result.final_content,
