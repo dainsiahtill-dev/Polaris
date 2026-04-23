@@ -393,6 +393,10 @@ storage/     → 3 层存储布局 (RAMDISK/WORKSPACE/GLOBAL)
 
 ## 🧠 哲学顶层：认知生命体架构
 
+> **工程注释**：以下使用生物学隐喻作为记忆辅助。
+> 所有隐喻均可在 `src/backend/docs/TERMINOLOGY.md` 中找到对应的工程实体。
+> 代码实现中使用的是工程实体名称，而非隐喻。
+
 | 抽象概念 | 工程实体 | 为什么重要 |
 |---------|---------|-----------|
 | **主控意识** | `RoleSessionOrchestrator` | 裁决"此刻该做什么" |
@@ -406,14 +410,17 @@ storage/     → 3 层存储布局 (RAMDISK/WORKSPACE/GLOBAL)
 
 ## 👥 角色体系：三省六部制
 
-| 角色 | 古名 | 加入你能做什么 |
-|------|------|---------------|
-| **Architect** | 中书令 | 设计 spec.md，指导技术方向 |
-| **PM** | 尚书令 | 写 PM_TASKS.json 任务合同 |
-| **Chief Engineer** | 工部尚书 | 画 Blueprint 施工蓝图 |
-| **Director** | 工部侍郎 | 严格按图施工，写代码 |
-| **QA** | 门下侍中 | 一票否决，独立证据验收 |
-| **FinOps** | 户部尚书 | 管 Token 预算，防资产流失 |
+> **工程注释**：以下古名为内部文化标识，代码中使用标准英文角色名。
+> 所有角色名称映射可在 `src/backend/docs/TERMINOLOGY.md` 中找到。
+
+| 角色 | 古名（文化标识） | 工程职责 | 加入你能做什么 |
+|------|----------------|---------|---------------|
+| **Architect** | 中书令 | 系统架构设计 | 设计 spec.md，指导技术方向 |
+| **PM** | 尚书令 | 任务编排与需求管理 | 写 PM_TASKS.json 任务合同 |
+| **Chief Engineer** | 工部尚书 | 技术决策与蓝图生成 | 画 Blueprint 施工蓝图 |
+| **Director** | 工部侍郎 | 代码实现与按图施工 | 严格按图施工，写代码 |
+| **QA** | 门下侍中 | 独立审计与质量验收 | 一票否决，独立证据验收 |
+| **FinOps** | 户部尚书 | 预算控制与成本管理 | 管 Token 预算，防资产流失 |
 
 **为什么分工严格？因为 AI 既当裁判又当运动员就会造假。**
 
@@ -480,10 +487,30 @@ python -m polaris.delivery.cli.director.cli --workspace . --iterations 1
 
 ```bash
 # 全部测试
-pytest --collect-only -q  # 13511 collected / 62 errors (2026-04-24)
+pytest --collect-only -q  # 14907 collected / 47 errors (2026-04-24)
 
 # 运行 lint + typecheck + test
 ruff check . --fix && ruff format . && mypy . && pytest . -q
+```
+
+### Pre-commit Hooks
+
+```bash
+# 一键安装 pre-commit hooks
+python scripts/setup_precommit.py
+
+# 手动运行所有 hooks
+pre-commit run --all-files
+```
+
+### 工程度量看板
+
+```bash
+# 生成覆盖率徽章
+python scripts/generate_coverage_badge.py --percentage 23.3
+
+# 生成工程度量看板
+python scripts/engineering_dashboard.py
 ```
 
 ---

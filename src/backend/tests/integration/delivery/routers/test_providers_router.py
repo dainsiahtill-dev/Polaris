@@ -1,11 +1,4 @@
-"""Contract tests for polaris.delivery.http.routers.providers module.
-
-Note: ``provider_health`` and ``provider_models`` endpoints use a
-``ProviderActionPayload`` parameter that is imported under ``TYPE_CHECKING``
-from ``llm_models``. This creates a ForwardRef that FastAPI cannot resolve at
-runtime, causing 422 on any request to those endpoints. The tests for those
-endpoints are skipped until the router is fixed.
-"""
+"""Contract tests for polaris.delivery.http.routers.providers module."""
 
 from __future__ import annotations
 
@@ -13,7 +6,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.routers import providers as providers_router
@@ -204,16 +196,61 @@ class TestProvidersRouter:
         payload: dict[str, Any] = response.json()
         assert payload["openai"]["ok"] is True
 
-    @pytest.mark.skip(
-        reason="Router bug: ProviderActionPayload imported under TYPE_CHECKING creates "
-        "an unresolved ForwardRef, causing FastAPI to reject all requests with 422.",
-    )
     def test_provider_health_happy_path(self) -> None:
         """POST /llm/providers/{id}/health returns health status."""
+        client = _build_client()
+        mock_manager = MagicMock()
+        mock_manager.get_provider_info.return_value = _FakeProviderInfo()
+        with patch(
+            "polaris.delivery.http.routers.providers._provider_manager",
+            mock_manager,
+        ), patch(
+            "polaris.delivery.http.routers.providers.resolve_provider_request_context"
+        ) as mock_resolve, patch(
+            "polaris.delivery.http.routers.providers.run_provider_action"
+        ) as mock_run:
+            mock_resolve.return_value = SimpleNamespace(
+                provider_cfg={"base_url": "https://api.test.com"},
+                provider_type="test",
+                api_key="secret",
+            )
+            mock_run.return_value = {"status": "healthy", "latency_ms": 42}
+            response = client.post(
+                "/llm/providers/test/health",
+                json={"api_key": "secret", "headers": {}},
+            )
 
-    @pytest.mark.skip(
-        reason="Router bug: ProviderActionPayload imported under TYPE_CHECKING creates "
-        "an unresolved ForwardRef, causing FastAPI to reject all requests with 422.",
-    )
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["status"] == "healthy"
+        assert payload["latency_ms"] == 42
+
     def test_provider_models_happy_path(self) -> None:
         """POST /llm/providers/{id}/models returns model list."""
+        client = _build_client()
+        mock_manager = MagicMock()
+        mock_manager.get_provider_info.return_value = _FakeProviderInfo()
+        with patch(
+            "polaris.delivery.http.routers.providers._provider_manager",
+            mock_manager,
+        ), patch(
+            "polaris.delivery.http.routers.providers.resolve_provider_request_context"
+        ) as mock_resolve, patch(
+            "polaris.delivery.http.routers.providers.run_provider_action"
+        ) as mock_run:
+            mock_resolve.return_value = SimpleNamespace(
+                provider_cfg={"base_url": "https://api.test.com"},
+                provider_type="test",
+                api_key="secret",
+            )
+            mock_run.return_value = {"models": [{"id": "gpt-4", "name": "GPT-4"}]}
+            response = client.post(
+                "/llm/providers/test/models",
+                json={"api_key": "secret", "headers": {}},
+            )
+
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert "models" in payload
+        assert len(payload["models"]) == 1
+        assert payload["models"][0]["id"] == "gpt-4"

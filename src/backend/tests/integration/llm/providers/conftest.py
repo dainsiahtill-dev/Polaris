@@ -280,3 +280,68 @@ def kimi_config() -> dict[str, Any]:
         "temperature": 0.7,
         "max_tokens": 2048,
     }
+
+
+@pytest.fixture
+def codex_cli_config() -> dict[str, Any]:
+    """Valid Codex CLI provider config."""
+    return {
+        "type": "codex_cli",
+        "command": "codex",
+        "cli_mode": "headless",
+        "timeout": 60,
+        "codex_exec": {
+            "skip_git_repo_check": True,
+            "json": True,
+            "sandbox": "read-only",
+        },
+    }
+
+
+@pytest.fixture
+def codex_sdk_config() -> dict[str, Any]:
+    """Valid Codex SDK provider config."""
+    return {
+        "type": "codex_sdk",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "sk-codex-test-key",
+        "timeout": 60,
+        "max_retries": 3,
+        "temperature": 0.2,
+        "thinking_mode": True,
+        "streaming": False,
+        "sdk_params": {},
+    }
+
+
+@pytest.fixture
+def gemini_cli_config() -> dict[str, Any]:
+    """Valid Gemini CLI provider config."""
+    return {
+        "type": "gemini_cli",
+        "command": "gemini",
+        "args": ["chat", "--model", "{model}", "--prompt", "{prompt}"],
+        "cli_mode": "headless",
+        "env": {
+            "GOOGLE_API_KEY": "gemini-test-key",
+            "GOOGLE_GENAI_USE_VERTEXAI": "false",
+        },
+        "timeout": 60,
+        "health_args": ["version"],
+        "list_args": ["models", "list"],
+    }
+
+
+@pytest.fixture
+def minimax_config() -> dict[str, Any]:
+    """Valid MiniMax provider config."""
+    return {
+        "type": "minimax",
+        "base_url": "https://api.minimaxi.com/v1",
+        "api_key": "minimax-test-key",
+        "api_path": "/text/chatcompletion_v2",
+        "timeout": 60,
+        "retries": 3,
+        "temperature": 0.7,
+        "max_tokens": 2048,
+    }

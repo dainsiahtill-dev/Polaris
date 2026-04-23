@@ -11,6 +11,10 @@
   - Tool Failure Circuit Breaker（turn 内工具失败熔断）
   - Effect Enforcement Adapter（策略到执行的强制适配层）
 
+> **工程注释**：本文档涉及"四层正交架构"等源自哲学层隐喻的概念。
+> 所有隐喻均可在 [TERMINOLOGY.md](../TERMINOLOGY.md) 中找到对应的工程实体。
+> 代码实现中使用的是工程实体名称，而非隐喻。
+
 ---
 
 ## 1. 背景与问题定义

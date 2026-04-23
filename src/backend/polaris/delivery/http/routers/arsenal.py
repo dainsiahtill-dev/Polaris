@@ -126,7 +126,7 @@ async def stop_scheduler(request: Request) -> dict[str, Any]:
     return payload
 
 
-@router.get("/code_map", dependencies=[Depends(require_auth)])
+@router.get("/code_map", dependencies=[Depends(require_auth)], response_model=None)
 def get_code_map(request: Request) -> dict[str, Any] | Response:
     state = get_state(request)
     # 1. Gather all "code" files from workspace

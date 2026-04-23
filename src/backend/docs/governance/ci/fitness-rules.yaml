@@ -537,7 +537,8 @@ rules:
       - polaris/kernelone/context/working_set.py
       - polaris/kernelone/context/tests/test_context_subsystem.py
       - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: E2E test exists and passes; automation command is stable.
     desired_automation:
       - run python -m pytest -q polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py::TestCanonicalCodeExploration::test_repo_map_before_full_read
       - fail if MAP phase is not set before SLICE phase in tool call sequence
@@ -553,7 +554,8 @@ rules:
       - polaris/kernelone/context/working_set.py
       - polaris/kernelone/context/engine/utils.py  # _read_slice_spec
       - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: E2E test exists and passes; slice enforcement is stable in runtime.
     desired_automation:
       - run python -m pytest -q polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py::TestCanonicalCodeExploration::test_large_file_uses_slice
       - audit runtime_executor for read_file call patterns above 2000-line threshold
@@ -584,7 +586,8 @@ rules:
     evidence:
       - polaris/kernelone/context/working_set.py
       - polaris/kernelone/context/tests/test_context_subsystem.py::TestWorkingSetAssembler
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: Unit tests cover WorkingSetAssembler budget tracking; stable.
     desired_automation:
       - run python -m pytest -q polaris/kernelone/context/tests/test_context_subsystem.py::TestWorkingSetAssembler
       - verify budget_used reflects all add_* calls
@@ -600,7 +603,8 @@ rules:
       - polaris/kernelone/context/engine/cache.py
       - polaris/kernelone/context/tests/test_context_subsystem.py
       - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: E2E + unit tests stable; cache tier separation is production behavior.
     desired_automation:
       - run python -m pytest -q polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py::TestCanonicalCodeExploration::test_session_and_code_exploration_separate
       - run python -m pytest -q polaris/kernelone/context/tests/test_context_subsystem.py::TestContextCache
@@ -760,7 +764,8 @@ rules:
     evidence:
       - polaris/cells/director/tasking/internal/worker_executor.py (cross-cell import)
       - docs/governance/audit/log-audit-architecture-contracts-20260413.md
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: Catalog governance gate already audits this; fail-on-new mode is active.
     desired_automation:
       - parse Python imports in polaris/cells/**/
       - map import paths to owning Cells via cells.yaml
@@ -780,7 +785,8 @@ rules:
       - polaris/cells/roles/kernel/internal/tool_gateway.py
       - polaris/cells/roles/kernel/internal/quality_checker.py
       - polaris/cells/llm/dialogue/internal/role_dialogue.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: grep-based automation is deterministic and low-risk; canonical source exists.
     desired_automation:
       - grep -r "dangerous_patterns\s*=" polaris/cells/ --include="*.py" | grep -v kernelone
       - fail if any local dangerous_patterns definition found outside kernelone
@@ -797,7 +803,8 @@ rules:
       - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
       - polaris/kernelone/storage/io_paths.py
       - polaris/cells/docs/court_workflow/internal/docs_stage_service.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: grep-based automation is deterministic; canonical module exists and is imported.
     desired_automation:
       - grep -r "def _resolve_artifact_path" polaris/cells/ --include="*.py"
       - fail if any local _resolve_artifact_path definition found
@@ -928,7 +935,8 @@ rules:
     evidence:
       - polaris/kernelone/
       - polaris/infrastructure/
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: grep-based automation is deterministic; low risk of false positives.
     desired_automation:
       - grep -rP "logger\.(warning|error|info)\(['\"].*?['\"]\)" polaris/kernelone/ polaris/infrastructure/ --include="*.py" | grep -v exc_info
       - fail if logger call without exc_info=True found in except blocks

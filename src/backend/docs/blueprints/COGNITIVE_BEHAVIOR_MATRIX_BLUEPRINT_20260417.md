@@ -8,6 +8,10 @@
 - `AGENTS.md` §18（认知生命体架构对齐）
 - `polaris/cells/llm/evaluation/internal/session_workflow_matrix.py`
 
+> **工程注释**：本文档使用"认知行为"、"主控意识"等隐喻作为记忆辅助。
+> 所有隐喻均可在 [TERMINOLOGY.md](../TERMINOLOGY.md) 中找到对应的工程实体。
+> 代码实现中使用的是工程实体名称，而非隐喻。
+
 ---
 
 ## 1. 问题陈述

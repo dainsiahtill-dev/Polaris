@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from polaris.cells.llm.provider_config.public.contracts import (
@@ -20,12 +20,10 @@ from polaris.cells.llm.provider_runtime.public.service import get_provider_manag
 from polaris.delivery.http.routers._shared import get_state, require_auth
 from polaris.kernelone.storage.io_paths import build_cache_root
 
+from .llm_models import ProviderActionPayload
+
 # Resolve provider_manager from the Cell layer (which delegates to kernelone)
 _provider_manager = get_provider_manager()
-
-
-if TYPE_CHECKING:
-    from .llm_models import ProviderActionPayload
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

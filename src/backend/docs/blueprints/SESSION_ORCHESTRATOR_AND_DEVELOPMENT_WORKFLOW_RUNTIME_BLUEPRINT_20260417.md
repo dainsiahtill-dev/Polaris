@@ -6,6 +6,10 @@
 **权威来源**: `AGENTS.md` §9 / `docs/AGENT_ARCHITECTURE_STANDARD.md`
 **关联文档**: `TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md`, `WORKING_MEMORY_PIPELINE_IMPLEMENTATION_20260417.md`
 
+> **工程注释**：本文档涉及"主控意识"、"海马体"、"肌肉记忆"等隐喻。
+> 所有隐喻均可在 [TERMINOLOGY.md](../TERMINOLOGY.md) 中找到对应的工程实体。
+> 代码实现中使用的是工程实体名称，而非隐喻。
+
 ---
 
 ## 1. 核心结论

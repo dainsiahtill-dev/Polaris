@@ -1,9 +1,13 @@
 # 认知生命体与工程架构对齐备忘录
 
-**文档编号**: MEMO-2026-0417-COGNITIVE-ALIGNMENT  
-**日期**: 2026-04-17  
-**状态**: 已定稿，可直接写入 AGENTS.md / ADR  
-**适用范围**: `src/backend/polaris/cells/roles/*` 及所有依赖事务内核与编排层的模块  
+**文档编号**: MEMO-2026-0417-COGNITIVE-ALIGNMENT
+**日期**: 2026-04-17
+**状态**: 已定稿，可直接写入 AGENTS.md / ADR
+**适用范围**: `src/backend/polaris/cells/roles/*` 及所有依赖事务内核与编排层的模块
+
+> **工程注释**：本文档使用生物学隐喻作为记忆辅助。
+> 所有隐喻均可在 [TERMINOLOGY.md](../TERMINOLOGY.md) 中找到对应的工程实体。
+> 代码实现中使用的是工程实体名称，而非隐喻。
 
 ---
 

@@ -248,6 +248,10 @@
 
 ## 10. 认知生命体与工程架构对齐（2026-04-17）
 
+> **工程注释**：本节使用生物学隐喻作为记忆辅助。
+> 所有隐喻均可在 [TERMINOLOGY.md](../TERMINOLOGY.md) 中找到对应的工程实体。
+> 代码实现中使用的是工程实体名称，而非隐喻。
+>
 > 本节是 `AGENTS.md §18` 的镜像摘要。如有冲突，以 `AGENTS.md` 为准。
 
 ### 10.1 核心命题
@@ -259,15 +263,15 @@
 
 ### 10.2 概念 ↔ 工程实体映射
 
-| 抽象概念 | 工程实体 | 作用 |
-|---------|---------|------|
-| 认知生命体 | `OrchestratorSessionState` + `SessionArtifactStore` | 躯体 + 海马体 + 自我意识 |
-| 主控意识 | `RoleSessionOrchestrator` | 前额叶皮层：裁决"此刻该做什么" |
-| 心脏 / 单次神经放电 | `TurnTransactionController` + `KernelGuard` | 不可逆的单次思考-行动循环 |
-| 肌肉记忆 / 潜意识 | `DevelopmentWorkflowRuntime` | 小脑：自动执行 `read→write→test` 闭环 |
-| 潜意识加速器 / 直觉预感 | `StreamShadowEngine` | 神经预激：让"思考"与"行动"时间重叠 |
-| 物理法则 / 生存约束 | `ContinuationPolicy` + `KernelGuard` | 防止死循环、资源泄漏、幻觉 |
-| 脑电图 / 对外表达 | `TurnEvent` 流 | 实时向人类/UI 暴露内心活动 |
+| 抽象概念 | 工程实体 | 工程职责 | 生物学隐喻（记忆辅助） |
+|---------|---------|---------|---------------------|
+| 认知生命体 | `OrchestratorSessionState` + `SessionArtifactStore` | 持久身份、会话状态、记忆固化 | 躯体 + 海马体 + 自我意识 |
+| 主控意识 | `RoleSessionOrchestrator` | 裁决"此刻该做什么"，编排 turn 级执行流 | 前额叶皮层 |
+| 心脏 / 单次神经放电 | `TurnTransactionController` + `KernelGuard` | 不可逆的单次思考-行动循环，强制单决策/单工具批次 | 心脏起搏 |
+| 肌肉记忆 / 潜意识 | `DevelopmentWorkflowRuntime` | 自动执行 `read→write→test` 闭环 | 小脑 |
+| 潜意识加速器 / 直觉预感 | `StreamShadowEngine` | 跨 turn 推测执行，让思考与行动时间重叠 | 神经预激 |
+| 物理法则 / 生存约束 | `ContinuationPolicy` + `KernelGuard` | 防止死循环、资源泄漏、幻觉 | 免疫系统/痛觉 |
+| 脑电图 / 对外表达 | `TurnEvent` 流 | 实时向人类/UI 暴露内心活动 | 脑电图 |
 
 ### 10.3 四层正交架构
 
