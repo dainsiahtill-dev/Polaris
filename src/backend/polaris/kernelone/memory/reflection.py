@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-import time
 from pathlib import Path
 from typing import Any
 
@@ -161,7 +161,7 @@ class ReflectionGenerator:
         self.model = model
         self.workspace_root = workspace_root
 
-    def generate(self, memories: list[MemoryItem], current_step: int) -> list[ReflectionNode]:
+    async def generate(self, memories: list[MemoryItem], current_step: int) -> list[ReflectionNode]:
         if not memories:
             return []
 
@@ -205,7 +205,9 @@ class ReflectionGenerator:
                 REFLECTION_MAX_ATTEMPTS,
             )
             if attempt + 1 < REFLECTION_MAX_ATTEMPTS:
-                time.sleep(REFLECTION_RETRY_BACKOFF_SECONDS[min(attempt, len(REFLECTION_RETRY_BACKOFF_SECONDS) - 1)])
+                await asyncio.sleep(
+                    REFLECTION_RETRY_BACKOFF_SECONDS[min(attempt, len(REFLECTION_RETRY_BACKOFF_SECONDS) - 1)]
+                )
         if not data:
             logger.warning(
                 "Reflection generation exhausted retries without valid structured output: attempts=%s",

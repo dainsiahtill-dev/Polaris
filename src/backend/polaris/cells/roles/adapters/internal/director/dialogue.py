@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import config as backend_config
+from polaris.bootstrap import config as backend_config
 
 logger = logging.getLogger(__name__)
 

@@ -580,21 +580,19 @@ class Canonicalizer:
             final_content = summarized_content if summarized_content is not None else item.content
 
             updated_events.append(
-                item.model_copy(
-                    update={
-                        "route": route,
-                        "artifact_id": artifact_id,
-                        "content": final_content,
-                        "metadata": {  # type: ignore[arg-type]
-                            **dict(item.metadata),
-                            **decision_metadata,
-                            **dialog_act_metadata,
-                            "routing_confidence": routing_confidence,
-                            "routing_reasons": list(routing_reasons),
-                            "routing_adapter_id": getattr(self._domain_adapter, "adapter_id", ""),
-                        },
+                validated_replace(
+                    item,
+                    route=route,
+                    artifact_id=artifact_id,
+                    content=final_content,
+                    metadata={
+                        **dict(item.metadata),
+                        **decision_metadata,
+                        **dialog_act_metadata,
+                        "routing_confidence": routing_confidence,
+                        "routing_reasons": list(routing_reasons),
+                        "routing_adapter_id": getattr(self._domain_adapter, "adapter_id", ""),
                     },
-                    deep=True,
                 )
             )
 
@@ -1299,16 +1297,14 @@ class ArtifactSelector:
                 stub_content = (
                     artifact.content[:MAX_STUB_CHARS] + f"\n...[truncated, full content at {artifact.artifact_id}]..."
                 )
-                artifact = artifact.model_copy(
-                    update={
-                        "content": stub_content,
-                        "metadata": {  # type: ignore[arg-type]
-                            **dict(artifact.metadata or ()),
-                            "truncated": True,
-                            "full_id": artifact.artifact_id,
-                        },
+                artifact = validated_replace(
+                    artifact,
+                    content=stub_content,
+                    metadata={
+                        **dict(artifact.metadata or ()),
+                        "truncated": True,
+                        "full_id": artifact.artifact_id,
                     },
-                    deep=True,
                 )
             ordered.append(artifact)
 
@@ -1323,16 +1319,14 @@ class ArtifactSelector:
                 stub_content = (
                     artifact.content[:MAX_STUB_CHARS] + f"\n...[truncated, full content at {artifact.artifact_id}]..."
                 )
-                artifact = artifact.model_copy(
-                    update={
-                        "content": stub_content,
-                        "metadata": {  # type: ignore[arg-type]
-                            **dict(artifact.metadata or ()),
-                            "truncated": True,
-                            "full_id": artifact.artifact_id,
-                        },
+                artifact = validated_replace(
+                    artifact,
+                    content=stub_content,
+                    metadata={
+                        **dict(artifact.metadata or ()),
+                        "truncated": True,
+                        "full_id": artifact.artifact_id,
                     },
-                    deep=True,
                 )
             ordered.append(artifact)
 

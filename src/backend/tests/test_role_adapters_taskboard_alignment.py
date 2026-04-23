@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.bootstrap import config as bootstrap_config_module
 from polaris.cells.roles.adapters.internal import director_execution_backend as director_execution_backend_module
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
@@ -974,7 +975,7 @@ async def test_director_call_role_llm_uses_default_kernel_retry_budget(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import config as config_module
+    config_module = bootstrap_config_module
     from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
 
     captured = {"max_retries": None}
@@ -998,7 +999,7 @@ async def test_director_call_role_llm_honors_retry_budget_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import config as config_module
+    config_module = bootstrap_config_module
     from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
 
     captured = {"max_retries": None}
@@ -1023,7 +1024,7 @@ async def test_director_call_role_llm_marks_error_response_as_failed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import config as config_module
+    config_module = bootstrap_config_module
     from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
 
     async def _fake_generate_role_response(**kwargs):  # noqa: ANN003
@@ -1105,7 +1106,7 @@ async def test_director_adapter_emits_trace_on_first_call_format_failure(
     invoking the engine. Therefore we patch _execute_sequential directly to
     simulate the engine's error path and verify the event emission.
     """
-    import config as config_module
+    config_module = bootstrap_config_module
     monkeypatch.setenv("KERNELONE_SEQ_ENABLED", "true")
     monkeypatch.setattr(config_module, "get_settings", lambda: SimpleNamespace())
 

@@ -246,7 +246,9 @@ def get_anthropomorphic_context(
     }
 
 
-def run_reflection_cycle(project_root: str, current_step: int, run_id: str, model: str, events_path: str = "") -> None:
+async def run_reflection_cycle(
+    project_root: str, current_step: int, run_id: str, model: str, events_path: str = ""
+) -> None:
     """
     Checks if reflection is due and runs generation if so.
     """
@@ -277,7 +279,7 @@ def run_reflection_cycle(project_root: str, current_step: int, run_id: str, mode
 
     # 3. Generate
     generator = ReflectionGenerator(model, project_root)
-    reflections = generator.generate(memories, current_step)
+    reflections = await generator.generate(memories, current_step)
 
     if not reflections:
         return

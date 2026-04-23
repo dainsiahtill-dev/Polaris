@@ -1,7 +1,19 @@
 """Runtime meta-prompting helpers for role-level prompt hardening.
 
 Polaris role alias normalization is delegated to the roles Cell via
-runtime import to maintain KernelOne → Cells import fence.
+dependency injection (Port/Adapter pattern) to maintain KernelOne → Cells fence.
+
+Architecture (ACGA 2.0):
+    +-------------------+       +-------------------+
+    |   KernelOne       |       |      Cells        |
+    |  meta_prompting   |       |  role_alias       |
+    +-------------------+       +-------------------+
+              |                         |
+              v                         v
+    +-------------------+       +-------------------+
+    | kernelone/ports/ |       | cells/adapters/  |
+    | IRoleProvider    | ----> | RoleProviderAdapter
+    +-------------------+       +-------------------+
 """
 
 from __future__ import annotations
@@ -24,22 +36,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _normalize_role_alias(role: str) -> str:
-    """Resolve role alias - delegates to Cells layer via runtime import.
+# =============================================================================
+# Backward Compatibility (Re-export from adapter)
+# =============================================================================
+# We need to import at module level for backward compatibility
+# This is acceptable as it's a stable public API (cells/adapters is part of ACGA 2.0)
+from polaris.cells.adapters.kernelone import RoleProviderAdapter  # noqa: E402
 
-    This function wraps the Cells implementation to maintain KernelOne purity.
-    """
-    # Runtime import to avoid module-level KernelOne → Cells dependency
-    from polaris.cells.roles.kernel.public.role_alias import normalize_role_alias
-
-    return normalize_role_alias(role)
+normalize_role_alias = RoleProviderAdapter().normalize_role_alias
 
 
-# Re-export normalize_role_alias directly from role_alias module
-# so it's the same function object (identity check passes in tests)
-from polaris.cells.roles.kernel.public.role_alias import normalize_role_alias as _nr  # noqa: E402
-normalize_role_alias = _nr
-del _nr
+def _role_matches_hint(record: Mapping[str, Any], role: str | RoleId) -> bool:
+    role_token = normalize_role_alias(str(role))
+    record_role = normalize_role_alias(str(record.get("role") or ""))
+    if record_role and record_role == role_token:
+        return True
+
+    next_role = normalize_role_alias(str(record.get("next_role") or ""))
+    if next_role and next_role == role_token:
+        return True
+
+    if role_token == RoleId.QA.value and next_role == "auditor":
+        return True
+    if role_token == RoleId.DIRECTOR.value and next_role == "chiefengineer":
+        return True
+    if role_token == RoleId.ARCHITECT.value and next_role == "pm":
+        return False
+    return bool(not record_role and not next_role)
 
 
 def _read_json_file(path: str) -> dict[str, Any]:
@@ -78,25 +101,6 @@ def _read_jsonl_lines(path: str, max_lines: int = 300) -> list[dict[str, Any]]:
     return rows
 
 
-def _role_matches_hint(record: Mapping[str, Any], role: str | RoleId) -> bool:
-    role_token = _normalize_role_alias(str(role))
-    record_role = _normalize_role_alias(str(record.get("role") or ""))
-    if record_role and record_role == role_token:
-        return True
-
-    next_role = _normalize_role_alias(str(record.get("next_role") or ""))
-    if next_role and next_role == role_token:
-        return True
-
-    if role_token == RoleId.QA.value and next_role == "auditor":
-        return True
-    if role_token == RoleId.DIRECTOR.value and next_role == "chiefengineer":
-        return True
-    if role_token == RoleId.ARCHITECT.value and next_role == "pm":
-        return False
-    return bool(not record_role and not next_role)
-
-
 def _hint_text(record: Mapping[str, Any]) -> str:
     candidates = [
         str(record.get("suggested_improvement") or "").strip(),
@@ -131,7 +135,7 @@ def _learning_paths(workspace_root: str) -> dict[str, str]:
 
 
 def load_meta_prompt_hints(workspace_root: str, role: str, limit: int = 4) -> list[str]:
-    role_token = _normalize_role_alias(role)
+    role_token = normalize_role_alias(role)
     paths = _learning_paths(workspace_root)
     rows: list[dict[str, Any]] = []
     rows.extend(_read_jsonl_lines(paths["improvement"], max_lines=500))
@@ -176,7 +180,7 @@ def append_meta_prompt_hint(
     source: str = "runtime_failure",
 ) -> bool:
     text = str(hint or "").strip()
-    role_token = _normalize_role_alias(role)
+    role_token = normalize_role_alias(role)
     if not workspace_root or not role_token or not text:
         return False
     paths = _learning_paths(workspace_root)

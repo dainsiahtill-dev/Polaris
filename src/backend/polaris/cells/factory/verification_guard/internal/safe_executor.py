@@ -10,6 +10,7 @@ This module provides a sandboxed command execution environment with:
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass
@@ -220,11 +221,94 @@ class SafeExecutor:
                 in_single_quote = not in_single_quote
             elif char == '"' and not in_single_quote:
                 in_double_quote = not in_double_quote
-            elif (char == ";" or (char in ("&", "|") and i + 1 < len(command) and command[i + 1] == char)) and not in_single_quote and not in_double_quote:
+            elif (
+                (char == ";" or (char in ("&", "|") and i + 1 < len(command) and command[i + 1] == char))
+                and not in_single_quote
+                and not in_double_quote
+            ):
                 return True
             i += 1
 
         return False
+
+    def _split_command(self, command: str) -> list[str]:
+        """Split command string into list with proper quote and escape handling.
+
+        This method handles:
+        - Split on whitespace outside of quotes
+        - Preserves quoted strings as single arguments
+        - Handles escape sequences within quoted strings (e.g., \\", \\n, \\\\)
+        - Preserves backslashes in paths when NOT inside quotes
+
+        Args:
+            command: The command string to split
+
+        Returns:
+            List of command and arguments
+
+        """
+        result: list[str] = []
+        current = ""
+        in_single_quote = False
+        in_double_quote = False
+        i = 0
+
+        while i < len(command):
+            char = command[i]
+
+            # Handle escape sequences inside double quotes
+            if in_double_quote and char == "\\" and i + 1 < len(command):
+                next_char = command[i + 1]
+                if next_char == '"':
+                    # Escaped quote - include the quote and continue
+                    # This is \" which means a literal " inside double quotes
+                    current += '"'
+                    i += 2
+                    continue
+                elif next_char == "\\":
+                    # Escaped backslash - include one backslash
+                    current += "\\"
+                    i += 2
+                    continue
+                elif next_char in ("n", "t", "r"):
+                    # Common escape sequences
+                    escape_map = {"n": "\n", "t": "\t", "r": "\r"}
+                    current += escape_map[next_char]
+                    i += 2
+                    continue
+                else:
+                    # Preserve backslash for unknown escape sequences
+                    current += char
+                    i += 1
+                    continue
+
+            # Handle quote state changes
+            if char == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+                i += 1
+                continue
+            elif char == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+                i += 1
+                continue
+
+            # Split on whitespace when outside quotes
+            if char in (" ", "\t", "\n", "\r") and not in_single_quote and not in_double_quote:
+                if current:
+                    result.append(current)
+                    current = ""
+                i += 1
+                continue
+
+            # Add character to current token
+            current += char
+            i += 1
+
+        # Add final token
+        if current:
+            result.append(current)
+
+        return result
 
     def execute(
         self,
@@ -314,10 +398,22 @@ class SafeExecutor:
 
                 run_env = {**os.environ, **env}
 
+            # SECURITY FIX: Convert command to list and use shell=False
+            # This prevents command injection attacks that exploit shell=True.
+            # With shell=False, the command and arguments are passed directly to exec()
+            # without shell interpretation, blocking injection via |, ;, $, ``, etc.
+            #
+            # Use a custom splitter that respects quoted strings but preserves
+            # backslashes in paths (unlike shlex.split which interprets backslashes
+            # as escape characters on Windows, breaking paths like C:\Users\).
+            cmd_list = self._split_command(command)
+
             # Execute with timeout
+            # shell=False is critical for security: prevents shell injection attacks
+            # where malicious input could execute arbitrary commands via shell metacharacters
             result = subprocess.run(
-                command,
-                shell=True,
+                cmd_list,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

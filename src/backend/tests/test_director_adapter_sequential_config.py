@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import config
+import pytest
+from polaris.bootstrap import config as bootstrap_config
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.runtime.public.service import SequentialMode
 
@@ -11,7 +12,7 @@ def test_sequential_config_respects_env_when_settings_lacks_seq_fields(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap_config, "get_settings", lambda: SimpleNamespace())
     monkeypatch.setenv("KERNELONE_SEQ_ENABLED", "0")
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
@@ -22,7 +23,7 @@ def test_sequential_config_reads_budget_and_mode_from_env_fallback(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap_config, "get_settings", lambda: SimpleNamespace())
     monkeypatch.setenv("KERNELONE_SEQ_ENABLED", "1")
     monkeypatch.setenv("KERNELONE_SEQ_DEFAULT_MODE", "required")
     monkeypatch.setenv("KERNELONE_SEQ_DEFAULT_ROLES", "director,adaptive")
@@ -58,7 +59,7 @@ def test_sequential_mode_context_override_wins_over_default_mode(
         seq_max_wall_time_seconds=30,
         seq_trace_level="summary",
     )
-    monkeypatch.setattr(config, "get_settings", lambda: settings)
+    monkeypatch.setattr(bootstrap_config, "get_settings", lambda: settings)
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
     cfg = adapter._get_sequential_config({"sequential_mode": "disabled"})

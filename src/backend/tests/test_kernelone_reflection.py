@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +33,7 @@ def test_reflection_store_loads_existing_records(tmp_path: Path) -> None:
     assert store.retrieve_active(current_step=20)[0].text == "remember this"
 
 
-def test_reflection_generator_accepts_structured_ollama_response(
+async def test_reflection_generator_accepts_structured_ollama_response(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -64,7 +65,7 @@ def test_reflection_generator_accepts_structured_ollama_response(
         )
     ]
 
-    result = generator.generate(memories, current_step=12)
+    result = await generator.generate(memories, current_step=12)
 
     assert len(result) == 1
     assert result[0].text == "derived insight"

@@ -43,6 +43,7 @@ from .helpers import (
     get_metadata_value,
 )
 from .memory_search import _search_memory_impl
+from .model_utils import validated_replace
 from .models_v2 import (
     ArtifactRecordV2 as ArtifactRecord,
     BudgetPlanV2 as BudgetPlan,
@@ -725,8 +726,8 @@ class StateFirstContextOS:
             }
             if item.artifact_id and normalized_route != RoutingClass.ARCHIVE:
                 metadata["archived_artifact_id"] = item.artifact_id
-            # Use model_copy() for Pydantic models instead of replace()
-            replaced = item.model_copy(update={"route": normalized_route, "metadata": metadata})
+            # Use validated_replace() for safe model mutation with field validation
+            replaced = validated_replace(item, route=normalized_route, metadata=metadata)
             transcript.append(replaced)
         if not found:
             raise StateNotFoundError(
@@ -736,7 +737,7 @@ class StateFirstContextOS:
             )
         return await self.project(
             messages=(),
-            existing_snapshot=context.model_copy(update={"transcript_log": tuple(transcript)}),
+            existing_snapshot=validated_replace(context, transcript_log=tuple(transcript)),
             recent_window_messages=recent_window_messages,
             focus=focus,
         )
@@ -769,7 +770,7 @@ class StateFirstContextOS:
                 continue
             target_episode = ep
             updated_episodes.append(
-                ep.model_copy(update={"status": "reopened", "reopened_at": now, "reopen_reason": normalized_reason})
+                validated_replace(ep, status="reopened", reopened_at=now, reopen_reason=normalized_reason)
             )
         if target_episode is None:
             raise StateNotFoundError(
@@ -789,12 +790,12 @@ class StateFirstContextOS:
                 "reopen_reason": normalized_reason,
                 "reopened_at": now,
             }
-            transcript.append(evt.model_copy(update={"metadata": metadata}))
+            transcript.append(validated_replace(evt, metadata=metadata))
 
         return await self.project(
             messages=(),
-            existing_snapshot=context.model_copy(
-                update={"transcript_log": tuple(transcript), "episode_store": tuple(updated_episodes)}
+            existing_snapshot=validated_replace(
+                context, transcript_log=tuple(transcript), episode_store=tuple(updated_episodes)
             ),
             recent_window_messages=recent_window_messages,
             focus=focus or normalized_reason,
@@ -1353,19 +1354,18 @@ class StateFirstContextOS:
                     "dialog_act_is_high_priority": DialogAct.is_high_priority(dialog_act_result.act),
                 }
             updated_events.append(
-                item.model_copy(
-                    update={
-                        "route": route,
-                        "artifact_id": artifact_id,
-                        "metadata": {
-                            **dict(item.metadata),
-                            **decision_metadata,
-                            **dialog_act_metadata,
-                            "routing_confidence": routing_confidence,
-                            "routing_reasons": list(routing_reasons),
-                            "routing_adapter_id": self.domain_adapter.adapter_id,
-                        },
-                    }
+                validated_replace(
+                    item,
+                    route=route,
+                    artifact_id=artifact_id,
+                    metadata={
+                        **dict(item.metadata),
+                        **decision_metadata,
+                        **dialog_act_metadata,
+                        "routing_confidence": routing_confidence,
+                        "routing_reasons": list(routing_reasons),
+                        "routing_adapter_id": self.domain_adapter.adapter_id,
+                    },
                 )
             )
 
