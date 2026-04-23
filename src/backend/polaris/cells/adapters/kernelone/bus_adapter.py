@@ -1,14 +1,17 @@
-"""KernelOneBusPortAdapter - Implements IBusPort using Cells' bus_port module.
+"""KernelOneBusPortAdapter - Implements IBusPort using Cells' KernelOneMessageBusPort.
 
 ACGA 2.0 Section 6.3: Cells provide implementations of KernelOne port interfaces.
 
 This adapter wraps the Cells' KernelOneMessageBusPort to implement the IBusPort
 interface defined in KernelOne.
+
+Note: The Cells' bus_port module already imports AgentEnvelope from KernelOne,
+so no conversion is needed - we can delegate directly.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from polaris.kernelone.ports.bus_port import (
     AgentEnvelope,
@@ -27,6 +30,10 @@ class KernelOneBusPortAdapter(IBusPort):
 
     This adapter maintains the KernelOne → Cells dependency direction by
     implementing the abstract port interface defined in KernelOne.
+
+    Note:
+        Both KernelOne and Cells use the same AgentEnvelope type from
+        kernelone/ports/bus_port.py, so no conversion is needed.
 
     Example:
         >>> from polaris.cells.adapters.kernelone import KernelOneBusPortAdapter
@@ -67,19 +74,7 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             True on success, False if the bus is full / unavailable.
         """
-        # Convert KernelOne AgentEnvelope to Cells' AgentMessage format
-        from polaris.cells.roles.runtime.internal.agent_runtime_base import AgentMessage
-
-        msg = AgentMessage(
-            type=envelope.msg_type,
-            sender=envelope.sender,
-            receiver=envelope.receiver,
-            payload=envelope.payload,
-            correlation_id=envelope.correlation_id,
-            attempt=envelope.attempt,
-            max_attempts=envelope.max_attempts,
-        )
-        return self._impl.publish(msg)
+        return self._impl.publish(envelope)
 
     def poll(
         self,
@@ -99,10 +94,7 @@ class KernelOneBusPortAdapter(IBusPort):
             The next `AgentEnvelope` for `receiver`, or None if no message
             is available within the timeout.
         """
-        msg = self._impl.poll(receiver, block=block, timeout=timeout)
-        if msg is None:
-            return None
-        return self._message_to_envelope(msg)
+        return self._impl.poll(receiver, block=block, timeout=timeout)
 
     async def poll_async(
         self,
@@ -122,10 +114,7 @@ class KernelOneBusPortAdapter(IBusPort):
             The next `AgentEnvelope` for `receiver`, or None if no message
             is available within the timeout.
         """
-        msg = await self._impl.poll_async(receiver, block=block, timeout=timeout)
-        if msg is None:
-            return None
-        return self._message_to_envelope(msg)
+        return await self._impl.poll_async(receiver, block=block, timeout=timeout)
 
     def ack(self, message_id: str, receiver: str) -> bool:
         """Acknowledge successful processing of a message.
@@ -189,26 +178,4 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             List of dead letter records.
         """
-        return [
-            DeadLetterRecord(
-                envelope=self._message_to_envelope(dlr.envelope),
-                reason=dlr.reason,
-                failed_at_utc=dlr.failed_at_utc,
-            )
-            for dlr in self._impl.dead_letters
-        ]
-
-    def _message_to_envelope(self, msg: Any) -> AgentEnvelope:
-        """Convert Cells' AgentMessage to KernelOne AgentEnvelope."""
-        return AgentEnvelope(
-            message_id=str(getattr(msg, "message_id", msg.id if hasattr(msg, "id") else "")),
-            msg_type=str(getattr(msg, "type", msg.msg_type if hasattr(msg, "msg_type") else "unknown")),
-            sender=str(getattr(msg, "sender", "")),
-            receiver=str(getattr(msg, "receiver", "")),
-            payload=dict(getattr(msg, "payload", {})),
-            timestamp_utc=str(getattr(msg, "timestamp_utc", "")),
-            correlation_id=getattr(msg, "correlation_id", None),
-            attempt=getattr(msg, "attempt", 0),
-            max_attempts=getattr(msg, "max_attempts", 3),
-            last_error=str(getattr(msg, "last_error", "")),
-        )
+        return self._impl.dead_letters

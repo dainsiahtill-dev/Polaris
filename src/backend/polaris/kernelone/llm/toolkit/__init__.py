@@ -2,7 +2,9 @@
 
 【K1-PURIFY Phase 2 - KernelOne 纯化后版本】
 本模块现在只包含平台无关的能力，不再包含 Polaris 业务角色语义。
-角色工具集成已迁移至: polaris.cells.llm.tool_runtime.internal.role_integrations
+角色工具集成已迁移至 Cell 层，详情请参考:
+    from polaris.kernelone.ports import IRoleToolIntegration
+    from polaris.cells.adapters.kernelone import RoleToolIntegrationAdapter
 
 提供三种 LLM 工具调用方案：
 1. Prompt-based: 通过 [TOOL_NAME]...[/TOOL_NAME] 标记解析
@@ -19,11 +21,12 @@
         "max_results": 10
     })
 
-    # 角色集成 - 请使用 Cell 层
-    from polaris.cells.llm.tool_runtime.internal.role_integrations import (
-        ROLE_TOOL_INTEGRATIONS,
-        get_role_tool_integration,
-    )
+    # 角色集成 - 通过 Port/Adapter 模式
+    from polaris.kernelone.ports import IRoleToolIntegration
+    from polaris.cells.adapters.kernelone import RoleToolIntegrationAdapter
+
+    port: IRoleToolIntegration = RoleToolIntegrationAdapter()
+    integration = port.get_role_integration("pm", "/path/to/workspace")
 """
 
 from __future__ import annotations
@@ -252,30 +255,22 @@ __all__ = [
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 【已迁移】Polaris 角色语义 - 请使用 Cell 层
+# 【已迁移】Polaris 角色语义 - 通过 Port/Adapter 模式
 # ═══════════════════════════════════════════════════════════════════
-# 以下导出已迁移至: polaris.cells.llm.tool_runtime.internal.role_integrations
+# 角色工具集成现已通过 Port/Adapter 模式访问:
 #
-# 迁移指南:
-#   from polaris.kernelone.llm.toolkit import (
-#       PMToolIntegration,
-#       ROLE_TOOL_INTEGRATIONS,
-#       get_role_tool_integration,
-#   )
+#   from polaris.kernelone.ports import IRoleToolIntegration
+#   from polaris.cells.adapters.kernelone import RoleToolIntegrationAdapter
 #
-#   改为:
-#   from polaris.cells.llm.tool_runtime.internal.role_integrations import (
-#       PMToolIntegration,
-#       ROLE_TOOL_INTEGRATIONS,
-#       get_role_tool_integration,
-#   )
+#   port: IRoleToolIntegration = RoleToolIntegrationAdapter()
+#   integration = port.get_role_integration("pm", "/path/to/workspace")
 # ═══════════════════════════════════════════════════════════════════
 
 # 【K1-PURIFY Phase 2 Note】
 # 已移除 __getattr__ deprecation shim 以避免违反 KernelOne import fence。
-# 现有调用方应迁移到 Cell 层导入路径。
-# 旧代码: from polaris.kernelone.llm.toolkit import PMToolIntegration
-# 新代码: from polaris.cells.llm.tool_runtime.internal.role_integrations import PMToolIntegration
+# 角色工具集成现已通过 Port/Adapter 模式提供:
+#   - Port: polaris.kernelone.ports.IRoleToolIntegration
+#   - Adapter: polaris.cells.adapters.kernelone.RoleToolIntegrationAdapter
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -292,9 +287,7 @@ def _check_duplicate_modules() -> None:
         "app.llm.usecases.role_tools",  # 之前创建的重复模块
     ]
 
-    strict = str(
-        os.environ.get("KERNELONE_TOOLKIT_STRICT_IMPORTS", "0")
-    ).strip().lower() in {
+    strict = str(os.environ.get("KERNELONE_TOOLKIT_STRICT_IMPORTS", "0")).strip().lower() in {
         "1",
         "true",
         "yes",

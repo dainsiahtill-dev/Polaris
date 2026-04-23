@@ -1,4 +1,3 @@
-# noqa: D104
 """KernelOne abstraction ports.
 
 This module defines the stable interfaces (Ports) that KernelOne uses to
@@ -27,13 +26,15 @@ Usage:
     normalized = port.normalize_role_alias("auditor")  # Returns "qa"
 """
 
-from polaris.kernelone.ports.role_provider import IRoleProvider
-from polaris.kernelone.ports.bus_port import IBusPort, IAgentBusPort
 from polaris.kernelone.ports.alignment import IAlignmentService
+from polaris.kernelone.ports.bus_port import IAgentBusPort, IBusPort
+from polaris.kernelone.ports.role_provider import IRoleProvider
+from polaris.kernelone.ports.role_tool_integration import IRoleToolIntegration
 
 __all__ = [
-    "IRoleProvider",
-    "IBusPort",
     "IAgentBusPort",
     "IAlignmentService",
+    "IBusPort",
+    "IRoleProvider",
+    "IRoleToolIntegration",
 ]

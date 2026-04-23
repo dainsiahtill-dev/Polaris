@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from polaris.kernelone.cognitive.config import (
     COGNITIVE_ENABLE_EVOLUTION,
@@ -106,14 +105,14 @@ class CognitiveOrchestrator:
 
         self._personality = PersonalityIntegrator() if self._enable_personality else None
 
-        self._value_alignment: Any = None
+        self._value_alignment: IAlignmentService | None = None
         if self._enable_value_alignment:
             try:
-                # ACGA 2.0: Use IAlignmentService port from kernelone/ports
+                # ACGA 2.0: Use IAlignmentService port via adapter
                 from polaris.kernelone.ports import IAlignmentService
-                from polaris.cells.values.alignment_service import ValueAlignmentService
+                from polaris.cells.adapters.kernelone import AlignmentServiceAdapter
 
-                self._value_alignment: IAlignmentService = ValueAlignmentService()
+                self._value_alignment = AlignmentServiceAdapter()
             except ImportError:
                 self._value_alignment = None
 

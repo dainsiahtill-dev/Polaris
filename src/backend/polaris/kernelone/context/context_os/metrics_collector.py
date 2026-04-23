@@ -212,10 +212,11 @@ class CognitiveRuntimeMetricsCollector:
                 write_failures = 0
                 num_write_tests = 20  # Run multiple ops for meaningful p95
 
-                for i in range(num_write_tests):
-                    test_start = time.perf_counter()
-                    try:
-                        test_conn = sqlite3.connect(str(db_path), timeout=5.0)
+                # Use single connection for all iterations to avoid connection overhead
+                test_conn = sqlite3.connect(str(db_path), timeout=30.0)
+                try:
+                    for i in range(num_write_tests):
+                        test_start = time.perf_counter()
                         try:
                             test_conn.execute(
                                 "CREATE TABLE IF NOT EXISTS _metrics_timing_test (id INTEGER)",
@@ -225,17 +226,18 @@ class CognitiveRuntimeMetricsCollector:
                                 (i,),
                             )
                             test_conn.commit()
-                            test_conn.execute("DROP TABLE IF EXISTS _metrics_timing_test")
-                            test_conn.commit()
+                        except (RuntimeError, ValueError) as e:
+                            logger.debug("SQLite timing test iteration %d failed: %s", i, e)
+                            write_failures += 1
                         finally:
-                            test_conn.close()
-                    except (RuntimeError, ValueError) as e:
-                        logger.debug("SQLite timing test iteration %d failed: %s", i, e)
-                        write_failures += 1
-                    finally:
-                        test_end = time.perf_counter()
-                        test_duration_ms = (test_end - test_start) * 1000
-                        write_latencies.append(test_duration_ms)
+                            test_end = time.perf_counter()
+                            test_duration_ms = (test_end - test_start) * 1000
+                            write_latencies.append(test_duration_ms)
+
+                    # Clean up test table after all iterations
+                    test_conn.execute("DROP TABLE IF EXISTS _metrics_timing_test")
+                finally:
+                    test_conn.close()
 
                 # Calculate receipt write failure rate from actual measurements
                 receipt_write_failure_rate = write_failures / num_write_tests if num_write_tests > 0 else 0.0

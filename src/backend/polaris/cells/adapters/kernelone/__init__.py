@@ -16,20 +16,34 @@ Architecture:
     | - IRoleProvider  |       | - RoleProviderAdapter
     | - IBusPort       |       | - BusPortAdapter  |
     | - IAlignmentSvc  |       | - AlignmentAdapter|
+    | - IRoleToolInt   |       | - RoleToolIntAdapter|
     +-------------------+       +-------------------+
 
 Usage:
-    from polaris.kernelone.ports import IRoleProvider
-    from polaris.cells.adapters.kernelone import RoleProviderAdapter
+    from polaris.kernelone.ports import IRoleProvider, IAlignmentService, IRoleToolIntegration
+    from polaris.cells.adapters.kernelone import (
+        RoleProviderAdapter,
+        AlignmentServiceAdapter,
+        RoleToolIntegrationAdapter,
+    )
 
-    port: IRoleProvider = RoleProviderAdapter()
-    normalized = port.normalize_role_alias("auditor")  # Returns "qa"
+    role_port: IRoleProvider = RoleProviderAdapter()
+    alignment_port: IAlignmentService = AlignmentServiceAdapter()
+    tool_port: IRoleToolIntegration = RoleToolIntegrationAdapter()
+    normalized = role_port.normalize_role_alias("auditor")  # Returns "qa"
+    integration = tool_port.get_role_integration("pm", "/path/to/workspace")
 """
 
-from polaris.cells.adapters.kernelone.role_provider_adapter import RoleProviderAdapter
+from polaris.cells.adapters.kernelone.alignment_adapter import AlignmentServiceAdapter
 from polaris.cells.adapters.kernelone.bus_adapter import KernelOneBusPortAdapter
+from polaris.cells.adapters.kernelone.role_provider_adapter import RoleProviderAdapter
+from polaris.cells.adapters.kernelone.role_tool_integration_adapter import (
+    RoleToolIntegrationAdapter,
+)
 
 __all__ = [
-    "RoleProviderAdapter",
+    "AlignmentServiceAdapter",
     "KernelOneBusPortAdapter",
+    "RoleProviderAdapter",
+    "RoleToolIntegrationAdapter",
 ]

@@ -6,16 +6,21 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import re
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.orchestration.workflow_runtime.internal.config import WorkflowConfig
 from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackend, RuntimeBackendPort
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -242,29 +247,59 @@ class RuntimeBackendAdapter:
             await asyncio.sleep(0.05)
 
 
-_adapter: RuntimeBackendAdapter | None = None
+# Async-safe global adapter using contextvars.
+# This replaces the previous global _adapter singleton pattern.
+# Each async task/context gets its own adapter instance by default,
+# but adapters can be explicitly set via set_adapter() for testing or DI.
+_adapter_var: contextvars.ContextVar[RuntimeBackendAdapter | None] = contextvars.ContextVar(
+    "runtime_backend_adapter",
+    default=None,
+)
+
+# Factory that can be overridden for testing
+_adapter_factory: Callable[[], RuntimeBackendAdapter] = RuntimeBackendAdapter
+
+
+def set_adapter(adapter: RuntimeBackendAdapter | None) -> None:
+    """Set the adapter for the current context (for testing or DI)."""
+    _adapter_var.set(adapter)
+
+
+def reset_adapter() -> None:
+    """Reset the adapter for the current context."""
+    _adapter_var.set(None)
+
+
+def set_adapter_factory(factory: Callable[[], RuntimeBackendAdapter]) -> None:
+    """Set a custom adapter factory (for testing)."""
+    global _adapter_factory
+    _adapter_factory = factory
 
 
 async def get_adapter() -> RuntimeBackendAdapter:
-    """获取全局适配器实例。"""
-    global _adapter
-    if _adapter is None:
-        _adapter = RuntimeBackendAdapter()
-    return _adapter
+    """Get the adapter for the current context, creating one if needed.
+
+    This function is async-safe and works with contextvars.
+    """
+    adapter = _adapter_var.get()
+    if adapter is None:
+        adapter = _adapter_factory()
+        _adapter_var.set(adapter)
+    return adapter
 
 
 async def start_adapter() -> None:
-    """启动全局适配器。"""
+    """Start the adapter for the current context."""
     adapter = await get_adapter()
     await adapter.start()
 
 
 async def stop_adapter() -> None:
-    """停止全局适配器。"""
-    global _adapter
-    if _adapter is not None:
-        await _adapter.stop()
-        _adapter = None
+    """Stop the adapter for the current context."""
+    adapter = _adapter_var.get()
+    if adapter is not None:
+        await adapter.stop()
+        _adapter_var.set(None)
 
 
 def _run_sync(coro: Any) -> Any:

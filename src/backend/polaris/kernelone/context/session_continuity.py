@@ -7,6 +7,7 @@ It intentionally does not own role session storage or role orchestration.
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -370,9 +371,14 @@ class SessionContinuityProjection:
 class SessionContinuityEngine:
     """Canonical continuity projector for resumed role sessions."""
 
-    def __init__(self, policy: SessionContinuityPolicy | None = None) -> None:
+    def __init__(
+        self,
+        policy: SessionContinuityPolicy | None = None,
+        max_cache_size: int = 10,
+    ) -> None:
         self.policy = policy or SessionContinuityPolicy()
-        self._context_os_cache: dict[str, StateFirstContextOS] = {}
+        self._max_cache_size = max_cache_size
+        self._context_os_cache: OrderedDict[str, StateFirstContextOS] = OrderedDict()
 
     def resolve_history_window(self, history_limit: int | None) -> int:
         if history_limit is None or history_limit < 0:
@@ -670,21 +676,31 @@ class SessionContinuityEngine:
 
     def _build_context_os(self, *, domain: str | None = None) -> StateFirstContextOS:
         key = domain or "generic"
-        if key not in self._context_os_cache:
-            self._context_os_cache[key] = StateFirstContextOS(
-                policy=StateFirstContextOSPolicy(
-                    context_window=ContextWindowPolicy(
-                        default_history_window_messages=self.policy.default_history_window_messages,
-                        max_active_window_messages=self.policy.max_history_window_messages,
-                    ),
-                    collection_limits=CollectionLimitsPolicy(
-                        max_open_loops=self.policy.max_open_loops,
-                        max_stable_facts=self.policy.max_stable_facts,
-                    ),
+        if key in self._context_os_cache:
+            # Move to end (most recently used)
+            self._context_os_cache.move_to_end(key)
+            return self._context_os_cache[key]
+
+        # Evict oldest (least recently used) if at capacity
+        if len(self._context_os_cache) >= self._max_cache_size:
+            self._context_os_cache.popitem(last=False)
+
+        # Create new entry
+        os = StateFirstContextOS(
+            policy=StateFirstContextOSPolicy(
+                context_window=ContextWindowPolicy(
+                    default_history_window_messages=self.policy.default_history_window_messages,
+                    max_active_window_messages=self.policy.max_history_window_messages,
                 ),
-                domain=key,
-            )
-        return self._context_os_cache[key]
+                collection_limits=CollectionLimitsPolicy(
+                    max_open_loops=self.policy.max_open_loops,
+                    max_stable_facts=self.policy.max_stable_facts,
+                ),
+            ),
+            domain=key,
+        )
+        self._context_os_cache[key] = os
+        return os
 
     def _resolve_context_os_domain(
         self,

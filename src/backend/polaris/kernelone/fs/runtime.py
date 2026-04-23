@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.storage import (
     UNSUPPORTED_PATH_PREFIX,
     normalize_logical_rel_path,
@@ -145,10 +146,51 @@ class KernelFileSystem:
             raise ValueError("workspace path is required")
         candidate = Path(raw)
         workspace_root = Path(self.workspace).resolve()
+
+        # SECURITY: Check for symlinks in path components BEFORE resolving.
+        # This prevents symlink traversal attacks where a symlink inside the
+        # workspace points to a path outside, bypassing the boundary check.
+        if candidate.is_absolute():
+            # For absolute paths, check if any component is a symlink
+            self._check_no_symlink_in_path(candidate)
+        else:
+            # For relative paths, check components relative to workspace
+            base = workspace_root
+            for part in candidate.parts:
+                base = base / part
+                # Check if the path so far is a symlink (before final resolution)
+                if base.is_symlink():
+                    raise PathSecurityError(f"Symlink detected in path: {relative_or_absolute_path}")
+
+        # Now safe to resolve - boundary check will catch if target escapes
         target = candidate.resolve() if candidate.is_absolute() else (workspace_root / candidate).resolve()
         if not self._is_within_root(root=workspace_root, target=target):
             raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {relative_or_absolute_path}")
         return target
+
+    def _check_no_symlink_in_path(self, path: Path) -> None:
+        """Verify no component of the path is a symlink.
+
+        This prevents symlink traversal attacks where a symlink inside the
+        workspace points outside, allowing access to arbitrary files.
+
+        Args:
+            path: The absolute path to check
+
+        Raises:
+            PathSecurityError: If any path component is a symlink
+        """
+        if not path.is_absolute():
+            raise ValueError("_check_no_symlink_in_path requires absolute path")
+
+        # Walk through each directory component and check for symlinks
+        # Handle both Unix-style (parts start with /) and Windows-style (with drive letter)
+        parts = path.parts
+        current = Path(parts[0])
+        for part in parts[1:]:
+            current = current / part
+            if current.is_symlink():
+                raise PathSecurityError(f"Symlink detected in absolute path: {path}")
 
     def to_workspace_relative_path(self, relative_or_absolute_path: str) -> str:
         target = self.resolve_workspace_path(relative_or_absolute_path)

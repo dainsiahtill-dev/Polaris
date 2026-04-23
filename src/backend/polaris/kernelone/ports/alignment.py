@@ -4,12 +4,18 @@ ACGA 2.0 Section 6.3: KernelOne defines interface contracts, Cells provide imple
 
 This port abstracts value alignment services, which contain Polaris-specific
 governance logic that should not leak into KernelOne core.
+
+Note: The interface defines an `evaluate` method that returns a result object
+with `overall_score`, `conflicts`, and `final_verdict` attributes.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from polaris.cells.values.alignment_service import ValueAlignmentResult
 
 
 class IAlignmentService(ABC):
@@ -23,12 +29,32 @@ class IAlignmentService(ABC):
         # KernelOne usage (abstract)
         from polaris.kernelone.ports import IAlignmentService
 
-        async def check_alignment(service: IAlignmentService, action: str) -> bool:
-            return await service.is_action_aligned(action)
+        async def check_action(service: IAlignmentService, action: str) -> float:
+            result = await service.evaluate(action=action, user_intent="test")
+            return result.overall_score
 
         # Cells provides concrete implementation
         # See: polaris.cells.adapters.kernelone.alignment_adapter
     """
+
+    @abstractmethod
+    async def evaluate(
+        self,
+        action: str,
+        context: str = "",
+        user_intent: str = "",
+    ) -> ValueAlignmentResult:
+        """Evaluate an action against the value alignment matrix.
+
+        Args:
+            action: The action/command to evaluate.
+            context: Additional context for the evaluation.
+            user_intent: The user's intent behind the action.
+
+        Returns:
+            ValueAlignmentResult with overall_score, conflicts, and final_verdict.
+        """
+        ...
 
     @abstractmethod
     async def is_action_aligned(self, action: str, **kwargs: Any) -> bool:

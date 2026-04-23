@@ -457,3 +457,255 @@ class TestKnowledgeSyncEdgeCases:
         # Should not raise, returns empty set
         assert isinstance(hashes, set)
         assert len(hashes) == 0
+
+
+class TestKnowledgeSyncGetLancedbTexts:
+    """Tests for _get_lancedb_texts method."""
+
+    @pytest.fixture
+    def jsonl_store(self):
+        store = MockJsonlStore()
+        store.setup_texts(["Hello world", "Python code"])
+        return store
+
+    @pytest.fixture
+    def lancedb_adapter(self):
+        return MockLanceDBAdapter()
+
+    @pytest.fixture
+    def embedding_computer(self):
+        return MockEmbeddingComputer()
+
+    @pytest.mark.asyncio
+    async def test_get_lancedb_texts_returns_texts(self, jsonl_store, lancedb_adapter, embedding_computer) -> None:
+        """_get_lancedb_texts returns texts for given content hashes."""
+        # Add some records to the mock
+        jsonl_store.setup_texts(["Text A", "Text B", "Text C"])
+        lancedb_adapter._records = {}
+        for text in ["Text A", "Text C"]:
+            import hashlib
+
+            h = hashlib.sha256(text.encode()).hexdigest()[:32]
+            lancedb_adapter._records[h] = {"text": text}
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+
+        hashes = set(lancedb_adapter._records.keys())
+        texts = sync._get_lancedb_texts(hashes)
+
+        assert isinstance(texts, dict)
+        assert len(texts) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_lancedb_texts_empty_hashes(self, jsonl_store, lancedb_adapter, embedding_computer) -> None:
+        """_get_lancedb_texts handles empty hash set."""
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+
+        texts = sync._get_lancedb_texts(set())
+
+        assert texts == {}
+
+
+class TestKnowledgeSyncBatchProcessing:
+    """Tests for batch processing in sync operations."""
+
+    @pytest.fixture
+    def lancedb_adapter(self):
+        return MockLanceDBAdapter()
+
+    @pytest.fixture
+    def embedding_computer(self):
+        return MockEmbeddingComputer()
+
+    @pytest.mark.asyncio
+    async def test_sync_to_lancedb_with_small_batch(self, lancedb_adapter, embedding_computer) -> None:
+        """sync_to_lancedb processes in specified batch size."""
+        jsonl_store = MockJsonlStore()
+        # Create 10 items
+        jsonl_store.setup_texts([f"Document {i}" for i in range(10)])
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+        # Use batch size of 3
+        stats = await sync.sync_to_lancedb(batch_size=3)
+
+        assert stats.items_added_to_lancedb == 10
+
+    @pytest.mark.asyncio
+    async def test_sync_to_lancedb_with_single_batch(self, lancedb_adapter, embedding_computer) -> None:
+        """sync_to_lancedb with batch_size=1 processes one at a time."""
+        jsonl_store = MockJsonlStore()
+        jsonl_store.setup_texts(["Doc 1", "Doc 2", "Doc 3"])
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+        stats = await sync.sync_to_lancedb(batch_size=1)
+
+        assert stats.items_added_to_lancedb == 3
+
+    @pytest.mark.asyncio
+    async def test_sync_to_lancedb_batch_exactly_matches_size(self, lancedb_adapter, embedding_computer) -> None:
+        """sync_to_lancedb handles batch size equal to item count."""
+        jsonl_store = MockJsonlStore()
+        jsonl_store.setup_texts(["A", "B", "C", "D", "D"])
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+        stats = await sync.sync_to_lancedb(batch_size=5)
+
+        # MockJsonlStore deduplicates texts by content_hash
+        # ["A", "B", "C", "D", "D"] becomes 4 unique items
+        assert stats.jsonl_total == 4
+        assert stats.items_added_to_lancedb == 4
+
+
+class TestKnowledgeSyncConcurrentOps:
+    """Tests for concurrent sync operations."""
+
+    @pytest.fixture
+    def lancedb_adapter(self):
+        return MockLanceDBAdapter()
+
+    @pytest.fixture
+    def embedding_computer(self):
+        return MockEmbeddingComputer()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_sync_to_lancedb(self, lancedb_adapter, embedding_computer) -> None:
+        """Concurrent sync operations complete without interference."""
+        jsonl_store = MockJsonlStore()
+        jsonl_store.setup_texts(["Doc 1", "Doc 2"])
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+
+        import asyncio
+
+        results = await asyncio.gather(
+            sync.sync_to_lancedb(),
+            sync.sync_to_lancedb(),
+        )
+
+        # Both should complete
+        assert len(results) == 2
+        assert all(r.items_added_to_lancedb >= 0 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_sync_respects_source_file(self, lancedb_adapter, embedding_computer) -> None:
+        """sync_to_lancedb uses the configured source file."""
+        jsonl_store = MockJsonlStore()
+        jsonl_store.setup_texts(["Test content"])
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+            source_file="test_migration.py",
+        )
+
+        await sync.sync_to_lancedb()
+
+        # Check that add was called with the source file
+        added_records = list(lancedb_adapter._records.values())
+        assert len(added_records) == 1
+
+
+class TestKnowledgeSyncErrorHandling:
+    """Tests for error handling in sync operations."""
+
+    @pytest.fixture
+    def lancedb_adapter(self):
+        return MockLanceDBAdapter()
+
+    @pytest.fixture
+    def embedding_computer(self):
+        return MockEmbeddingComputer()
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_add_failure(self, lancedb_adapter, embedding_computer) -> None:
+        """sync_to_lancedb records errors when add fails."""
+        jsonl_store = MockJsonlStore()
+        jsonl_store.setup_texts(["Test 1", "Test 2"])
+
+        async def failing_add(*args, **kwargs):
+            raise RuntimeError("Add failed")
+
+        lancedb_adapter.add = failing_add
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+
+        stats = await sync.sync_to_lancedb()
+
+        # Should record errors but not crash
+        assert len(stats.errors) == 2
+        assert stats.items_added_to_lancedb == 0
+
+    @pytest.mark.asyncio
+    async def test_sync_from_lancedb_handles_delete_error(self, lancedb_adapter, embedding_computer) -> None:
+        """sync_from_lancedb handles delete failures gracefully."""
+        jsonl_store = MockJsonlStore()
+        jsonl_store.setup_texts([])  # No JSONL items
+
+        # Add orphan to LanceDB
+        jsonl_store.setup_texts([])
+        import hashlib
+
+        orphan_hash = hashlib.sha256(b"orphan").hexdigest()[:32]
+        lancedb_adapter._records = {orphan_hash: {"text": "orphan"}}
+
+        async def failing_delete(content_hash):
+            raise RuntimeError("Delete failed")
+
+        lancedb_adapter.delete = failing_delete
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+
+        stats = await sync.sync_from_lancedb(delete_orphan_lancedb=True)
+
+        assert stats.items_removed_from_lancedb == 0
+        assert len(stats.errors) == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_tracks_timing(self, lancedb_adapter, embedding_computer) -> None:
+        """sync operations record duration."""
+        jsonl_store = MockJsonlStore()
+        jsonl_store.setup_texts(["Test content"])
+
+        sync = KnowledgeSync(
+            jsonl_store=jsonl_store,
+            lancedb_adapter=lancedb_adapter,
+            embedding_computer=embedding_computer,
+        )
+
+        stats = await sync.sync_to_lancedb()
+
+        assert stats.duration_ms >= 0
+        assert isinstance(stats.duration_ms, float)
