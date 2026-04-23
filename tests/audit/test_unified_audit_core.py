@@ -207,7 +207,7 @@ class TestEmitAuditEvent:
     def reset_and_setup(self, tmp_path, monkeypatch):
         """重置并设置环境"""
         UnifiedAuditCore.reset_instance(tmp_path)
-        monkeypatch.setenv("POLARIS_RUNTIME_BASE", str(tmp_path))
+        monkeypatch.setenv("KERNELONE_RUNTIME_BASE", str(tmp_path))
 
     def test_emit_audit_event(self, tmp_path):
         """测试便捷函数"""

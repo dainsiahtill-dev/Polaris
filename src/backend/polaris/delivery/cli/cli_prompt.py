@@ -109,9 +109,9 @@ class PromptInputSession:
             command_variants = [[*variant, "--config", config_path] for variant in command_variants]
 
         env = os.environ.copy()
-        env["POLARIS_ROLE"] = self._role
-        env["POLARIS_SESSION_ID"] = self._session_id
-        env["POLARIS_WORKSPACE"] = self._workspace
+        env["KERNELONE_ROLE"] = self._role
+        env["KERNELONE_SESSION_ID"] = self._session_id
+        env["KERNELONE_WORKSPACE"] = self._workspace
         env["POSH_SHELL"] = "pwsh"
 
         for command in command_variants:

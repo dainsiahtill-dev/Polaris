@@ -52,7 +52,7 @@ def _infer_workspace_for_path(path: str) -> str:
         guessed = candidate[:marker_index]
         if os.path.isdir(guessed):
             return guessed
-    # Priority: KERNELONE_WORKSPACE (via _runtime_config), then POLARIS_WORKSPACE fallback
+    # Priority: KERNELONE_WORKSPACE (via _runtime_config), then KERNELONE_WORKSPACE fallback
     configured = get_workspace()
     if configured:
         return os.path.abspath(configured)

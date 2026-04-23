@@ -3217,7 +3217,7 @@
     {
       "type": "function",
       "name": "test_tracer_default_disabled_without_env",
-      "description": "When POLARIS_TASK_MARKET_TRACING_ENABLED is not set, tracer is disabled.",
+      "description": "When KERNELONE_TASK_MARKET_TRACING_ENABLED is not set, tracer is disabled.",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_tracing.py"
     },
     {

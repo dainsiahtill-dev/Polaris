@@ -31,7 +31,7 @@ _TASKBOARD_PRIORITY_LEVELS = {
 
 def _taskboard_mainline_enabled() -> bool:
     """Check if taskboard mainline is enabled."""
-    token = str(os.environ.get("POLARIS_DISABLE_TASKBOARD_MAINLINE", "0")).strip().lower()
+    token = str(os.environ.get("KERNELONE_DISABLE_TASKBOARD_MAINLINE", "0")).strip().lower()
     return token not in {"1", "true", "yes", "on"}
 
 

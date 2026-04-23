@@ -17,7 +17,7 @@ def test_settings_normalize_legacy_json_log_path(tmp_path):
 
 def test_websocket_status_payload_is_serializable(tmp_path, monkeypatch):
     token = "ws-test-token"
-    monkeypatch.setenv("POLARIS_TOKEN", token)
+    monkeypatch.setenv("KERNELONE_TOKEN", token)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -44,7 +44,7 @@ def test_websocket_status_payload_is_serializable(tmp_path, monkeypatch):
 
 def test_websocket_status_payload_tolerates_workflow_sync_helpers(tmp_path, monkeypatch):
     token = "ws-workflow-token"
-    monkeypatch.setenv("POLARIS_TOKEN", token)
+    monkeypatch.setenv("KERNELONE_TOKEN", token)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

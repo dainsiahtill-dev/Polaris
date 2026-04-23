@@ -1,6 +1,6 @@
 """Tool Executor Service - 工具执行服务层
 
-根据 POLARIS_KERNEL_REFACTOR_BLUEPRINT 实现的服务层组件，
+根据 KERNELONE_KERNEL_REFACTOR_BLUEPRINT 实现的服务层组件，
 负责工具调用的执行、超时控制和错误分类。
 
 Architecture:

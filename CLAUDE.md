@@ -91,10 +91,10 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 - 验证失败不得标记任务完成（fail-closed）。
 
 ## 6) 常用环境变量
-- `POLARIS_WORKSPACE`
-- `POLARIS_RENDERER_PORT`
-- `POLARIS_BACKEND_PORT`
-- `POLARIS_PM_PROVIDER`, `POLARIS_PM_MODEL`
+- `KERNELONE_WORKSPACE`
+- `KERNELONE_RENDERER_PORT`
+- `KERNELONE_BACKEND_PORT`
+- `KERNELONE_PM_PROVIDER`, `KERNELONE_PM_MODEL`
 
 ## 7) 核心系统地图（防重复造轮子）
 

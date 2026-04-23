@@ -18,7 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 
 def _create_test_app(tmp_path, monkeypatch) -> tuple[object, str]:
     token = "runtime-ws-migration-token"
-    monkeypatch.setenv("POLARIS_TOKEN", token)
+    monkeypatch.setenv("KERNELONE_TOKEN", token)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

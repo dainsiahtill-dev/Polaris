@@ -347,11 +347,10 @@ class BackendBootstrapper:
             config: Configuration snapshot
             request: Launch request
         """
-        # Set token (KERNELONE_* primary, POLARIS_* for backward compatibility)
+        # Set token (Canonical KERNELONE_* only)
         token = request.token or config.get("security.token", "")
         if token:
             os.environ["KERNELONE_TOKEN"] = token
-            os.environ["POLARIS_TOKEN"] = token  # Backward compatibility
 
         self_upgrade_mode = config.get_typed("self_upgrade_mode", bool, False)
         if self_upgrade_mode:
@@ -363,72 +362,55 @@ class BackendBootstrapper:
         resolved_workspace = str(config.get("workspace") or request.workspace or "").strip()
         if resolved_workspace:
             os.environ["KERNELONE_WORKSPACE"] = resolved_workspace
-            os.environ["POLARIS_WORKSPACE"] = resolved_workspace  # Backward compatibility
         else:
             os.environ.pop("KERNELONE_WORKSPACE", None)
-            os.environ.pop("POLARIS_WORKSPACE", None)
 
         # Set ramdisk root if configured
         ramdisk_root = config.get("runtime.ramdisk_root")
         if ramdisk_root:
             os.environ["KERNELONE_RAMDISK_ROOT"] = str(ramdisk_root)
-            os.environ["POLARIS_RAMDISK_ROOT"] = str(ramdisk_root)  # Backward compatibility
         else:
             os.environ.pop("KERNELONE_RAMDISK_ROOT", None)
-            os.environ.pop("POLARIS_RAMDISK_ROOT", None)
 
         # NATS configuration
         nats_enabled = "1" if config.get_typed("nats.enabled", bool, True) else "0"
         os.environ["KERNELONE_NATS_ENABLED"] = nats_enabled
-        os.environ["POLARIS_NATS_ENABLED"] = nats_enabled  # Backward compatibility
 
         nats_required = "1" if config.get_typed("nats.required", bool, True) else "0"
         os.environ["KERNELONE_NATS_REQUIRED"] = nats_required
-        os.environ["POLARIS_NATS_REQUIRED"] = nats_required  # Backward compatibility
 
         nats_url = str(config.get("nats.url") or "").strip()
         if nats_url:
             os.environ["KERNELONE_NATS_URL"] = nats_url
-            os.environ["POLARIS_NATS_URL"] = nats_url  # Backward compatibility
         else:
             os.environ.pop("KERNELONE_NATS_URL", None)
-            os.environ.pop("POLARIS_NATS_URL", None)
 
         nats_user = str(config.get("nats.user") or "").strip()
         if nats_user:
             os.environ["KERNELONE_NATS_USER"] = nats_user
-            os.environ["POLARIS_NATS_USER"] = nats_user  # Backward compatibility
         else:
             os.environ.pop("KERNELONE_NATS_USER", None)
-            os.environ.pop("POLARIS_NATS_USER", None)
 
         nats_password = str(config.get("nats.password") or "").strip()
         if nats_password:
             os.environ["KERNELONE_NATS_PASSWORD"] = nats_password
-            os.environ["POLARIS_NATS_PASSWORD"] = nats_password  # Backward compatibility
         else:
             os.environ.pop("KERNELONE_NATS_PASSWORD", None)
-            os.environ.pop("POLARIS_NATS_PASSWORD", None)
 
         nats_connect_timeout = str(float(config.get("nats.connect_timeout_sec") or 3.0))
         os.environ["KERNELONE_NATS_CONNECT_TIMEOUT"] = nats_connect_timeout
-        os.environ["POLARIS_NATS_CONNECT_TIMEOUT"] = nats_connect_timeout  # Backward compatibility
 
         nats_reconnect_wait = str(float(config.get("nats.reconnect_wait_sec") or 1.0))
         os.environ["KERNELONE_NATS_RECONNECT_WAIT"] = nats_reconnect_wait
-        os.environ["POLARIS_NATS_RECONNECT_WAIT"] = nats_reconnect_wait  # Backward compatibility
 
         nats_max_reconnect = str(int(config.get("nats.max_reconnect_attempts") or -1))
         os.environ["KERNELONE_NATS_MAX_RECONNECT"] = nats_max_reconnect
-        os.environ["POLARIS_NATS_MAX_RECONNECT"] = nats_max_reconnect  # Backward compatibility
 
         nats_stream_name = str(config.get("nats.stream_name") or "").strip()
         if nats_stream_name:
             os.environ["KERNELONE_NATS_STREAM_NAME"] = nats_stream_name
-            os.environ["POLARIS_NATS_STREAM_NAME"] = nats_stream_name  # Backward compatibility
         else:
             os.environ.pop("KERNELONE_NATS_STREAM_NAME", None)
-            os.environ.pop("POLARIS_NATS_STREAM_NAME", None)
 
     def _configure_debug_tracing(self, config: ConfigSnapshot) -> None:
         """Configure debug tracing if enabled.
@@ -439,7 +421,6 @@ class BackendBootstrapper:
         enable_tracing = config.get("logging.enable_debug_tracing", False)
         tracing_value = "1" if enable_tracing else "0"
         os.environ["KERNELONE_DEBUG_TRACING"] = tracing_value
-        os.environ["POLARIS_DEBUG_TRACING"] = tracing_value  # Backward compatibility
 
     def _validate_workspace_policy(self, config: ConfigSnapshot) -> str:
         workspace = str(config.get("workspace") or "").strip()

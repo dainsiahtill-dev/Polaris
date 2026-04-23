@@ -27,7 +27,7 @@ class TestBaseRoleAdapterMethods:
         adapter = _make_director_adapter(tmp_path)
         env = adapter._build_env()
         assert env["PYTHONUTF8"] == "1"
-        assert env["POLARIS_WORKSPACE"] == str(tmp_path)
+        assert env["KERNELONE_WORKSPACE"] == str(tmp_path)
 
     def test_build_env_with_overrides(self, tmp_path) -> None:
         adapter = _make_director_adapter(tmp_path)
@@ -78,16 +78,16 @@ class TestResolveKernelRetryBudget:
     def test_respects_env_override(self, monkeypatch) -> None:
         from polaris.cells.roles.adapters.internal.base import BaseRoleAdapter
 
-        monkeypatch.setenv("POLARIS_DIRECTOR_KERNEL_MAX_RETRIES", "3")
+        monkeypatch.setenv("KERNELONE_DIRECTOR_KERNEL_MAX_RETRIES", "3")
         result = BaseRoleAdapter._resolve_kernel_retry_budget("director")
         assert result == 3
 
     def test_clamped_to_0_3(self, monkeypatch) -> None:
         from polaris.cells.roles.adapters.internal.base import BaseRoleAdapter
 
-        monkeypatch.setenv("POLARIS_DIRECTOR_KERNEL_MAX_RETRIES", "99")
+        monkeypatch.setenv("KERNELONE_DIRECTOR_KERNEL_MAX_RETRIES", "99")
         assert BaseRoleAdapter._resolve_kernel_retry_budget("director") == 3
-        monkeypatch.setenv("POLARIS_DIRECTOR_KERNEL_MAX_RETRIES", "-1")
+        monkeypatch.setenv("KERNELONE_DIRECTOR_KERNEL_MAX_RETRIES", "-1")
         assert BaseRoleAdapter._resolve_kernel_retry_budget("director") == 0
 
 
@@ -108,11 +108,11 @@ class TestResolveKernelValidationEnabled:
     def test_env_true(self, monkeypatch) -> None:
         from polaris.cells.roles.adapters.internal.base import BaseRoleAdapter
 
-        monkeypatch.setenv("POLARIS_DIRECTOR_VALIDATE_OUTPUT", "1")
+        monkeypatch.setenv("KERNELONE_DIRECTOR_VALIDATE_OUTPUT", "1")
         assert BaseRoleAdapter._resolve_kernel_validation_enabled("director", None) is True
 
     def test_env_false(self, monkeypatch) -> None:
         from polaris.cells.roles.adapters.internal.base import BaseRoleAdapter
 
-        monkeypatch.setenv("POLARIS_DIRECTOR_VALIDATE_OUTPUT", "0")
+        monkeypatch.setenv("KERNELONE_DIRECTOR_VALIDATE_OUTPUT", "0")
         assert BaseRoleAdapter._resolve_kernel_validation_enabled("director", None) is False

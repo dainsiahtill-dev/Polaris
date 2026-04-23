@@ -98,7 +98,7 @@ run_once()                                              [orchestration_engine.py
 ### 0-A.4 Task Market（任务市场）
 
 **文件**: `polaris/cells/runtime/task_market/` (49 个文件)
-**模式**: 由 `POLARIS_TASK_MARKET_MODE` 环境变量控制
+**模式**: 由 `KERNELONE_TASK_MARKET_MODE` 环境变量控制
 
 | 模式 | 行为 | 当前使用状态 |
 |------|------|-------------|
@@ -2090,7 +2090,7 @@ ChiefEngineer (工部尚书 / 技术总监)
 | `DirectorTaskWorkflow` | `polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py` | **保留**——`DirectorPool` 内部调用每个 Director 时，底层仍用 `DirectorTaskWorkflow` 的五阶段模型 | 小 | 禁止在 workflow 方法内直接执行同步 I/O |
 | `Shangshuling Registry` | `polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py` | **强化**——CE 把 Director 实时状态也写入注册表 | 小 | 确保原子性，避免 registry 文件膨胀 |
 | `ScopeConflictDetector` | 当前在 consumer 内部（需搜索定位） | **迁移**——从 consumer 内部提升到 `DirectorPool` 层面 | 中 | 最重要的一步，需保证行为一致 |
-| `orchestration_engine.py` | `polaris/delivery/cli/pm/orchestration_engine.py` | **调整**——当 `POLARIS_TASK_MARKET_MODE=mainline-design` 时，PM 只负责 publish 到 Task Market，不直接调用 `_run_dispatch_pipeline_with_workflow()` | 中 | 当前默认走 Workflow 路径，不能粗暴移除 |
+| `orchestration_engine.py` | `polaris/delivery/cli/pm/orchestration_engine.py` | **调整**——当 `KERNELONE_TASK_MARKET_MODE=mainline-design` 时，PM 只负责 publish 到 Task Market，不直接调用 `_run_dispatch_pipeline_with_workflow()` | 中 | 当前默认走 Workflow 路径，不能粗暴移除 |
 | `director_pool.py` | 新建 | 核心新组件 | 大 | 需完整的 unit + integration + chaos 测试 |
 
 **不修改的模块**:
@@ -2214,7 +2214,7 @@ Week 2:
 
 ```
 Week 3:
-├── POLARIS_TASK_MARKET_MODE 切换为 mainline-design
+├── KERNELONE_TASK_MARKET_MODE 切换为 mainline-design
 ├── 验证 CEConsumer 正确认领 + 生成蓝图 + 调用 DirectorPool
 ├── 移除 orchestration_engine.py 中 CE 的直接调用路径
 └── DirectorExecutionConsumer 标记 deprecated

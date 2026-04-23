@@ -203,8 +203,8 @@ async function startStaticDevServer(distDir: string): Promise<StaticDevServerHan
 }
 
 async function resolveDevUrl(): Promise<{ url?: string; devServer?: StaticDevServerHandle }> {
-  if (process.env.POLARIS_DEV_SERVER_URL) {
-    return { url: process.env.POLARIS_DEV_SERVER_URL };
+  if (process.env.KERNELONE_DEV_SERVER_URL) {
+    return { url: process.env.KERNELONE_DEV_SERVER_URL };
   }
 
   const distIndexCandidates = [
@@ -257,7 +257,7 @@ export const test = base.extend<Fixtures>({
   testEnv: async ({ }, use) => {
     const isolatedE2EHome = createIsolatedE2EHome();
     const isolatedRuntimeRoot = createIsolatedRuntimeRoot(isolatedE2EHome);
-    const useRealSettings = process.env.POLARIS_E2E_USE_REAL_SETTINGS === "1";
+    const useRealSettings = process.env.KERNELONE_E2E_USE_REAL_SETTINGS === "1";
 
     try {
       await use({
@@ -272,32 +272,32 @@ export const test = base.extend<Fixtures>({
   electronApp: async ({ mainProcessLogs, testEnv }, use) => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      POLARIS_E2E: "1",
-      POLARIS_E2E_ALLOW_MULTI_INSTANCE: "1",
+      KERNELONE_E2E: "1",
+      KERNELONE_E2E_ALLOW_MULTI_INSTANCE: "1",
     };
     delete env.ELECTRON_RUN_AS_NODE;
 
     if (!testEnv.useRealSettings) {
-      env.POLARIS_HOME = testEnv.isolatedE2EHome;
-      env.POLARIS_RUNTIME_ROOT = testEnv.isolatedRuntimeRoot;
-      env.POLARIS_STATE_TO_RAMDISK = "0";
+      env.KERNELONE_HOME = testEnv.isolatedE2EHome;
+      env.KERNELONE_RUNTIME_ROOT = testEnv.isolatedRuntimeRoot;
+      env.KERNELONE_STATE_TO_RAMDISK = "0";
     }
 
     const venvPython = resolveVenvPython();
-    if (venvPython && !env.POLARIS_PYTHON) {
-      env.POLARIS_PYTHON = venvPython;
+    if (venvPython && !env.KERNELONE_PYTHON) {
+      env.KERNELONE_PYTHON = venvPython;
     }
-    if (!testEnv.useRealSettings && !env.POLARIS_WORKSPACE) {
-      env.POLARIS_WORKSPACE = repoRoot;
-      env.POLARIS_SELF_UPGRADE_MODE = "1";
+    if (!testEnv.useRealSettings && !env.KERNELONE_WORKSPACE) {
+      env.KERNELONE_WORKSPACE = repoRoot;
+      env.KERNELONE_SELF_UPGRADE_MODE = "1";
     }
 
     const devUrl = await resolveDevUrl();
     if (devUrl.url) {
-      env.POLARIS_DEV_SERVER_URL = devUrl.url;
+      env.KERNELONE_DEV_SERVER_URL = devUrl.url;
       try {
         const devOrigin = new URL(devUrl.url).origin;
-        env.POLARIS_CORS_ORIGINS = mergeCorsOrigins(env.POLARIS_CORS_ORIGINS, devOrigin);
+        env.KERNELONE_CORS_ORIGINS = mergeCorsOrigins(env.KERNELONE_CORS_ORIGINS, devOrigin);
       } catch {
         // Ignore invalid URL parsing.
       }

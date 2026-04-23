@@ -237,7 +237,7 @@ def test_phase6_cleanup_script():
     assert "Phase6Cleanup" in content
     assert "archive_legacy_files" in content
     assert "scan_for_deprecated_patterns" in content
-    assert "POLARIS_USE_NEW_BOOTSTRAP" in content
+    assert "KERNELONE_USE_NEW_BOOTSTRAP" in content
 
     print("  ✓ Cleanup script has required components")
 

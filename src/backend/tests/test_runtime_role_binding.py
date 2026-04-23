@@ -13,7 +13,7 @@ from polaris.kernelone.llm.runtime_config import RuntimeConfigManager
 def test_runtime_config_strict_mode_requires_explicit_role_assignment(monkeypatch) -> None:
     manager = RuntimeConfigManager()
     manager.clear_cache()
-    monkeypatch.setenv("POLARIS_ROLE_MODEL_BINDING_MODE", "strict")
+    monkeypatch.setenv("KERNELONE_ROLE_MODEL_BINDING_MODE", "strict")
     monkeypatch.setattr(manager, "get_role_config", lambda _role_id: None)
 
     provider_id, model = manager.get_role_model("pm")
@@ -25,7 +25,7 @@ def test_runtime_config_strict_mode_requires_explicit_role_assignment(monkeypatc
 def test_runtime_config_warn_mode_rejects_missing_role_model(monkeypatch) -> None:
     manager = RuntimeConfigManager()
     manager.clear_cache()
-    monkeypatch.setenv("POLARIS_ROLE_MODEL_BINDING_MODE", "warn")
+    monkeypatch.setenv("KERNELONE_ROLE_MODEL_BINDING_MODE", "warn")
     monkeypatch.setattr(manager, "get_role_config", lambda _role_id: None)
 
     provider_id, model = manager.get_role_model("director")
@@ -42,7 +42,7 @@ def test_invoke_runtime_provider_strict_mode_rejects_missing_provider_type(
         def __init__(self, *args, **kwargs):
             self.ramdisk_root = ""
 
-    monkeypatch.setenv("POLARIS_ROLE_MODEL_BINDING_MODE", "strict")
+    monkeypatch.setenv("KERNELONE_ROLE_MODEL_BINDING_MODE", "strict")
     monkeypatch.setattr("config.Settings", _Settings)
     monkeypatch.setattr(
         "polaris.kernelone.llm.runtime_config.get_role_model",

@@ -370,7 +370,7 @@ yield {"type": "tool_call", "tool": call.tool, "args": safe_args, "iteration": r
 
 1. **异常吞噬问题**: CLAUDE.md 提到仍有 206 处 `except Exception` / `except:` 和 53 处 `pass` 语句
 2. **新旧引擎共存**: TurnEngine（旧）和 TurnTransactionController（新）并存可能导致行为不一致
-3. **环境变量前缀混用**: `POLARIS_` 和 `KERNELONE_` 在同一代码层混用
+3. **环境变量前缀混用**: `KERNELONE_` 和 `KERNELONE_` 在同一代码层混用
 
 ### 8.2 已验证修复的问题
 
@@ -406,7 +406,7 @@ yield {"type": "tool_call", "tool": call.tool, "args": safe_args, "iteration": r
 ### 10.1 短期建议
 
 1. **完善异常日志**: 对剩余的 silent except 添加有意义的日志记录
-2. **统一环境变量前缀**: 考虑统一 `POLARIS_` 和 `KERNELONE_` 前缀使用
+2. **统一环境变量前缀**: 考虑统一 `KERNELONE_` 和 `KERNELONE_` 前缀使用
 3. **增加一致性测试**: 为 Stream/Non-Stream 路径添加专门的回归测试
 
 ### 10.2 中期建议

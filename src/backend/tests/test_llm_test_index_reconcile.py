@@ -19,7 +19,7 @@ def _index_path(workspace: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _isolate_polaris_root(tmp_path, monkeypatch):
-    monkeypatch.setenv("POLARIS_ROOT", str(tmp_path))
+    monkeypatch.setenv("KERNELONE_ROOT", str(tmp_path))
     monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / ".polaris"))
 
 

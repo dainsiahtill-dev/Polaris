@@ -1821,7 +1821,7 @@ async def test_probe_generation_retry_recovers_from_timeout(monkeypatch: pytest.
 def test_probe_generation_timeout_uses_probe_timeout_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("POLARIS_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("KERNELONE_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS", raising=False)
     probe = RoleAvailabilityProbe(backend_url="http://unit.test", probe_timeout=30)
     assert probe._generation_probe_timeout_seconds() == 30.0
 
@@ -1829,7 +1829,7 @@ def test_probe_generation_timeout_uses_probe_timeout_by_default(
 def test_probe_generation_timeout_honors_env_with_clamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POLARIS_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("KERNELONE_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS", "120")
     probe = RoleAvailabilityProbe(backend_url="http://unit.test", probe_timeout=30)
     assert probe._generation_probe_timeout_seconds() == 60.0
 

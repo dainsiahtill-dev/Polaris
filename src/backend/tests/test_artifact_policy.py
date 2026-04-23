@@ -259,16 +259,16 @@ class TestLegacyKeyAliases:
 
 
 class TestArtifactPolicyRegistryAlignment:
-    """Test that POLARIS_ARTIFACT_POLICY_METADATA is aligned with ARTIFACT_REGISTRY."""
+    """Test that KERNELONE_ARTIFACT_POLICY_METADATA is aligned with ARTIFACT_REGISTRY."""
 
     def test_all_policy_keys_exist_in_registry(self) -> None:
         """Every key in policy metadata must exist in ARTIFACT_REGISTRY."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             ARTIFACT_REGISTRY,
-            POLARIS_ARTIFACT_POLICY_METADATA,
+            KERNELONE_ARTIFACT_POLICY_METADATA,
         )
 
-        policy_keys = set(POLARIS_ARTIFACT_POLICY_METADATA.keys())
+        policy_keys = set(KERNELONE_ARTIFACT_POLICY_METADATA.keys())
         registry_keys = set(ARTIFACT_REGISTRY.keys())
 
         missing = policy_keys - registry_keys
@@ -278,10 +278,10 @@ class TestArtifactPolicyRegistryAlignment:
         """All canonical artifact keys have policy metadata."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
             ARTIFACT_REGISTRY,
-            POLARIS_ARTIFACT_POLICY_METADATA,
+            KERNELONE_ARTIFACT_POLICY_METADATA,
         )
 
-        policy_keys = set(POLARIS_ARTIFACT_POLICY_METADATA.keys())
+        policy_keys = set(KERNELONE_ARTIFACT_POLICY_METADATA.keys())
         registry_keys = set(ARTIFACT_REGISTRY.keys())
 
         missing = registry_keys - policy_keys
@@ -290,10 +290,10 @@ class TestArtifactPolicyRegistryAlignment:
     def test_all_entries_have_required_fields(self) -> None:
         """All policy entries must have category, lifecycle, compress, archive_on_terminal."""
         from polaris.cells.audit.verdict.internal.artifact_service import (
-            POLARIS_ARTIFACT_POLICY_METADATA,
+            KERNELONE_ARTIFACT_POLICY_METADATA,
         )
 
         required_fields = {"category", "lifecycle", "compress", "archive_on_terminal"}
-        for key, entry in POLARIS_ARTIFACT_POLICY_METADATA.items():
+        for key, entry in KERNELONE_ARTIFACT_POLICY_METADATA.items():
             missing = required_fields - set(entry.keys())
             assert not missing, f"{key} missing fields: {missing}"

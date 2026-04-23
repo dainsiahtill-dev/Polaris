@@ -9,7 +9,7 @@ Usage:
     # 环境变量方式
     export KERNELONE_MAX_RETRIES=5
     export KERNELONE_RETRY_DELAY=2.0
-    export POLARIS_QUALITY_THRESHOLD=70.0
+    export KERNELONE_QUALITY_THRESHOLD=70.0
 
     # 程序化方式
     config = KernelConfig(max_retries=5, retry_delay=2.0, quality_threshold=70.0)
@@ -64,12 +64,12 @@ class KernelConfig:
     Environment Variables:
         KERNELONE_MAX_RETRIES: 最大重试次数
         KERNELONE_RETRY_DELAY: 重试间隔秒数
-        POLARIS_QUALITY_THRESHOLD: 质量阈值
+        KERNELONE_QUALITY_THRESHOLD: 质量阈值
     """
 
     max_retries: int = field(default_factory=lambda: _parse_int_env("KERNELONE_MAX_RETRIES", 3))
     retry_delay: float = field(default_factory=lambda: _parse_float_env("KERNELONE_RETRY_DELAY", 1.0))
-    quality_threshold: float = field(default_factory=lambda: _parse_float_env("POLARIS_QUALITY_THRESHOLD", 60.0))
+    quality_threshold: float = field(default_factory=lambda: _parse_float_env("KERNELONE_QUALITY_THRESHOLD", 60.0))
 
     def __post_init__(self) -> None:
         """验证配置值合法性"""

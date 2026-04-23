@@ -39,7 +39,7 @@
 - **CLI 参数**: 所有现有参数名和默认值保持不变
 - **API 端点**: `/v2/pm/*`, `/v2/director/*` 响应结构不变
 - **backend_started 事件**: 格式保持不变
-- **环境变量**: 所有 `POLARIS_*` 环境变量保持不变
+- **环境变量**: 所有 `KERNELONE_*` 环境变量保持不变
 
 ### 新增的 API
 
@@ -111,7 +111,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:49977/health
 
 1. **DEFAULT**: 代码中的硬编码默认值
 2. **PERSISTED**: `.polaris/config.json` 文件
-3. **ENV**: 环境变量 (`POLARIS_*`)
+3. **ENV**: 环境变量 (`KERNELONE_*`)
 4. **CLI**: 命令行参数
 
 ### 示例

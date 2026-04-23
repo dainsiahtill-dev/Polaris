@@ -115,19 +115,19 @@ def _slug_token(value: Any, fallback: str = "task") -> str:
 
 def _use_context_engine_v2() -> bool:
     """Check if context engine v2 should be used."""
-    value = str(os.environ.get("POLARIS_CONTEXT_ENGINE", "")).strip().lower()
+    value = str(os.environ.get("KERNELONE_CONTEXT_ENGINE", "")).strip().lower()
     return value in ("v2", "context_v2", "engine_v2", "context-engine-v2")
 
 
 def auto_plan_enabled() -> bool:
     """Check if auto-plan is enabled."""
-    value = os.environ.get("POLARIS_AUTO_PLAN", "1").strip().lower()
+    value = os.environ.get("KERNELONE_AUTO_PLAN", "1").strip().lower()
     return value not in ("0", "false", "no", "off")
 
 
 def is_qa_enabled() -> bool:
     """Check if QA is enabled."""
-    raw = str(os.environ.get("POLARIS_QA_ENABLED", "1")).strip().lower()
+    raw = str(os.environ.get("KERNELONE_QA_ENABLED", "1")).strip().lower()
     return raw not in ("0", "false", "no", "off")
 
 

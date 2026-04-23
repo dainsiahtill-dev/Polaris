@@ -319,7 +319,7 @@ Director 的行为由 Policy 严格控制，支持多层级合并。
 1.  **CLI 参数**: `--risk-block-threshold 0`
 2.  **Task Overrides**: `PM_TASKS.json` 中的 `policy_overrides` 字段
 3.  **Policy 文件**: `.polaris/runtime/director_policy.json`
-4.  **环境变量**: `POLARIS_...`
+4.  **环境变量**: `KERNELONE_...`
 5.  **代码默认值**
 
 **Policy 示例:**

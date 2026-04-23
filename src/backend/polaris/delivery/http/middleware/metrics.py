@@ -7,8 +7,8 @@ Provides Prometheus-compatible metrics for monitoring:
 - Custom application metrics
 
 Configuration:
-- POLARIS_METRICS_ENABLED: Enable/disable metrics (default: true)
-- POLARIS_METRICS_ENDPOINT: Metrics endpoint path (default: /metrics)
+- KERNELONE_METRICS_ENABLED: Enable/disable metrics (default: true)
+- KERNELONE_METRICS_ENDPOINT: Metrics endpoint path (default: /metrics)
 
 Usage:
     from polaris.delivery.http.middleware.metrics import (
@@ -212,7 +212,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
     ) -> None:
         super().__init__(app)
         self._collector = collector or get_metrics_collector()
-        self._enabled = os.environ.get("POLARIS_METRICS_ENABLED", "true").lower() not in ("false", "0", "no", "off")
+        self._enabled = os.environ.get("KERNELONE_METRICS_ENABLED", "true").lower() not in ("false", "0", "no", "off")
 
     def _should_collect(self, path: str) -> bool:
         """Check if path should be tracked."""

@@ -105,18 +105,18 @@ class ToolPolicy:
             except (TypeError, ValueError):
                 return default
 
-        whitelist = _split_csv(os.environ.get("POLARIS_TOOL_POLICY_WHITELIST", ""))
-        blacklist = _split_csv(os.environ.get("POLARIS_TOOL_POLICY_BLACKLIST", ""))
+        whitelist = _split_csv(os.environ.get("KERNELONE_TOOL_POLICY_WHITELIST", ""))
+        blacklist = _split_csv(os.environ.get("KERNELONE_TOOL_POLICY_BLACKLIST", ""))
         return cls(
             whitelist=whitelist,
             blacklist=blacklist,
-            allow_code_write=os.environ.get("POLARIS_ALLOW_CODE_WRITE", "true").lower() in {"1", "true", "yes"},
-            allow_command_execution=os.environ.get("POLARIS_ALLOW_COMMAND_EXEC", "true").lower()
+            allow_code_write=os.environ.get("KERNELONE_ALLOW_CODE_WRITE", "true").lower() in {"1", "true", "yes"},
+            allow_command_execution=os.environ.get("KERNELONE_ALLOW_COMMAND_EXEC", "true").lower()
             in {"1", "true", "yes"},
-            allow_file_delete=os.environ.get("POLARIS_ALLOW_FILE_DELETE", "true").lower() in {"1", "true", "yes"},
+            allow_file_delete=os.environ.get("KERNELONE_ALLOW_FILE_DELETE", "true").lower() in {"1", "true", "yes"},
             max_tool_calls_per_turn=max(
                 1,
-                _safe_int(os.environ.get("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", "64"), 64),
+                _safe_int(os.environ.get("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", "64"), 64),
             ),
         )
 

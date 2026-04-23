@@ -36,14 +36,14 @@ def test_resolve_orchestration_runtime_normalizes_to_workflow() -> None:
     runtime = resolve_orchestration_runtime(
         "nodes",
         environ={
-            "POLARIS_ORCHESTRATION_RUNTIME": "legacy",
+            "KERNELONE_ORCHESTRATION_RUNTIME": "legacy",
         },
     )
     assert runtime == "workflow"
 
 
 def test_engine_resolve_orchestration_runtime_normalizes_to_workflow(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_ORCHESTRATION_RUNTIME", "embedded")
+    monkeypatch.setenv("KERNELONE_ORCHESTRATION_RUNTIME", "embedded")
     args = argparse.Namespace(orchestration_runtime="nodes")
     assert engine._resolve_orchestration_runtime(args) == "workflow"
 
@@ -157,10 +157,10 @@ def test_runtime_adapter_resolves_writable_db_path_from_context_root(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    monkeypatch.delenv("POLARIS_RUNTIME_DB", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_DB", raising=False)
     monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
     monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
-    monkeypatch.setenv("POLARIS_CONTEXT_ROOT", str(workspace))
+    monkeypatch.setenv("KERNELONE_CONTEXT_ROOT", str(workspace))
 
     db_path = RuntimeBackendAdapter._resolve_runtime_db_path()
     assert db_path.endswith(
@@ -321,11 +321,11 @@ def test_get_workflow_runtime_status_uses_workspace_runtime_db_env(
     observed: dict[str, str] = {}
 
     def _fake_describe(workflow_id: str, config) -> dict[str, object]:
-        observed["runtime_db"] = str(os.environ.get("POLARIS_RUNTIME_DB") or "")
+        observed["runtime_db"] = str(os.environ.get("KERNELONE_RUNTIME_DB") or "")
         observed["cache_root"] = str(
             os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") or ""
         )
-        observed["context_root"] = str(os.environ.get("POLARIS_CONTEXT_ROOT") or "")
+        observed["context_root"] = str(os.environ.get("KERNELONE_CONTEXT_ROOT") or "")
         return {"ok": False, "workflow_id": workflow_id, "error": "unreachable"}
 
     monkeypatch.setattr(workflow_status_module, "describe_workflow_sync", _fake_describe)
@@ -335,7 +335,7 @@ def test_get_workflow_runtime_status_uses_workspace_runtime_db_env(
         lambda workflow_id, query_name, config=None: {"ok": False, "error": "query_failed"},
     )
 
-    original_runtime_db = os.environ.get("POLARIS_RUNTIME_DB")
+    original_runtime_db = os.environ.get("KERNELONE_RUNTIME_DB")
     result = workflow_status_module.get_workflow_runtime_status(workspace, cache_root)
 
     assert isinstance(result, dict)
@@ -343,9 +343,9 @@ def test_get_workflow_runtime_status_uses_workspace_runtime_db_env(
     assert observed["cache_root"] == cache_root
     assert observed["context_root"] == workspace
     if original_runtime_db is None:
-        assert os.environ.get("POLARIS_RUNTIME_DB") is None
+        assert os.environ.get("KERNELONE_RUNTIME_DB") is None
     else:
-        assert os.environ.get("POLARIS_RUNTIME_DB") == original_runtime_db
+        assert os.environ.get("KERNELONE_RUNTIME_DB") == original_runtime_db
 
 
 def test_get_workflow_runtime_status_uses_workflow_chain_run_id_for_child_queries(

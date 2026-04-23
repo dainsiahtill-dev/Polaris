@@ -365,9 +365,9 @@
 
   @dataclass(frozen=True, slots=True)
   class ToolLoopSafetyPolicy:
-      max_total_tool_calls: int = 64      # POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS
-      max_stall_cycles: int = 2           # POLARIS_TOOL_LOOP_MAX_STALL_CYCLES
-      max_wall_time_seconds: int = 900    # POLARIS_TOOL_LOOP_MAX_WALL_TIME_SECONDS
+      max_total_tool_calls: int = 64      # KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS
+      max_stall_cycles: int = 2           # KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES
+      max_wall_time_seconds: int = 900    # KERNELONE_TOOL_LOOP_MAX_WALL_TIME_SECONDS
 
   ---
   八、ProviderAdapter 消息转换

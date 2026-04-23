@@ -332,7 +332,7 @@ write tmp → fsync → rename（原子替换）
 > **设计根源**：Polaris 的初衷是**无人值守的自动化写代码工具**。回滚会浪费已消耗的时间和 token（成本），且“写完了再撤销”等于白写。因此系统从根源上采用 **Fix-Forward**：宁愿代码出问题，也保留当前写入，后续通过修缺陷、迭代任务去纠正，而不是自动回滚导致“代码白写”。
 
 ### 条文
-- **默认禁止自动回滚**：执行阶段与 QA 阶段均不自动执行 `restore_snapshot`；`hard_rollback_enabled`、`POLARIS_ENABLE_AUTO_ROLLBACK`、`rollback_on_fail` 默认均为 false。
+- **默认禁止自动回滚**：执行阶段与 QA 阶段均不自动执行 `restore_snapshot`；`hard_rollback_enabled`、`KERNELONE_ENABLE_AUTO_ROLLBACK`、`rollback_on_fail` 默认均为 false。
 - **快照仅作参考**：执行前快照仅用于人工/运维事后参考或显式触发的恢复，不参与默认决策。
 - **优先写前阻断**：通过 preflight、scope gate、capability gate 在落盘前拦截非法或高风险写入，而不是“先写再回滚”。
 

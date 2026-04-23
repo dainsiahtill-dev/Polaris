@@ -43,15 +43,15 @@ class TestPolicyMerge(unittest.TestCase):
 
     def test_build_env_overrides(self):
         env_keys = [
-            "POLARIS_JSONL_BUFFERED",
-            "POLARIS_JSONL_FLUSH_INTERVAL",
-            "POLARIS_RAG_TOPK",
+            "KERNELONE_JSONL_BUFFERED",
+            "KERNELONE_JSONL_FLUSH_INTERVAL",
+            "KERNELONE_RAG_TOPK",
         ]
         originals = {key: os.environ.get(key) for key in env_keys}
         try:
-            os.environ["POLARIS_JSONL_BUFFERED"] = "0"
-            os.environ["POLARIS_JSONL_FLUSH_INTERVAL"] = "0.5"
-            os.environ["POLARIS_RAG_TOPK"] = "4"
+            os.environ["KERNELONE_JSONL_BUFFERED"] = "0"
+            os.environ["KERNELONE_JSONL_FLUSH_INTERVAL"] = "0.5"
+            os.environ["KERNELONE_RAG_TOPK"] = "4"
             overrides = self.policy.build_env_overrides()
             self.assertEqual(overrides["io"]["jsonl_buffered"], "0")
             self.assertEqual(overrides["io"]["flush_interval_sec"], "0.5")

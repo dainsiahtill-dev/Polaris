@@ -51,7 +51,7 @@ class CognitiveMiddleware:
         if enabled is not None:
             return enabled
         # Check environment variable
-        env_value = os.environ.get("POLARIS_ENABLE_COGNITIVE_MIDDLEWARE", "").strip().lower()
+        env_value = os.environ.get("KERNELONE_ENABLE_COGNITIVE_MIDDLEWARE", "").strip().lower()
         if env_value in ("1", "true", "yes", "on"):
             return True
         # Default: cognitive middleware is ENABLED for unified cognitive + role system

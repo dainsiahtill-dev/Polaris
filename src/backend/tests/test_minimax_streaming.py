@@ -41,11 +41,11 @@ class TestMiniMaxStreaming:
         assert masked["Accept"] == "application/json"
 
     def test_debug_flag_defaults_to_off(self, monkeypatch):
-        monkeypatch.delenv("POLARIS_MINIMAX_DEBUG", raising=False)
+        monkeypatch.delenv("KERNELONE_MINIMAX_DEBUG", raising=False)
         assert minimax_provider._debug_enabled({}) is False
 
     def test_debug_flag_can_be_enabled_by_env(self, monkeypatch):
-        monkeypatch.setenv("POLARIS_MINIMAX_DEBUG", "1")
+        monkeypatch.setenv("KERNELONE_MINIMAX_DEBUG", "1")
         assert minimax_provider._debug_enabled({}) is True
 
     @pytest.mark.asyncio

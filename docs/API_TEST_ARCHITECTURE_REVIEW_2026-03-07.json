@@ -176,11 +176,11 @@
           "category": "inconsistent_naming",
           "description": "环境变量命名不一致",
           "locations": [
-            "POLARIS_* 前缀 (主要)",
+            "KERNELONE_* 前缀 (主要)",
             "CODEX_* 前缀 (部分)",
             "OLLAMA_* 前缀 (部分)"
           ],
-          "recommendation": "统一使用 POLARIS_ 前缀"
+          "recommendation": "统一使用 KERNELONE_ 前缀"
         }
       ]
     },
@@ -196,7 +196,7 @@
           "category": "token_in_env",
           "description": "认证 token 通过环境变量传递，存在泄露风险",
           "locations": [
-            "src/backend/config.py - POLARIS_TOKEN",
+            "src/backend/config.py - KERNELONE_TOKEN",
             "src/backend/server.py:226"
           ],
           "recommendation": "使用更安全的 token 存储方案（如密钥管理服务）"

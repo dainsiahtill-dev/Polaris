@@ -83,7 +83,7 @@ def resolve_agents_approval_timeout(args: argparse.Namespace) -> int:
 
 
 def _unattended_mode_enabled() -> bool:
-    raw = str(os.environ.get("POLARIS_UNATTENDED_MODE", "1")).strip().lower()
+    raw = str(os.environ.get("KERNELONE_UNATTENDED_MODE", "1")).strip().lower()
     return raw not in ("0", "false", "no", "off")
 
 
@@ -117,7 +117,7 @@ def maybe_generate_agents_draft(
 
     # Generate using LLM
     try:
-        draft_timeout_raw = os.environ.get("POLARIS_AGENTS_DRAFT_TIMEOUT", "120")
+        draft_timeout_raw = os.environ.get("KERNELONE_AGENTS_DRAFT_TIMEOUT", "120")
         try:
             draft_timeout = int(draft_timeout_raw)
         except (RuntimeError, ValueError):

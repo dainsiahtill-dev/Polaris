@@ -7,7 +7,7 @@ Usage:
         --poll-interval 5.0
 
 Environment variables:
-    POLARIS_WORKSPACE: Used as workspace if --workspace is not provided.
+    KERNELONE_WORKSPACE: Used as workspace if --workspace is not provided.
 """
 
 from __future__ import annotations
@@ -33,10 +33,10 @@ def _resolve_workspace(args: argparse.Namespace) -> str:
     """Resolve workspace from CLI arg or environment."""
     if args.workspace:
         return str(args.workspace).strip()
-    env = os.environ.get("POLARIS_WORKSPACE", "").strip()
+    env = os.environ.get("KERNELONE_WORKSPACE", "").strip()
     if env:
         return env
-    raise ValueError("workspace is required; set --workspace argument or POLARIS_WORKSPACE env var")
+    raise ValueError("workspace is required; set --workspace argument or KERNELONE_WORKSPACE env var")
 
 
 async def run_once(consumer: CEConsumer, args: argparse.Namespace) -> int:
@@ -82,7 +82,7 @@ async def main() -> int:
     parser.add_argument(
         "--workspace",
         type=str,
-        default=os.environ.get("POLARIS_WORKSPACE", ""),
+        default=os.environ.get("KERNELONE_WORKSPACE", ""),
         help="Polaris workspace path (default: from env)",
     )
     parser.add_argument(

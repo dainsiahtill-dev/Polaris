@@ -89,21 +89,21 @@ function parseArgs(argv) {
     taskFile: "",
     evidenceJson: "",
     outputJson: "",
-    round: parseIntArg(process.env.POLARIS_STAGEHAND_ROUND, 1, "POLARIS_STAGEHAND_ROUND"),
-    model: String(process.env.POLARIS_STAGEHAND_MODEL || "gpt-4.1-mini").trim(),
+    round: parseIntArg(process.env.KERNELONE_STAGEHAND_ROUND, 1, "KERNELONE_STAGEHAND_ROUND"),
+    model: String(process.env.KERNELONE_STAGEHAND_MODEL || "gpt-4.1-mini").trim(),
     apiKey: String(process.env.OPENAI_API_KEY || "").trim(),
     baseUrl: String(process.env.OPENAI_BASE_URL || "").trim(),
     startUrl: String(
-      process.env.POLARIS_STAGEHAND_START_URL
-      || process.env.POLARIS_DEV_SERVER_URL
-      || process.env.POLARIS_COMPUTER_USE_START_URL
+      process.env.KERNELONE_STAGEHAND_START_URL
+      || process.env.KERNELONE_DEV_SERVER_URL
+      || process.env.KERNELONE_COMPUTER_USE_START_URL
       || "http://127.0.0.1:5173",
     ).trim(),
-    timeoutMs: parseIntArg(process.env.POLARIS_STAGEHAND_TIMEOUT_MS, 12 * 60 * 1000, "POLARIS_STAGEHAND_TIMEOUT_MS"),
-    width: parseIntArg(process.env.POLARIS_STAGEHAND_WIDTH, 1280, "POLARIS_STAGEHAND_WIDTH"),
-    height: parseIntArg(process.env.POLARIS_STAGEHAND_HEIGHT, 800, "POLARIS_STAGEHAND_HEIGHT"),
-    headless: parseBool(process.env.POLARIS_STAGEHAND_HEADLESS, true),
-    verifyCommand: String(process.env.POLARIS_STAGEHAND_VERIFY_CMD || "").trim(),
+    timeoutMs: parseIntArg(process.env.KERNELONE_STAGEHAND_TIMEOUT_MS, 12 * 60 * 1000, "KERNELONE_STAGEHAND_TIMEOUT_MS"),
+    width: parseIntArg(process.env.KERNELONE_STAGEHAND_WIDTH, 1280, "KERNELONE_STAGEHAND_WIDTH"),
+    height: parseIntArg(process.env.KERNELONE_STAGEHAND_HEIGHT, 800, "KERNELONE_STAGEHAND_HEIGHT"),
+    headless: parseBool(process.env.KERNELONE_STAGEHAND_HEADLESS, true),
+    verifyCommand: String(process.env.KERNELONE_STAGEHAND_VERIFY_CMD || "").trim(),
     dryRun: false,
   };
 

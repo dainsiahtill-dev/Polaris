@@ -50,11 +50,11 @@ Stage mapping:
 
 ## Rollout Mode
 
-- `POLARIS_TASK_MARKET_MODE=off`: disabled (default)
-- `POLARIS_TASK_MARKET_MODE=shadow`: PM dispatch keeps legacy direct workflow and also mirrors tasks into market
-- `POLARIS_TASK_MARKET_MODE=mainline`: PM publishes to `pending_design` and exits mainline dispatch
-- `POLARIS_TASK_MARKET_MODE=mainline-design`: alias of `mainline`
-- `POLARIS_TASK_MARKET_MODE=mainline-full`: PM publishes then runs bounded CE -> Director -> QA inline consumer loop
+- `KERNELONE_TASK_MARKET_MODE=off`: disabled (default)
+- `KERNELONE_TASK_MARKET_MODE=shadow`: PM dispatch keeps legacy direct workflow and also mirrors tasks into market
+- `KERNELONE_TASK_MARKET_MODE=mainline`: PM publishes to `pending_design` and exits mainline dispatch
+- `KERNELONE_TASK_MARKET_MODE=mainline-design`: alias of `mainline`
+- `KERNELONE_TASK_MARKET_MODE=mainline-full`: PM publishes then runs bounded CE -> Director -> QA inline consumer loop
 
 ## Notes
 

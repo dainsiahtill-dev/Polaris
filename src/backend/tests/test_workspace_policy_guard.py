@@ -124,27 +124,27 @@ def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) 
     )
     sync_process_settings_environment(settings)
 
-    assert os.environ.get("POLARIS_NATS_ENABLED") == "0"
-    assert os.environ.get("POLARIS_NATS_REQUIRED") == "0"
-    assert os.environ.get("POLARIS_NATS_URL") == "nats://127.0.0.1:4555"
-    assert os.environ.get("POLARIS_NATS_USER") == "demo"
-    assert os.environ.get("POLARIS_NATS_PASSWORD") == "secret"
-    assert os.environ.get("POLARIS_NATS_CONNECT_TIMEOUT") == "4.5"
-    assert os.environ.get("POLARIS_NATS_RECONNECT_WAIT") == "2.0"
-    assert os.environ.get("POLARIS_NATS_MAX_RECONNECT") == "7"
-    assert os.environ.get("POLARIS_NATS_STREAM_NAME") == "HP_RUNTIME"
+    assert os.environ.get("KERNELONE_NATS_ENABLED") == "0"
+    assert os.environ.get("KERNELONE_NATS_REQUIRED") == "0"
+    assert os.environ.get("KERNELONE_NATS_URL") == "nats://127.0.0.1:4555"
+    assert os.environ.get("KERNELONE_NATS_USER") == "demo"
+    assert os.environ.get("KERNELONE_NATS_PASSWORD") == "secret"
+    assert os.environ.get("KERNELONE_NATS_CONNECT_TIMEOUT") == "4.5"
+    assert os.environ.get("KERNELONE_NATS_RECONNECT_WAIT") == "2.0"
+    assert os.environ.get("KERNELONE_NATS_MAX_RECONNECT") == "7"
+    assert os.environ.get("KERNELONE_NATS_STREAM_NAME") == "HP_RUNTIME"
 
     for name in (
         "KERNELONE_WORKSPACE",
-        "POLARIS_NATS_ENABLED",
-        "POLARIS_NATS_REQUIRED",
-        "POLARIS_NATS_URL",
-        "POLARIS_NATS_USER",
-        "POLARIS_NATS_PASSWORD",
-        "POLARIS_NATS_CONNECT_TIMEOUT",
-        "POLARIS_NATS_RECONNECT_WAIT",
-        "POLARIS_NATS_MAX_RECONNECT",
-        "POLARIS_NATS_STREAM_NAME",
+        "KERNELONE_NATS_ENABLED",
+        "KERNELONE_NATS_REQUIRED",
+        "KERNELONE_NATS_URL",
+        "KERNELONE_NATS_USER",
+        "KERNELONE_NATS_PASSWORD",
+        "KERNELONE_NATS_CONNECT_TIMEOUT",
+        "KERNELONE_NATS_RECONNECT_WAIT",
+        "KERNELONE_NATS_MAX_RECONNECT",
+        "KERNELONE_NATS_STREAM_NAME",
     ):
         os.environ.pop(name, None)
 

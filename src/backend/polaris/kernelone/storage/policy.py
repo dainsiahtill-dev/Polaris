@@ -349,7 +349,7 @@ def get_lifecycle_for_path(logical_path: str) -> Lifecycle:
 #
 # Migration path:
 #   from polaris.cells.audit.verdict.internal.artifact_service import (
-#       POLARIS_ARTIFACT_POLICY_METADATA,
+#       KERNELONE_ARTIFACT_POLICY_METADATA,
 #       get_artifact_policy_metadata,
 #       should_compress_artifact,
 #       should_archive_artifact,

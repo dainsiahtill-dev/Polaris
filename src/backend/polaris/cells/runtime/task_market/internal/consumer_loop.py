@@ -77,7 +77,7 @@ class ConsumerLoopManager:
             poll_interval
             if poll_interval is not None
             else _read_float_env(
-                "POLARIS_TASK_MARKET_DURABLE_POLL_INTERVAL",
+                "KERNELONE_TASK_MARKET_DURABLE_POLL_INTERVAL",
                 default=5.0,
                 minimum=0.05,
                 maximum=300.0,
@@ -87,7 +87,7 @@ class ConsumerLoopManager:
             design_visibility_timeout
             if design_visibility_timeout is not None
             else _read_positive_int_env(
-                "POLARIS_TASK_MARKET_DESIGN_VISIBILITY_TIMEOUT_SECONDS",
+                "KERNELONE_TASK_MARKET_DESIGN_VISIBILITY_TIMEOUT_SECONDS",
                 default=900,
                 minimum=30,
                 maximum=7200,
@@ -97,7 +97,7 @@ class ConsumerLoopManager:
             exec_visibility_timeout
             if exec_visibility_timeout is not None
             else _read_positive_int_env(
-                "POLARIS_TASK_MARKET_EXEC_VISIBILITY_TIMEOUT_SECONDS",
+                "KERNELONE_TASK_MARKET_EXEC_VISIBILITY_TIMEOUT_SECONDS",
                 default=1800,
                 minimum=30,
                 maximum=7200,
@@ -107,7 +107,7 @@ class ConsumerLoopManager:
             qa_visibility_timeout
             if qa_visibility_timeout is not None
             else _read_positive_int_env(
-                "POLARIS_TASK_MARKET_QA_VISIBILITY_TIMEOUT_SECONDS",
+                "KERNELONE_TASK_MARKET_QA_VISIBILITY_TIMEOUT_SECONDS",
                 default=900,
                 minimum=30,
                 maximum=7200,
@@ -118,7 +118,7 @@ class ConsumerLoopManager:
             outbox_relay_interval
             if outbox_relay_interval is not None
             else _read_float_env(
-                "POLARIS_TASK_MARKET_OUTBOX_RELAY_INTERVAL",
+                "KERNELONE_TASK_MARKET_OUTBOX_RELAY_INTERVAL",
                 default=2.0,
                 minimum=0.05,
                 maximum=60.0,

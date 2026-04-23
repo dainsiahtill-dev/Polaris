@@ -24,12 +24,12 @@ def test_normalize_invalid_level_raises() -> None:
 
 
 def test_resolve_prefers_explicit_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLARIS_CLI_LOG_LEVEL", "error")
+    monkeypatch.setenv("KERNELONE_CLI_LOG_LEVEL", "error")
     assert resolve_log_level("info") == "info"
 
 
 def test_resolve_reads_env_when_flag_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLARIS_CLI_LOG_LEVEL", "warn")
+    monkeypatch.setenv("KERNELONE_CLI_LOG_LEVEL", "warn")
     assert resolve_log_level(None) == "warning"
 
 

@@ -120,7 +120,7 @@ def service(temp_workspace: Path) -> FactoryRunService:
 def client(temp_workspace: Path, service: FactoryRunService, monkeypatch: pytest.MonkeyPatch):
     # Set a test token before creating the app (IRONWALL-1: auth is now enforced)
     test_token = "test-factory-router-token-2024"
-    monkeypatch.setenv("POLARIS_TOKEN", test_token)
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     app = create_app(Settings(workspace=temp_workspace))
     monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
 

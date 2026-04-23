@@ -22,7 +22,7 @@ def resolve_fsync_mode(raw_value: str | None = None) -> str:
 
     Args:
         raw_value: Optional explicit mode token. When omitted, resolves
-            KERNELONE_IO_FSYNC_MODE (with POLARIS_IO_FSYNC_MODE fallback).
+            KERNELONE_IO_FSYNC_MODE (with KERNELONE_IO_FSYNC_MODE fallback).
 
     Returns:
         Lower-cased normalized mode token.

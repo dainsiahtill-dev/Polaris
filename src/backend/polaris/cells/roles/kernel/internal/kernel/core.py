@@ -199,7 +199,7 @@ class RoleExecutionKernel:
 
         # 结构化输出配置
         if use_structured_output is None:
-            use_structured_output = os.environ.get("POLARIS_USE_STRUCTURED_OUTPUT", "false").lower() in (
+            use_structured_output = os.environ.get("KERNELONE_USE_STRUCTURED_OUTPUT", "false").lower() in (
                 "true",
                 "1",
                 "yes",

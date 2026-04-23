@@ -229,7 +229,7 @@
 ### P2-004 环境变量前缀统一 ✅
 | 成果 | 数量 |
 |------|------|
-| POLARIS_ 在 kernelone | 185 → 162 |
+| KERNELONE_ 在 kernelone | 185 → 162 |
 | KERNELONE_ 在 kernelone | 158 → 201 |
 | 环境映射添加 | 9个 |
 
@@ -481,7 +481,7 @@ class ToolExecutorProtocol(Protocol):
 
 | 前缀 | 出现次数 | 建议统一 |
 |------|----------|----------|
-| `POLARIS_` | 769处 | 业务层配置 |
+| `KERNELONE_` | 769处 | 业务层配置 |
 | `KERNELONE_` | 225处 | 基础设施层配置 |
 
 **问题**: 两前缀在 kernelone 模块混用，如 `kernelone/llm/config_store.py`

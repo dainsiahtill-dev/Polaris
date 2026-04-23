@@ -14,12 +14,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Canonical env var names (KERNELONE_* primary, POLARIS_* fallback handled by resolver)
+# Canonical env var names (KERNELONE_* primary, KERNELONE_* fallback handled by resolver)
 CONTEXT_OS_ENABLED_ENV = "KERNELONE_CONTEXT_OS_ENABLED"
 COGNITIVE_RUNTIME_MODE_ENV = "KERNELONE_COGNITIVE_RUNTIME_MODE"
-# POLARIS_* fallbacks
-CONTEXT_OS_ENABLED_ENV_FALLBACK = "POLARIS_CONTEXT_OS_ENABLED"
-COGNITIVE_RUNTIME_MODE_ENV_FALLBACK = "POLARIS_COGNITIVE_RUNTIME_MODE"
+# KERNELONE_* fallbacks
+CONTEXT_OS_ENABLED_ENV_FALLBACK = "KERNELONE_CONTEXT_OS_ENABLED"
+COGNITIVE_RUNTIME_MODE_ENV_FALLBACK = "KERNELONE_COGNITIVE_RUNTIME_MODE"
 
 _TRUE_TOKENS = {"1", "true", "yes", "on", "enabled"}
 _FALSE_TOKENS = {"0", "false", "no", "off", "disabled"}
@@ -139,7 +139,7 @@ def resolve_context_os_enabled(
     )
     if env_value is not None:
         return env_value
-    # POLARIS_* fallback
+    # KERNELONE_* fallback
     env_value = _coerce_bool(
         os.getenv(CONTEXT_OS_ENABLED_ENV_FALLBACK, ""),
         default=None,
@@ -161,7 +161,7 @@ def resolve_cognitive_runtime_mode(
     Priority:
     1. context/metadata explicit mode
     2. context/metadata boolean enabled flag
-    3. environment variable (KERNELONE_COGNITIVE_RUNTIME_MODE or POLARIS_COGNITIVE_RUNTIME_MODE)
+    3. environment variable (KERNELONE_COGNITIVE_RUNTIME_MODE or KERNELONE_COGNITIVE_RUNTIME_MODE)
     4. default mode (shadow)
 
     Mode behaviors:
@@ -185,7 +185,7 @@ def resolve_cognitive_runtime_mode(
     env_mode = os.getenv(COGNITIVE_RUNTIME_MODE_ENV, "")
     if str(env_mode or "").strip():
         return _coerce_mode(env_mode, default=default, env_var_name=COGNITIVE_RUNTIME_MODE_ENV)
-    # POLARIS_* fallback
+    # KERNELONE_* fallback
     env_mode = os.getenv(COGNITIVE_RUNTIME_MODE_ENV_FALLBACK, "")
     if str(env_mode or "").strip():
         return _coerce_mode(env_mode, default=default, env_var_name=COGNITIVE_RUNTIME_MODE_ENV_FALLBACK)

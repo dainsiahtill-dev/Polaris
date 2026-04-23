@@ -74,22 +74,22 @@ class TestNATSConnectionConfig:
             assert config.url == "nats://custom:5222"
 
     def test_polaris_nats_url_fallback(self) -> None:
-        """POLARIS_NATS_URL should be used when NATS_URL not set."""
+        """KERNELONE_NATS_URL should be used when NATS_URL not set."""
         with patch.dict(
             os.environ,
-            {"POLARIS_NATS_URL": "nats://legacy:4222"},
+            {"KERNELONE_NATS_URL": "nats://legacy:4222"},
             clear=True,
         ):
             config = NATSConnectionConfig()
             assert config.url == "nats://legacy:4222"
 
     def test_nats_url_priority_over_polaris(self) -> None:
-        """NATS_URL should take priority over POLARIS_NATS_URL."""
+        """NATS_URL should take priority over KERNELONE_NATS_URL."""
         with patch.dict(
             os.environ,
             {
                 "NATS_URL": "nats://explicit:4222",
-                "POLARIS_NATS_URL": "nats://legacy:4222",
+                "KERNELONE_NATS_URL": "nats://legacy:4222",
             },
         ):
             config = NATSConnectionConfig()
@@ -120,8 +120,8 @@ class TestNATSConnectionConfig:
             assert config.enabled is False
 
     def test_polaris_nats_enabled_true(self) -> None:
-        """POLARIS_NATS_ENABLED=true should enable NATS."""
-        with patch.dict(os.environ, {"POLARIS_NATS_ENABLED": "true"}):
+        """KERNELONE_NATS_ENABLED=true should enable NATS."""
+        with patch.dict(os.environ, {"KERNELONE_NATS_ENABLED": "true"}):
             config = NATSConnectionConfig()
             assert config.enabled is True
 

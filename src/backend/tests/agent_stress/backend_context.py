@@ -24,7 +24,7 @@ def resolve_polaris_root(
     active_env = env or os.environ
     active_platform = platform or os.name
 
-    root_override = str(active_env.get("POLARIS_ROOT") or "").strip()
+    root_override = str(active_env.get("KERNELONE_ROOT") or "").strip()
     if root_override:
         return _expand_path(root_override)
 
@@ -97,8 +97,8 @@ def resolve_backend_context(
             source="explicit",
         )
 
-    env_url = str(active_env.get("POLARIS_BASE_URL") or "").strip()
-    env_token = str(active_env.get("POLARIS_TOKEN") or "").strip()
+    env_url = str(active_env.get("KERNELONE_BASE_URL") or "").strip()
+    env_token = str(active_env.get("KERNELONE_TOKEN") or "").strip()
     if env_url or env_token:
         return BackendContext(
             backend_url=env_url,

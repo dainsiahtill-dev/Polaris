@@ -315,7 +315,7 @@ def _kernel_db_for(workspace: str) -> KernelDatabase:
 | P2-007 | State字符串→Enum | ✅ 完成 | TurnState/TaskPhase/WorkflowTaskStatus/ActivityStatus |
 | P2-008 | buffer_size重复 | ✅ 完成 | 2常量, 5文件替换 |
 | P2-009 | max_workers合并 | ✅ 完成 | 2常量, 11文件统一 |
-| P2-010 | POLARIS_迁移 | ✅ 完成 | 10文件24处KERNELONE_回退 |
+| P2-010 | KERNELONE_迁移 | ✅ 完成 | 10文件24处KERNELONE_回退 |
 
 ---
 
@@ -380,7 +380,7 @@ def _kernel_db_for(workspace: str) -> KernelDatabase:
 
 ### 4.7 EnvVar命名
 
-50+ 处仅用 `POLARIS_*` 无 `KERNELONE_` 回退（已在P1-027中部分修复）。
+50+ 处仅用 `KERNELONE_*` 无 `KERNELONE_` 回退（已在P1-027中部分修复）。
 
 ---
 
@@ -1202,7 +1202,7 @@ constants.py 定义 `EVENT_TYPE_TOOL_CALL = "tool_call"`，与 TypedEvent 的 `"
 
 ## 第十四部分：Config/Env/Constants 层新发现问题 (2026-04-05)
 
-### [P1-CONFIG-001] POLARIS_/KERNELONE_前缀混用40+处 — HIGH
+### [P1-CONFIG-001] KERNELONE_/KERNELONE_前缀混用40+处 — HIGH
 
 **位置**: 
 - `polaris/kernelone/llm/config_store.py:993-994` — RAMDISK_ROOT
@@ -1265,7 +1265,7 @@ DEFAULT_RENDERER_PORT: int = 5173
 - Storage: ensure_dir重复实现, 原子写入重复, 路径类型混用, 循环依赖, FileSystem抽象分裂 (5)
 - Events: 事件类型4套定义 (1)
 - Types: Result类型两版本, ToolResult 4定义, ToolCall多版本 (3)
-- Config: POLARIS_/KERNELONE_混用 (1)
+- Config: KERNELONE_/KERNELONE_混用 (1)
 - Cells/Roles: 6个ACGA违规导入 (6)
 
 ---
@@ -1353,7 +1353,7 @@ DEFAULT_RENDERER_PORT: int = 5173
 ### Config/Env/Constants 层 — ✅ 完成
 | 问题 | 修复方案 | 状态 |
 |------|---------|------|
-| P1-CONFIG-001: POLARIS_/KERNELONE_混用 | 40+处统一使用 `_runtime_config` 解析 | ✅ |
+| P1-CONFIG-001: KERNELONE_/KERNELONE_混用 | 40+处统一使用 `_runtime_config` 解析 | ✅ |
 | P1-CONFIG-002: JSONL常量重复 | canonical 常量添加到 `constants.py` | ✅ |
 | P1-CONFIG-003: 魔法数字20+处 | 新增20+常量到 `constants.py` | ✅ |
 | P1-CONFIG-004: 默认端口未收敛 | `DEFAULT_BACKEND_PORT`/`DEFAULT_RENDERER_PORT` 移到 `constants.py` | ✅ |

@@ -163,7 +163,7 @@ def _resolve_task_market_mode() -> str:
 
 def _resolve_task_market_rollout_mode() -> str:
     """Resolve task-market rollout phase from environment."""
-    raw_mode = str(os.environ.get("POLARIS_TASK_MARKET_MODE", "off") or "off").strip().lower()
+    raw_mode = str(os.environ.get("KERNELONE_TASK_MARKET_MODE", "off") or "off").strip().lower()
     if raw_mode in {"off", "shadow", "mainline", "mainline-design", "mainline-full", "mainline-durable"}:
         return raw_mode
     if raw_mode == "mainline-exec":
@@ -374,31 +374,31 @@ def _run_inline_task_market_consumers(
 
     worker_suffix = f"{iteration}-{_hash_payload(run_id)[:8]}"
     max_cycles = _read_positive_int_env(
-        "POLARIS_TASK_MARKET_MAINLINE_FULL_MAX_CYCLES",
+        "KERNELONE_TASK_MARKET_MAINLINE_FULL_MAX_CYCLES",
         default=2,
         minimum=1,
         maximum=20,
     )
     design_timeout = _read_positive_int_env(
-        "POLARIS_TASK_MARKET_DESIGN_VISIBILITY_TIMEOUT_SECONDS",
+        "KERNELONE_TASK_MARKET_DESIGN_VISIBILITY_TIMEOUT_SECONDS",
         default=900,
         minimum=30,
         maximum=7200,
     )
     exec_timeout = _read_positive_int_env(
-        "POLARIS_TASK_MARKET_EXEC_VISIBILITY_TIMEOUT_SECONDS",
+        "KERNELONE_TASK_MARKET_EXEC_VISIBILITY_TIMEOUT_SECONDS",
         default=1800,
         minimum=30,
         maximum=7200,
     )
     qa_timeout = _read_positive_int_env(
-        "POLARIS_TASK_MARKET_QA_VISIBILITY_TIMEOUT_SECONDS",
+        "KERNELONE_TASK_MARKET_QA_VISIBILITY_TIMEOUT_SECONDS",
         default=900,
         minimum=30,
         maximum=7200,
     )
     enable_safe_parallel = _read_bool_env(
-        "POLARIS_TASK_MARKET_ENABLE_SAFE_PARALLEL_DIRECTOR",
+        "KERNELONE_TASK_MARKET_ENABLE_SAFE_PARALLEL_DIRECTOR",
         default=False,
     )
 
@@ -1487,7 +1487,7 @@ def run_integration_qa(
     get_director_task_status_summary, to_bool = _get_tasks_utils()
 
     enabled = to_bool(
-        os.environ.get("POLARIS_INTEGRATION_QA_ENABLED", "1"),
+        os.environ.get("KERNELONE_INTEGRATION_QA_ENABLED", "1"),
         True,
     )
 
@@ -1800,7 +1800,7 @@ def run_post_dispatch_integration_qa(
     enabled = to_bool(
         getattr(args, "integration_qa", None),
         default=to_bool(
-            os.environ.get("POLARIS_INTEGRATION_QA_ENABLED", "1"),
+            os.environ.get("KERNELONE_INTEGRATION_QA_ENABLED", "1"),
             default=True,
         ),
     )

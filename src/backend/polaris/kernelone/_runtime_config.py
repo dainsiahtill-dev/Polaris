@@ -5,7 +5,7 @@ It is product-agnostic: KernelOne itself knows nothing about Polaris branding.
 
 Design principles:
 1. Generic KERNELONE_* env vars are the canonical and only source.
-2. POLARIS_* env vars are no longer supported (legacy fallback removed).
+2. KERNELONE_* env vars are no longer supported (legacy fallback removed).
 3. Workspace metadata directory name is a logical prefix, not hardcoded,
    injected by the application layer.
 

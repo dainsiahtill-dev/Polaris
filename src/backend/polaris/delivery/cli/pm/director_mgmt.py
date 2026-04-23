@@ -71,7 +71,7 @@ def run_director_once(
 
     # Determine effective director type once for this run.
     director_type = (
-        str(getattr(args, "director_type", None) or os.getenv("POLARIS_DIRECTOR_TYPE", "auto")).strip().lower()
+        str(getattr(args, "director_type", None) or os.getenv("KERNELONE_DIRECTOR_TYPE", "auto")).strip().lower()
     )
     if director_type not in {"auto", "script", "none"}:
         error_text = f"Unsupported director_type '{director_type}'. Allowed: auto, script, none."

@@ -36,8 +36,8 @@ function envEnabled(name, defaultValue) {
 
 function useColor(ttyCapable) {
   if (!ttyCapable) return false;
-  if (!envEnabled("POLARIS_PRETTY_LOGS", true)) return false;
-  if (!envEnabled("POLARIS_LOG_COLORS", true)) return false;
+  if (!envEnabled("KERNELONE_PRETTY_LOGS", true)) return false;
+  if (!envEnabled("KERNELONE_LOG_COLORS", true)) return false;
   if (process.env.NO_COLOR !== undefined) return false;
   return true;
 }
@@ -233,7 +233,7 @@ function formatLogLine(sourceTag, line, options = {}) {
   const innerTag = tag && tagLower !== sourceLower ? tag : "";
   const message = tag && tagLower === sourceLower ? rest : tag ? rest : raw;
 
-  const prettyEnabled = envEnabled("POLARIS_PRETTY_LOGS", true);
+  const prettyEnabled = envEnabled("KERNELONE_PRETTY_LOGS", true);
   if (!prettyEnabled) {
     return formatPlain(source, message, innerTag, message);
   }

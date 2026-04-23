@@ -26,7 +26,7 @@
 
 | 文档 | 路径 | 更新类型 | 优先级 |
 |------|------|----------|--------|
-| POLARIS_KERNEL_MIGRATION_LOG.md | `src/backend/docs/POLARIS_KERNEL_MIGRATION_LOG.md` | 新增重构记录 | P1 |
+| KERNELONE_KERNEL_MIGRATION_LOG.md | `src/backend/docs/KERNELONE_KERNEL_MIGRATION_LOG.md` | 新增重构记录 | P1 |
 | TurnEngine Transactional Tool Flow | `src/backend/docs/TurnEngine Transactional Tool Flow - 完整落地蓝图.md` | 导入路径更新 | P1 |
 
 ### 2.3 Cell README.agent.md (P1)
@@ -218,7 +218,7 @@ polaris/cells/roles/runtime/public/service/
 
 ---
 
-### 3.4 POLARIS_KERNEL_MIGRATION_LOG.md 更新
+### 3.4 KERNELONE_KERNEL_MIGRATION_LOG.md 更新
 
 **新增 Phase 8: 模块化重构**
 
@@ -403,7 +403,7 @@ tool_loop_controller
 | 优先级 | 文档 | 原因 |
 |--------|------|------|
 | P0 | AGENTS.md, CLAUDE.md | 架构真相，必须同步 |
-| P1 | POLARIS_KERNEL_MIGRATION_LOG.md, README.agent.md | 迁移记录，Cell 文档 |
+| P1 | KERNELONE_KERNEL_MIGRATION_LOG.md, README.agent.md | 迁移记录，Cell 文档 |
 | P2 | INTERFACE_CONTRACT.md, 测试文档 | 契约定义，测试说明 |
 
 ---
@@ -425,7 +425,7 @@ tool_loop_controller
 
 - [ ] 更新 AGENTS.md §15.X
 - [ ] 更新 CLAUDE.md §2.7
-- [ ] 更新 POLARIS_KERNEL_MIGRATION_LOG.md
+- [ ] 更新 KERNELONE_KERNEL_MIGRATION_LOG.md
 
 ### Wave 4 完成后
 
@@ -460,7 +460,7 @@ grep -r "llm_caller.py" docs/ --include="*.md"
 | AGENTS.md 更新 | Pending |
 | CLAUDE.md (根目录) 更新 | Pending |
 | CLAUDE.md (backend) 更新 | Pending |
-| POLARIS_KERNEL_MIGRATION_LOG.md 更新 | Pending |
+| KERNELONE_KERNEL_MIGRATION_LOG.md 更新 | Pending |
 | INTERFACE_CONTRACT.md 新建 | Pending |
 | README.agent.md 更新 | Pending |
 | CHANGELOG 条目 | Pending |
@@ -472,7 +472,7 @@ grep -r "llm_caller.py" docs/ --include="*.md"
 ### A. 参考文档
 
 - `src/backend/AGENTS.md` - 后端权威入口
-- `src/backend/docs/POLARIS_KERNEL_MIGRATION_LOG.md` - 迁移日志
+- `src/backend/docs/KERNELONE_KERNEL_MIGRATION_LOG.md` - 迁移日志
 - `docs/blueprints/refactoring-1000-lines-20260331/BLUEPRINT.md` - 重构蓝图
 
 ### B. 文档同步协议

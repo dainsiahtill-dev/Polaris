@@ -259,7 +259,7 @@ def _persist_meeting_learning_records(
 ) -> dict[str, Any]:
     """Persist meeting records to learning datasets."""
     enabled = _normalize_bool(
-        os.environ.get("POLARIS_MEETING_DATASET_ENABLED"),
+        os.environ.get("KERNELONE_MEETING_DATASET_ENABLED"),
         default=True,
     )
     if not enabled:
@@ -380,7 +380,7 @@ def _run_tri_council_round(
     """Run a tri-council coordination round."""
     stage_token = str(stage or "").strip().lower() or "unknown"
     discuss_after_retry = _env_non_negative_int(
-        "POLARIS_TRI_COUNCIL_START_RETRY",
+        "KERNELONE_TRI_COUNCIL_START_RETRY",
         _DEFAULT_TRI_COUNCIL_START_RETRY,
     )
     if discuss_after_retry < 0:

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-SELF_UPGRADE_MODE_ENV = "POLARIS_SELF_UPGRADE_MODE"
+SELF_UPGRADE_MODE_ENV = "KERNELONE_SELF_UPGRADE_MODE"
 
 
 def _coerce_bool(value: Any) -> bool:

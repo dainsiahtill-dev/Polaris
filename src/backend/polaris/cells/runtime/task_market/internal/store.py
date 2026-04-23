@@ -444,12 +444,12 @@ TaskMarketStore: TypeAlias = TaskMarketStoreProtocol
 def get_store(workspace: str, backend: BackendType | None = None) -> TaskMarketStore:
     """Return the appropriate store backend.
 
-    The backend can be overridden via the ``POLARIS_TASK_MARKET_STORE``
+    The backend can be overridden via the ``KERNELONE_TASK_MARKET_STORE``
     environment variable or the ``backend`` parameter.  Default is ``sqlite``
     when the parameter is not provided.
     """
     if backend is None:
-        backend = str(os.environ.get("POLARIS_TASK_MARKET_STORE", "sqlite") or "sqlite").strip().lower()  # type: ignore[assignment]
+        backend = str(os.environ.get("KERNELONE_TASK_MARKET_STORE", "sqlite") or "sqlite").strip().lower()  # type: ignore[assignment]
 
     if backend == "json":
         return TaskMarketJSONStore(workspace)

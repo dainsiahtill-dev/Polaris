@@ -133,7 +133,7 @@ STDIN 非 TTY 检测:
 
 **设计：**
 ```
-POLARIS_CLI_KEYMODE=vi|emacs|auto (default: auto)
+KERNELONE_CLI_KEYMODE=vi|emacs|auto (default: auto)
     └── readline.parse_and_bind() 设置键盘模式
 ```
 
@@ -149,7 +149,7 @@ POLARIS_CLI_KEYMODE=vi|emacs|auto (default: auto)
 - [ ] F6: Banner 显示 session 创建时间、消息数
 - [ ] F7: `--dry-run` 显示将执行的工具但不执行
 - [ ] F8: `cat commands.txt | polaris console --batch` 正常工作
-- [ ] F9: `POLARIS_CLI_KEYMODE=vi` 启用 Vi 模式
+- [ ] F9: `KERNELONE_CLI_KEYMODE=vi` 启用 Vi 模式
 - [ ] F10: `/model <name>` 在 REPL 内切换模型
 - [ ] 所有 pytest 通过
 - [ ] Ruff format + check 通过

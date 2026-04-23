@@ -86,7 +86,7 @@ def _get_desktop_app_keywords() -> list[str]:
     ]
 
     # 允许通过环境变量扩展关键词
-    extra_keywords_env = os.environ.get("POLARIS_DESKTOP_APP_KEYWORDS", "")
+    extra_keywords_env = os.environ.get("KERNELONE_DESKTOP_APP_KEYWORDS", "")
     if extra_keywords_env:
         extra = [k.strip().lower() for k in extra_keywords_env.split(",") if k.strip()]
         default_keywords.extend(extra)

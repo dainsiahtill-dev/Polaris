@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 # Provider native message format support configuration
 _NATIVE_MESSAGE_PROVIDERS = frozenset(
-    os.environ.get("POLARIS_NATIVE_MESSAGE_PROVIDERS", "anthropic,claude,openai,gpt,kimi").lower().split(",")
+    os.environ.get("KERNELONE_NATIVE_MESSAGE_PROVIDERS", "anthropic,claude,openai,gpt,kimi").lower().split(",")
 )
 
 # Director timeout configuration
 _DIRECTOR_ROLE_ID = "director"
-_DIRECTOR_TIMEOUT_ENV = "POLARIS_DIRECTOR_LLM_TIMEOUT_SECONDS"
+_DIRECTOR_TIMEOUT_ENV = "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"
 _DEFAULT_DIRECTOR_TIMEOUT_SECONDS: float = DIRECTOR_TIMEOUT_SECONDS
 
 

@@ -136,7 +136,7 @@ class TestBuildContextWindowContextOSOverlay:
 
     def test_build_context_window_can_disable_overlay_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         original = _base_pack()
-        monkeypatch.setenv("POLARIS_CONTEXT_OS_ENABLED", "off")
+        monkeypatch.setenv("KERNELONE_CONTEXT_OS_ENABLED", "off")
         with patch(
             "polaris.cells.context.engine.public.service._build_context_pack",
             return_value=original,

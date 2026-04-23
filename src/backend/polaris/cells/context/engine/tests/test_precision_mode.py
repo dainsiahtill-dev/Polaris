@@ -51,22 +51,22 @@ class TestNormalizeCostClass:
 
 class TestResolveCostClass:
     def test_explicit_value_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("POLARIS_COST_MODEL", "METERED")
+        monkeypatch.setenv("KERNELONE_COST_MODEL", "METERED")
         assert resolve_cost_class("FIXED") == "FIXED"
 
     def test_env_polaris_cost_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("POLARIS_COST_CLASS", raising=False)
-        monkeypatch.setenv("POLARIS_COST_MODEL", "METERED")
+        monkeypatch.delenv("KERNELONE_COST_CLASS", raising=False)
+        monkeypatch.setenv("KERNELONE_COST_MODEL", "METERED")
         assert resolve_cost_class() == "METERED"
 
     def test_env_polaris_cost_class_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("POLARIS_COST_CLASS", "FIXED")
+        monkeypatch.setenv("KERNELONE_COST_CLASS", "FIXED")
         # COST_MODEL takes precedence
         assert resolve_cost_class() == "FIXED"
 
     def test_no_env_defaults_to_local(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("POLARIS_COST_MODEL", raising=False)
-        monkeypatch.delenv("POLARIS_COST_CLASS", raising=False)
+        monkeypatch.delenv("KERNELONE_COST_MODEL", raising=False)
+        monkeypatch.delenv("KERNELONE_COST_CLASS", raising=False)
         assert resolve_cost_class() == "LOCAL"
 
 

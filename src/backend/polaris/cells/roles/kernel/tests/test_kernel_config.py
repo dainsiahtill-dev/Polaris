@@ -92,8 +92,8 @@ class TestKernelConfigEnvVars:
             assert config.retry_delay == 2.5
 
     def test_env_override_quality_threshold(self) -> None:
-        """测试 POLARIS_QUALITY_THRESHOLD 环境变量覆盖"""
-        with patch.dict(os.environ, {"POLARIS_QUALITY_THRESHOLD": "75.0"}):
+        """测试 KERNELONE_QUALITY_THRESHOLD 环境变量覆盖"""
+        with patch.dict(os.environ, {"KERNELONE_QUALITY_THRESHOLD": "75.0"}):
             config = KernelConfig()
             assert config.quality_threshold == 75.0
 
@@ -104,7 +104,7 @@ class TestKernelConfigEnvVars:
             {
                 "KERNELONE_MAX_RETRIES": "5",
                 "KERNELONE_RETRY_DELAY": "3.0",
-                "POLARIS_QUALITY_THRESHOLD": "80.0",
+                "KERNELONE_QUALITY_THRESHOLD": "80.0",
             },
         ):
             config = KernelConfig()
@@ -125,7 +125,7 @@ class TestKernelConfigEnvVars:
             {
                 "KERNELONE_MAX_RETRIES": "8",
                 "KERNELONE_RETRY_DELAY": "4.0",
-                "POLARIS_QUALITY_THRESHOLD": "85.0",
+                "KERNELONE_QUALITY_THRESHOLD": "85.0",
             },
         ):
             config = KernelConfig.from_env()

@@ -350,7 +350,7 @@ class TestLoopPmUtils(unittest.TestCase):
 
     def test_execute_non_director_tasks_generates_defect_followup(self):
         with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
                 payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
@@ -403,7 +403,7 @@ class TestLoopPmUtils(unittest.TestCase):
 
     def test_execute_non_director_tasks_policygate_block_is_fail_closed(self):
         with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
                 payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
@@ -426,7 +426,7 @@ class TestLoopPmUtils(unittest.TestCase):
 
     def test_execute_non_director_tasks_policygate_missing_decision_is_fail_closed(self):
         with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
                 payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
@@ -449,7 +449,7 @@ class TestLoopPmUtils(unittest.TestCase):
 
     def test_execute_non_director_tasks_policygate_escalate_is_block(self):
         with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
                 payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
@@ -475,7 +475,7 @@ class TestLoopPmUtils(unittest.TestCase):
 
     def test_execute_non_director_tasks_auditor_missing_ticket_blocks(self):
         with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
                 payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
@@ -575,7 +575,7 @@ class TestLoopPmUtils(unittest.TestCase):
             workspace_path = Path(workspace)
             run_dir = workspace_path / "runtime" / "runs" / "pm-00001"
             run_dir.mkdir(parents=True, exist_ok=True)
-            with patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
                 from io_utils import interrupt_notice_path
 
                 interrupt_path = Path(interrupt_notice_path(str(workspace_path)))
@@ -742,7 +742,7 @@ class TestLoopPmUtils(unittest.TestCase):
             self.assertEqual(self.loop_pm.resolve_agents_approval_mode(args), "wait")
 
     def test_wait_for_agents_confirmation_auto_accept_creates_agents(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
             runtime = Path(workspace) / ".polaris" / "runtime"
             runtime.mkdir(parents=True, exist_ok=True)
             draft = runtime / "contracts" / "agents.generated.md"
@@ -797,7 +797,7 @@ class TestLoopPmUtils(unittest.TestCase):
             self.assertIn("Auto", agents_path.read_text(encoding="utf-8"))
 
     def test_wait_for_agents_confirmation_wait_timeout_pauses_for_manual(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ, {"POLARIS_STATE_TO_RAMDISK": "0"}, clear=False):
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
             runtime = Path(workspace) / ".polaris" / "runtime"
             runtime.mkdir(parents=True, exist_ok=True)
             draft = runtime / "contracts" / "agents.generated.md"
@@ -839,8 +839,8 @@ class TestLoopPmUtils(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace, patch.dict(
             os.environ,
             {
-                "POLARIS_STATE_TO_RAMDISK": "0",
-                "POLARIS_MANUAL_INTERVENTION_MODE": "pause",
+                "KERNELONE_STATE_TO_RAMDISK": "0",
+                "KERNELONE_MANUAL_INTERVENTION_MODE": "pause",
             },
             clear=False,
         ):

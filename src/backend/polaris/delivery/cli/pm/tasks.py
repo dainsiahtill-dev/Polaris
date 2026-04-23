@@ -56,9 +56,9 @@ def _resolve_pm_task_limit() -> int:
     """Resolve PM task normalization cap.
 
     Default allows richer decomposition while preventing unbounded payload size.
-    Set POLARIS_PM_MAX_TASKS=0 to disable truncation.
+    Set KERNELONE_PM_MAX_TASKS=0 to disable truncation.
     """
-    raw = str(os.environ.get("POLARIS_PM_MAX_TASKS", "6") or "6").strip()
+    raw = str(os.environ.get("KERNELONE_PM_MAX_TASKS", "6") or "6").strip()
     try:
         value = int(raw)
     except (RuntimeError, ValueError):

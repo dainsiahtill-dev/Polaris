@@ -148,11 +148,11 @@ def _build_ramdisk_root(value: str = "") -> Path:
 
 def _resolve_polaris_root(env: dict[str, str] | None = None) -> Path:
     source = env or os.environ
-    root_override = str(source.get("POLARIS_ROOT", "") or "").strip()
+    root_override = str(source.get("KERNELONE_ROOT", "") or "").strip()
     if root_override:
         return Path(root_override).expanduser().resolve()
 
-    home_override = str(source.get("POLARIS_HOME", "") or "").strip()
+    home_override = str(source.get("KERNELONE_HOME", "") or "").strip()
     if home_override:
         expanded = Path(home_override).expanduser().resolve()
         if expanded.name.lower() == ".polaris":
@@ -247,7 +247,7 @@ async def _resolve_backend_connection(
 
     raise ValueError(
         "Unable to resolve Polaris backend info from --base-url/--token, "
-        "POLARIS_BASE_URL/POLARIS_TOKEN, or the official desktop backend info file: "
+        "KERNELONE_BASE_URL/KERNELONE_TOKEN, or the official desktop backend info file: "
         f"{desktop_info_path}"
     )
 
@@ -1008,12 +1008,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Polaris AI-agent headless stress validation.")
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("POLARIS_BASE_URL", ""),
+        default=os.environ.get("KERNELONE_BASE_URL", ""),
         help="Optional backend base URL override; otherwise auto-discover the current Polaris backend context",
     )
     parser.add_argument(
         "--token",
-        default=os.environ.get("POLARIS_TOKEN", ""),
+        default=os.environ.get("KERNELONE_TOKEN", ""),
         help="Optional backend bearer token override; otherwise auto-discover the current Polaris backend context",
     )
     parser.add_argument("--agent-label", default="codex", help="Agent label recorded in reports, e.g. codex or claude")

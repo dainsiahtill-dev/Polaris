@@ -361,7 +361,7 @@ Repro or Logs (optional):
 
 ### 13.2 Required Env（固定）
 - 当前无强制专用环境变量。
-- 如需真实链路测试，可设置 `POLARIS_E2E_USE_REAL_SETTINGS=1`。
+- 如需真实链路测试，可设置 `KERNELONE_E2E_USE_REAL_SETTINGS=1`。
 
 ### 13.3 执行顺序（必须严格按序）
 1. `npm run test:e2e -- --list`

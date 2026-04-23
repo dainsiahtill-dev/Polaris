@@ -83,7 +83,7 @@ class TestResolveDirectorDispatchTasks:
 
 
 def test_shadow_publish_skips_when_mode_off(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_TASK_MARKET_MODE", "off")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "off")
     calls: list[str] = []
 
     def _fake_get_task_market_services():
@@ -103,7 +103,7 @@ def test_shadow_publish_skips_when_mode_off(monkeypatch) -> None:
 
 
 def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_TASK_MARKET_MODE", "shadow")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "shadow")
 
     captured: list[object] = []
 
@@ -147,7 +147,7 @@ def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
 
 def test_mainline_publish_emits_pending_design_stage(monkeypatch) -> None:
     """In mainline mode, tasks are published to PENDING_DESIGN for CE consumption."""
-    monkeypatch.setenv("POLARIS_TASK_MARKET_MODE", "mainline")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline")
 
     captured: list[object] = []
 
@@ -202,7 +202,7 @@ def test_mainline_publish_emits_pending_design_stage(monkeypatch) -> None:
 
 
 def test_mainline_design_alias_publishes_pending_design(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_TASK_MARKET_MODE", "mainline-design")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-design")
 
     captured: list[object] = []
 
@@ -242,7 +242,7 @@ def test_mainline_design_alias_publishes_pending_design(monkeypatch) -> None:
 
 
 def test_mainline_publish_submits_change_order_on_revision_drift(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_TASK_MARKET_MODE", "mainline")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline")
 
     captured_publish: list[object] = []
     register_calls: list[object] = []
@@ -320,7 +320,7 @@ def test_mainline_publish_submits_change_order_on_revision_drift(monkeypatch) ->
 
 
 def test_run_inline_task_market_consumers_mainline_full_success(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_TASK_MARKET_MODE", "mainline-full")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
 
     class _FakeCEConsumer:
         def __init__(self, **_kwargs) -> None:
@@ -372,7 +372,7 @@ def test_run_inline_task_market_consumers_mainline_full_success(monkeypatch) -> 
 
 
 def test_run_dispatch_pipeline_mainline_full_skips_engine_dispatch(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_TASK_MARKET_MODE", "mainline-full")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
 
     dispatch_tasks = [{"id": "T01", "title": "Task 1"}]
 

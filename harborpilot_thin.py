@@ -78,7 +78,7 @@ class PolarisThinCLI:
         ] + args
 
         # If using new architecture, use orchestrator
-        if os.environ.get("POLARIS_USE_THIN_CLI", "1") == "1":
+        if os.environ.get("KERNELONE_USE_THIN_CLI", "1") == "1":
             definition = ServiceDefinition(
                 name="pm-thin",
                 command=cmd,
@@ -102,7 +102,7 @@ class PolarisThinCLI:
             "scripts.director.cli_thin",
         ] + args
 
-        if os.environ.get("POLARIS_USE_THIN_CLI", "1") == "1":
+        if os.environ.get("KERNELONE_USE_THIN_CLI", "1") == "1":
             definition = ServiceDefinition(
                 name="director-thin",
                 command=cmd,
@@ -185,8 +185,8 @@ class PolarisThinCLI:
         return {
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
-            "POLARIS_WORKSPACE": str(PROJECT_ROOT),
-            "POLARIS_USE_THIN_CLI": os.environ.get("POLARIS_USE_THIN_CLI", "1"),
+            "KERNELONE_WORKSPACE": str(PROJECT_ROOT),
+            "KERNELONE_USE_THIN_CLI": os.environ.get("KERNELONE_USE_THIN_CLI", "1"),
         }
 
 

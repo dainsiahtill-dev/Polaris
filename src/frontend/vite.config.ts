@@ -11,9 +11,9 @@ const DEFAULT_BACKEND_PORT = 49977;
 const DEFAULT_RENDERER_PORT = 5173;
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-const rendererPortRaw = Number(process.env.POLARIS_RENDERER_PORT || DEFAULT_RENDERER_PORT);
+const rendererPortRaw = Number(process.env.KERNELONE_RENDERER_PORT || DEFAULT_RENDERER_PORT);
 const rendererPort = Number.isFinite(rendererPortRaw) && rendererPortRaw > 0 ? rendererPortRaw : DEFAULT_RENDERER_PORT;
-const backendPort = process.env.POLARIS_BACKEND_PORT || String(DEFAULT_BACKEND_PORT);
+const backendPort = process.env.KERNELONE_BACKEND_PORT || String(DEFAULT_BACKEND_PORT);
 const backendHttpTarget = `http://127.0.0.1:${backendPort}`;
 const backendWsTarget = `ws://127.0.0.1:${backendPort}`;
 

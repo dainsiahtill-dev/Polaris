@@ -171,7 +171,7 @@
 - `UEPStreamEventPayload` / `UEPLifecycleEventPayload` 无版本字段
 
 ### 4.4 环境变量混用
-- `POLARIS_` (769 处) 和 `KERNELONE_` (225 处) 同一代码层混用
+- `KERNELONE_` (769 处) 和 `KERNELONE_` (225 处) 同一代码层混用
 
 ### 4.5 冷启动问题
 - `ModelCatalog` 每次 `resolved_context_window` 调用都重新实例化

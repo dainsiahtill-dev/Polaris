@@ -278,7 +278,7 @@ TypedEventBusAdapter.emit_to_both(typed_event)
 |------|----------|
 | `polaris/kernelone/events/uep_publisher.py` | 集成 TypedEventBusAdapter |
 | `polaris/kernelone/events/tests/test_uep_publisher.py` | 添加转换测试 |
-| `docs/blueprints/POLARIS_UNIFIED_EVENT_PIPELINE_V2_BLUEPRINT_20260331.md` | 更新状态 |
+| `docs/blueprints/KERNELONE_UNIFIED_EVENT_PIPELINE_V2_BLUEPRINT_20260331.md` | 更新状态 |
 
 ---
 

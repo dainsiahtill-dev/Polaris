@@ -10,39 +10,39 @@ class NATSConfig(BaseModel):
 
     enabled: bool = Field(
         default=True,
-        description="Enable NATS connectivity (POLARIS_NATS_ENABLED)",
+        description="Enable NATS connectivity (KERNELONE_NATS_ENABLED)",
     )
     required: bool = Field(
         default=True,
-        description="NATS connection is required for backend readiness (POLARIS_NATS_REQUIRED)",
+        description="NATS connection is required for backend readiness (KERNELONE_NATS_REQUIRED)",
     )
     url: str = Field(
         default="nats://127.0.0.1:4222",
-        description="NATS server URL (POLARIS_NATS_URL)",
+        description="NATS server URL (KERNELONE_NATS_URL)",
     )
     user: str = Field(
         default="",
-        description="NATS username (POLARIS_NATS_USER)",
+        description="NATS username (KERNELONE_NATS_USER)",
     )
     password: str = Field(
         default="",
-        description="NATS password (POLARIS_NATS_PASSWORD)",
+        description="NATS password (KERNELONE_NATS_PASSWORD)",
     )
     connect_timeout_sec: float = Field(
         default=3.0,
-        description="Connection timeout in seconds (POLARIS_NATS_CONNECT_TIMEOUT)",
+        description="Connection timeout in seconds (KERNELONE_NATS_CONNECT_TIMEOUT)",
     )
     reconnect_wait_sec: float = Field(
         default=1.0,
-        description="Reconnect wait interval in seconds (POLARIS_NATS_RECONNECT_WAIT)",
+        description="Reconnect wait interval in seconds (KERNELONE_NATS_RECONNECT_WAIT)",
     )
     max_reconnect_attempts: int = Field(
         default=-1,
-        description="Max reconnect attempts, -1 for infinite (POLARIS_NATS_MAX_RECONNECT)",
+        description="Max reconnect attempts, -1 for infinite (KERNELONE_NATS_MAX_RECONNECT)",
     )
     stream_name: str = Field(
         default="HP_RUNTIME",
-        description="NATS stream name for runtime events (POLARIS_NATS_STREAM_NAME)",
+        description="NATS stream name for runtime events (KERNELONE_NATS_STREAM_NAME)",
     )
 
     @field_validator("connect_timeout_sec", "reconnect_wait_sec", mode="before")

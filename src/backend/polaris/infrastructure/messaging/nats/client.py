@@ -59,7 +59,7 @@ _RUNTIME_STREAM_REPAIR_COOLDOWN_SEC = 2.0
 
 
 def _env_nats_servers() -> list[str]:
-    # Use _runtime_config for KERNELONE_* / POLARIS_* fallback
+    # Use _runtime_config for KERNELONE_* / KERNELONE_* fallback
     raw = _runtime_config.resolve_env_str("nats_url").strip()
     if not raw:
         return [DEFAULT_NATS_URL]
@@ -127,13 +127,13 @@ class NATSConfig:
     name: str = "polaris"
     max_reconnect_attempts: int = field(
         default_factory=lambda: _env_int(
-            os.environ.get("KERNELONE_NATS_MAX_RECONNECT") or "POLARIS_NATS_MAX_RECONNECT",
+            os.environ.get("KERNELONE_NATS_MAX_RECONNECT") or "KERNELONE_NATS_MAX_RECONNECT",
             10,
         )
     )
     reconnect_time_wait: float = field(
         default_factory=lambda: _env_float(
-            os.environ.get("KERNELONE_NATS_RECONNECT_WAIT") or "POLARIS_NATS_RECONNECT_WAIT",
+            os.environ.get("KERNELONE_NATS_RECONNECT_WAIT") or "KERNELONE_NATS_RECONNECT_WAIT",
             0.5,
         )
     )
@@ -142,7 +142,7 @@ class NATSConfig:
     allow_reconnect: bool = True
     connect_timeout: float = field(
         default_factory=lambda: _env_float(
-            os.environ.get("KERNELONE_NATS_CONNECT_TIMEOUT") or "POLARIS_NATS_CONNECT_TIMEOUT",
+            os.environ.get("KERNELONE_NATS_CONNECT_TIMEOUT") or "KERNELONE_NATS_CONNECT_TIMEOUT",
             5.0,
         )
     )

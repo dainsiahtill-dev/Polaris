@@ -12,9 +12,9 @@ from polaris.cells.context.engine.public.precision_mode import (  # noqa: E402
 
 
 def test_resolve_cost_class_env(monkeypatch):
-    monkeypatch.setenv("POLARIS_COST_MODEL", "fixed")
+    monkeypatch.setenv("KERNELONE_COST_MODEL", "fixed")
     assert resolve_cost_class() == "FIXED"
-    monkeypatch.setenv("POLARIS_COST_MODEL", "metered")
+    monkeypatch.setenv("KERNELONE_COST_MODEL", "metered")
     assert resolve_cost_class() == "METERED"
 
 

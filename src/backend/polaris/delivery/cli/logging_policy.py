@@ -41,7 +41,7 @@ def normalize_log_level(level: str | None) -> str:
     return normalized
 
 
-def resolve_log_level(level: str | None, *, env_var: str = "POLARIS_CLI_LOG_LEVEL") -> str:
+def resolve_log_level(level: str | None, *, env_var: str = "KERNELONE_CLI_LOG_LEVEL") -> str:
     """Resolve CLI log level from flag first, then environment."""
 
     explicit = str(level or "").strip()

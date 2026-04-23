@@ -19,7 +19,7 @@ def normalize_cost_class(value: str | None) -> str:
 def resolve_cost_class(value: str | None = None) -> str:
     if value:
         return normalize_cost_class(value)
-    env_value = os.environ.get("POLARIS_COST_MODEL") or os.environ.get("POLARIS_COST_CLASS") or ""
+    env_value = os.environ.get("KERNELONE_COST_MODEL") or os.environ.get("KERNELONE_COST_CLASS") or ""
     return normalize_cost_class(env_value)
 
 

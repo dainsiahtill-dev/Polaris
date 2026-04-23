@@ -12,7 +12,7 @@ def test_sequential_config_respects_env_when_settings_lacks_seq_fields(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace())
-    monkeypatch.setenv("POLARIS_SEQ_ENABLED", "0")
+    monkeypatch.setenv("KERNELONE_SEQ_ENABLED", "0")
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
     assert adapter._get_sequential_config() is None
@@ -23,14 +23,14 @@ def test_sequential_config_reads_budget_and_mode_from_env_fallback(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace())
-    monkeypatch.setenv("POLARIS_SEQ_ENABLED", "1")
-    monkeypatch.setenv("POLARIS_SEQ_DEFAULT_MODE", "required")
-    monkeypatch.setenv("POLARIS_SEQ_DEFAULT_ROLES", "director,adaptive")
-    monkeypatch.setenv("POLARIS_SEQ_MAX_STEPS", "5")
-    monkeypatch.setenv("POLARIS_SEQ_MAX_TOOL_CALLS_TOTAL", "8")
-    monkeypatch.setenv("POLARIS_SEQ_MAX_NO_PROGRESS_STEPS", "2")
-    monkeypatch.setenv("POLARIS_SEQ_MAX_WALL_TIME_SECONDS", "45")
-    monkeypatch.setenv("POLARIS_SEQ_TRACE_LEVEL", "detailed")
+    monkeypatch.setenv("KERNELONE_SEQ_ENABLED", "1")
+    monkeypatch.setenv("KERNELONE_SEQ_DEFAULT_MODE", "required")
+    monkeypatch.setenv("KERNELONE_SEQ_DEFAULT_ROLES", "director,adaptive")
+    monkeypatch.setenv("KERNELONE_SEQ_MAX_STEPS", "5")
+    monkeypatch.setenv("KERNELONE_SEQ_MAX_TOOL_CALLS_TOTAL", "8")
+    monkeypatch.setenv("KERNELONE_SEQ_MAX_NO_PROGRESS_STEPS", "2")
+    monkeypatch.setenv("KERNELONE_SEQ_MAX_WALL_TIME_SECONDS", "45")
+    monkeypatch.setenv("KERNELONE_SEQ_TRACE_LEVEL", "detailed")
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
     cfg = adapter._get_sequential_config()

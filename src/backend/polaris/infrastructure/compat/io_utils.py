@@ -103,7 +103,7 @@ def _infer_workspace_for_path(path: str) -> str:
         if os.path.isdir(workspace_guess):
             return workspace_guess
 
-    configured = str(os.environ.get("KERNELONE_WORKSPACE") or os.environ.get("POLARIS_WORKSPACE") or "").strip()
+    configured = str(os.environ.get("KERNELONE_WORKSPACE") or os.environ.get("KERNELONE_WORKSPACE") or "").strip()
     if configured:
         return os.path.abspath(configured)
     return os.getcwd()

@@ -27,7 +27,7 @@ def discover_latest_runtime(base_path: str | None = None) -> Path | None:
     Returns:
         发现的 runtime 目录路径，或 None
     """
-    base = base_path or os.environ.get("POLARIS_RUNTIME_BASE")
+    base = base_path or os.environ.get("KERNELONE_RUNTIME_BASE")
 
     if not base:
         candidates = [
@@ -78,7 +78,7 @@ def get_all_runtimes(base_path: str | None = None) -> list[Path]:
         可用 runtime 目录列表
     """
     runtimes: list[Path] = []
-    env_base = os.environ.get("POLARIS_RUNTIME_BASE")
+    env_base = os.environ.get("KERNELONE_RUNTIME_BASE")
 
     if base_path:
         runtime_path = Path(base_path)

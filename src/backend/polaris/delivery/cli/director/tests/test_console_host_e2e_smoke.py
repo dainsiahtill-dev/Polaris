@@ -66,7 +66,7 @@ class TestConsoleHostE2ESmoke:
         - session-isolated event log accumulates events
         - final complete event is surfaced to the caller
         """
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
         workspace = Path(mock_host.workspace)
         session_id = "e2e-smoke-1"
 
@@ -198,7 +198,7 @@ class TestConsoleHostE2ESmoke:
         Simulate a single turn that hands off to DevelopmentWorkflowRuntime.
         Verify the handoff events are logged and the stream exits cleanly.
         """
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
         workspace = Path(mock_host.workspace)
         session_id = "e2e-handoff-1"
 

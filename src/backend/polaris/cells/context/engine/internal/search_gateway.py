@@ -73,7 +73,7 @@ def _default_backend_root() -> Path:
 
 
 def _resolve_workspace() -> Path:
-    env = os.environ.get("POLARIS_WORKSPACE", "").strip()
+    env = os.environ.get("KERNELONE_WORKSPACE", "").strip()
     if env:
         return Path(env).resolve()
     return _default_backend_root()

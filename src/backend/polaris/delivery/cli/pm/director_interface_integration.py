@@ -90,13 +90,13 @@ def _resolve_effective_director_timeout(args: argparse.Namespace) -> int | None:
     - ``--director-timeout > 0``: use that timeout.
     - ``--director-timeout <= 0``: disable timeout (None).
     - If CLI option is unavailable, fallback to env
-      ``POLARIS_DIRECTOR_RUN_TIMEOUT`` (non-positive => disabled).
+      ``KERNELONE_DIRECTOR_RUN_TIMEOUT`` (non-positive => disabled).
     """
     cli_timeout = getattr(args, "director_timeout", None)
     if cli_timeout is not None:
         return timeout_seconds_or_none(cli_timeout, default=0)
     return timeout_seconds_or_none(
-        os.environ.get("POLARIS_DIRECTOR_RUN_TIMEOUT", "0"),
+        os.environ.get("KERNELONE_DIRECTOR_RUN_TIMEOUT", "0"),
         default=0,
     )
 
@@ -113,7 +113,7 @@ def run_director_via_interface(
     Run Director using the DirectorInterface abstraction.
 
     This replaces the subprocess-based run_director_once when
-    POLARIS_DIRECTOR_TYPE is set to 'script' or 'none'.
+    KERNELONE_DIRECTOR_TYPE is set to 'script' or 'none'.
 
     Args:
         args: CLI arguments
@@ -136,7 +136,7 @@ def run_director_via_interface(
         )
 
     # Determine director type from environment or args
-    director_type = os.getenv("POLARIS_DIRECTOR_TYPE", "auto")
+    director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "auto")
     if director_type == "auto":
         director_type = getattr(args, "director_type", None) or "auto"
     token = str(director_type or "").strip().lower()
@@ -227,13 +227,13 @@ def should_use_director_interface(args: argparse.Namespace) -> bool:
 
     Returns True if:
     1. DirectorInterface is available
-    2. POLARIS_DIRECTOR_TYPE is set to 'script' or 'none'
+    2. KERNELONE_DIRECTOR_TYPE is set to 'script' or 'none'
     3. Not explicitly disabled
     """
     if not DIRECTOR_INTERFACE_AVAILABLE:
         return False
 
-    director_type = os.getenv("POLARIS_DIRECTOR_TYPE", "")
+    director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "")
     if director_type in ("script", "none"):
         return True
 
@@ -251,7 +251,7 @@ def is_standalone_mode(args: argparse.Namespace) -> bool:
     2. --run-director is False and no director type is specified
     """
     # Check if explicitly set to none
-    director_type = os.getenv("POLARIS_DIRECTOR_TYPE", "")
+    director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "")
     if director_type == "none":
         return True
 
@@ -267,11 +267,11 @@ def get_director_type(args: argparse.Namespace) -> str:
     Get the effective director type based on args and environment.
 
     Priority:
-    1. Environment variable POLARIS_DIRECTOR_TYPE
+    1. Environment variable KERNELONE_DIRECTOR_TYPE
     2. CLI argument --director-type
     3. Default: 'auto'
     """
-    director_type = os.getenv("POLARIS_DIRECTOR_TYPE", "")
+    director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "")
     if director_type:
         token = str(director_type).strip().lower()
         if token in {"auto", "script", "none"}:

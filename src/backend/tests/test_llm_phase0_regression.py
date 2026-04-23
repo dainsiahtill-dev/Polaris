@@ -26,7 +26,7 @@ if BACKEND_DIR not in sys.path:
 def isolate_polaris_root(tmp_path, monkeypatch):
     app_root = tmp_path / "polaris_root"
     app_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("POLARIS_ROOT", str(app_root))
+    monkeypatch.setenv("KERNELONE_ROOT", str(app_root))
     # llm_config uses KERNELONE_HOME via storage_layout.resolve_global_path.
     # Isolate it to avoid touching the real user config during tests.
     monkeypatch.setenv("KERNELONE_HOME", str(app_root))

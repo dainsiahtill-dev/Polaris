@@ -43,8 +43,8 @@ class DirectorPatchExecutor:
         raw_candidates: list[Any] = []
         if isinstance(context, dict):
             raw_candidates.append(context.get("llm_call_timeout_seconds"))
-        raw_candidates.append(os.environ.get("POLARIS_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS"))
-        raw_candidates.append(os.environ.get("POLARIS_DIRECTOR_LLM_TIMEOUT_SECONDS"))
+        raw_candidates.append(os.environ.get("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS"))
+        raw_candidates.append(os.environ.get("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"))
 
         for raw in raw_candidates:
             if raw is None:

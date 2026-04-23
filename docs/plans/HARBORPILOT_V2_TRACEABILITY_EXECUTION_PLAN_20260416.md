@@ -4,7 +4,7 @@
 > 日期: 2026-04-16
 > 状态: COMPLETED — 2026-04-16
 > 负责人: Principal Architect (Chief Engineer)
-> 关联蓝图: `docs/blueprints/POLARIS_V2_TRACEABILITY_BLUEPRINT_20260416.md`
+> 关联蓝图: `docs/blueprints/KERNELONE_V2_TRACEABILITY_BLUEPRINT_20260416.md`
 
 ---
 

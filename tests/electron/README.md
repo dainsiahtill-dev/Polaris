@@ -40,13 +40,13 @@
 - `E2E_PANEL_AUTOFIX_SKIP_BUILD=1`: skip `npm run build` in auto-fix loop
 - `E2E_PANEL_CODEX_MODEL`: optional model override passed to `codex exec --model`
 - `E2E_PANEL_CODEX_DANGEROUS=1`: optionally enable `--dangerously-bypass-approvals-and-sandbox` for non-interactive Codex runs
-- `POLARIS_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS`: max Claude repair rounds for `auto:fix:real-flow` (default `2`)
-- `POLARIS_REAL_FLOW_AUTOFIX_SKIP_BUILD=1`: skip `npm run build` in the real-flow repair loop
-- `POLARIS_CLAUDE_MODEL`: optional model override passed to `claude --model`
-- `POLARIS_CLAUDE_PERMISSION_MODE`: optional permission mode override (default `bypassPermissions`)
-- `POLARIS_CLAUDE_AGENT`: optional Claude custom agent name
-- `POLARIS_CLAUDE_ALLOWED_TOOLS`: optional `claude --allowedTools` override
-- `POLARIS_CLAUDE_NO_SESSION_PERSISTENCE=0`: keep Claude session history instead of the default stateless round execution
+- `KERNELONE_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS`: max Claude repair rounds for `auto:fix:real-flow` (default `2`)
+- `KERNELONE_REAL_FLOW_AUTOFIX_SKIP_BUILD=1`: skip `npm run build` in the real-flow repair loop
+- `KERNELONE_CLAUDE_MODEL`: optional model override passed to `claude --model`
+- `KERNELONE_CLAUDE_PERMISSION_MODE`: optional permission mode override (default `bypassPermissions`)
+- `KERNELONE_CLAUDE_AGENT`: optional Claude custom agent name
+- `KERNELONE_CLAUDE_ALLOWED_TOOLS`: optional `claude --allowedTools` override
+- `KERNELONE_CLAUDE_NO_SESSION_PERSISTENCE=0`: keep Claude session history instead of the default stateless round execution
 
 Built-in ignored terminal noise:
 - Chromium cache permission/cache creation lines
@@ -63,8 +63,8 @@ npm run test:e2e:panel
 
 ## Notes
 - If `src/frontend/dist/index.html` exists, tests load dist directly. For absolute `/assets/*` in `index.html`, fixture auto-generates `index.e2e.html` with relative paths.
-- Otherwise set `POLARIS_DEV_SERVER_URL` to a running dev server URL.
-- `.venv` is preferred for backend start. Override with `POLARIS_PYTHON`.
+- Otherwise set `KERNELONE_DEV_SERVER_URL` to a running dev server URL.
+- `.venv` is preferred for backend start. Override with `KERNELONE_PYTHON`.
 - Gate order in `panel-error.spec.ts`: `terminal -> console -> panel`.
 - Gate order in `panel-task.spec.ts`: `terminal -> console -> panel`.
 - One-line task resolution dictionary: `infrastructure/e2e/panel-locators.json`.
@@ -72,8 +72,8 @@ npm run test:e2e:panel
 - Auto-fix runner writes a UTF-8 log to `.polaris/logs/autofix_panel_*.log`.
 - Real-flow auto-fix writes UTF-8 prompt/output/audit files to `.polaris/logs/autofix_real_flow_*`.
 - Auto-fix requires local Codex CLI auth (`codex login`) before execution.
-- Real-flow auto-fix requires local Claude CLI auth (`claude`) and real Polaris settings because it forces `POLARIS_E2E_USE_REAL_SETTINGS=1`.
+- Real-flow auto-fix requires local Claude CLI auth (`claude`) and real Polaris settings because it forces `KERNELONE_E2E_USE_REAL_SETTINGS=1`.
 - Hybrid runner writes a UTF-8 audit JSON to `.polaris/logs/hybrid_*.audit.json`.
 - Hybrid fallback command wiring guide: `docs/testing/HYBRID_UI_AUTOMATION.md`.
-- 默认会阻断 LLM 相关测试任务；仅当显式设置 `POLARIS_E2E_ALLOW_LLM_TESTS=1` 才允许执行。
+- 默认会阻断 LLM 相关测试任务；仅当显式设置 `KERNELONE_E2E_ALLOW_LLM_TESTS=1` 才允许执行。
 - OpenAI Base URL 使用环境变量 `OPENAI_BASE_URL`（默认 `https://api.openai.com/v1`）。

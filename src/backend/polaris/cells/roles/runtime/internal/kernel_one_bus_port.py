@@ -17,7 +17,7 @@ Architecture note (2026-04-04 P0-007 Fix):
 Configuration:
   - `NATS_URL`: NATS server URL (default: "nats://127.0.0.1:4222")
   - `NATS_ENABLED`: Enable NATS transport (default: True)
-  - `POLARIS_NATS_URL`: Alias for `NATS_URL` (for backward compatibility)
+  - `KERNELONE_NATS_URL`: Alias for `NATS_URL` (for backward compatibility)
 
 Implements C2 from ROLES_CELL_REFACTORING_BLUEPRINT_2026-03-26.
 """
@@ -61,13 +61,13 @@ def _get_nats_url_from_env() -> str:
 
     Priority:
     1. `NATS_URL` (explicit)
-    2. `POLARIS_NATS_URL` (legacy compatibility)
+    2. `KERNELONE_NATS_URL` (legacy compatibility)
     3. Default: "nats://127.0.0.1:4222"
     """
     url = os.environ.get("NATS_URL")
     if url:
         return str(url).strip()
-    url = os.environ.get("POLARIS_NATS_URL")
+    url = os.environ.get("KERNELONE_NATS_URL")
     if url:
         return str(url).strip()
     return _DEFAULT_NATS_URL
@@ -75,7 +75,7 @@ def _get_nats_url_from_env() -> str:
 
 def _is_nats_enabled() -> bool:
     """Check if NATS transport is enabled via environment."""
-    env_val = os.environ.get("NATS_ENABLED") or os.environ.get("POLARIS_NATS_ENABLED", "")
+    env_val = os.environ.get("NATS_ENABLED") or os.environ.get("KERNELONE_NATS_ENABLED", "")
     if not env_val:
         return _DEFAULT_NATS_ENABLED
     return str(env_val).strip().lower() not in ("0", "false", "no", "off", "disabled")
@@ -97,7 +97,7 @@ class NATSConnectionConfig:
     def __post_init__(self) -> None:
         # Resolve dynamic values from environment if not explicitly provided
         if self.connect_timeout_sec == 3.0:  # Default sentinel
-            env_val = os.environ.get("NATS_CONNECT_TIMEOUT") or os.environ.get("POLARIS_NATS_CONNECT_TIMEOUT")
+            env_val = os.environ.get("NATS_CONNECT_TIMEOUT") or os.environ.get("KERNELONE_NATS_CONNECT_TIMEOUT")
             if env_val:
                 object.__setattr__(
                     self,
@@ -105,7 +105,7 @@ class NATSConnectionConfig:
                     float(env_val),
                 )
         if self.reconnect_wait_sec == 1.0:  # Default sentinel
-            env_val = os.environ.get("NATS_RECONNECT_WAIT") or os.environ.get("POLARIS_NATS_RECONNECT_WAIT")
+            env_val = os.environ.get("NATS_RECONNECT_WAIT") or os.environ.get("KERNELONE_NATS_RECONNECT_WAIT")
             if env_val:
                 object.__setattr__(
                     self,
@@ -113,7 +113,7 @@ class NATSConnectionConfig:
                     float(env_val),
                 )
         if self.max_reconnect_attempts == -1:  # Default sentinel
-            env_val = os.environ.get("NATS_MAX_RECONNECT") or os.environ.get("POLARIS_NATS_MAX_RECONNECT")
+            env_val = os.environ.get("NATS_MAX_RECONNECT") or os.environ.get("KERNELONE_NATS_MAX_RECONNECT")
             if env_val:
                 object.__setattr__(
                     self,
@@ -345,8 +345,8 @@ class KernelOneMessageBusPort:
     - Lazy NATS connection: only connects when first publish is attempted.
 
     Environment variables:
-      `NATS_URL` / `POLARIS_NATS_URL`: NATS server URL
-      `NATS_ENABLED` / `POLARIS_NATS_ENABLED`: Enable NATS transport
+      `NATS_URL` / `KERNELONE_NATS_URL`: NATS server URL
+      `NATS_ENABLED` / `KERNELONE_NATS_ENABLED`: Enable NATS transport
       `NATS_CONNECT_TIMEOUT`: Connection timeout in seconds
       `NATS_RECONNECT_WAIT`: Reconnect wait interval
       `NATS_MAX_RECONNECT`: Max reconnect attempts (-1 for infinite)

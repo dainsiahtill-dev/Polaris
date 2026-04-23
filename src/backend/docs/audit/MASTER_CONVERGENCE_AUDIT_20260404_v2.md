@@ -323,7 +323,7 @@ kernelone 版本废弃但仍存在，infrastructure 版本是权威
 
 ### [P1-027] POLARIS-only 环境变量无 KERNELONE_ 回退
 **Expert**: Expert 8
-50+ 处直接使用 `os.environ.get("POLARIS_...)` 无回退
+50+ 处直接使用 `os.environ.get("KERNELONE_...)` 无回退
 
 ---
 

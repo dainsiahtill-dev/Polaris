@@ -25,16 +25,16 @@ class TestOrchestrationRuntimeMode(unittest.TestCase):
         self.assertEqual(_resolve_orchestration_runtime(args), "legacy")
 
     def test_env_value_used_when_args_missing(self) -> None:
-        previous = os.environ.get("POLARIS_ORCHESTRATION_RUNTIME")
-        os.environ["POLARIS_ORCHESTRATION_RUNTIME"] = "auto"
+        previous = os.environ.get("KERNELONE_ORCHESTRATION_RUNTIME")
+        os.environ["KERNELONE_ORCHESTRATION_RUNTIME"] = "auto"
         try:
             args = argparse.Namespace()
             self.assertEqual(_resolve_orchestration_runtime(args), "auto")
         finally:
             if previous is None:
-                os.environ.pop("POLARIS_ORCHESTRATION_RUNTIME", None)
+                os.environ.pop("KERNELONE_ORCHESTRATION_RUNTIME", None)
             else:
-                os.environ["POLARIS_ORCHESTRATION_RUNTIME"] = previous
+                os.environ["KERNELONE_ORCHESTRATION_RUNTIME"] = previous
 
 
 if __name__ == "__main__":

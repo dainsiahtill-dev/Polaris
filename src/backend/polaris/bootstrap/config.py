@@ -79,35 +79,35 @@ class JSONLConfig(BaseModel):
 
     lock_stale_sec: float = Field(
         default=120.0,
-        description="Lock file stale timeout in seconds (POLARIS_JSONL_LOCK_STALE_SEC)",
+        description="Lock file stale timeout in seconds (KERNELONE_JSONL_LOCK_STALE_SEC)",
     )
     buffer_enabled: bool = Field(
         default=True,
-        description="Enable buffered writes (POLARIS_JSONL_BUFFERED)",
+        description="Enable buffered writes (KERNELONE_JSONL_BUFFERED)",
     )
     flush_interval_sec: float = Field(
         default=1.0,
-        description="Buffer flush interval in seconds (POLARIS_JSONL_FLUSH_INTERVAL)",
+        description="Buffer flush interval in seconds (KERNELONE_JSONL_FLUSH_INTERVAL)",
     )
     flush_batch: int = Field(
         default=50,
-        description="Number of lines to trigger flush (POLARIS_JSONL_FLUSH_BATCH)",
+        description="Number of lines to trigger flush (KERNELONE_JSONL_FLUSH_BATCH)",
     )
     max_buffer: int = Field(
         default=2000,
-        description="Maximum buffer size per file (POLARIS_JSONL_MAX_BUFFER)",
+        description="Maximum buffer size per file (KERNELONE_JSONL_MAX_BUFFER)",
     )
     buffer_ttl_sec: float = Field(
         default=300.0,
-        description="Buffer entry TTL in seconds (POLARIS_JSONL_BUFFER_TTL)",
+        description="Buffer entry TTL in seconds (KERNELONE_JSONL_BUFFER_TTL)",
     )
     max_paths: int = Field(
         default=100,
-        description="Maximum number of tracked file paths (POLARIS_JSONL_MAX_PATHS)",
+        description="Maximum number of tracked file paths (KERNELONE_JSONL_MAX_PATHS)",
     )
     cleanup_interval_sec: float = Field(
         default=60.0,
-        description="Cleanup timer interval in seconds (POLARIS_JSONL_CLEANUP_INTERVAL)",
+        description="Cleanup timer interval in seconds (KERNELONE_JSONL_CLEANUP_INTERVAL)",
     )
 
     @field_validator("lock_stale_sec", "flush_interval_sec", "buffer_ttl_sec", "cleanup_interval_sec", mode="before")
@@ -933,73 +933,73 @@ class Settings(BaseModel):
                 )
             )
 
-        timeout = os.environ.get("POLARIS_TIMEOUT")
+        timeout = os.environ.get("KERNELONE_TIMEOUT")
         if timeout is not None:
             kwargs["timeout"] = _parse_value(timeout)
 
-        json_log = os.environ.get("POLARIS_JSON_LOG_PATH")
+        json_log = os.environ.get("KERNELONE_JSON_LOG_PATH")
         if json_log:
             kwargs["json_log_path"] = json_log
 
         for flag_key, env_key in (
-            ("slm_enabled", "POLARIS_SLM_ENABLED"),
-            ("qa_enabled", "POLARIS_QA_ENABLED"),
-            ("audit_llm_enabled", "POLARIS_AUDIT_LLM_ENABLED"),
-            ("audit_llm_prefer_local_ollama", "POLARIS_AUDIT_LLM_PREFER_LOCAL_OLLAMA"),
-            ("audit_llm_allow_remote_fallback", "POLARIS_AUDIT_LLM_ALLOW_REMOTE_FALLBACK"),
+            ("slm_enabled", "KERNELONE_SLM_ENABLED"),
+            ("qa_enabled", "KERNELONE_QA_ENABLED"),
+            ("audit_llm_enabled", "KERNELONE_AUDIT_LLM_ENABLED"),
+            ("audit_llm_prefer_local_ollama", "KERNELONE_AUDIT_LLM_PREFER_LOCAL_OLLAMA"),
+            ("audit_llm_allow_remote_fallback", "KERNELONE_AUDIT_LLM_ALLOW_REMOTE_FALLBACK"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:
                 kwargs[flag_key] = _parse_value(raw)
 
-        audit_role = os.environ.get("POLARIS_AUDIT_LLM_ROLE")
+        audit_role = os.environ.get("KERNELONE_AUDIT_LLM_ROLE")
         if audit_role is not None:
             kwargs["audit_llm_role"] = str(audit_role).strip().lower() or "qa"
 
-        audit_timeout = os.environ.get("POLARIS_AUDIT_LLM_TIMEOUT")
+        audit_timeout = os.environ.get("KERNELONE_AUDIT_LLM_TIMEOUT")
         if audit_timeout is not None:
             kwargs["audit_llm_timeout"] = _parse_value(audit_timeout)
 
         llm_config: dict[str, Any] = {}
         for key, env_key in (
-            ("model", "POLARIS_MODEL"),
-            ("provider", "POLARIS_LLM_PROVIDER"),
-            ("base_url", "POLARIS_LLM_BASE_URL"),
-            ("api_key", "POLARIS_LLM_API_KEY"),
-            ("api_path", "POLARIS_LLM_API_PATH"),
-            ("timeout", "POLARIS_LLM_TIMEOUT"),
+            ("model", "KERNELONE_MODEL"),
+            ("provider", "KERNELONE_LLM_PROVIDER"),
+            ("base_url", "KERNELONE_LLM_BASE_URL"),
+            ("api_key", "KERNELONE_LLM_API_KEY"),
+            ("api_path", "KERNELONE_LLM_API_PATH"),
+            ("timeout", "KERNELONE_LLM_TIMEOUT"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:
                 llm_config[key] = _parse_value(raw)
 
-        if os.environ.get("POLARIS_PM_MODEL"):
-            llm_config["model"] = os.environ.get("POLARIS_PM_MODEL")
-        elif os.environ.get("POLARIS_DIRECTOR_MODEL"):
-            llm_config["model"] = os.environ.get("POLARIS_DIRECTOR_MODEL")
+        if os.environ.get("KERNELONE_PM_MODEL"):
+            llm_config["model"] = os.environ.get("KERNELONE_PM_MODEL")
+        elif os.environ.get("KERNELONE_DIRECTOR_MODEL"):
+            llm_config["model"] = os.environ.get("KERNELONE_DIRECTOR_MODEL")
         if llm_config:
             kwargs["llm"] = LLMConfig(**llm_config)
 
         pm_config: dict[str, Any] = {}
         for key, env_key in (
-            ("model", "POLARIS_PM_MODEL"),
-            ("backend", "POLARIS_PM_BACKEND"),
-            ("director_timeout", "POLARIS_PM_DIRECTOR_TIMEOUT"),
-            ("director_iterations", "POLARIS_PM_DIRECTOR_ITERATIONS"),
-            ("director_match_mode", "POLARIS_PM_DIRECTOR_MATCH_MODE"),
-            ("agents_approval_mode", "POLARIS_PM_AGENTS_APPROVAL_MODE"),
-            ("agents_approval_timeout", "POLARIS_PM_AGENTS_APPROVAL_TIMEOUT"),
-            ("max_failures", "POLARIS_PM_MAX_FAILURES"),
-            ("max_blocked", "POLARIS_PM_MAX_BLOCKED"),
-            ("max_same", "POLARIS_PM_MAX_SAME"),
+            ("model", "KERNELONE_PM_MODEL"),
+            ("backend", "KERNELONE_PM_BACKEND"),
+            ("director_timeout", "KERNELONE_PM_DIRECTOR_TIMEOUT"),
+            ("director_iterations", "KERNELONE_PM_DIRECTOR_ITERATIONS"),
+            ("director_match_mode", "KERNELONE_PM_DIRECTOR_MATCH_MODE"),
+            ("agents_approval_mode", "KERNELONE_PM_AGENTS_APPROVAL_MODE"),
+            ("agents_approval_timeout", "KERNELONE_PM_AGENTS_APPROVAL_TIMEOUT"),
+            ("max_failures", "KERNELONE_PM_MAX_FAILURES"),
+            ("max_blocked", "KERNELONE_PM_MAX_BLOCKED"),
+            ("max_same", "KERNELONE_PM_MAX_SAME"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:
                 pm_config[key] = _parse_value(raw)
         for key, env_key in (
-            ("show_output", "POLARIS_PM_SHOW_OUTPUT"),
-            ("runs_director", "POLARIS_PM_RUNS_DIRECTOR"),
-            ("director_show_output", "POLARIS_PM_DIRECTOR_SHOW_OUTPUT"),
+            ("show_output", "KERNELONE_PM_SHOW_OUTPUT"),
+            ("runs_director", "KERNELONE_PM_RUNS_DIRECTOR"),
+            ("director_show_output", "KERNELONE_PM_DIRECTOR_SHOW_OUTPUT"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:
@@ -1009,22 +1009,22 @@ class Settings(BaseModel):
 
         director_config: dict[str, Any] = {}
         for key, env_key in (
-            ("model", "POLARIS_DIRECTOR_MODEL"),
-            ("iterations", "POLARIS_DIRECTOR_ITERATIONS"),
-            ("execution_mode", "POLARIS_DIRECTOR_WORKFLOW_EXECUTION_MODE"),
-            ("max_parallel_tasks", "POLARIS_DIRECTOR_MAX_PARALLEL_TASKS"),
-            ("ready_timeout_seconds", "POLARIS_DIRECTOR_READY_TIMEOUT_SECONDS"),
-            ("claim_timeout_seconds", "POLARIS_DIRECTOR_CLAIM_TIMEOUT_SECONDS"),
-            ("phase_timeout_seconds", "POLARIS_DIRECTOR_PHASE_TIMEOUT_SECONDS"),
-            ("complete_timeout_seconds", "POLARIS_DIRECTOR_COMPLETE_TIMEOUT_SECONDS"),
-            ("task_timeout_seconds", "POLARIS_DIRECTOR_TASK_TIMEOUT_SECONDS"),
+            ("model", "KERNELONE_DIRECTOR_MODEL"),
+            ("iterations", "KERNELONE_DIRECTOR_ITERATIONS"),
+            ("execution_mode", "KERNELONE_DIRECTOR_WORKFLOW_EXECUTION_MODE"),
+            ("max_parallel_tasks", "KERNELONE_DIRECTOR_MAX_PARALLEL_TASKS"),
+            ("ready_timeout_seconds", "KERNELONE_DIRECTOR_READY_TIMEOUT_SECONDS"),
+            ("claim_timeout_seconds", "KERNELONE_DIRECTOR_CLAIM_TIMEOUT_SECONDS"),
+            ("phase_timeout_seconds", "KERNELONE_DIRECTOR_PHASE_TIMEOUT_SECONDS"),
+            ("complete_timeout_seconds", "KERNELONE_DIRECTOR_COMPLETE_TIMEOUT_SECONDS"),
+            ("task_timeout_seconds", "KERNELONE_DIRECTOR_TASK_TIMEOUT_SECONDS"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:
                 director_config[key] = _parse_value(raw)
         for key, env_key in (
-            ("forever", "POLARIS_DIRECTOR_FOREVER"),
-            ("show_output", "POLARIS_DIRECTOR_SHOW_OUTPUT"),
+            ("forever", "KERNELONE_DIRECTOR_FOREVER"),
+            ("show_output", "KERNELONE_DIRECTOR_SHOW_OUTPUT"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:
@@ -1048,10 +1048,10 @@ class Settings(BaseModel):
             kwargs["runtime"] = RuntimeConfig(**runtime_config)
 
         logging_config: dict[str, Any] = {}
-        log_level = os.environ.get("POLARIS_LOG_LEVEL")
+        log_level = os.environ.get("KERNELONE_LOG_LEVEL")
         if log_level:
             logging_config["level"] = log_level
-        debug_tracing = os.environ.get("POLARIS_DEBUG_TRACING")
+        debug_tracing = os.environ.get("KERNELONE_DEBUG_TRACING")
         if debug_tracing is not None:
             logging_config["enable_debug_tracing"] = _parse_bool(debug_tracing)
         if kwargs.get("json_log_path"):
@@ -1060,10 +1060,10 @@ class Settings(BaseModel):
             kwargs["logging"] = LoggingConfig(**logging_config)
 
         server_config: dict[str, Any] = {}
-        backend_port = os.environ.get("POLARIS_BACKEND_PORT")
+        backend_port = os.environ.get("KERNELONE_BACKEND_PORT")
         if backend_port and backend_port.isdigit():
             server_config["port"] = int(backend_port)
-        cors_origins = os.environ.get("POLARIS_CORS_ORIGINS")
+        cors_origins = os.environ.get("KERNELONE_CORS_ORIGINS")
         if cors_origins:
             parsed = [item.strip() for item in cors_origins.split(",") if item.strip()]
             if parsed:
@@ -1073,15 +1073,15 @@ class Settings(BaseModel):
 
         nats_config: dict[str, Any] = {}
         for key, env_key in (
-            ("enabled", "POLARIS_NATS_ENABLED"),
-            ("required", "POLARIS_NATS_REQUIRED"),
-            ("url", "POLARIS_NATS_URL"),
-            ("user", "POLARIS_NATS_USER"),
-            ("password", "POLARIS_NATS_PASSWORD"),
-            ("connect_timeout_sec", "POLARIS_NATS_CONNECT_TIMEOUT"),
-            ("reconnect_wait_sec", "POLARIS_NATS_RECONNECT_WAIT"),
-            ("max_reconnect_attempts", "POLARIS_NATS_MAX_RECONNECT"),
-            ("stream_name", "POLARIS_NATS_STREAM_NAME"),
+            ("enabled", "KERNELONE_NATS_ENABLED"),
+            ("required", "KERNELONE_NATS_REQUIRED"),
+            ("url", "KERNELONE_NATS_URL"),
+            ("user", "KERNELONE_NATS_USER"),
+            ("password", "KERNELONE_NATS_PASSWORD"),
+            ("connect_timeout_sec", "KERNELONE_NATS_CONNECT_TIMEOUT"),
+            ("reconnect_wait_sec", "KERNELONE_NATS_RECONNECT_WAIT"),
+            ("max_reconnect_attempts", "KERNELONE_NATS_MAX_RECONNECT"),
+            ("stream_name", "KERNELONE_NATS_STREAM_NAME"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:

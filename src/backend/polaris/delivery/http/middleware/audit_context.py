@@ -4,7 +4,7 @@ Extracts or generates trace IDs from request headers (X-Trace-ID, X-Run-ID, X-Ta
 and establishes the UnifiedAuditContext scope for the request lifecycle.
 
 Configuration:
-- POLARIS_AUDIT_CONTEXT_ENABLED: Enable/disable audit context (default: true)
+- KERNELONE_AUDIT_CONTEXT_ENABLED: Enable/disable audit context (default: true)
 
 Usage:
     from polaris.delivery.http.middleware.audit_context import (
@@ -68,7 +68,7 @@ class AuditContextMiddleware(BaseHTTPMiddleware):
     ) -> None:
         super().__init__(app)
         # Explicit parameter takes precedence over environment variable
-        env_enabled = os.environ.get("POLARIS_AUDIT_CONTEXT_ENABLED", "true").lower() not in (
+        env_enabled = os.environ.get("KERNELONE_AUDIT_CONTEXT_ENABLED", "true").lower() not in (
             "false",
             "0",
             "no",

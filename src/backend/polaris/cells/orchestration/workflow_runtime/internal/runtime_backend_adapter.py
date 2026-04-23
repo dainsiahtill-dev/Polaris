@@ -52,12 +52,12 @@ class RuntimeBackendAdapter:
 
     @staticmethod
     def _resolve_runtime_db_path() -> str:
-        explicit = str(os.environ.get("POLARIS_RUNTIME_DB") or "").strip()
+        explicit = str(os.environ.get("KERNELONE_RUNTIME_DB") or "").strip()
         candidate = explicit
         if not candidate:
-            runtime_root = str(os.environ.get("POLARIS_RUNTIME_ROOT") or "").strip()
-            cache_root = str(os.environ.get("POLARIS_RUNTIME_CACHE_ROOT") or "").strip()
-            context_root = str(os.environ.get("POLARIS_CONTEXT_ROOT") or "").strip()
+            runtime_root = str(os.environ.get("KERNELONE_RUNTIME_ROOT") or "").strip()
+            cache_root = str(os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") or "").strip()
+            context_root = str(os.environ.get("KERNELONE_CONTEXT_ROOT") or "").strip()
             if runtime_root:
                 base_dir = runtime_root
             elif cache_root:

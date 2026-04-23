@@ -27,7 +27,7 @@ _ASYNC_HANDLER_TIMEOUT_SECONDS = max(
     0.1,
     float(
         os.environ.get("KERNELONE_MESSAGE_HANDLER_TIMEOUT_SECONDS")
-        or os.environ.get("POLARIS_MESSAGE_HANDLER_TIMEOUT_SECONDS", "5.0")
+        or os.environ.get("KERNELONE_MESSAGE_HANDLER_TIMEOUT_SECONDS", "5.0")
         or 5.0
     ),
 )

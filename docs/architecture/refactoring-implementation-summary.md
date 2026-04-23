@@ -37,7 +37,7 @@
 **核心特性**:
 - ✅ 10阶段启动流程 (utf8_setup → server_creation)
 - ✅ 统一配置合并 (default < persisted < env < cli)
-- ✅ 功能开关 `POLARIS_USE_NEW_BOOTSTRAP=0/1`
+- ✅ 功能开关 `KERNELONE_USE_NEW_BOOTSTRAP=0/1`
 - ✅ Electron `backend_started` 事件兼容
 
 ### Phase 3: 进程编排统一 ✅
@@ -67,7 +67,7 @@
 **核心特性**:
 - ✅ CLI 层只负责参数解析，业务逻辑委托给 RuntimeOrchestrator
 - ✅ 统一使用 ServiceDefinition 描述服务
-- ✅ 支持 `POLARIS_USE_THIN_CLI` 功能开关
+- ✅ 支持 `KERNELONE_USE_THIN_CLI` 功能开关
 - ✅ 向后兼容旧 CLI 参数
 
 ### Phase 5: 兼容加固与可观测性 ✅
@@ -96,7 +96,7 @@
 | 归档清单 | `archive/phase6_legacy/` | 遗留代码归档 |
 
 **核心特性**:
-- ✅ `POLARIS_USE_NEW_BOOTSTRAP` 移除计划
+- ✅ `KERNELONE_USE_NEW_BOOTSTRAP` 移除计划
 - ✅ 遗留代码自动归档
 - ✅ 清理清单和验证脚本
 - ✅ 回滚方案文档化
@@ -373,14 +373,14 @@ python scripts/phase6_cleanup.py --archive-path archive/legacy
 python src/backend/server.py --port 8080
 
 # 使用旧架构（遗留路径）
-POLARIS_USE_NEW_BOOTSTRAP=0 python src/backend/server.py --port 8080
+KERNELONE_USE_NEW_BOOTSTRAP=0 python src/backend/server.py --port 8080
 ```
 
 ### 保持的契约
 
 - ✅ `backend_started` stdout JSON 事件格式
 - ✅ CLI 参数名 (`--host`, `--port`, `--workspace`, 等)
-- ✅ 环境变量名 (`POLARIS_*`)
+- ✅ 环境变量名 (`KERNELONE_*`)
 - ✅ `/v2/pm/*` 和 `/v2/director/*` API 响应结构
 
 ## 实施完成总结

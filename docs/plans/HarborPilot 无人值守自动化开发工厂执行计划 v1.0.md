@@ -10,7 +10,7 @@ Polaris 无人值守自动化开发工厂执行计划 v1.0
 Auditor 语义采用 fail-closed：audit_result=FAIL 且缺少 defect ticket 时强阻断。
 路径契约采用“双兼容一规范”：运行时代码统一使用 runtime/...；输入层兼容 .polaris/runtime/... 一个发布周期。
 日志采用“单写入口”：业务代码不得直写 JSONL，必须经 LogEventWriter 或 Adapter。
-新日志能力采用 feature flag：POLARIS_LOG_PIPELINE_ENABLED（开发默认开，生产灰度后全开）。
+新日志能力采用 feature flag：KERNELONE_LOG_PIPELINE_ENABLED（开发默认开，生产灰度后全开）。
 所有文本读写显式 UTF-8，并增加 CI 编码守卫阻断非 UTF-8 文件。
 4. 公开接口与类型变更
 WebSocket 协议：新增 system|process|llm 订阅；新增 {"type":"event","action":"query"} 查询请求与 query_result 响应；保留 legacy snapshot/line。
@@ -50,7 +50,7 @@ Phase C Gate：pytest -q src/backend/tests 与 npm run test:e2e
 Phase D Gate：run_factory_e2e_smoke.py --workspace . --full、npm run test:e2e、CI 全绿
 8. 风险与回退策略
 风险：双写期可能重复事件；投影层可能导致新旧显示差异；CI 扩容初期耗时上升。
-回退：POLARIS_LOG_PIPELINE_ENABLED=0 一键回旧链路；保留 legacy 订阅与读取路径；每阶段合并前打可回退 tag 并保留验证日志。
+回退：KERNELONE_LOG_PIPELINE_ENABLED=0 一键回旧链路；保留 legacy 订阅与读取路径；每阶段合并前打可回退 tag 并保留验证日志。
 9. 交付物清单
 代码：路径契约修复、Auditor 语义修复、统一日志链路、查询与 WS 接口、CI 门禁。
 测试：单元/集成/E2E 用例更新，full smoke 通过。

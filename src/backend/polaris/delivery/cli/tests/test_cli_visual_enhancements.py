@@ -52,8 +52,8 @@ class TestBannerVisual:
         assert "╔" in captured.out or "workspace" in captured.out
 
     def test_print_banner_skip_when_env_var_set(self, monkeypatch, capsys):
-        """Banner should skip when POLARIS_CLI_SKIP_BANNER is set."""
-        monkeypatch.setenv("POLARIS_CLI_SKIP_BANNER", "1")
+        """Banner should skip when KERNELONE_CLI_SKIP_BANNER is set."""
+        monkeypatch.setenv("KERNELONE_CLI_SKIP_BANNER", "1")
 
         state = tc._ConsoleRenderState(prompt_style="plain", json_render="raw")
         tc._print_banner(
@@ -71,7 +71,7 @@ class TestBannerVisual:
 
     def test_print_banner_skip_in_json_output_mode(self, monkeypatch, capsys):
         """Banner should skip in JSON output mode."""
-        monkeypatch.delenv("POLARIS_CLI_SKIP_BANNER", raising=False)
+        monkeypatch.delenv("KERNELONE_CLI_SKIP_BANNER", raising=False)
 
         state = tc._ConsoleRenderState(prompt_style="plain", json_render="raw", output_format="json")
         tc._print_banner(

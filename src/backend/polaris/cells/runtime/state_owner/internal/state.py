@@ -46,7 +46,7 @@ class Auth:
 
     def __init__(self, token: str) -> None:
         self.token = token or ""
-        strict_when_empty = str(os.environ.get("POLARIS_STRICT_AUTH_WHEN_EMPTY_TOKEN", "")).strip().lower()
+        strict_when_empty = str(os.environ.get("KERNELONE_STRICT_AUTH_WHEN_EMPTY_TOKEN", "")).strip().lower()
         self._strict_when_empty_token = strict_when_empty in {"1", "true", "yes", "on"}
 
     def check(self, header_value: str) -> bool:
@@ -62,7 +62,7 @@ class Auth:
         """
         if not self.token:
             # Security fix: empty token no longer bypasses auth.
-            # Auth is always enforced; only explicit POLARIS_STRICT_AUTH_WHEN_EMPTY_TOKEN=1
+            # Auth is always enforced; only explicit KERNELONE_STRICT_AUTH_WHEN_EMPTY_TOKEN=1
             # may disable it in dev/test environments (strict mode = rejection).
             return False
         if not header_value:

@@ -420,7 +420,7 @@ class PMService:
             ]
         )
 
-        prompt_profile = str(os.environ.get("POLARIS_PROMPT_PROFILE", "")).strip()
+        prompt_profile = str(os.environ.get("KERNELONE_PROMPT_PROFILE", "")).strip()
         if prompt_profile:
             cmd.extend(["--prompt-profile", prompt_profile])
         if settings.runtime.ramdisk_root:
@@ -450,7 +450,7 @@ class PMService:
             cmd.append("--pm-show-output")
 
         if loop_mode:
-            loop_interval = int(os.environ.get("POLARIS_PM_LOOP_INTERVAL", "20") or 20)
+            loop_interval = int(os.environ.get("KERNELONE_PM_LOOP_INTERVAL", "20") or 20)
             cmd.extend(["--loop", "--interval", str(max(loop_interval, 1))])
             if resume:
                 cmd.append("--resume")
@@ -493,13 +493,13 @@ class PMService:
         workspace = self._resolve_effective_workspace()
         env = os.environ.copy()
         env.setdefault("PYTHONIOENCODING", "utf-8")
-        env.setdefault("POLARIS_LOOP_MODULE_DIR", str(self._settings.loop_module_dir))
-        env["POLARIS_WORKSPACE"] = str(workspace)
+        env.setdefault("KERNELONE_LOOP_MODULE_DIR", str(self._settings.loop_module_dir))
+        env["KERNELONE_WORKSPACE"] = str(workspace)
 
         broker = get_execution_broker_service()
         timeout_seconds = float(
             max(
-                int(os.environ.get("POLARIS_PM_PROCESS_TIMEOUT_SECONDS", "86400") or 86400),
+                int(os.environ.get("KERNELONE_PM_PROCESS_TIMEOUT_SECONDS", "86400") or 86400),
                 1,
             )
         )

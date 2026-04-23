@@ -35,7 +35,7 @@ def build_sequential_config(
     )
 
     sentinel = object()
-    seq_enabled = _seq_resolve_bool(settings, sentinel, "seq_enabled", "POLARIS_SEQ_ENABLED", False)
+    seq_enabled = _seq_resolve_bool(settings, sentinel, "seq_enabled", "KERNELONE_SEQ_ENABLED", False)
     if not seq_enabled:
         return None
     enabled_roles = [
@@ -44,19 +44,19 @@ def build_sequential_config(
             settings,
             sentinel,
             "seq_default_roles",
-            "POLARIS_SEQ_DEFAULT_ROLES",
+            "KERNELONE_SEQ_DEFAULT_ROLES",
             "director,adaptive",
         ).split(",")
     ]
     if "director" not in enabled_roles:
         return None
 
-    max_steps = _seq_resolve_int(settings, sentinel, "seq_max_steps", "POLARIS_SEQ_MAX_STEPS", 12, minimum=1)
+    max_steps = _seq_resolve_int(settings, sentinel, "seq_max_steps", "KERNELONE_SEQ_MAX_STEPS", 12, minimum=1)
     max_tool_calls = _seq_resolve_int(
         settings,
         sentinel,
         "seq_max_tool_calls_total",
-        "POLARIS_SEQ_MAX_TOOL_CALLS_TOTAL",
+        "KERNELONE_SEQ_MAX_TOOL_CALLS_TOTAL",
         24,
         minimum=1,
     )
@@ -64,7 +64,7 @@ def build_sequential_config(
         settings,
         sentinel,
         "seq_max_no_progress_steps",
-        "POLARIS_SEQ_MAX_NO_PROGRESS_STEPS",
+        "KERNELONE_SEQ_MAX_NO_PROGRESS_STEPS",
         3,
         minimum=1,
     )
@@ -72,11 +72,11 @@ def build_sequential_config(
         settings,
         sentinel,
         "seq_max_wall_time_seconds",
-        "POLARIS_SEQ_MAX_WALL_TIME_SECONDS",
+        "KERNELONE_SEQ_MAX_WALL_TIME_SECONDS",
         120,
         minimum=1,
     )
-    trace_level = _seq_resolve_str(settings, sentinel, "seq_trace_level", "POLARIS_SEQ_TRACE_LEVEL", "summary")
+    trace_level = _seq_resolve_str(settings, sentinel, "seq_trace_level", "KERNELONE_SEQ_TRACE_LEVEL", "summary")
     trace_level_enum = SequentialTraceLevel.SUMMARY
     if trace_level == "off":
         trace_level_enum = SequentialTraceLevel.OFF
@@ -90,7 +90,7 @@ def build_sequential_config(
         max_wall_time_seconds=max_wall_time,
     )
     mode = resolve_sequential_mode(settings, sentinel, context)
-    use_hybrid = _seq_resolve_bool(settings, sentinel, "seq_use_hybrid", "POLARIS_SEQ_USE_HYBRID", False)
+    use_hybrid = _seq_resolve_bool(settings, sentinel, "seq_use_hybrid", "KERNELONE_SEQ_USE_HYBRID", False)
     return {
         "mode": mode,
         "budget": budget,
@@ -107,7 +107,7 @@ def resolve_sequential_mode(
     """Resolve SequentialMode from settings and context."""
     from .helpers import _seq_resolve_str
 
-    default_mode = _seq_resolve_str(settings, sentinel, "seq_default_mode", "POLARIS_SEQ_DEFAULT_MODE", "enabled")
+    default_mode = _seq_resolve_str(settings, sentinel, "seq_default_mode", "KERNELONE_SEQ_DEFAULT_MODE", "enabled")
     default_mode_token = str(default_mode or "").strip().lower()
     mode = SequentialMode.ENABLED
     if default_mode_token == "disabled":

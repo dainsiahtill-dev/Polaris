@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-POLARIS_ROOT = BACKEND_ROOT / "polaris"
+KERNELONE_ROOT = BACKEND_ROOT / "polaris"
 BASELINE_PATH = (
     BACKEND_ROOT
     / "tests"
@@ -81,7 +81,7 @@ def _is_write_mode(call: ast.Call) -> bool:
 
 def _collect_direct_write_counts() -> Counter[str]:
     counts: Counter[str] = Counter()
-    for py_file in POLARIS_ROOT.rglob("*.py"):
+    for py_file in KERNELONE_ROOT.rglob("*.py"):
         rel = py_file.relative_to(BACKEND_ROOT).as_posix()
         if rel in KFS_DIRECT_IO_HARD_ALLOWLIST:
             continue

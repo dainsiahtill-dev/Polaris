@@ -421,7 +421,7 @@ def resolve_ramdisk_root(cli_value: str | None = None) -> str:
 def kernelone_home() -> str:
     """Return the KernelOne global home directory.
 
-    Priority: KERNELONE_HOME > POLARIS_HOME > ~/.polaris
+    Priority: KERNELONE_HOME > KERNELONE_HOME > ~/.polaris
 
     This is the product-agnostic counterpart. Polaris-specific callers
     should use ``PolarisStorageLayout`` or ``polaris_home()`` from

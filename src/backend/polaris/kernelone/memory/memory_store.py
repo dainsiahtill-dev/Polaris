@@ -24,7 +24,7 @@ from .schema import MemoryItem
 
 logger = logging.getLogger(__name__)
 
-# Use _runtime_config for KERNELONE_* / POLARIS_* fallback
+# Use _runtime_config for KERNELONE_* / KERNELONE_* fallback
 EMBEDDING_MODEL = _runtime_config.resolve_env_str("embedding_model") or "nomic-embed-text"
 _MEMORY_REFS_MODE_ENV = "KERNELONE_MEMORY_REFS_MODE"
 

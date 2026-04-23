@@ -91,9 +91,9 @@ function parseArgs(argv) {
     evidenceJson: "",
     imagePath: "",
     outputJson: "",
-    round: parseIntArg(process.env.POLARIS_OMNIPARSER_ROUND, 1, "POLARIS_OMNIPARSER_ROUND"),
-    timeoutMs: parseIntArg(process.env.POLARIS_OMNIPARSER_TIMEOUT_MS, 10 * 60 * 1000, "POLARIS_OMNIPARSER_TIMEOUT_MS"),
-    engineCommand: String(process.env.POLARIS_OMNIPARSER_ENGINE_CMD || "").trim(),
+    round: parseIntArg(process.env.KERNELONE_OMNIPARSER_ROUND, 1, "KERNELONE_OMNIPARSER_ROUND"),
+    timeoutMs: parseIntArg(process.env.KERNELONE_OMNIPARSER_TIMEOUT_MS, 10 * 60 * 1000, "KERNELONE_OMNIPARSER_TIMEOUT_MS"),
+    engineCommand: String(process.env.KERNELONE_OMNIPARSER_ENGINE_CMD || "").trim(),
     dryRun: false,
   };
 

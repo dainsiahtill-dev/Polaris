@@ -264,7 +264,7 @@ Include sections for: Goal, Scope, Constraints, Acceptance Criteria, and Backlog
         try:
             from polaris.kernelone.process.ollama_utils import invoke_ollama
 
-            model = os.environ.get("POLARIS_ARCHITECT_MODEL", "MiniMax-M2.5")
+            model = os.environ.get("KERNELONE_ARCHITECT_MODEL", "MiniMax-M2.5")
 
             # 使用 asyncio.to_thread() 包装同步调用，避免阻塞事件循环
             # 注意: asyncio.to_thread 只接受位置参数，关键字参数需通过 functools.partial 传递

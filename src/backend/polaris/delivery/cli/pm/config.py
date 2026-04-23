@@ -21,7 +21,7 @@ SCRIPT_DIR = str(Path(__file__).resolve().parent.parent)
 
 def _resolve_project_root() -> str:
     """Resolve project root with environment override first."""
-    from_env = str(os.environ.get("POLARIS_PROJECT_ROOT", "") or "").strip()
+    from_env = str(os.environ.get("KERNELONE_PROJECT_ROOT", "") or "").strip()
     if from_env:
         return str(Path(from_env).expanduser().resolve())
     resolved = Path(__file__).resolve()
@@ -35,9 +35,9 @@ def _resolve_project_root() -> str:
 PROJECT_ROOT = _resolve_project_root()
 
 # Environment variable names
-PROMPT_PROFILE_ENV = "POLARIS_PROMPT_PROFILE"
-AGENTS_APPROVAL_MODE_ENV = "POLARIS_AGENTS_APPROVAL_MODE"
-AGENTS_APPROVAL_TIMEOUT_ENV = "POLARIS_AGENTS_APPROVAL_TIMEOUT_SECONDS"
+PROMPT_PROFILE_ENV = "KERNELONE_PROMPT_PROFILE"
+AGENTS_APPROVAL_MODE_ENV = "KERNELONE_AGENTS_APPROVAL_MODE"
+AGENTS_APPROVAL_TIMEOUT_ENV = "KERNELONE_AGENTS_APPROVAL_TIMEOUT_SECONDS"
 
 # Default paths
 DEFAULT_DIRECTOR_SUBPROCESS_LOG = "runtime/logs/director.process.log"
@@ -51,7 +51,7 @@ DEFAULT_ASSIGNEE_EXECUTION = "runtime/state/assignee_execution.state.json"
 AGENTS_APPROVAL_MODES = {"auto", "wait", "auto_accept", "fail_fast"}
 DEFAULT_AGENTS_APPROVAL_MODE = "auto_accept"
 DEFAULT_AGENTS_APPROVAL_TIMEOUT = 90
-MANUAL_INTERVENTION_MODE_ENV = "POLARIS_MANUAL_INTERVENTION_MODE"
+MANUAL_INTERVENTION_MODE_ENV = "KERNELONE_MANUAL_INTERVENTION_MODE"
 MANUAL_INTERVENTION_MODES = {"report_only", "pause"}
 DEFAULT_MANUAL_INTERVENTION_MODE = "report_only"
 
@@ -153,7 +153,7 @@ def _is_valid_module_dir(path: str) -> bool:
 
 def find_module_dir(base_dir: str) -> str:
     """Find the loop module directory."""
-    env_candidates = [os.environ.get("POLARIS_LOOP_MODULE_DIR", "").strip()]
+    env_candidates = [os.environ.get("KERNELONE_LOOP_MODULE_DIR", "").strip()]
     for env_dir in env_candidates:
         if _is_valid_module_dir(env_dir):
             return os.path.abspath(env_dir)
@@ -171,7 +171,7 @@ def find_module_dir(base_dir: str) -> str:
 
 
 # Module directory setup
-MODULE_DIR = os.environ.get("POLARIS_LOOP_MODULE_DIR", "").strip()
+MODULE_DIR = os.environ.get("KERNELONE_LOOP_MODULE_DIR", "").strip()
 if MODULE_DIR:
     MODULE_DIR = os.path.abspath(MODULE_DIR)
 if not _is_valid_module_dir(MODULE_DIR):
@@ -218,22 +218,22 @@ def load_pm_model_config() -> tuple[str, str]:
         provider_id, model = get_role_model("pm")
 
         # Set environment variables for downstream use
-        os.environ["POLARIS_PM_PROVIDER"] = provider_id
-        os.environ["POLARIS_PM_MODEL"] = model
+        os.environ["KERNELONE_PM_PROVIDER"] = provider_id
+        os.environ["KERNELONE_PM_MODEL"] = model
 
         return provider_id, model
     except (RuntimeError, ValueError) as e:
         logger.warning("Failed to load visual PM config: %s", e)
         # Fallback to environment variables or defaults
-        provider_id = os.environ.get("POLARIS_PM_PROVIDER", "openai")
-        model = os.environ.get("POLARIS_PM_MODEL", "gpt-4")
+        provider_id = os.environ.get("KERNELONE_PM_PROVIDER", "openai")
+        model = os.environ.get("KERNELONE_PM_MODEL", "gpt-4")
         return provider_id, model
 
 
 # Keep module import side-effect free:
 # Do not trigger runtime config loading at import time.
-_PM_PROVIDER_ID = os.environ.get("POLARIS_PM_PROVIDER", "openai")
-_PM_MODEL = os.environ.get("POLARIS_PM_MODEL", "gpt-4")
+_PM_PROVIDER_ID = os.environ.get("KERNELONE_PM_PROVIDER", "openai")
+_PM_MODEL = os.environ.get("KERNELONE_PM_MODEL", "gpt-4")
 
 
 __all__ = [

@@ -134,7 +134,7 @@ def test_script_director_uses_default_task_timeout_when_process_timeout_disabled
     import subprocess
 
     monkeypatch.setattr(subprocess, "Popen", _Process)
-    monkeypatch.delenv("POLARIS_DIRECTOR_TASK_TIMEOUT", raising=False)
+    monkeypatch.delenv("KERNELONE_DIRECTOR_TASK_TIMEOUT", raising=False)
     adapter = _make_adapter(tmp_path=tmp_path, timeout=None)
 
     result = adapter.execute(_sample_task())

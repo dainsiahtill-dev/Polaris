@@ -371,21 +371,21 @@ class TestModelSelection:
         SSOT: Model info must come from ContextOS via event payload.
         Environment variable is only a fallback - returns None if not set.
         """
-        monkeypatch.delenv("POLARIS_PM_MODEL", raising=False)
+        monkeypatch.delenv("KERNELONE_PM_MODEL", raising=False)
         result = tc._get_current_model()
         assert result is None
 
     def test_get_current_model_returns_env_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """_get_current_model should return value from POLARIS_PM_MODEL."""
-        monkeypatch.setenv("POLARIS_PM_MODEL", "gpt-4o")
+        """_get_current_model should return value from KERNELONE_PM_MODEL."""
+        monkeypatch.setenv("KERNELONE_PM_MODEL", "gpt-4o")
         result = tc._get_current_model()
         assert result == "gpt-4o"
 
     def test_set_current_model_sets_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """_set_current_model should set POLARIS_PM_MODEL env var."""
-        monkeypatch.delenv("POLARIS_PM_MODEL", raising=False)
+        """_set_current_model should set KERNELONE_PM_MODEL env var."""
+        monkeypatch.delenv("KERNELONE_PM_MODEL", raising=False)
         tc._set_current_model("claude-3-5-sonnet")
-        assert os.environ.get("POLARIS_PM_MODEL") == "claude-3-5-sonnet"
+        assert os.environ.get("KERNELONE_PM_MODEL") == "claude-3-5-sonnet"
 
     def test_known_models_includes_common_models(self) -> None:
         """_KNOWN_MODELS should include common LLM models."""

@@ -49,7 +49,7 @@ npx playwright install
 npm run test:electron
 ```
 
-> 默认优先使用 `.venv` 的 Python 启动后端。如果需要自定义解释器，请设置 `POLARIS_PYTHON`。
+> 默认优先使用 `.venv` 的 Python 启动后端。如果需要自定义解释器，请设置 `KERNELONE_PYTHON`。
 
 ## 一句话任务速查
 
@@ -58,7 +58,7 @@ npm run test:electron
 npm run test:e2e -- tests/electron/realtime-visibility.spec.ts tests/electron/panel-error.spec.ts
 
 # PM -> Director 全链路（需要真实设置）
-set POLARIS_E2E_USE_REAL_SETTINGS=1
+set KERNELONE_E2E_USE_REAL_SETTINGS=1
 npm run test:e2e -- tests/electron/pm-director-real-flow.spec.ts
 
 # 任务合同仅做结构检查（不执行）

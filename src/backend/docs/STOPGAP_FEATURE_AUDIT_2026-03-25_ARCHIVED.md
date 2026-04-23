@@ -274,7 +274,7 @@
   - `polaris/kernelone/fs/control_flags.py`
   - `polaris/kernelone/audit/gateway.py`
 - 典型表现:
-  - `_runtime_config.py` 接受 `POLARIS_*` 作为 backward-compatible fallback
+  - `_runtime_config.py` 接受 `KERNELONE_*` 作为 backward-compatible fallback
   - `control_flags.py` 里有 `stop_flag_path()/director_stop_flag_path()` 等 legacy alias
   - `audit/gateway.py` 明写 `Compatibility gateway`
 - canonical 目标:

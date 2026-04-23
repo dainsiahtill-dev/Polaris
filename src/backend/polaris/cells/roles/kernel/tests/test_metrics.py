@@ -297,24 +297,24 @@ class TestTransactionMetrics:
 
 
 class TestQualityThresholdEnvVar:
-    """Tests for POLARIS_QUALITY_THRESHOLD environment variable."""
+    """Tests for KERNELONE_QUALITY_THRESHOLD environment variable."""
 
     def setup_method(self) -> None:
         """Reset environment before each test."""
-        self._original_env = os.environ.get("POLARIS_QUALITY_THRESHOLD")
+        self._original_env = os.environ.get("KERNELONE_QUALITY_THRESHOLD")
         # Reset the singleton for each test
         MetricsCollector.reset()
 
     def teardown_method(self) -> None:
         """Restore environment after each test."""
         if self._original_env is None:
-            os.environ.pop("POLARIS_QUALITY_THRESHOLD", None)
+            os.environ.pop("KERNELONE_QUALITY_THRESHOLD", None)
         else:
-            os.environ["POLARIS_QUALITY_THRESHOLD"] = self._original_env
+            os.environ["KERNELONE_QUALITY_THRESHOLD"] = self._original_env
 
     def test_default_threshold(self) -> None:
         """Default threshold is 60.0."""
-        os.environ.pop("POLARIS_QUALITY_THRESHOLD", None)
+        os.environ.pop("KERNELONE_QUALITY_THRESHOLD", None)
         from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
 
         checker = QualityChecker()
@@ -322,7 +322,7 @@ class TestQualityThresholdEnvVar:
 
     def test_custom_threshold(self) -> None:
         """Custom threshold from environment variable."""
-        os.environ["POLARIS_QUALITY_THRESHOLD"] = "75.5"
+        os.environ["KERNELONE_QUALITY_THRESHOLD"] = "75.5"
         from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
 
         checker = QualityChecker()
@@ -330,19 +330,19 @@ class TestQualityThresholdEnvVar:
 
     def test_threshold_clamping(self) -> None:
         """Threshold is clamped to [0, 100]."""
-        os.environ["POLARIS_QUALITY_THRESHOLD"] = "150"
+        os.environ["KERNELONE_QUALITY_THRESHOLD"] = "150"
         from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
 
         checker = QualityChecker()
         assert checker.quality_threshold == 100.0
 
-        os.environ["POLARIS_QUALITY_THRESHOLD"] = "-10"
+        os.environ["KERNELONE_QUALITY_THRESHOLD"] = "-10"
         checker2 = QualityChecker()
         assert checker2.quality_threshold == 0.0
 
     def test_invalid_threshold_falls_back(self) -> None:
         """Invalid threshold falls back to default."""
-        os.environ["POLARIS_QUALITY_THRESHOLD"] = "invalid"
+        os.environ["KERNELONE_QUALITY_THRESHOLD"] = "invalid"
         from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
 
         checker = QualityChecker()

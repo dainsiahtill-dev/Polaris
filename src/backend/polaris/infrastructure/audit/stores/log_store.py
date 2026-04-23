@@ -5,9 +5,9 @@ Maintains compatibility with original Director log format.
 
 CRITICAL: All logs are stored OUTSIDE the workspace to avoid pollution.
 Storage locations (in priority order):
-1. Ramdisk (X:\) if available and POLARIS_STATE_TO_RAMDISK is enabled
+1. Ramdisk (X:\) if available and KERNELONE_STATE_TO_RAMDISK is enabled
 2. System cache directory (%LOCALAPPDATA%\Polaris\cache or ~/.cache/polaris)
-3. Explicit POLARIS_RUNTIME_ROOT
+3. Explicit KERNELONE_RUNTIME_ROOT
 
 Path structure: {runtime_base}/<metadata_dir>/projects/{workspace_key}/runtime/logs/
 """

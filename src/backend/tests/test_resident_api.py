@@ -16,7 +16,7 @@ def test_resident_api_supports_identity_goals_and_decisions(tmp_path: Path) -> N
 
 def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-resident-token"
-    monkeypatch.setenv("POLARIS_TOKEN", test_token)
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     reset_resident_services()
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

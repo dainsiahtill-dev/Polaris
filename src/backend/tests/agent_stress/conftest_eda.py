@@ -40,10 +40,10 @@ def clean_task_market_service():
     Resetting it ensures each test gets an isolated service instance.
     """
     reset_task_market_service()
-    os.environ["POLARIS_TASK_MARKET_STORE"] = "json"
+    os.environ["KERNELONE_TASK_MARKET_STORE"] = "json"
     yield
     reset_task_market_service()
-    os.environ.pop("POLARIS_TASK_MARKET_STORE", None)
+    os.environ.pop("KERNELONE_TASK_MARKET_STORE", None)
 
 
 @pytest.fixture

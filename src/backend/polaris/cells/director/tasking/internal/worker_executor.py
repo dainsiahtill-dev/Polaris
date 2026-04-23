@@ -376,7 +376,7 @@ class WorkerExecutor:
         policy_messages: list[str] = []
 
         # Get model and timeout from environment
-        model = os.environ.get("POLARIS_WORKER_MODEL", "MiniMax-M2.5")
+        model = os.environ.get("KERNELONE_WORKER_MODEL", "MiniMax-M2.5")
         per_call_timeout = self._code_engine.resolve_llm_timeout(
             task.timeout_seconds  # type: ignore[arg-type]
         )
@@ -624,7 +624,7 @@ class WorkerExecutor:
             file_plans = plan.get("file_plans", [])
             if file_plans:
                 # Check for chunking environment variable
-                chunk_size_str = os.environ.get("POLARIS_CE_ROUND_FILE_CHUNK", "")
+                chunk_size_str = os.environ.get("KERNELONE_CE_ROUND_FILE_CHUNK", "")
                 if chunk_size_str:
                     try:
                         chunk_size = int(chunk_size_str)
@@ -855,7 +855,7 @@ Requirements:
 - Prefer editing/creating the listed target files before creating new files
 """
 
-        raw_max_chars = os.environ.get("POLARIS_WORKER_PROMPT_MAX_CHARS", "9000")
+        raw_max_chars = os.environ.get("KERNELONE_WORKER_PROMPT_MAX_CHARS", "9000")
         try:
             max_chars = int(raw_max_chars)
         except ValueError:

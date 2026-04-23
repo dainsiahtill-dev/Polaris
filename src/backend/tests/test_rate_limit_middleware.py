@@ -22,7 +22,7 @@ def _build_client(*, rps: float, burst: int, window: float) -> TestClient:
 
 
 def test_rate_limit_uses_rps_times_window_capacity(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("KERNELONE_RATE_LIMIT_ENABLED", "true")
     with _build_client(rps=10.0, burst=20, window=60.0) as client:
         responses = [client.get("/v2/test") for _ in range(25)]
 
@@ -31,7 +31,7 @@ def test_rate_limit_uses_rps_times_window_capacity(monkeypatch) -> None:
 
 
 def test_rate_limit_still_enforces_small_capacity(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("KERNELONE_RATE_LIMIT_ENABLED", "true")
     with _build_client(rps=1.0, burst=2, window=1.0) as client:
         first = client.get("/v2/test")
         second = client.get("/v2/test")

@@ -166,7 +166,7 @@ class QANode(BaseRoleNode):
 
         # Get timeout
         timeout_seconds = 300
-        timeout_env = os.environ.get("POLARIS_INTEGRATION_QA_TIMEOUT_SECONDS", "300")
+        timeout_env = os.environ.get("KERNELONE_INTEGRATION_QA_TIMEOUT_SECONDS", "300")
         try:
             timeout_seconds = max(30, int(timeout_env))
         except (RuntimeError, ValueError) as e:

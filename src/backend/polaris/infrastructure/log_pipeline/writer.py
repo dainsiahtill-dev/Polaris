@@ -77,7 +77,7 @@ def _ensure_jetstream_support() -> bool:
 
 # Publish retry configuration
 PUBLISH_ENABLED = (
-    os.environ.get("KERNELONE_JETSTREAM_PUBLISH") or os.environ.get("POLARIS_JETSTREAM_PUBLISH", "0")
+    os.environ.get("KERNELONE_JETSTREAM_PUBLISH") or os.environ.get("KERNELONE_JETSTREAM_PUBLISH", "0")
 ) not in ("0", "false", "no")
 
 

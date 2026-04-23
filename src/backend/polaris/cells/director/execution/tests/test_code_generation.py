@@ -36,22 +36,22 @@ class TestResolveLlmTimeout:
 
     def test_resolve_llm_timeout_from_env(self):
         engine = CodeGenerationEngine("/tmp", Mock())
-        with patch.dict(os.environ, {"POLARIS_WORKER_LLM_TIMEOUT": "120"}):
+        with patch.dict(os.environ, {"KERNELONE_WORKER_LLM_TIMEOUT": "120"}):
             assert engine.resolve_llm_timeout(60) == 120
 
     def test_resolve_llm_timeout_invalid_env(self):
         engine = CodeGenerationEngine("/tmp", Mock())
-        with patch.dict(os.environ, {"POLARIS_WORKER_LLM_TIMEOUT": "invalid"}):
+        with patch.dict(os.environ, {"KERNELONE_WORKER_LLM_TIMEOUT": "invalid"}):
             assert engine.resolve_llm_timeout(60) == 60
 
     def test_resolve_llm_timeout_bounds_min(self):
         engine = CodeGenerationEngine("/tmp", Mock())
-        with patch.dict(os.environ, {"POLARIS_WORKER_LLM_TIMEOUT": "5"}):
+        with patch.dict(os.environ, {"KERNELONE_WORKER_LLM_TIMEOUT": "5"}):
             assert engine.resolve_llm_timeout(60) == 15
 
     def test_resolve_llm_timeout_bounds_max(self):
         engine = CodeGenerationEngine("/tmp", Mock())
-        with patch.dict(os.environ, {"POLARIS_WORKER_LLM_TIMEOUT": "500"}):
+        with patch.dict(os.environ, {"KERNELONE_WORKER_LLM_TIMEOUT": "500"}):
             assert engine.resolve_llm_timeout(60) == 300
 
 
@@ -73,7 +73,7 @@ class TestResolveTaskTimeoutBudget:
         engine = CodeGenerationEngine("/tmp", Mock())
         mock_task = Mock()
         mock_task.timeout_seconds = 0
-        with patch.dict(os.environ, {"POLARIS_WORKER_TOTAL_TIMEOUT": "600"}):
+        with patch.dict(os.environ, {"KERNELONE_WORKER_TOTAL_TIMEOUT": "600"}):
             assert engine.resolve_task_timeout_budget(mock_task, rounds=1) == 600
 
 

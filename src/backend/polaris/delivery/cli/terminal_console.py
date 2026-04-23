@@ -271,12 +271,12 @@ def _get_current_model() -> str | None:
     Environment variable is only a fallback, not the primary source.
     Returns None if not set - caller must handle appropriately.
     """
-    return os.environ.get("POLARIS_PM_MODEL")
+    return os.environ.get("KERNELONE_PM_MODEL")
 
 
 def _set_current_model(model: str) -> None:
     """Set the LLM model for subsequent requests via environment variable."""
-    os.environ["POLARIS_PM_MODEL"] = model
+    os.environ["KERNELONE_PM_MODEL"] = model
 
 
 def _extract_token_usage(payload: Mapping[str, Any]) -> dict[str, int] | None:
@@ -442,7 +442,7 @@ def _detect_keymode_from_shell() -> str:
 
 def _get_default_keymode() -> str:
     """Resolve the default keymode: env var, persisted file, or auto-detection."""
-    env_keymode = os.environ.get("POLARIS_CLI_KEYMODE", "auto").lower()
+    env_keymode = os.environ.get("KERNELONE_CLI_KEYMODE", "auto").lower()
     if env_keymode in _KEYMODE_VALUES:
         return env_keymode
     # Try loading from persisted file
@@ -1051,9 +1051,9 @@ class _PromptRenderer:
             command_variants = [[*variant, "--config", config_path] for variant in command_variants]
 
         env = os.environ.copy()
-        env["POLARIS_ROLE"] = role
-        env["POLARIS_SESSION_ID"] = session_id
-        env["POLARIS_WORKSPACE"] = str(workspace)
+        env["KERNELONE_ROLE"] = role
+        env["KERNELONE_SESSION_ID"] = session_id
+        env["KERNELONE_WORKSPACE"] = str(workspace)
         env["POSH_SHELL"] = "pwsh"
 
         for command in command_variants:
@@ -1084,7 +1084,7 @@ def _spinner_output_stream() -> Any:
 
 
 def _spinner_enabled_for_stream(stream: Any) -> bool:
-    toggle = _safe_text(os.environ.get("POLARIS_CLI_SPINNER")).lower()
+    toggle = _safe_text(os.environ.get("KERNELONE_CLI_SPINNER")).lower()
     if toggle in {"0", "false", "off", "no"}:
         return False
     if toggle in {"1", "true", "on", "yes"}:
@@ -1176,11 +1176,11 @@ def _build_render_state(
     json_render: str | None,
     output_format: str | None,
 ) -> _ConsoleRenderState:
-    env_prompt_style = os.environ.get("POLARIS_CLI_PROMPT_STYLE")
-    env_json_render = os.environ.get("POLARIS_CLI_JSON_RENDER")
-    env_omp_config = os.environ.get("POLARIS_CLI_OMP_CONFIG")
-    env_omp_executable = os.environ.get("POLARIS_CLI_OMP_BIN")
-    env_output_format = os.environ.get("POLARIS_CLI_OUTPUT_FORMAT")
+    env_prompt_style = os.environ.get("KERNELONE_CLI_PROMPT_STYLE")
+    env_json_render = os.environ.get("KERNELONE_CLI_JSON_RENDER")
+    env_omp_config = os.environ.get("KERNELONE_CLI_OMP_CONFIG")
+    env_omp_executable = os.environ.get("KERNELONE_CLI_OMP_BIN")
+    env_output_format = os.environ.get("KERNELONE_CLI_OUTPUT_FORMAT")
     resolved_format = _resolve_output_format(output_format or env_output_format)
     return _ConsoleRenderState(
         prompt_style=_normalize_prompt_style(prompt_style or env_prompt_style),
@@ -1600,7 +1600,7 @@ def _print_status_bar(role: str, keymode: str = "auto") -> None:
         print(f"{symbol} [{role}]  {hints}")
 
 
-_POLARIS_ART = """
+_KERNELONE_ART = """
 [cyan bold]◈ Polaris CLI[/cyan bold] [dim]·[/dim] [white]Polaris[/white]
 """
 
@@ -1616,7 +1616,7 @@ def _print_banner(
     message_count: int | None = None,
 ) -> None:
     # Check skip banner env var
-    if os.environ.get("POLARIS_CLI_SKIP_BANNER", "").lower() in {"1", "true", "yes", "on"}:
+    if os.environ.get("KERNELONE_CLI_SKIP_BANNER", "").lower() in {"1", "true", "yes", "on"}:
         return
 
     # Skip banner in JSON output mode
@@ -2575,7 +2575,7 @@ def run_role_console(
         json_render=json_render,
         output_format=output_format,
     )
-    debug_enabled = _coerce_bool(debug if debug is not None else os.environ.get("POLARIS_CLI_DEBUG"))
+    debug_enabled = _coerce_bool(debug if debug is not None else os.environ.get("KERNELONE_CLI_DEBUG"))
     if debug_enabled:
         # --debug 标志降低日志级别并确保 handler 输出 DEBUG
         polaris_logger = logging.getLogger("polaris")

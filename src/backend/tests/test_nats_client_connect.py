@@ -85,7 +85,7 @@ async def test_nats_client_connect_uses_imported_nats_module(
 def test_nats_client_default_servers_follow_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POLARIS_NATS_URL", "nats://127.0.0.1:4555")
+    monkeypatch.setenv("KERNELONE_NATS_URL", "nats://127.0.0.1:4555")
 
     client = nats_client_module.NATSClient()
 

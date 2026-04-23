@@ -68,7 +68,7 @@ def pm_command(settings: Settings, loop_mode: bool, resume: bool = False) -> lis
             str(max(approval_timeout, 0)),
         ]
     )
-    prompt_profile = str(os.environ.get("POLARIS_PROMPT_PROFILE", "")).strip()
+    prompt_profile = str(os.environ.get("KERNELONE_PROMPT_PROFILE", "")).strip()
     if prompt_profile:
         cmd.extend(["--prompt-profile", prompt_profile])
     if settings.ramdisk_root:
@@ -84,7 +84,7 @@ def pm_command(settings: Settings, loop_mode: bool, resume: bool = False) -> lis
         ]
     )
     if loop_mode:
-        loop_interval = int(os.environ.get("POLARIS_PM_LOOP_INTERVAL", "20") or 20)
+        loop_interval = int(os.environ.get("KERNELONE_PM_LOOP_INTERVAL", "20") or 20)
         cmd.extend(["--loop", "--interval", str(max(loop_interval, 1))])
         if resume:
             cmd.append("--resume")
@@ -123,7 +123,7 @@ def director_command(settings: Settings) -> list[str]:
     ]
     if settings.director_model or settings.model:
         cmd.extend(["--model", settings.director_model or settings.model])
-    prompt_profile = str(os.environ.get("POLARIS_PROMPT_PROFILE", "")).strip()
+    prompt_profile = str(os.environ.get("KERNELONE_PROMPT_PROFILE", "")).strip()
     if prompt_profile:
         cmd.extend(["--prompt-profile", prompt_profile])
     if settings.ramdisk_root:
@@ -153,18 +153,18 @@ def _normalize_invariant_mode(value: str | None, allowed: set, default: str) -> 
 def build_invariants_env(settings: Settings) -> dict[str, str]:
     del settings
     io_mode = _normalize_invariant_mode(
-        os.environ.get("POLARIS_IO_FSYNC_MODE", "strict"),
+        os.environ.get("KERNELONE_IO_FSYNC_MODE", "strict"),
         _INVARIANT_IO_FSYNC_MODES,
         "strict",
     )
     mem_mode = _normalize_invariant_mode(
-        os.environ.get("POLARIS_MEMORY_REFS_MODE", "soft"),
+        os.environ.get("KERNELONE_MEMORY_REFS_MODE", "soft"),
         _INVARIANT_MEMORY_REFS_MODES,
         "soft",
     )
     return {
-        "POLARIS_IO_FSYNC_MODE": io_mode,
-        "POLARIS_MEMORY_REFS_MODE": mem_mode,
+        "KERNELONE_IO_FSYNC_MODE": io_mode,
+        "KERNELONE_MEMORY_REFS_MODE": mem_mode,
     }
 
 
@@ -224,7 +224,7 @@ def spawn_process(
     env = build_utf8_env(extra_env)
     loop_module_dir = str(get_settings().loop_module_dir)
     if loop_module_dir:
-        env.setdefault("POLARIS_LOOP_MODULE_DIR", loop_module_dir)
+        env.setdefault("KERNELONE_LOOP_MODULE_DIR", loop_module_dir)
     timeout_value = timeout_seconds if timeout_seconds > 0 else _DEFAULT_BROKER_PROCESS_TIMEOUT_SECONDS
 
     async def _launch() -> tuple[Any | None, str]:

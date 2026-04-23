@@ -213,8 +213,8 @@ class TestPMServiceExecutionBroker:
             assert command.env["PYTHONIOENCODING"].upper() == "UTF-8"
 
             # Verify workspace env var is set
-            assert "POLARIS_WORKSPACE" in command.env
-            assert command.env["POLARIS_WORKSPACE"] == str(tmp_path)
+            assert "KERNELONE_WORKSPACE" in command.env
+            assert command.env["KERNELONE_WORKSPACE"] == str(tmp_path)
 
     @pytest.mark.asyncio
     async def test_spawn_process_sets_timeout(
@@ -223,7 +223,7 @@ class TestPMServiceExecutionBroker:
         mock_settings: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """Verify _spawn_process respects POLARIS_PM_PROCESS_TIMEOUT_SECONDS."""
+        """Verify _spawn_process respects KERNELONE_PM_PROCESS_TIMEOUT_SECONDS."""
         pm_script = tmp_path / "pm_script.py"
         pm_script.write_text("import sys; sys.exit(0)", encoding="utf-8")
 
@@ -248,7 +248,7 @@ class TestPMServiceExecutionBroker:
                 "polaris.cells.orchestration.pm_planning.service.get_execution_broker_service",
                 return_value=mock_broker,
             ),
-            patch.dict("os.environ", {"POLARIS_PM_PROCESS_TIMEOUT_SECONDS": "7200"}),
+            patch.dict("os.environ", {"KERNELONE_PM_PROCESS_TIMEOUT_SECONDS": "7200"}),
         ):
             service = PMService(settings=mock_settings)
             service._storage = StorageLayout(

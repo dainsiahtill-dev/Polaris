@@ -29,10 +29,10 @@ def test_noop_span_is_context_manager() -> None:
 
 
 def test_tracer_default_disabled_without_env() -> None:
-    """When POLARIS_TASK_MARKET_TRACING_ENABLED is not set, tracer is disabled."""
+    """When KERNELONE_TASK_MARKET_TRACING_ENABLED is not set, tracer is disabled."""
     import os
 
-    env_key = "POLARIS_TASK_MARKET_TRACING_ENABLED"
+    env_key = "KERNELONE_TASK_MARKET_TRACING_ENABLED"
     original = os.environ.pop(env_key, None)
     try:
         tracer = TaskMarketTracer()
@@ -44,7 +44,7 @@ def test_tracer_default_disabled_without_env() -> None:
 
 def test_tracer_enabled_via_env(monkeypatch) -> None:
     """When env var is set to true and OTel SDK is available, tracer is enabled."""
-    monkeypatch.setenv("POLARIS_TASK_MARKET_TRACING_ENABLED", "true")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_TRACING_ENABLED", "true")
     tracer = TaskMarketTracer()
     # The enabled flag depends on whether opentelemetry is importable.
     # In a test environment without OTel SDK, it gracefully falls back to disabled.

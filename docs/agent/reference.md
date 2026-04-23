@@ -98,7 +98,7 @@ polaris/
 
 ### 2.0.2 存储位置规则（Workspace vs RAMDISK）
 
-当启用 `POLARIS_STATE_TO_RAMDISK=1` 时，系统会把**高频/热数据**写入 RAMDISK 缓存目录
+当启用 `KERNELONE_STATE_TO_RAMDISK=1` 时，系统会把**高频/热数据**写入 RAMDISK 缓存目录
 `X:\.polaris\cache\<hash>\`，而**长期/冷数据**仍写在 workspace 下的 `.polaris/`。
 
 **写入 workspace/.polaris/**（长期保存）
@@ -266,12 +266,12 @@ Polaris 内置了 `tools.py` 统一入口。
 
 | 变量                           | 说明                                             |
 | :----------------------------- | :----------------------------------------------- |
-| `POLARIS_STATE_TO_RAMDISK` | 设为 `1` 强制将 `.polaris/` 指向内存盘 (X:\) |
-| `POLARIS_PM_BACKEND`       | 默认 PM 后端 (`codex`\|`ollama`)                 |
-| `POLARIS_DIRECTOR_MODEL`   | 默认 Director 模型                               |
-| `POLARIS_CONTEXT_ENGINE`   | 上下文引擎版本（`v1` / `v2`）                    |
-| `POLARIS_COST_MODEL`       | Cost model (`LOCAL` / `FIXED` / `METERED`)           |
-| `POLARIS_CONTEXT_SNAPSHOT` | Context 快照开关（`1` 开 / `0` 关）              |
+| `KERNELONE_STATE_TO_RAMDISK` | 设为 `1` 强制将 `.polaris/` 指向内存盘 (X:\) |
+| `KERNELONE_PM_BACKEND`       | 默认 PM 后端 (`codex`\|`ollama`)                 |
+| `KERNELONE_DIRECTOR_MODEL`   | 默认 Director 模型                               |
+| `KERNELONE_CONTEXT_ENGINE`   | 上下文引擎版本（`v1` / `v2`）                    |
+| `KERNELONE_COST_MODEL`       | Cost model (`LOCAL` / `FIXED` / `METERED`)           |
+| `KERNELONE_CONTEXT_SNAPSHOT` | Context 快照开关（`1` 开 / `0` 关）              |
 
 > 说明：上述 PM/Director 相关 env 仅提供默认值，实际角色绑定以 LLM 配置与面试通过后的选择为准；Director 不再限定某一后端。
 
@@ -283,18 +283,18 @@ Polaris 内置了 `tools.py` 统一入口。
 
 | 变量 | 说明 | 默认值 |
 | :--------------------------- | :----------------------------------------------- | :------ |
-| `POLARIS_CODEX_MODEL` | 覆盖 `--model` | `gpt-5.2-codex` |
-| `POLARIS_CODEX_SANDBOX` | 覆盖 `--sandbox`（read-only/workspace-write/danger-full-access） | `danger-full-access` |
-| `POLARIS_CODEX_APPROVALS` | 覆盖 `--ask-for-approval`（untrusted/on-failure/on-request/never） | 空 |
-| `POLARIS_CODEX_COLOR` | 覆盖 `--color`（always/never/auto） | `never` |
-| `POLARIS_CODEX_CD` | 覆盖 `--cd` 工作目录 | workspace |
-| `POLARIS_CODEX_SKIP_GIT_CHECK` | 是否添加 `--skip-git-repo-check` | `1` |
-| `POLARIS_CODEX_OUTPUT_SCHEMA` | 覆盖 `--output-schema` | 空 |
-| `POLARIS_CODEX_ADD_DIRS` | 追加 `--add-dir`（`;` / `,` 分隔） | 空 |
-| `POLARIS_CODEX_CONFIG` | 追加 `--config key=value`（`;` / `,` 分隔） | 空 |
-| `POLARIS_CODEX_OSS` | 启用 `--oss`（需 Ollama） | `0` |
-| `POLARIS_CODEX_UTF8_GUARD` | 注入 UTF-8 编码 guardrail | `1` |
-| `POLARIS_CODEX_CAPTURE_STDOUT` | 未使用 `--json` 时是否捕获 stdout | `0` |
+| `KERNELONE_CODEX_MODEL` | 覆盖 `--model` | `gpt-5.2-codex` |
+| `KERNELONE_CODEX_SANDBOX` | 覆盖 `--sandbox`（read-only/workspace-write/danger-full-access） | `danger-full-access` |
+| `KERNELONE_CODEX_APPROVALS` | 覆盖 `--ask-for-approval`（untrusted/on-failure/on-request/never） | 空 |
+| `KERNELONE_CODEX_COLOR` | 覆盖 `--color`（always/never/auto） | `never` |
+| `KERNELONE_CODEX_CD` | 覆盖 `--cd` 工作目录 | workspace |
+| `KERNELONE_CODEX_SKIP_GIT_CHECK` | 是否添加 `--skip-git-repo-check` | `1` |
+| `KERNELONE_CODEX_OUTPUT_SCHEMA` | 覆盖 `--output-schema` | 空 |
+| `KERNELONE_CODEX_ADD_DIRS` | 追加 `--add-dir`（`;` / `,` 分隔） | 空 |
+| `KERNELONE_CODEX_CONFIG` | 追加 `--config key=value`（`;` / `,` 分隔） | 空 |
+| `KERNELONE_CODEX_OSS` | 启用 `--oss`（需 Ollama） | `0` |
+| `KERNELONE_CODEX_UTF8_GUARD` | 注入 UTF-8 编码 guardrail | `1` |
+| `KERNELONE_CODEX_CAPTURE_STDOUT` | 未使用 `--json` 时是否捕获 stdout | `0` |
 
 > LLM 设置中的 `codex_cli` 支持 `codex_exec` 字段，字段名与 codex exec 参数一一对应（cd/color/approvals/.../prompt_from_stdin）。
 
@@ -304,9 +304,9 @@ Polaris 内置了 `tools.py` 统一入口。
 
 | 变量                                      | 说明                 | 默认值  |
 | :---------------------------------------- | :------------------- | :------ |
-| `POLARIS_INNER_VOICE_ENABLED`         | 启用内心独白抽取     | `true`  |
-| `POLARIS_INNER_VOICE_MAX_LENGTH`      | 独白最大长度（字符） | `2048`  |
-| `POLARIS_INNER_VOICE_SHOW_BY_DEFAULT` | UI 默认显示独白      | `false` |
+| `KERNELONE_INNER_VOICE_ENABLED`         | 启用内心独白抽取     | `true`  |
+| `KERNELONE_INNER_VOICE_MAX_LENGTH`      | 独白最大长度（字符） | `2048`  |
+| `KERNELONE_INNER_VOICE_SHOW_BY_DEFAULT` | UI 默认显示独白      | `false` |
 
 ### 5.4 Context Engine v2 策略字段（policy hints）
 
@@ -327,7 +327,7 @@ Polaris 内置了 `tools.py` 统一入口。
 
 ### 为什么 RAMDISK 不回落 (Fallback)？
 
-Polaris 强制要求配置了 `POLARIS_STATE_TO_RAMDISK` 的环境必须存在有效的 RAMDISK 路径。如果路径不存在，系统会直接报错退出，而不是回落到磁盘。
+Polaris 强制要求配置了 `KERNELONE_STATE_TO_RAMDISK` 的环境必须存在有效的 RAMDISK 路径。如果路径不存在，系统会直接报错退出，而不是回落到磁盘。
 原因：
 
 1.  **避免路径污染**：混合使用内存盘和机械盘会导致状态文件分散，增加调试和日志收集的难度。

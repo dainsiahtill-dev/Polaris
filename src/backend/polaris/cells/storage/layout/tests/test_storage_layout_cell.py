@@ -198,20 +198,20 @@ class TestStorageLayoutErrorV1:
 class TestPolarisHome:
     def test_polaris_home_priority_polaris_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
         hp_home = "/custom/hp/home"
-        monkeypatch.setenv("POLARIS_HOME", hp_home)
+        monkeypatch.setenv("KERNELONE_HOME", hp_home)
         result = polaris_home()
-        # POLARIS_HOME is used directly as complete path
+        # KERNELONE_HOME is used directly as complete path
         assert os.path.abspath(result) == os.path.abspath(hp_home)
 
     def test_polaris_home_strips_trailing_slash(self, monkeypatch: pytest.MonkeyPatch) -> None:
         hp_home = "/custom/hp/home/"
-        monkeypatch.setenv("POLARIS_HOME", hp_home)
+        monkeypatch.setenv("KERNELONE_HOME", hp_home)
         result = polaris_home()
         assert not result.endswith("/") and not result.endswith("\\")
 
     def test_polaris_home_expands_user_and_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         hp_home = "~/hp-home"
-        monkeypatch.setenv("POLARIS_HOME", hp_home)
+        monkeypatch.setenv("KERNELONE_HOME", hp_home)
         result = polaris_home()
         assert result.startswith(os.path.expanduser("~"))
         assert "hp-home" in result
@@ -222,7 +222,7 @@ class TestPolarisHome:
         # When KERNELONE_HOME is set and no Polaris dir exists, polaris_home()
         # appends .polaris (the current metadata dir)
         kern_home = str(tmp_path / "kern-home")
-        monkeypatch.delenv("POLARIS_HOME", raising=False)
+        monkeypatch.delenv("KERNELONE_HOME", raising=False)
         monkeypatch.setenv("KERNELONE_HOME", kern_home)
         result = polaris_home()
         expected = os.path.join(os.path.abspath(kern_home), ".polaris")
@@ -230,7 +230,7 @@ class TestPolarisHome:
 
     def test_polaris_home_fallback_expanduser(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Without any env vars, fallback is ~/.polaris (current metadata dir)
-        monkeypatch.delenv("POLARIS_HOME", raising=False)
+        monkeypatch.delenv("KERNELONE_HOME", raising=False)
         monkeypatch.delenv("KERNELONE_HOME", raising=False)
         result = polaris_home()
         expected = os.path.abspath(os.path.expanduser("~/.polaris"))
@@ -271,7 +271,7 @@ class TestDefaultPolarisCacheBase:
 class TestPolarisStorageLayout:
     def test_config_root_uses_polaris_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         hp_home = str(tmp_path / "hp-home")
-        monkeypatch.setenv("POLARIS_HOME", hp_home)
+        monkeypatch.setenv("KERNELONE_HOME", hp_home)
         layout = PolarisStorageLayout(str(tmp_path / "workspace"), str(tmp_path / "runtime"))
         # config_root must be anchored at polaris_home(), not kernelone_home()
         config_str = layout.config_root.as_posix()
@@ -294,8 +294,8 @@ class TestPolarisStorageLayout:
     ) -> None:
         # Mock default_ramdisk_root to return "" to avoid Windows X:\ detection
         # that pollutes cross-test _ramdisk_check_cache
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "project"
         ws.mkdir()
@@ -331,7 +331,7 @@ class TestPolarisStorageLayout:
         hp_home = str(tmp_path / "hp-home")
         hp_home_path = tmp_path / "hp-home"
         hp_home_path.mkdir()
-        monkeypatch.setenv("POLARIS_HOME", hp_home)
+        monkeypatch.setenv("KERNELONE_HOME", hp_home)
         layout = PolarisStorageLayout(str(tmp_path / "ws"), str(tmp_path / "runtime"))
         repr_str = repr(layout)
         assert "config_root=" in repr_str
@@ -346,15 +346,15 @@ class TestResolvePolarisRoots:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         # config_root = polaris_home()/config, which defaults to ~/.polaris/config
-        # When POLARIS_HOME is set, it uses that instead
+        # When KERNELONE_HOME is set, it uses that instead
         hp_home = str(tmp_path / "hp-home")
         hp_home_path = tmp_path / "hp-home"
         hp_home_path.mkdir()
-        monkeypatch.setenv("POLARIS_HOME", hp_home)
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_HOME", hp_home)
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
         runtime_cache = tmp_path / "runtime-cache"
         runtime_cache.mkdir()
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_cache))
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_cache))
 
         ws = tmp_path / "workspace"
         ws.mkdir()
@@ -362,13 +362,13 @@ class TestResolvePolarisRoots:
         roots = resolve_polaris_roots(str(ws))
 
         # config_root is anchored at polaris_home()/config
-        # When POLARIS_HOME=hp-home, config_root = hp-home/config
+        # When KERNELONE_HOME=hp-home, config_root = hp-home/config
         assert "config" in roots.config_root
         assert "hp-home" in roots.config_root
 
     def test_project_root_uses_polaris_metadata_dir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "myproject"
         ws.mkdir()
@@ -377,8 +377,8 @@ class TestResolvePolarisRoots:
         assert roots.project_persistent_root == roots.project_root
 
     def test_workspace_key_is_stable(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "stable"
         ws.mkdir()
@@ -389,9 +389,9 @@ class TestResolvePolarisRoots:
     def test_history_root_always_workspace_anchored(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # history_root must be under workspace_abs, NOT under runtime_base,
         # to guarantee it stays on the same drive as the workspace.
-        # Use POLARIS_RUNTIME_ROOT to force runtime_base to tmp_path.
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        # Use KERNELONE_RUNTIME_ROOT to force runtime_base to tmp_path.
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -404,8 +404,8 @@ class TestResolvePolarisRoots:
         assert "history" in roots.history_root
 
     def test_runtime_mode_is_project_local(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -418,15 +418,15 @@ class TestResolvePolarisRoots:
         ws.mkdir()
         ramdisk = tmp_path / "ramdisk"
         ramdisk.mkdir()
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "1")
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "1")
         roots = resolve_polaris_roots(str(ws), ramdisk_root=str(ramdisk))
         assert roots.runtime_mode == "ramdisk"
 
     def test_empty_workspace_defaults_to_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # resolve_polaris_roots accepts "" and falls back to os.getcwd()
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
         roots = resolve_polaris_roots("")
         assert roots.workspace_abs == os.path.abspath(os.getcwd())
 
@@ -436,8 +436,8 @@ class TestResolvePolarisRoots:
 
 class TestResolveStorageLayout:
     def test_returns_storage_layout_result(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -450,8 +450,8 @@ class TestResolveStorageLayout:
         assert ".polaris" in result.meta_root
 
     def test_result_extras_contains_all_roots(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -476,8 +476,8 @@ class TestResolveStorageLayout:
     def test_result_is_consistent_with_resolve_polaris_roots(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -495,8 +495,8 @@ class TestResolveStorageLayout:
     def test_logging_audit_event_emitted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog) -> None:
         import logging
 
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -569,8 +569,8 @@ class TestPathEscapeGuards:
 
 class TestRefreshStorageLayout:
     def test_returns_storage_layout_result(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -584,8 +584,8 @@ class TestRefreshStorageLayout:
     def test_force_false_uses_cache(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # When force=False, the cache is NOT invalidated; a second call returns
         # the same object identity (since nothing changed and the cache is fresh).
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -600,8 +600,8 @@ class TestRefreshStorageLayout:
     def test_force_true_invalidates_cache(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # When force=True the cache is cleared, but the result is the same
         # since the underlying environment hasn't changed.
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -624,8 +624,8 @@ class TestRefreshStorageLayout:
     def test_result_extras_identical_to_resolve_storage_layout(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -643,8 +643,8 @@ class TestRefreshStorageLayout:
     def test_force_true_emits_debug_log(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog) -> None:
         import logging
 
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "test-ws"
         ws.mkdir()
@@ -669,8 +669,8 @@ class TestStorageLayoutPerformance:
 
     def test_resolve_storage_layout_hot_path_sub_ms(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Hot-path: same workspace resolved twice (second call hits cache)."""
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "perf-ws"
         ws.mkdir()
@@ -692,8 +692,8 @@ class TestStorageLayoutPerformance:
 
     def test_resolve_storage_layout_cold_path_completes(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Cold-path: cache is cleared between each call."""
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         import time
 
@@ -716,8 +716,8 @@ class TestStorageLayoutPerformance:
 
     def test_polaris_roots_workspace_key_determinism(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """workspace_key must be stable across repeated calls without cache."""
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "stable-ws"
         ws.mkdir()
@@ -734,15 +734,15 @@ class TestStorageLayoutPerformance:
     ) -> None:
         """config_root is computed without touching the filesystem.
 
-        POLARIS_HOME is already set, so config_root = POLARIS_HOME/config
+        KERNELONE_HOME is already set, so config_root = KERNELONE_HOME/config
         requires no stat calls.  Verify by clearing the cache between calls and
         confirming P99 stays under threshold.
         """
         hp_home = tmp_path / "hp-home"
         hp_home.mkdir()
-        monkeypatch.setenv("POLARIS_HOME", str(hp_home))
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_HOME", str(hp_home))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         import time
 
@@ -765,8 +765,8 @@ class TestStorageLayoutPerformance:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """force=False refresh must be functionally identical to resolve_storage_layout."""
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime-cache"))
 
         ws = tmp_path / "equiv-ws"
         ws.mkdir()

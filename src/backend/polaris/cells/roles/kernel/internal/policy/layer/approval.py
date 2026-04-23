@@ -50,7 +50,7 @@ class ApprovalPolicy:
     @classmethod
     def from_env(cls) -> ApprovalPolicy:
         """从环境变量构造（Phase 3 默认空策略）。"""
-        raw = os.environ.get("POLARIS_REQUIRE_APPROVAL_FOR", "").strip()
+        raw = os.environ.get("KERNELONE_REQUIRE_APPROVAL_FOR", "").strip()
         if not raw:
             return cls()
         tools = [t.strip() for t in raw.split(",") if t.strip()]

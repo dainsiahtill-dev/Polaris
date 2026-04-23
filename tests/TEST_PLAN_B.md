@@ -6,8 +6,8 @@ Stage B validates real functional behavior across Polaris workflows. These tests
 ## Execution Guard
 Default Stage B tests run by default (mocked models, controlled inputs).
 Real Ollama integration tests are opt-in:
-- Set `POLARIS_OLLAMA_MODEL` to a locally installed model (e.g. `qwen2.5-coder:latest`).
-- Optional: `POLARIS_OLLAMA_TIMEOUT` to cap runtime (seconds).
+- Set `KERNELONE_OLLAMA_MODEL` to a locally installed model (e.g. `qwen2.5-coder:latest`).
+- Optional: `KERNELONE_OLLAMA_TIMEOUT` to cap runtime (seconds).
 
 ## Current Functional Tests
 
@@ -30,7 +30,7 @@ Real Ollama integration tests are opt-in:
 - Behavior:
   - Runs PM loop once with a real Ollama model
   - Verifies `pm_tasks.json` includes tasks, target_files, and acceptance
-  - Skips automatically when `POLARIS_OLLAMA_MODEL` is not set or the model is not installed
+  - Skips automatically when `KERNELONE_OLLAMA_MODEL` is not set or the model is not installed
 
 ## Future Stage B Extensions
 - QA toolchain execution (ruff/mypy/pytest)

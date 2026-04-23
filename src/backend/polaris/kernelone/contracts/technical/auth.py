@@ -5,7 +5,7 @@ Defines the canonical authentication interface for KernelOne.
 Key security invariant (IRONWALL-1 CRITICAL #1):
     An empty or blank token string is NEVER treated as authenticated.
     AuthCheckerPort.check("") MUST return AuthResult(authenticated=False).
-    This closes the authentication bypass where an empty POLARIS_TOKEN
+    This closes the authentication bypass where an empty KERNELONE_TOKEN
     was incorrectly accepted as valid.
 """
 
@@ -80,7 +80,7 @@ class AuthCheckerPort(Protocol):
 
     Implementations:
         - StaticTokenAuthChecker: Verifies against a pre-configured static token.
-        - EnvVarTokenAuthChecker: Reads POLARIS_TOKEN from environment.
+        - EnvVarTokenAuthChecker: Reads KERNELONE_TOKEN from environment.
         - JWTTokenAuthChecker: Cryptographically verifies a JWT (placeholder).
     """
 

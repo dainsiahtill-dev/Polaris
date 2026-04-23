@@ -52,7 +52,7 @@ Phase 1 — 单一运行态读模型收敛
 变更：/state/snapshot、/v2/ws/runtime、任何 dashboard/status hook 的服务端数据都统一从 RuntimeProjection 出来；runtime_ws_status.py 中 legacy merge 入口只保留 wrapper，不再持有第二套业务规则。
 变更：/v2/director/status 明确保留“local-only role status”；需要统一态的前端一律走 /state/snapshot 或 /v2/ws/runtime。
 验收：仓库 grep 只允许 merge_director_status() 在 runtime_projection.py 存在一份正式实现；test_runtime_projection.py 增加本地运行优先、workflow fallback、task rows 二选一、engine orphan recovery 四类场景。
-回滚开关：POLARIS_USE_RUNTIME_PROJECTION_V2=0 时退回旧 snapshot wrapper，但仅作为阶段性兜底，阶段完成后删除。
+回滚开关：KERNELONE_USE_RUNTIME_PROJECTION_V2=0 时退回旧 snapshot wrapper，但仅作为阶段性兜底，阶段完成后删除。
 Phase 2 — API 装配边界重构与兼容层拆分
 
 范围：拆掉“compat_router 既是入口又是兼容层”的混乱结构，正式路由和遗留桥接分离。
@@ -63,7 +63,7 @@ Phase 2 — API 装配边界重构与兼容层拆分
 变更：api.main.create_app() 直接注册 v2_router、system.router、runtime.router、history.router、conversations.router、role_session.router 和仍然正式保留的 legacy routers；不再把整个应用装配都藏在 compat_router 后面。
 变更：role_chat.py 明确为 Phase 2A 兼容桥，内部统一基于 RoleSessionService 和 /v2/roles/sessions/* 语义；Phase 2B 切 tombstone。
 验收：所有正式前端调用不再依赖旧 /pm/*、/director/*、旧 role chat 入口；桥接日志有调用计数；桥接阶段测试断言响应头和 migration target。
-回滚开关：POLARIS_ENABLE_LEGACY_BRIDGE=1 保留桥接；切 410 前必须观察到旧调用量清零或受控。
+回滚开关：KERNELONE_ENABLE_LEGACY_BRIDGE=1 保留桥接；切 410 前必须观察到旧调用量清零或受控。
 Phase 3 — 配置系统与导入系统根因治理
 
 范围：把 sys.path.insert 和“模块必须靠路径注入才可运行”的问题从生产代码中清除。
@@ -83,7 +83,7 @@ Phase 4 — 单一执行写路径与 Orchestration Command 收口
 变更：PMService、DirectorService 保留为本地进程/状态适配器，但不再负责发起新的业务级 orchestration decisions；它们只暴露 local lifecycle 和 status。
 变更：runtime_orchestrator.py 只保留 shim；所有实际 spawn_pm/spawn_director 都转到 orchestration command service 或新版 process launcher。
 验收：新增“无 direct spawn outside allowlist” 架构守护测试；pm.py 和 director.py 不再内嵌 run_id 生成、metadata 拼装和 adapter registration 细节，统一下放到应用层。
-回滚开关：POLARIS_FACTORY_RUN_SERVICE_V2=0 时 Factory 仍可走旧路径，但 PM/Director V2 API 不回退到旧 orchestrator。
+回滚开关：KERNELONE_FACTORY_RUN_SERVICE_V2=0 时 Factory 仍可走旧路径，但 PM/Director V2 API 不回退到旧 orchestrator。
 Phase 5 — Factory 正式服务化与审计持久化
 
 范围：把当前 factory.py 中的 V1 内存编排提升为可恢复、可审计、可回放的正式服务。

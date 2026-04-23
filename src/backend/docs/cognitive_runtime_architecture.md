@@ -30,7 +30,7 @@
 > 当前已对 `roles.runtime` 与 `director.execution` 接入 shadow-sidecar：
 > 执行链会旁路写入 receipt / handoff，但不会用 `Cognitive Runtime`
 > 去阻断、裁决或替代生产主链。
-> 运行时模式可开关（默认开启 shadow）：`POLARIS_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`。
+> 运行时模式可开关（默认开启 shadow）：`KERNELONE_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`。
 
 ---
 
@@ -820,7 +820,7 @@
 
 1. 允许 `Phase-1 + Phase-2` 能力完整落地并持久化（SQLite）
 2. 允许 `roles.runtime` / `director.execution` 旁路写 receipt/handoff/decision/rollback 资产
-3. 允许通过开关启停：`POLARIS_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`
+3. 允许通过开关启停：`KERNELONE_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`
 4. 保持对现有 Director / roles.runtime / kernelone.context / resident.autonomy 的复用边界
 
 当前阶段明确不做以下内容：

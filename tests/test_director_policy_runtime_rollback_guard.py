@@ -20,7 +20,7 @@ class _DummyState:
 
 
 def test_auto_rollback_disabled_without_manual_confirmation(monkeypatch):
-    monkeypatch.delenv("POLARIS_MANUAL_ROLLBACK_CONFIRMED", raising=False)
+    monkeypatch.delenv("KERNELONE_MANUAL_ROLLBACK_CONFIRMED", raising=False)
     state = _DummyState()
     policy = {
         "repair": {"rollback_on_fail": True},
@@ -34,7 +34,7 @@ def test_auto_rollback_disabled_without_manual_confirmation(monkeypatch):
 
 
 def test_manual_confirmation_can_enable_rollback(monkeypatch):
-    monkeypatch.setenv("POLARIS_MANUAL_ROLLBACK_CONFIRMED", "1")
+    monkeypatch.setenv("KERNELONE_MANUAL_ROLLBACK_CONFIRMED", "1")
     state = _DummyState()
     policy = {
         "repair": {"rollback_on_fail": True},

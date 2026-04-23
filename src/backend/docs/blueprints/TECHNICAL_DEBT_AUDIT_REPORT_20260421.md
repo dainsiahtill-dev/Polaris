@@ -111,7 +111,7 @@
 | DEBT-007 | 债务 | `storage.policy` artifact lifecycle 函数 deprecated |
 | DEBT-008 | 债务 | `RuntimeBackend` 别名 deprecated，应使用 `RuntimeBackendPort` |
 | DEBT-021 | 债务 | 5 个 Cell 未在 cells.yaml 声明 |
-| DEBT-022 | 债务 | POLARIS_ (769处) vs KERNELONE_ (225处) 环境变量前缀混用 |
+| DEBT-022 | 债务 | KERNELONE_ (769处) vs KERNELONE_ (225处) 环境变量前缀混用 |
 | DEBT-025 | 债务 | ContextOS v1/v2 模型混用 |
 
 ---

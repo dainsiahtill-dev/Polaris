@@ -31,8 +31,8 @@ Usage:
     broker.ensure_nats_connected()
 
 Configuration:
-    NATS_URL / POLARIS_NATS_URL: NATS server URL (default: nats://127.0.0.1:4222)
-    NATS_ENABLED / POLARIS_NATS_ENABLED: Enable NATS transport (default: True)
+    NATS_URL / KERNELONE_NATS_URL: NATS server URL (default: nats://127.0.0.1:4222)
+    NATS_ENABLED / KERNELONE_NATS_ENABLED: Enable NATS transport (default: True)
     NATS_CONNECT_TIMEOUT: Connection timeout in seconds (default: 3.0)
     NATS_RECONNECT_WAIT: Reconnect wait interval (default: 1.0)
     NATS_MAX_RECONNECT: Max reconnect attempts (default: -1 for infinite)

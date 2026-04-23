@@ -362,7 +362,7 @@ Cell 是最小自治边界。
 1. Descriptor 覆盖已提升至 **54 / 54**
 2. 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 中 25 个 high 级别遗留）
 3. `fitness-rules.yaml` blocker 尚未全量自动化执行
-4. `POLARIS_` 与 `KERNELONE_` 仍混用
+4. `KERNELONE_` 与 `KERNELONE_` 仍混用
 
 ### 15.5 未登记 Cell（需补充）
 
@@ -374,7 +374,7 @@ Cell 是最小自治边界。
 
 ### 15.6 环境变量前缀现状（2026-03-28）
 
-- `POLARIS_`: **769 处 / 165 文件**
+- `KERNELONE_`: **769 处 / 165 文件**
 - `KERNELONE_`: **225 处 / 43 文件**
 
 ### 15.7 CLI 入口点（已更新）

@@ -17,7 +17,7 @@
 | `except Exception:` | 206处 | **406处** | 🔴 严重 |
 | bare `except:` | 53处 | **0处** | 🟢 正常 |
 | pytest收集错误 | 11个 | **30个** | 🟡 需修复 |
-| POLARIS_前缀 | 769 | 786 | ⚠️ 需收敛 |
+| KERNELONE_前缀 | 769 | 786 | ⚠️ 需收敛 |
 | KERNELONE_前缀 | 225 | 266 | ⚠️ 需收敛 |
 | Cell总数 | 52 | **53** | 🟢 正常 |
 
@@ -102,18 +102,18 @@ except SpecificException as exc:
 ### 🟡 P1-2: 环境变量前缀收敛
 
 **现状**:
-- `POLARIS_`: 786次/185文件
+- `KERNELONE_`: 786次/185文件
 - `KERNELONE_`: 266次/62文件
 - `polaris/kernelone/_runtime_config.py` 已实现 fallback 设计
 
 **理解**: 这是**设计决策**，非 bug：
 - `KERNELONE_` 是规范前缀
-- `POLARIS_` 是兼容别名（Polaris 特有）
+- `KERNELONE_` 是兼容别名（Polaris 特有）
 - bootstrap 层负责映射
 
 **修复方案**:
 1. 新代码强制使用 `KERNELONE_`
-2. 旧代码 `POLARIS_` 改为 `KERNELONE_`（内部可保留兼容）
+2. 旧代码 `KERNELONE_` 改为 `KERNELONE_`（内部可保留兼容）
 3. 更新 AGENTS.md 文档说明
 
 **预计工时**: 1人天（逐步迁移）

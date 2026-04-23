@@ -1900,7 +1900,7 @@
         },
         {
           "name": "test_build_env_includes_polaris_workspace",
-          "doc": "Test adapter build_env includes POLARIS_WORKSPACE."
+          "doc": "Test adapter build_env includes KERNELONE_WORKSPACE."
         },
         {
           "name": "test_build_env_with_overrides",

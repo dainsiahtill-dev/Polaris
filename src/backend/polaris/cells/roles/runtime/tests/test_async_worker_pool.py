@@ -193,10 +193,10 @@ async def test_async_worker_env_inheritance(work_dir: Path) -> None:
     await worker.start()
 
     try:
-        # Test that POLARIS_WORKER_ID and POLARIS_TASK_ID are set
+        # Test that KERNELONE_WORKER_ID and KERNELONE_TASK_ID are set
         task = WorkerTask(
             task_id=400,
-            command=f"{sys.executable} -c \"import os; print(os.environ.get('POLARIS_WORKER_ID', 'MISSING')); print(os.environ.get('POLARIS_TASK_ID', 'MISSING'))\"",
+            command=f"{sys.executable} -c \"import os; print(os.environ.get('KERNELONE_WORKER_ID', 'MISSING')); print(os.environ.get('KERNELONE_TASK_ID', 'MISSING'))\"",
             work_dir=work_dir,
             env={"TEST_VAR": "test_value"},
             timeout=30,

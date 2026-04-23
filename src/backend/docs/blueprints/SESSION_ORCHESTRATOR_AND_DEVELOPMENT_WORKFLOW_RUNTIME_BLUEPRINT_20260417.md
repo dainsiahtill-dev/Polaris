@@ -530,7 +530,7 @@ else:
         ...
 ```
 
-Feature Flag: `POLARIS_ENABLE_SESSION_ORCHESTRATOR=1` 或 `capability_profile["enable_session_orchestrator"]=True`。
+Feature Flag: `KERNELONE_ENABLE_SESSION_ORCHESTRATOR=1` 或 `capability_profile["enable_session_orchestrator"]=True`。
 
 ### 6.2 与 `TurnTransactionController` 的集成
 
@@ -663,7 +663,7 @@ SessionCompletedEvent
 - [x] 性能基准测试（单元测试覆盖）
 
 ### Phase 4（1 天）：Feature Flag 集成 + 事件日志隔离
-- [x] `RoleConsoleHost` 接入 Feature Flag（`POLARIS_ENABLE_SESSION_ORCHESTRATOR` / `capability_profile["enable_session_orchestrator"]`）
+- [x] `RoleConsoleHost` 接入 Feature Flag（`KERNELONE_ENABLE_SESSION_ORCHESTRATOR` / `capability_profile["enable_session_orchestrator"]`）
 - [x] 强制按 `session_id` 分文件写入事件日志（`.polaris/runtime/events/{session_id}.jsonl`）
 - [x] 端到端场景测试（25 个新增测试全部通过）
 - [x] 全量回归测试（64 个验证卡测试全部通过）

@@ -15,5 +15,5 @@ if str(BACKEND_ROOT) not in sys.path:
 
 
 def test_default_role_binding_mode_is_strict(monkeypatch):
-    monkeypatch.delenv("POLARIS_ROLE_MODEL_BINDING_MODE", raising=False)
+    monkeypatch.delenv("KERNELONE_ROLE_MODEL_BINDING_MODE", raising=False)
     assert runtime_config._resolve_role_binding_mode() == "strict"

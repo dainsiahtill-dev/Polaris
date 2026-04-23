@@ -86,10 +86,10 @@ def _build_kernel_fs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[K
 
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
-    monkeypatch.delenv("POLARIS_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     set_default_adapter(_TestFileSystemAdapter())
 
     return KernelFileSystem(str(workspace), get_default_adapter()), workspace

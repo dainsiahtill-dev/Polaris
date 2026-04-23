@@ -222,7 +222,7 @@ enforce_utf8()
 # Keys MUST match entries in ARTIFACT_REGISTRY above.
 # The canonical path is stored in ARTIFACT_REGISTRY; policy metadata lives here.
 
-POLARIS_ARTIFACT_POLICY_METADATA: dict[str, dict[str, Any]] = {
+KERNELONE_ARTIFACT_POLICY_METADATA: dict[str, dict[str, Any]] = {
     # Plan Artifacts
     "contract.plan": {
         "category": "runtime_current",
@@ -409,7 +409,7 @@ def get_artifact_policy_metadata(key: str) -> dict[str, Any] | None:
         registered in the Polaris artifact registry.
     """
     canonical = _resolve_artifact_key(key)
-    return POLARIS_ARTIFACT_POLICY_METADATA.get(canonical)
+    return KERNELONE_ARTIFACT_POLICY_METADATA.get(canonical)
 
 
 def should_compress_artifact(key: str) -> bool:
@@ -1196,7 +1196,7 @@ def create_artifact_service(
 
 __all__ = [
     "ARTIFACT_REGISTRY",
-    "POLARIS_ARTIFACT_POLICY_METADATA",
+    "KERNELONE_ARTIFACT_POLICY_METADATA",
     "LEGACY_KEY_MAPPING",
     "LEGACY_PATH_ALIASES",
     "ArtifactService",

@@ -295,7 +295,7 @@ pytest --version  # >= 7.0.0
 ## 10. 参考文档
 
 ### 项目文档
-- `POLARIS_KERNEL_TEST_FIX_PROJECT.md` - 项目总览
+- `KERNELONE_KERNEL_TEST_FIX_PROJECT.md` - 项目总览
 - `TEAM_ASSIGNMENTS.md` - 团队详细任务分配
 - `TURN_ENGINE_BUG_ANALYSIS.md` - 历史Bug分析
 - `TURN_ENGINE_DI_GUIDE.md` - 依赖注入指南

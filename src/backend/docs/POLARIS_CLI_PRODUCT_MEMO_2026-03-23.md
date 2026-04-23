@@ -184,4 +184,4 @@ Polaris Client / polaris-cli / test-window
 - Host 流程必须构建 `ExecuteRoleSessionCommandV1` 并调用 runtime facade。
 - 对应门禁测试：`tests/test_director_console_host.py::test_director_console_host_constructor_exposes_runtime_service_only`。
 
-详细守则见：`docs/POLARIS_CLI_UNIFIED_RUNTIME_GUARDRAILS.md`。
+详细守则见：`docs/KERNELONE_CLI_UNIFIED_RUNTIME_GUARDRAILS.md`。

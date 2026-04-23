@@ -123,18 +123,18 @@ class TestSignalRegistry:
 
 class TestStopFlagFilesystem:
     def test_no_flag_file_means_not_requested(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime"))
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
         assert stop_requested_for(workspace, "stop") is False
 
     def test_flag_file_present_means_requested(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         runtime_root = tmp_path / "runtime"
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
 
@@ -146,9 +146,9 @@ class TestStopFlagFilesystem:
 
     def test_clear_stop_flag_removes_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         runtime_root = tmp_path / "runtime"
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
 
@@ -161,9 +161,9 @@ class TestStopFlagFilesystem:
         assert stop_requested_for(workspace, "stop") is False
 
     def test_clear_stop_flag_noop_when_not_present(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime"))
-        monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-        monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime"))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
         # Must not raise even when flag file doesn't exist
@@ -176,9 +176,9 @@ class TestStopFlagFilesystem:
 
 
 def test_legacy_stop_requested_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime"))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
     workspace = str(tmp_path / "workspace")
     os.makedirs(workspace, exist_ok=True)
     # Legacy alias routes to "pm" signal
@@ -192,9 +192,9 @@ def test_legacy_stop_requested_alias(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_pause_requested_false_when_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(tmp_path / "runtime"))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
     workspace = str(tmp_path / "workspace")
     os.makedirs(workspace, exist_ok=True)
     assert pause_requested(workspace) is False

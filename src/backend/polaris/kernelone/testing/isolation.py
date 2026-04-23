@@ -312,8 +312,8 @@ class GlobalStateIsolationManager:
             None
 
         Example:
-            with manager.env_isolation(["POLARIS_ROOT"], {"POLARIS_ROOT": "/tmp/test"}):
-                os.environ["POLARIS_ROOT"] = "/tmp/test"  # Test code
+            with manager.env_isolation(["KERNELONE_ROOT"], {"KERNELONE_ROOT": "/tmp/test"}):
+                os.environ["KERNELONE_ROOT"] = "/tmp/test"  # Test code
         """
         snapshot = self.snapshot_env(keys)
         # Clear the keys

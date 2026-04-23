@@ -48,11 +48,11 @@ const BACKEND_MAX_RESTARTS = 3;
 const BACKEND_SHUTDOWN_TIMEOUT_MS = 6000;
 
 // Polaris 测试阶段：默认开启所有调试功能
-// 可以通过设置 POLARIS_DEBUG_BACKEND_START_TRACE=false 来禁用
+// 可以通过设置 KERNELONE_DEBUG_BACKEND_START_TRACE=false 来禁用
 const BACKEND_START_TRACE_ENABLED =
-  process.env.POLARIS_DEBUG_BACKEND_START_TRACE === undefined
+  process.env.KERNELONE_DEBUG_BACKEND_START_TRACE === undefined
     ? true
-    : isTruthyEnv(process.env.POLARIS_DEBUG_BACKEND_START_TRACE);
+    : isTruthyEnv(process.env.KERNELONE_DEBUG_BACKEND_START_TRACE);
 
 // Window state management
 function getConfigPath() {
@@ -125,19 +125,19 @@ function readPersistedWorkspace() {
 
 function resolveStartupWorkspaceOverride() {
   const persistedWorkspace = readPersistedWorkspace();
-  const envWorkspace = String(process.env.POLARIS_WORKSPACE || "").trim();
+  const envWorkspace = String(process.env.KERNELONE_WORKSPACE || "").trim();
   const selection = selectStartupWorkspaceOverride({
     env: process.env,
     persistedWorkspace,
   });
 
   console.log(`[workspace] Resolving startup workspace:`);
-  console.log(`[workspace]   POLARIS_WORKSPACE: ${envWorkspace || "(not set)"}`);
+  console.log(`[workspace]   KERNELONE_WORKSPACE: ${envWorkspace || "(not set)"}`);
   console.log(`[workspace]   Persisted workspace: ${persistedWorkspace || "(not set)"}`);
   console.log(`[workspace]   Selected source: ${selection.source}`);
 
   if (selection.source === "env_forced") {
-    console.log("[workspace] Applying FORCED workspace override from POLARIS_WORKSPACE_FORCE");
+    console.log("[workspace] Applying FORCED workspace override from KERNELONE_WORKSPACE_FORCE");
   } else if (selection.source === "persisted") {
     console.log(`[workspace] Using persisted workspace: ${selection.workspace}`);
   } else if (selection.source === "env") {
@@ -780,10 +780,10 @@ async function startBackend(options = {}) {
   backendStatus.lastError = "";
   backendStatus.lastExitCode = null;
   const venv = ensureVenvNotice();
-  if (!process.env.POLARIS_PYTHON && venv.pythonPath) {
-    process.env.POLARIS_PYTHON = venv.pythonPath;
+  if (!process.env.KERNELONE_PYTHON && venv.pythonPath) {
+    process.env.KERNELONE_PYTHON = venv.pythonPath;
   }
-  const python = process.env.POLARIS_PYTHON || "python";
+  const python = process.env.KERNELONE_PYTHON || "python";
   if (venv.pythonPath) {
     const depCheck = checkVenvDependencies(venv.pythonPath);
     if (!depCheck.ok) {
@@ -925,10 +925,10 @@ async function startBackend(options = {}) {
 async function createWindow() {
   const savedState = loadWindowState();
   console.log('Creating window with saved state:', savedState);
-  const forcedDevUrl = String(process.env.POLARIS_DEV_SERVER_URL || "").trim();
-  const isE2E = process.env.POLARIS_E2E === "1";
+  const forcedDevUrl = String(process.env.KERNELONE_DEV_SERVER_URL || "").trim();
+  const isE2E = process.env.KERNELONE_E2E === "1";
   const allowVisibleE2EWindow = ["1", "true", "yes", "on"].includes(
-    String(process.env.POLARIS_E2E_SHOW_WINDOW || "").trim().toLowerCase(),
+    String(process.env.KERNELONE_E2E_SHOW_WINDOW || "").trim().toLowerCase(),
   );
   const shouldShowWindow = !isE2E || allowVisibleE2EWindow;
 
@@ -1012,8 +1012,8 @@ async function createWindow() {
 }
 
 const allowE2EMultiInstance =
-  process.env.POLARIS_E2E === "1" &&
-  process.env.POLARIS_E2E_ALLOW_MULTI_INSTANCE === "1";
+  process.env.KERNELONE_E2E === "1" &&
+  process.env.KERNELONE_E2E_ALLOW_MULTI_INSTANCE === "1";
 
 const hasSingleInstanceLock = allowE2EMultiInstance ? true : app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {

@@ -105,12 +105,12 @@ def resolve_role_write_call_limit(role_id: str) -> int:
 
     role = str(role_id or "").strip().lower()
     default_limit = int(_DEFAULT_ROLE_WRITE_CALL_LIMITS.get(role, 0))
-    role_env_key = f"POLARIS_ROLE_WRITE_CALLS_PER_TURN_{role.upper()}" if role else ""
+    role_env_key = f"KERNELONE_ROLE_WRITE_CALLS_PER_TURN_{role.upper()}" if role else ""
     raw_value = ""
     if role_env_key:
         raw_value = str(os.environ.get(role_env_key, "")).strip()
     if not raw_value:
-        raw_value = str(os.environ.get("POLARIS_ROLE_WRITE_CALLS_PER_TURN", "")).strip()
+        raw_value = str(os.environ.get("KERNELONE_ROLE_WRITE_CALLS_PER_TURN", "")).strip()
     if not raw_value:
         return max(0, default_limit)
     try:

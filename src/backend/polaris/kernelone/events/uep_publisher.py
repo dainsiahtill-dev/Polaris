@@ -265,7 +265,7 @@ class UEPEventPublisher:
 
             workspace = str(payload.get("workspace") or "").strip()
             if not workspace:
-                workspace = os.environ.get("POLARIS_WORKSPACE", os.getcwd())
+                workspace = os.environ.get("KERNELONE_WORKSPACE", os.getcwd())
             workspace = os.path.abspath(workspace)
 
             role = str(payload.get("role") or "unknown").strip().lower() or "unknown"

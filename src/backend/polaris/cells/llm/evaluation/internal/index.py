@@ -192,7 +192,7 @@ from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 
 def _get_default_index_path() -> str:
     """获取默认索引路径"""
-    workspace = os.environ.get("POLARIS_WORKSPACE", ".")
+    workspace = os.environ.get("KERNELONE_WORKSPACE", ".")
     return str(Path(workspace) / get_workspace_metadata_dir_name() / "llm_test_index.json")
 
 

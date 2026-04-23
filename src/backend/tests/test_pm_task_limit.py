@@ -28,19 +28,19 @@ def _sample_raw_tasks(count: int) -> list[dict]:
 
 
 def test_normalize_tasks_default_limit_is_not_three(monkeypatch) -> None:
-    monkeypatch.delenv("POLARIS_PM_MAX_TASKS", raising=False)
+    monkeypatch.delenv("KERNELONE_PM_MAX_TASKS", raising=False)
     normalized = pm_tasks.normalize_tasks(_sample_raw_tasks(5), iteration=1)
     assert len(normalized) == 5
 
 
 def test_normalize_tasks_honors_env_limit(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_PM_MAX_TASKS", "2")
+    monkeypatch.setenv("KERNELONE_PM_MAX_TASKS", "2")
     normalized = pm_tasks.normalize_tasks(_sample_raw_tasks(5), iteration=1)
     assert len(normalized) == 2
 
 
 def test_normalize_tasks_limit_zero_disables_truncation(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_PM_MAX_TASKS", "0")
+    monkeypatch.setenv("KERNELONE_PM_MAX_TASKS", "0")
     normalized = pm_tasks.normalize_tasks(_sample_raw_tasks(7), iteration=1)
     assert len(normalized) == 7
 

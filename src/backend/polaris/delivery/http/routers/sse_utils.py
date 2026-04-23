@@ -411,7 +411,7 @@ async def publish_to_jetstream(
             return False
 
         await client.publish_js(
-            stream="POLARIS_RUNTIME",
+            stream="KERNELONE_RUNTIME",
             subject=subject,
             payload=payload,
         )

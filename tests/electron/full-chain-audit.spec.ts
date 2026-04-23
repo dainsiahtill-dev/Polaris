@@ -582,7 +582,7 @@ async function runDirectorRound(window: Page): Promise<{ seenRunning: boolean; l
 test.setTimeout(70 * 60 * 1000);
 
 test("unattended full-chain audit with strong JSON evidence package", async ({ window, testEnv }, testInfo) => {
-  test.skip(!testEnv.useRealSettings, "Set POLARIS_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
+  test.skip(!testEnv.useRealSettings, "Set KERNELONE_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
 
   const repoRoot = path.resolve(__dirname, "..", "..");
   const logsRoot = path.join(repoRoot, ".polaris", "logs");

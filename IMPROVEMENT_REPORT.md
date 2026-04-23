@@ -125,7 +125,7 @@ polaris/bootstrap/ci_dependency_check.py
 - ✅ 环境变量统一 (Bootstrap层100%)
 - ✅ **5阶段CI/CD流水线** (GitHub Actions)
 - ✅ 本地开发工具 (Makefile + dev-tools.py)
-- ✅ 双前缀支持 (KERNELONE_为主，POLARIS_兼容)
+- ✅ 双前缀支持 (KERNELONE_为主，KERNELONE_兼容)
 
 **新增配置**:
 ```

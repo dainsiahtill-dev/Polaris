@@ -92,7 +92,7 @@ async def test_allow_desktop_context_env_preserves_healthy_desktop(monkeypatch: 
     async def _fake_probe_preflight_status(_context):  # noqa: ANN001
         return BackendPreflightStatus.HEALTHY
 
-    monkeypatch.setenv("POLARIS_STRESS_ALLOW_DESKTOP_CONTEXT", "1")
+    monkeypatch.setenv("KERNELONE_STRESS_ALLOW_DESKTOP_CONTEXT", "1")
     monkeypatch.setattr("tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context)
     monkeypatch.setattr("tests.agent_stress.backend_bootstrap._probe_preflight_status", _fake_probe_preflight_status)
 

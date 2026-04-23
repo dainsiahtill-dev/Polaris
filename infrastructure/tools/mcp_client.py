@@ -85,13 +85,13 @@ def _load_mcp_config() -> Dict[str, Dict[str, Any]]:
                 logger.warning(f"Failed to load config from {config_path}: {e}")
 
     # Try environment variable for quick config
-    mcp_env = os.environ.get("POLARIS_MCP_SERVERS")
+    mcp_env = os.environ.get("KERNELONE_MCP_SERVERS")
     if mcp_env:
         try:
             MCP_SERVERS = json.loads(mcp_env)
             logger.debug("Loaded MCP config from environment variable")
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in POLARIS_MCP_SERVERS: {e}")
+            logger.error(f"Invalid JSON in KERNELONE_MCP_SERVERS: {e}")
 
     return MCP_SERVERS
 

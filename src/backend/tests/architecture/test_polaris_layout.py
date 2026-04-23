@@ -2,7 +2,7 @@ from importlib import import_module
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-POLARIS_ROOT = BACKEND_ROOT / "polaris"
+KERNELONE_ROOT = BACKEND_ROOT / "polaris"
 
 
 def test_polaris_root_directories_exist() -> None:
@@ -17,9 +17,9 @@ def test_polaris_root_directories_exist() -> None:
         "tests",
     ]
 
-    assert POLARIS_ROOT.is_dir()
+    assert KERNELONE_ROOT.is_dir()
     for name in expected:
-        path = POLARIS_ROOT / name
+        path = KERNELONE_ROOT / name
         assert path.is_dir(), f"Missing Polaris directory: {path}"
         assert (path / "__init__.py").is_file(), f"Missing package marker: {path / '__init__.py'}"
 

@@ -112,7 +112,7 @@
 | P2-002 | MAX_FILE_SIZE 两处不同值 | 多文件 | P2 | ✅ 已修复 |
 | P2-008 | buffer_size 重复 | 多文件 | P2 | ✅ 已修复 |
 | P2-009 | max_workers 合并 | 多文件 | P2 | ✅ 已修复 |
-| P1-CONFIG-001 | POLARIS_/KERNELONE_前缀混用40+处 | 多文件 | P1 | ✅ 已修复 |
+| P1-CONFIG-001 | KERNELONE_/KERNELONE_前缀混用40+处 | 多文件 | P1 | ✅ 已修复 |
 | P1-CONFIG-002 | JSONL常量重复 | 多文件 | P1 | ✅ 已修复 |
 | P1-CONFIG-003 | 魔法数字20+处未收敛 | 多文件 | P1 | ✅ 已修复 |
 | P1-CONFIG-004 | 默认端口常量未收敛 | `config.py` | P1 | ✅ 已修复 |
@@ -157,7 +157,7 @@
 | P1-STORAGE-001 | ensure_dir/ensure_parent_dir 6+处重复 | 多文件 | P1 | ✅ 已修复 |
 | P1-STORAGE-002 | 原子写入函数10+处重复 | 多文件 | P1 | ✅ 已缓释 |
 | P2-005 | Tool三套Normalization | 多文件 | P2 | ✅ 已修复 |
-| P2-010 | POLARIS_迁移 | 多文件 | P2 | ✅ 已修复 |
+| P2-010 | KERNELONE_迁移 | 多文件 | P2 | ✅ 已修复 |
 
 **收敛方案**: 共享逻辑抽取到 `_utils.py` 或基类
 
@@ -275,7 +275,7 @@
 | P1-TYPE-002 | Types | ProviderFormatter协议冲突 | 意图分离文档化 | ✅ |
 | P1-TYPE-005 | Types | LLMRequest/LLMResponse多处重复 | 意图分离文档化 | ✅ |
 | P1-TYPE-006 | Types | StreamEventType 4处重复 | 意图分离文档化 | ✅ |
-| P1-CONFIG-001 | Config | POLARIS_/KERNELONE_混用40+处 | 统一使用_runtime_config解析 | ✅ |
+| P1-CONFIG-001 | Config | KERNELONE_/KERNELONE_混用40+处 | 统一使用_runtime_config解析 | ✅ |
 
 ### P2 MEDIUM 问题 (178+项)
 
@@ -287,7 +287,7 @@
 | TypedDict边界 | 多文件混合使用 | ✅ 已文档化 |
 | 事件类型字符串 | 部分文件仍使用字面值 | ✅ 已修复 |
 | Tool系统Fragmentation | 部分收敛完成 | ⏳ 持续进行 |
-| EnvVar命名 | 50+处仅用POLARIS_ | ✅ 已修复 |
+| EnvVar命名 | 50+处仅用KERNELONE_ | ✅ 已修复 |
 | 遗留文件 | runtime/internal/*.py待删除 | ⏳ 待处理 |
 
 ---

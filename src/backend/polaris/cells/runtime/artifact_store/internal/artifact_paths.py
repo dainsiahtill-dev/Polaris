@@ -67,7 +67,7 @@ def is_hot_artifact_path(rel_path: str) -> bool:
 
 def _resolve_absolute_if_allowed(workspace_full: str, rel_path: str) -> str:
     absolute = os.path.abspath(rel_path)
-    allow_unsafe = str(os.environ.get("POLARIS_ALLOW_UNSAFE_ABSOLUTE_ARTIFACT_PATHS") or "").strip().lower()
+    allow_unsafe = str(os.environ.get("KERNELONE_ALLOW_UNSAFE_ABSOLUTE_ARTIFACT_PATHS") or "").strip().lower()
     if allow_unsafe in {"1", "true", "yes", "on"}:
         return absolute
     roots = resolve_storage_roots(workspace_full)

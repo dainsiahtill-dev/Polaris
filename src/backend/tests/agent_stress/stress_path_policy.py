@@ -62,7 +62,7 @@ def default_stress_workspace_base(
     Official Windows runs must keep workspaces under `C:/Temp/`.
     """
     base_root = _base_root_from_env(
-        "POLARIS_STRESS_WORKSPACE_ROOT",
+        "KERNELONE_STRESS_WORKSPACE_ROOT",
         _WORKSPACES_DIR,
         env=env,
         platform_name=platform_name,
@@ -84,7 +84,7 @@ def default_stress_runtime_root(
     Official Windows runs must keep runtime/cache roots on `X:/`.
     """
     base_root = _base_root_from_env(
-        "POLARIS_STRESS_RUNTIME_ROOT_BASE",
+        "KERNELONE_STRESS_RUNTIME_ROOT_BASE",
         _RUNTIME_DIR,
         env=env,
         platform_name=platform_name,

@@ -564,43 +564,43 @@ class TestCheckQualityPromoteCandidate:
 
 class TestGetQualityGateConfig:
     def test_defaults(self, monkeypatch) -> None:
-        monkeypatch.delenv("POLARIS_PM_TASK_QUALITY_MODE", raising=False)
-        monkeypatch.delenv("POLARIS_PM_TASK_QUALITY_MIN_SCORE", raising=False)
-        monkeypatch.delenv("POLARIS_PM_TASK_QUALITY_RETRIES", raising=False)
+        monkeypatch.delenv("KERNELONE_PM_TASK_QUALITY_MODE", raising=False)
+        monkeypatch.delenv("KERNELONE_PM_TASK_QUALITY_MIN_SCORE", raising=False)
+        monkeypatch.delenv("KERNELONE_PM_TASK_QUALITY_RETRIES", raising=False)
         cfg = get_quality_gate_config()
         assert cfg["mode"] == "strict"
         assert cfg["min_score"] == 80
         assert cfg["max_retries"] == 3
 
     def test_env_overrides(self, monkeypatch) -> None:
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_MODE", "warn")
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_MIN_SCORE", "60")
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_RETRIES", "5")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_MODE", "warn")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_MIN_SCORE", "60")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_RETRIES", "5")
         cfg = get_quality_gate_config()
         assert cfg["mode"] == "warn"
         assert cfg["min_score"] == 60
         assert cfg["max_retries"] == 5
 
     def test_invalid_mode_defaults_to_strict(self, monkeypatch) -> None:
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_MODE", "invalid")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_MODE", "invalid")
         cfg = get_quality_gate_config()
         assert cfg["mode"] == "strict"
 
     def test_min_score_clamped_to_0_100(self, monkeypatch) -> None:
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_MIN_SCORE", "999")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_MIN_SCORE", "999")
         cfg = get_quality_gate_config()
         assert cfg["min_score"] == 100
 
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_MIN_SCORE", "-50")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_MIN_SCORE", "-50")
         cfg = get_quality_gate_config()
         assert cfg["min_score"] == 0
 
     def test_invalid_min_score_defaults_to_80(self, monkeypatch) -> None:
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_MIN_SCORE", "not_a_number")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_MIN_SCORE", "not_a_number")
         cfg = get_quality_gate_config()
         assert cfg["min_score"] == 80
 
     def test_invalid_retries_defaults_to_3(self, monkeypatch) -> None:
-        monkeypatch.setenv("POLARIS_PM_TASK_QUALITY_RETRIES", "bad")
+        monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_RETRIES", "bad")
         cfg = get_quality_gate_config()
         assert cfg["max_retries"] == 3

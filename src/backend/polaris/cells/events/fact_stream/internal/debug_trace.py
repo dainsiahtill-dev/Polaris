@@ -269,7 +269,7 @@ class DebugTracer:
         """启用/禁用事件输出（不影响补丁状态）。"""
         with self._state.lock:
             self._state.enabled = bool(enabled)
-        os.environ["POLARIS_DEBUG_TRACING"] = "1" if enabled else "0"
+        os.environ["KERNELONE_DEBUG_TRACING"] = "1" if enabled else "0"
         self.emit_event("debug.toggle", enabled=enabled)
 
     def is_installed(self) -> bool:
@@ -300,7 +300,7 @@ class DebugTracer:
         """安装钩子并根据环境或参数启用追踪。"""
         self.install()
         if enabled is None:
-            enabled = _truthy_env("POLARIS_DEBUG_TRACING")
+            enabled = _truthy_env("KERNELONE_DEBUG_TRACING")
         self.set_enabled(bool(enabled))
 
     def __enter__(self) -> DebugTracer:

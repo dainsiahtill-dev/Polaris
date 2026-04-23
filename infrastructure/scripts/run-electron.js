@@ -128,18 +128,18 @@ if (env.ELECTRON_RUN_AS_NODE) {
   delete env.ELECTRON_RUN_AS_NODE;
 }
 const venvPython = resolveVenvPython();
-const configuredPython = (env.POLARIS_PYTHON || "").trim();
+const configuredPython = (env.KERNELONE_PYTHON || "").trim();
 
 if (venvPython) {
   if (!configuredPython) {
-    env.POLARIS_PYTHON = venvPython;
+    env.KERNELONE_PYTHON = venvPython;
   } else if (!fs.existsSync(configuredPython)) {
-    console.warn(`[polaris] POLARIS_PYTHON not found: ${configuredPython}`);
-    env.POLARIS_PYTHON = venvPython;
+    console.warn(`[polaris] KERNELONE_PYTHON not found: ${configuredPython}`);
+    env.KERNELONE_PYTHON = venvPython;
   }
 }
 
-console.log(`[polaris] python: ${env.POLARIS_PYTHON || "python"}`);
+console.log(`[polaris] python: ${env.KERNELONE_PYTHON || "python"}`);
 
 const electronBinary = require("electron");
 const child = spawn(electronBinary, [electronMain], {

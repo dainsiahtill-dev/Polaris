@@ -42,7 +42,7 @@ _TEST_TOKEN = "test-factory-contract-snapshot-token-2026"
 @pytest.fixture
 def client(temp_workspace: Path, service: FactoryRunService, monkeypatch: pytest.MonkeyPatch):
     """Create a test client with a known auth token for security-hardened endpoints."""
-    monkeypatch.setenv("POLARIS_TOKEN", _TEST_TOKEN)
+    monkeypatch.setenv("KERNELONE_TOKEN", _TEST_TOKEN)
     app = create_app(Settings(workspace=temp_workspace))
     monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
 

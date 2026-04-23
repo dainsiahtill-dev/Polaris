@@ -44,7 +44,7 @@ def _wait_for_events(path: Path, *, timeout_sec: float = 2.0) -> list[dict]:
 
 def test_websocket_close_events_are_persisted(tmp_path, monkeypatch):
     token = "ws-audit-token"
-    monkeypatch.setenv("POLARIS_TOKEN", token)
+    monkeypatch.setenv("KERNELONE_TOKEN", token)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

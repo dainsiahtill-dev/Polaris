@@ -271,22 +271,22 @@ class UnifiedContextFactory:
     def from_env_vars() -> UnifiedAuditContext | None:
         """Create UnifiedAuditContext from environment variables.
 
-        Checks KERNELONE_* vars first, then POLARIS_* for compatibility.
+        Checks KERNELONE_* vars first, then KERNELONE_* for compatibility.
 
         Returns:
             UnifiedAuditContext if trace_id found, None otherwise.
         """
         import os
 
-        trace_id = os.environ.get("KERNELONE_TRACE_ID") or os.environ.get("POLARIS_TRACE_ID")
+        trace_id = os.environ.get("KERNELONE_TRACE_ID") or os.environ.get("KERNELONE_TRACE_ID")
         if not trace_id:
             return None
 
         return UnifiedAuditContext(
             trace_id=trace_id,
-            run_id=os.environ.get("KERNELONE_RUN_ID") or os.environ.get("POLARIS_RUN_ID") or "",
-            task_id=os.environ.get("KERNELONE_TASK_ID") or os.environ.get("POLARIS_TASK_ID") or "",
-            workspace=os.environ.get("KERNELONE_WORKSPACE") or os.environ.get("POLARIS_WORKSPACE") or "",
+            run_id=os.environ.get("KERNELONE_RUN_ID") or os.environ.get("KERNELONE_RUN_ID") or "",
+            task_id=os.environ.get("KERNELONE_TASK_ID") or os.environ.get("KERNELONE_TASK_ID") or "",
+            workspace=os.environ.get("KERNELONE_WORKSPACE") or os.environ.get("KERNELONE_WORKSPACE") or "",
             metadata={},
         )
 

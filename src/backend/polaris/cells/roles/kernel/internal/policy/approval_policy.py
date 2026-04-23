@@ -86,8 +86,8 @@ class ApprovalPolicy:
         def _split_csv(raw: str) -> list[str]:
             return [item.strip() for item in str(raw or "").split(",") if item.strip()]
 
-        tools = _split_csv(os.environ.get("POLARIS_APPROVAL_TOOLS", ""))
-        patterns = _split_csv(os.environ.get("POLARIS_APPROVAL_PATTERNS", ""))
+        tools = _split_csv(os.environ.get("KERNELONE_APPROVAL_TOOLS", ""))
+        patterns = _split_csv(os.environ.get("KERNELONE_APPROVAL_PATTERNS", ""))
         return cls(
             require_approval_for=tools or None,
             require_approval_patterns=patterns or None,

@@ -159,23 +159,23 @@ def _render_llm_authored_docs(
     accepted = 0
     failures: list[str] = []
     failure_reasons: list[dict[str, str]] = []
-    timeout_raw = str(os.environ.get("POLARIS_ARCHITECT_LLM_DOC_TIMEOUT", "60") or "60").strip()
+    timeout_raw = str(os.environ.get("KERNELONE_ARCHITECT_LLM_DOC_TIMEOUT", "60") or "60").strip()
     try:
         timeout_seconds = int(timeout_raw)
     except (RuntimeError, ValueError) as exc:
         logger.warning(
-            "Failed to parse POLARIS_ARCHITECT_LLM_DOC_TIMEOUT %r, using default 60: %s",
+            "Failed to parse KERNELONE_ARCHITECT_LLM_DOC_TIMEOUT %r, using default 60: %s",
             timeout_raw,
             exc,
         )
         timeout_seconds = 60
     timeout_seconds = max(timeout_seconds, 15)
-    retries_raw = str(os.environ.get("POLARIS_ARCHITECT_LLM_DOC_RETRIES", "2") or "2").strip()
+    retries_raw = str(os.environ.get("KERNELONE_ARCHITECT_LLM_DOC_RETRIES", "2") or "2").strip()
     try:
         retries = int(retries_raw)
     except (RuntimeError, ValueError) as exc:
         logger.warning(
-            "Failed to parse POLARIS_ARCHITECT_LLM_DOC_RETRIES %r, using default 2: %s",
+            "Failed to parse KERNELONE_ARCHITECT_LLM_DOC_RETRIES %r, using default 2: %s",
             retries_raw,
             exc,
         )

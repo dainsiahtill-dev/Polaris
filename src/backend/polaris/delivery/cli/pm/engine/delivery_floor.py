@@ -54,15 +54,15 @@ def _resolve_delivery_floor_thresholds(scale: str) -> dict[str, int]:
     scale_token = str(scale or "default").strip().upper()
     return {
         "code_files": _env_non_negative_int(
-            f"POLARIS_DELIVERY_FLOOR_{scale_token}_CODE_FILES",
+            f"KERNELONE_DELIVERY_FLOOR_{scale_token}_CODE_FILES",
             int(defaults["code_files"]),
         ),
         "code_lines": _env_non_negative_int(
-            f"POLARIS_DELIVERY_FLOOR_{scale_token}_CODE_LINES",
+            f"KERNELONE_DELIVERY_FLOOR_{scale_token}_CODE_LINES",
             int(defaults["code_lines"]),
         ),
         "test_files": _env_non_negative_int(
-            f"POLARIS_DELIVERY_FLOOR_{scale_token}_TEST_FILES",
+            f"KERNELONE_DELIVERY_FLOOR_{scale_token}_TEST_FILES",
             int(defaults["test_files"]),
         ),
     }
@@ -74,7 +74,7 @@ def _evaluate_delivery_floor(
     workspace_full: str,
 ) -> dict[str, Any]:
     """Evaluate delivery floor thresholds against task results."""
-    explicit_toggle = _is_truthy_env("POLARIS_DELIVERY_FLOOR_ENABLED")
+    explicit_toggle = _is_truthy_env("KERNELONE_DELIVERY_FLOOR_ENABLED")
     enabled = explicit_toggle if explicit_toggle is not None else _looks_like_stress_workspace(workspace_full)
     scale = _detect_project_scale(workspace_full)
     thresholds = _resolve_delivery_floor_thresholds(scale)

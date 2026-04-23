@@ -1,12 +1,12 @@
 """KernelOne trace context with Polaris-compatible env var names.
 
 This module provides trace context management that is backward-compatible with
-Polaris's POLARIS_* env var naming convention while also supporting
+Polaris's KERNELONE_* env var naming convention while also supporting
 the generic KERNELONE_* prefix.
 
 Environment variable propagation uses both naming schemes:
 - Primary: KERNELONE_TRACE_ID, KERNELONE_RUN_ID, KERNELONE_WORKSPACE, etc.
-- Legacy fallback: POLARIS_TRACE_ID, POLARIS_RUN_ID, POLARIS_WORKSPACE, etc.
+- Legacy fallback: KERNELONE_TRACE_ID, KERNELONE_RUN_ID, KERNELONE_WORKSPACE, etc.
 
 This dual-naming ensures that KernelOne can run both as a standalone kernel
 and as part of the Polaris application stack without environment reconfiguration.
@@ -99,38 +99,38 @@ class PolarisContext:
     def to_env_vars(self) -> dict[str, str]:
         """转换为环境变量字典（用于子进程传递）。
 
-        同时写入 KERNELONE_* 和 POLARIS_* 两套命名，
+        同时写入 KERNELONE_* 和 KERNELONE_* 两套命名，
         保证 KernelOne 独立运行和 Polaris 集成都能正常工作。
         """
         env = {
             "KERNELONE_TRACE_ID": self.trace_id,
-            "POLARIS_TRACE_ID": self.trace_id,
+            "KERNELONE_TRACE_ID": self.trace_id,
         }
         if self.run_id:
             env["KERNELONE_RUN_ID"] = self.run_id
-            env["POLARIS_RUN_ID"] = self.run_id
+            env["KERNELONE_RUN_ID"] = self.run_id
         if self.request_id:
             env["KERNELONE_REQUEST_ID"] = self.request_id
-            env["POLARIS_REQUEST_ID"] = self.request_id
+            env["KERNELONE_REQUEST_ID"] = self.request_id
         if self.workflow_id:
             env["KERNELONE_WORKFLOW_ID"] = self.workflow_id
-            env["POLARIS_WORKFLOW_ID"] = self.workflow_id
+            env["KERNELONE_WORKFLOW_ID"] = self.workflow_id
         if self.task_id:
             env["KERNELONE_TASK_ID"] = self.task_id
-            env["POLARIS_TASK_ID"] = self.task_id
+            env["KERNELONE_TASK_ID"] = self.task_id
         if self.workspace:
             env["KERNELONE_WORKSPACE"] = self.workspace
-            env["POLARIS_WORKSPACE"] = self.workspace
+            env["KERNELONE_WORKSPACE"] = self.workspace
         return env
 
     @classmethod
     def from_env_vars(cls) -> PolarisContext | None:
         """从环境变量恢复上下文。
 
-        优先读取 KERNELONE_* env vars，回退到 POLARIS_*（向后兼容）。
+        优先读取 KERNELONE_* env vars，回退到 KERNELONE_*（向后兼容）。
         Uses _runtime_config for consistent fallback resolution.
         """
-        # Use _runtime_config for KERNELONE_* / POLARIS_* fallback
+        # Use _runtime_config for KERNELONE_* / KERNELONE_* fallback
         trace_id = _runtime_config.resolve_env_str("trace_id")
         if not trace_id:
             return None

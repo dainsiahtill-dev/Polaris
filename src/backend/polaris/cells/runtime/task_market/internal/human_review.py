@@ -52,7 +52,7 @@ _DEFAULT_ESCALATION_TIMEOUT_SECONDS = 3600
 
 def _read_escalation_timeout() -> int:
     """Read escalation timeout from env, default 3600s (1 hour)."""
-    raw = str(os.environ.get("POLARIS_TASK_MARKET_ESCALATION_TIMEOUT_SECONDS", "") or "").strip()
+    raw = str(os.environ.get("KERNELONE_TASK_MARKET_ESCALATION_TIMEOUT_SECONDS", "") or "").strip()
     if not raw:
         return _DEFAULT_ESCALATION_TIMEOUT_SECONDS
     try:

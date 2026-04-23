@@ -79,13 +79,13 @@ class TestResolveTimeoutSeconds:
 
         _get_cached_director_timeout.cache_clear()
 
-        os.environ["POLARIS_DIRECTOR_LLM_TIMEOUT_SECONDS"] = "300"
+        os.environ["KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"] = "300"
         try:
             profile = MockProfile(role_id="director")
             timeout = resolve_timeout_seconds(cast("RoleProfile", profile))
             assert timeout == 300
         finally:
-            os.environ.pop("POLARIS_DIRECTOR_LLM_TIMEOUT_SECONDS", None)
+            os.environ.pop("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", None)
             _get_cached_director_timeout.cache_clear()
 
     def test_timeout_clamped_to_max_900(self) -> None:
@@ -96,13 +96,13 @@ class TestResolveTimeoutSeconds:
 
         _get_cached_director_timeout.cache_clear()
 
-        os.environ["POLARIS_DIRECTOR_LLM_TIMEOUT_SECONDS"] = "9999"
+        os.environ["KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"] = "9999"
         try:
             profile = MockProfile(role_id="director")
             timeout = resolve_timeout_seconds(cast("RoleProfile", profile))
             assert timeout == 900
         finally:
-            os.environ.pop("POLARIS_DIRECTOR_LLM_TIMEOUT_SECONDS", None)
+            os.environ.pop("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", None)
             _get_cached_director_timeout.cache_clear()
 
 

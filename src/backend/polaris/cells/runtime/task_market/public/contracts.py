@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -32,6 +33,16 @@ _VALID_HUMAN_RESOLUTIONS = {
     "close_as_invalid",
     "shadow_continue",
 }
+
+
+class TaskWorkItemState(str, Enum):
+    """Two-stage job claiming lifecycle states."""
+
+    PENDING = "pending"
+    STAGE1_CLAIMED = "stage1_claimed"
+    STAGE1_COMPLETE = "stage1_complete"
+    STAGE2_CLAIMED = "stage2_claimed"
+    STAGE2_COMPLETE = "stage2_complete"
 
 
 def _require_non_empty(name: str, value: str) -> str:
@@ -492,6 +503,25 @@ class TaskWorkItemResultV1:
     lease_token: str = ""
     reason: str = ""
     payload: Mapping[str, Any] = field(default_factory=dict)
+    claimed_by: str = ""
+    source_chain: list[str] = field(default_factory=list)
+    consolidated_from: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ClaimStage1Result:
+    success: bool
+    claimant_id: str = ""
+    already_claimed_by: str = ""
+    merged: bool = False
+
+
+@dataclass(frozen=True)
+class ClaimStage2Result:
+    success: bool
+    claimant_id: str = ""
+    stage1_result_available: bool = False
+    consolidated_result: Any = None
 
 
 @dataclass(frozen=True)

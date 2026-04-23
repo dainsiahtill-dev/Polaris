@@ -7,18 +7,18 @@ from polaris.cells.llm.dialogue.internal import role_dialogue
 
 
 def test_resolve_role_tool_rounds_supports_role_overrides(monkeypatch) -> None:
-    monkeypatch.delenv("POLARIS_ROLE_TOOL_ROUNDS", raising=False)
-    monkeypatch.delenv("POLARIS_ROLE_TOOL_ROUNDS_PM", raising=False)
-    monkeypatch.delenv("POLARIS_ROLE_TOOL_ROUNDS_ARCHITECT", raising=False)
+    monkeypatch.delenv("KERNELONE_ROLE_TOOL_ROUNDS", raising=False)
+    monkeypatch.delenv("KERNELONE_ROLE_TOOL_ROUNDS_PM", raising=False)
+    monkeypatch.delenv("KERNELONE_ROLE_TOOL_ROUNDS_ARCHITECT", raising=False)
 
     assert role_dialogue._resolve_role_tool_rounds("pm") == 2
     assert role_dialogue._resolve_role_tool_rounds("architect") == 3
     assert role_dialogue._resolve_role_tool_rounds("director") == 4
 
-    monkeypatch.setenv("POLARIS_ROLE_TOOL_ROUNDS", "5")
+    monkeypatch.setenv("KERNELONE_ROLE_TOOL_ROUNDS", "5")
     assert role_dialogue._resolve_role_tool_rounds("pm") == 5
 
-    monkeypatch.setenv("POLARIS_ROLE_TOOL_ROUNDS_PM", "3")
+    monkeypatch.setenv("KERNELONE_ROLE_TOOL_ROUNDS_PM", "3")
     assert role_dialogue._resolve_role_tool_rounds("pm") == 3
 
 
@@ -260,8 +260,8 @@ async def test_generate_role_response_adds_loop_breaker_for_repeated_readonly_to
             "suggestions": [],
         },
     )
-    monkeypatch.delenv("POLARIS_ROLE_TOOL_ROUNDS", raising=False)
-    monkeypatch.delenv("POLARIS_ROLE_TOOL_ROUNDS_PM", raising=False)
+    monkeypatch.delenv("KERNELONE_ROLE_TOOL_ROUNDS", raising=False)
+    monkeypatch.delenv("KERNELONE_ROLE_TOOL_ROUNDS_PM", raising=False)
 
     response = await role_dialogue.generate_role_response(
         workspace=".",
@@ -409,7 +409,7 @@ async def test_generate_role_response_marks_error_when_tool_rounds_exhausted(mon
             "suggestions": [],
         },
     )
-    monkeypatch.setenv("POLARIS_ROLE_TOOL_ROUNDS", "1")
+    monkeypatch.setenv("KERNELONE_ROLE_TOOL_ROUNDS", "1")
 
     response = await role_dialogue.generate_role_response(
         workspace=".",

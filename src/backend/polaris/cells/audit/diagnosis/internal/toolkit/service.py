@@ -171,13 +171,13 @@ def _build_verify_chain_strict_error(
 def _resolve_backend_base_url(base_url: str | None = None) -> str:
     if base_url and str(base_url).strip():
         return str(base_url).strip().rstrip("/")
-    port = os.environ.get("POLARIS_BACKEND_PORT", "49977")
+    port = os.environ.get("KERNELONE_BACKEND_PORT", "49977")
     return f"http://127.0.0.1:{port}"
 
 
 def _resolve_runtime_root_from_backend(base_url: str) -> Path | None:
     """Try backend runtime layout endpoint as a non-authoritative hint."""
-    token = str(os.environ.get("POLARIS_BACKEND_TOKEN") or os.environ.get("POLARIS_TOKEN") or "").strip()
+    token = str(os.environ.get("KERNELONE_BACKEND_TOKEN") or os.environ.get("KERNELONE_TOKEN") or "").strip()
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -209,7 +209,7 @@ def resolve_runtime_root(
     if runtime_root:
         return Path(runtime_root).resolve()
 
-    env_root = str(os.environ.get("POLARIS_RUNTIME_BASE") or "").strip()
+    env_root = str(os.environ.get("KERNELONE_RUNTIME_BASE") or "").strip()
     if env_root:
         return Path(env_root).resolve()
 
@@ -218,7 +218,7 @@ def resolve_runtime_root(
     if from_backend:
         return from_backend
 
-    workspace_path = str(workspace or os.environ.get("POLARIS_WORKSPACE") or os.getcwd())
+    workspace_path = str(workspace or os.environ.get("KERNELONE_WORKSPACE") or os.getcwd())
     try:
         roots = resolve_storage_roots(workspace_path)
         return Path(roots.runtime_root).resolve()
@@ -992,7 +992,7 @@ def run_audit_command(
         )
 
     resolved_base_url = _resolve_backend_base_url(base_url)
-    resolved_workspace = str(workspace or os.environ.get("POLARIS_WORKSPACE") or os.getcwd())
+    resolved_workspace = str(workspace or os.environ.get("KERNELONE_WORKSPACE") or os.getcwd())
     resolved_runtime_root = resolve_runtime_root(
         runtime_root=runtime_root,
         workspace=resolved_workspace,

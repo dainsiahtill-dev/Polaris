@@ -15,12 +15,12 @@ function isTruthyEnv(value) {
 }
 
 function resolvepolarisRoot(env = process.env, platform = process.platform) {
-  const rootOverride = String(env.POLARIS_ROOT || "").trim();
+  const rootOverride = String(env.KERNELONE_ROOT || "").trim();
   if (rootOverride) {
     return expandPath(rootOverride);
   }
 
-  const homeOverride = String(env.POLARIS_HOME || "").trim();
+  const homeOverride = String(env.KERNELONE_HOME || "").trim();
   if (homeOverride) {
     const expanded = expandPath(homeOverride);
     const trimmed = expanded.replace(/[\\/]+$/, "");
@@ -60,9 +60,9 @@ function getDesktopBackendInfoPath(env = process.env, platform = process.platfor
 function selectStartupWorkspaceOverride(options = {}) {
   const env = options.env || process.env;
   const persistedWorkspace = expandPath(options.persistedWorkspace || "");
-  const envWorkspace = expandPath(env.POLARIS_WORKSPACE || "");
+  const envWorkspace = expandPath(env.KERNELONE_WORKSPACE || "");
 
-  if (envWorkspace && isTruthyEnv(env.POLARIS_WORKSPACE_FORCE)) {
+  if (envWorkspace && isTruthyEnv(env.KERNELONE_WORKSPACE_FORCE)) {
     return { workspace: envWorkspace, source: "env_forced" };
   }
   if (persistedWorkspace) {
@@ -102,7 +102,7 @@ function shouldEnableSelfUpgradeMode(options = {}) {
   const isPackaged = Boolean(options.isPackaged);
   const platform = options.platform || process.platform;
 
-  if (isTruthyEnv(env.POLARIS_SELF_UPGRADE_MODE)) {
+  if (isTruthyEnv(env.KERNELONE_SELF_UPGRADE_MODE)) {
     return { enabled: true, source: "env" };
   }
   if (!workspace || !repoRoot) {

@@ -22,9 +22,9 @@ test("resolvepolarisRoot prefers APPDATA on Windows when no overrides exist", ()
   assert.equal(result, path.resolve("C:\\Users\\tester\\AppData\\Roaming"));
 });
 
-test("resolvepolarisRoot trims POLARIS_HOME when it already points at .polaris", () => {
+test("resolvepolarisRoot trims KERNELONE_HOME when it already points at .polaris", () => {
   const env = {
-    POLARIS_HOME: "C:\\Users\\tester\\AppData\\Roaming\\.polaris",
+    KERNELONE_HOME: "C:\\Users\\tester\\AppData\\Roaming\\.polaris",
   };
 
   const result = resolvepolarisRoot(env, "win32");
@@ -62,7 +62,7 @@ test("getDesktopBackendInfoPath stores backend bridge state under Polaris runtim
 test("selectStartupWorkspaceOverride prefers persisted workspace by default", () => {
   const result = selectStartupWorkspaceOverride({
     env: {
-      POLARIS_WORKSPACE: "C:\\Users\\dains\\Documents\\GitLab\\polaris",
+      KERNELONE_WORKSPACE: "C:\\Users\\dains\\Documents\\GitLab\\polaris",
     },
     persistedWorkspace: "C:\\Temp\\FileServer",
   });
@@ -74,8 +74,8 @@ test("selectStartupWorkspaceOverride prefers persisted workspace by default", ()
 test("selectStartupWorkspaceOverride respects forced env override", () => {
   const result = selectStartupWorkspaceOverride({
     env: {
-      POLARIS_WORKSPACE: "C:\\Users\\dains\\Documents\\GitLab\\polaris",
-      POLARIS_WORKSPACE_FORCE: "true",
+      KERNELONE_WORKSPACE: "C:\\Users\\dains\\Documents\\GitLab\\polaris",
+      KERNELONE_WORKSPACE_FORCE: "true",
     },
     persistedWorkspace: "C:\\Temp\\FileServer",
   });
@@ -121,7 +121,7 @@ test("shouldEnableSelfUpgradeMode does not auto-enable when packaged", () => {
 test("shouldEnableSelfUpgradeMode respects env override", () => {
   const result = shouldEnableSelfUpgradeMode({
     env: {
-      POLARIS_SELF_UPGRADE_MODE: "1",
+      KERNELONE_SELF_UPGRADE_MODE: "1",
     },
     workspace: "C:\\Temp\\ExternalProject",
     repoRoot: "C:\\Repo\\Polaris",

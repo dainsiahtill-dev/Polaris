@@ -452,17 +452,17 @@ def get_quality_gate_config() -> dict[str, Any]:
     """
     import os
 
-    mode = str(os.environ.get("POLARIS_PM_TASK_QUALITY_MODE", "strict")).strip().lower()
+    mode = str(os.environ.get("KERNELONE_PM_TASK_QUALITY_MODE", "strict")).strip().lower()
     if mode not in ("off", "warn", "strict"):
         mode = "strict"
 
-    min_score_raw = os.environ.get("POLARIS_PM_TASK_QUALITY_MIN_SCORE", "80")
+    min_score_raw = os.environ.get("KERNELONE_PM_TASK_QUALITY_MIN_SCORE", "80")
     try:
         min_score = max(0, min(100, int(min_score_raw)))
     except ValueError:
         min_score = 80
 
-    max_retries_raw = os.environ.get("POLARIS_PM_TASK_QUALITY_RETRIES", "3")
+    max_retries_raw = os.environ.get("KERNELONE_PM_TASK_QUALITY_RETRIES", "3")
     try:
         max_retries = max(0, int(max_retries_raw))
     except ValueError:

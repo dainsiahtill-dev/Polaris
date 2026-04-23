@@ -120,7 +120,7 @@ def test_lazy_init() -> None:
 def test_trust_remote_code_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """load_model must use trust_remote_code=False by default (no env var set)."""
     # Ensure env var is absent
-    monkeypatch.delenv("POLARIS_VISION_TRUST_REMOTE_CODE", raising=False)
+    monkeypatch.delenv("KERNELONE_VISION_TRUST_REMOTE_CODE", raising=False)
 
     module = _reload_vision_module()
 
@@ -158,9 +158,9 @@ def test_trust_remote_code_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_trust_remote_code_env_enabled(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """When POLARIS_VISION_TRUST_REMOTE_CODE=1, trust_remote_code=True is
+    """When KERNELONE_VISION_TRUST_REMOTE_CODE=1, trust_remote_code=True is
     forwarded to from_pretrained AND a warning is emitted."""
-    monkeypatch.setenv("POLARIS_VISION_TRUST_REMOTE_CODE", "1")
+    monkeypatch.setenv("KERNELONE_VISION_TRUST_REMOTE_CODE", "1")
 
     module = _reload_vision_module()
 
@@ -191,7 +191,7 @@ def test_trust_remote_code_env_enabled(
     # A warning log must have been emitted
     warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
     assert any(
-        "POLARIS_VISION_TRUST_REMOTE_CODE" in str(m) for m in warning_messages
+        "KERNELONE_VISION_TRUST_REMOTE_CODE" in str(m) for m in warning_messages
     ), f"Expected warning about trust_remote_code env var, got: {warning_messages}"
 
 

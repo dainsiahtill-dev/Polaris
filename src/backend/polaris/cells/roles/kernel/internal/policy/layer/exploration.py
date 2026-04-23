@@ -190,13 +190,13 @@ class ExplorationToolPolicy:
             return raw in ("true", "1", "yes", "on")
 
         return cls(
-            max_exploration_calls=_int("POLARIS_EXPLORATION_MAX_CALLS", 32, 1, 256),
-            max_calls_per_tool=_int("POLARIS_EXPLORATION_MAX_CALLS_PER_TOOL", 8, 1, 64),
-            cooldown_after_calls=_int("POLARIS_EXPLORATION_COOLDOWN_AFTER", 4, 1, 32),
+            max_exploration_calls=_int("KERNELONE_EXPLORATION_MAX_CALLS", 32, 1, 256),
+            max_calls_per_tool=_int("KERNELONE_EXPLORATION_MAX_CALLS_PER_TOOL", 8, 1, 64),
+            cooldown_after_calls=_int("KERNELONE_EXPLORATION_COOLDOWN_AFTER", 4, 1, 32),
             # Phase 5 新增环境变量
-            enable_adaptive_cooldown=_bool("POLARIS_EXPLORATION_ADAPTIVE_COOLDOWN", True),
-            min_cooldown_calls=_int("POLARIS_EXPLORATION_MIN_COOLDOWN", 6, 2, 32),
-            max_cooldown_calls=_int("POLARIS_EXPLORATION_MAX_COOLDOWN", 16, 4, 64),
+            enable_adaptive_cooldown=_bool("KERNELONE_EXPLORATION_ADAPTIVE_COOLDOWN", True),
+            min_cooldown_calls=_int("KERNELONE_EXPLORATION_MIN_COOLDOWN", 6, 2, 32),
+            max_cooldown_calls=_int("KERNELONE_EXPLORATION_MAX_COOLDOWN", 16, 4, 64),
         )
 
     @classmethod

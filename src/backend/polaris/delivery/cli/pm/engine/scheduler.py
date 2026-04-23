@@ -58,7 +58,7 @@ class SingleWorkerScheduler:
 def _role_context_history_limit() -> int:
     """Get the role context history limit from environment."""
     limit = _env_positive_int(
-        "POLARIS_ROLE_CONTEXT_HISTORY_LIMIT",
+        "KERNELONE_ROLE_CONTEXT_HISTORY_LIMIT",
         _DEFAULT_ROLE_CONTEXT_HISTORY_LIMIT,
     )
     return max(4, int(limit or _DEFAULT_ROLE_CONTEXT_HISTORY_LIMIT))

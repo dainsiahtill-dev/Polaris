@@ -498,7 +498,7 @@ def _dispatch_director_tasks_impl(
     blocked_count = sum(1 for item in records if item.get("pm_status") == "blocked")
     needs_continue_count = sum(1 for item in records if item.get("pm_status") == "needs_continue")
     terminal_count = success_count + failed_count + blocked_count
-    target_failure_rate = _env_float("POLARIS_TARGET_FAILURE_RATE", 0.05)
+    target_failure_rate = _env_float("KERNELONE_TARGET_FAILURE_RATE", 0.05)
     if target_failure_rate < 0:
         target_failure_rate = 0.05
     failure_rate = float(failed_count + blocked_count) / float(terminal_count) if terminal_count > 0 else 0.0
@@ -658,8 +658,8 @@ def _run_single_task(
     qa_contract = normalize_qa_contract(task.get("qa_contract"), task=task)
     coordination_policy = _resolve_tri_council_policy(
         qa_contract=qa_contract,
-        enabled_override=os.environ.get("POLARIS_TRI_COUNCIL_ENABLED", ""),
-        max_rounds_override=os.environ.get("POLARIS_TRI_COUNCIL_MAX_ROUNDS", ""),
+        enabled_override=os.environ.get("KERNELONE_TRI_COUNCIL_ENABLED", ""),
+        max_rounds_override=os.environ.get("KERNELONE_TRI_COUNCIL_MAX_ROUNDS", ""),
     )
     pre_dispatch_council = _run_tri_council_round(
         stage="pre_dispatch",
@@ -829,8 +829,8 @@ def _run_single_task(
         result_payload.get("summary") or result_payload.get("completion_summary") or result_payload.get("reason") or ""
     )
 
-    qa_mode = normalize_qa_mode(getattr(args, "qa_mode", None) or os.environ.get("POLARIS_QA_MODE", "blocking"))
-    ui_plugin_enabled = str(os.environ.get("POLARIS_QA_UI_PLUGIN_ENABLED", "0")).strip().lower() in (
+    qa_mode = normalize_qa_mode(getattr(args, "qa_mode", None) or os.environ.get("KERNELONE_QA_MODE", "blocking"))
+    ui_plugin_enabled = str(os.environ.get("KERNELONE_QA_UI_PLUGIN_ENABLED", "0")).strip().lower() in (
         "1",
         "true",
         "yes",

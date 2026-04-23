@@ -462,10 +462,10 @@ class RoleConsoleHost:
         """Check whether session orchestrator should be used.
 
         Priority:
-        1. POLARIS_ENABLE_SESSION_ORCHESTRATOR env var
+        1. KERNELONE_ENABLE_SESSION_ORCHESTRATOR env var
         2. capability_profile["enable_session_orchestrator"]
         """
-        env_flag = os.environ.get("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "").strip().lower()
+        env_flag = os.environ.get("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "").strip().lower()
         if env_flag in {"1", "true", "yes"}:
             return True
         if env_flag in {"0", "false", "no"}:

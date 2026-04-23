@@ -102,7 +102,7 @@ class TestAnalysisOnlyPath:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Turn 1: repo_tree. Turn 2: summary visible_content. Should END_SESSION."""
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
         session_id = "e2e-analysis-1"
 
         # Turn 1: repo_tree tool call -> completion
@@ -205,7 +205,7 @@ class TestWritePath:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Turn 1: repo_tree. Turn 2: write_file. Should END_SESSION."""
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
         session_id = "e2e-write-1"
 
         events_by_turn = {
@@ -325,7 +325,7 @@ class TestContextSwitch:
 
         The second prompt should update goal and task_progress.
         """
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
         session_id = "e2e-context-switch-1"
 
         events_by_turn = {

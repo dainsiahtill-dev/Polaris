@@ -3,10 +3,10 @@
 Provides IP-based request rate limiting for the API.
 
 Configuration:
-- POLARIS_RATE_LIMIT_ENABLED: Enable/disable rate limiting (default: true)
-- POLARIS_RATE_LIMIT_RPS: Requests per second limit (default: 10)
-- POLARIS_RATE_LIMIT_BURST: Burst allowance (default: 20)
-- POLARIS_RATE_LIMIT_WINDOW: Time window in seconds (default: 60)
+- KERNELONE_RATE_LIMIT_ENABLED: Enable/disable rate limiting (default: true)
+- KERNELONE_RATE_LIMIT_RPS: Requests per second limit (default: 10)
+- KERNELONE_RATE_LIMIT_BURST: Burst allowance (default: 20)
+- KERNELONE_RATE_LIMIT_WINDOW: Time window in seconds (default: 60)
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
 
         # Check if disabled via environment
-        self._enabled = os.environ.get("POLARIS_RATE_LIMIT_ENABLED", "true").lower() not in (
+        self._enabled = os.environ.get("KERNELONE_RATE_LIMIT_ENABLED", "true").lower() not in (
             "false",
             "0",
             "no",
@@ -221,9 +221,9 @@ def get_rate_limit_middleware(
     Returns:
         Configured RateLimitMiddleware instance
     """
-    rps = rps or float(os.environ.get("POLARIS_RATE_LIMIT_RPS", "10"))
-    burst = burst or int(os.environ.get("POLARIS_RATE_LIMIT_BURST", "20"))
-    window = window or float(os.environ.get("POLARIS_RATE_LIMIT_WINDOW", "60"))
+    rps = rps or float(os.environ.get("KERNELONE_RATE_LIMIT_RPS", "10"))
+    burst = burst or int(os.environ.get("KERNELONE_RATE_LIMIT_BURST", "20"))
+    window = window or float(os.environ.get("KERNELONE_RATE_LIMIT_WINDOW", "60"))
 
     logger.info(f"Initializing rate limiting: {rps} RPS, burst={burst}, window={window}s")
 

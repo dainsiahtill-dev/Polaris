@@ -121,8 +121,8 @@ class BudgetPolicy:
 
         return cls(
             BudgetState(
-                max_tool_calls=_read_int("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", 64, 1, 512),
-                max_wall_time_seconds=_read_int("POLARIS_TOOL_LOOP_MAX_WALL_TIME_SECONDS", 900, 30, 7200),
+                max_tool_calls=_read_int("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", 64, 1, 512),
+                max_wall_time_seconds=_read_int("KERNELONE_TOOL_LOOP_MAX_WALL_TIME_SECONDS", 900, 30, 7200),
             )
         )
 

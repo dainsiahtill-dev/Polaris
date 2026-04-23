@@ -287,7 +287,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         type=str,
-        default=os.environ.get("POLARIS_DIRECTOR_MODEL", ""),
+        default=os.environ.get("KERNELONE_DIRECTOR_MODEL", ""),
         help="LLM model",
     )
 

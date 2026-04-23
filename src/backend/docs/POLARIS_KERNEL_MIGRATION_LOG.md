@@ -124,7 +124,7 @@ polaris/cells/roles/kernel/internal/policy/approval_policy.py  # 修复: Convers
 ### Task #9 交付
 - `polaris/cells/roles/kernel/tests/test_transcript_ir.py` — TranscriptItem IR 测试骨架
 - `polaris/cells/roles/kernel/tests/test_conversation_state.py` — ConversationState 测试骨架
-- `docs/POLARIS_KERNEL_MIGRATION_LOG.md` — 迁移日志
+- `docs/KERNELONE_KERNEL_MIGRATION_LOG.md` — 迁移日志
 
 ### Phase 1 完成后补充（Task #9 后续）
 - `test_transcript_ir.py` — 补充 ToolCall / ToolResult / ControlEvent / TranscriptDelta 测试

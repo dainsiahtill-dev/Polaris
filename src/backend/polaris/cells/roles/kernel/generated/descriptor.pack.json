@@ -11425,7 +11425,7 @@
         },
         {
           "name": "test_env_override_quality_threshold",
-          "doc": "测试 POLARIS_QUALITY_THRESHOLD 环境变量覆盖"
+          "doc": "测试 KERNELONE_QUALITY_THRESHOLD 环境变量覆盖"
         },
         {
           "name": "test_env_override_all",
@@ -13143,7 +13143,7 @@
     {
       "type": "class",
       "name": "TestQualityThresholdEnvVar",
-      "description": "Tests for POLARIS_QUALITY_THRESHOLD environment variable.",
+      "description": "Tests for KERNELONE_QUALITY_THRESHOLD environment variable.",
       "defined_in": "polaris/cells/roles/kernel/tests/test_metrics.py",
       "methods": [
         {

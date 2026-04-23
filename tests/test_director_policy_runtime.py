@@ -77,7 +77,7 @@ class TestDirectorPolicyRuntime(unittest.TestCase):
                 "verify_requires_ready": False,
             },
         }
-        env_key = "POLARIS_RAG_TOPK"
+        env_key = "KERNELONE_RAG_TOPK"
         original_env = os.environ.get(env_key)
         try:
             self.runtime.apply_policy_to_state(state, policy)
@@ -159,7 +159,7 @@ class TestDirectorPolicyRuntime(unittest.TestCase):
                 "standalone_allowed": True,
             },
         }
-        env_key = "POLARIS_MANUAL_ROLLBACK_CONFIRMED"
+        env_key = "KERNELONE_MANUAL_ROLLBACK_CONFIRMED"
         original_env = os.environ.get(env_key)
         try:
             os.environ[env_key] = "1"

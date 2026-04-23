@@ -50,7 +50,7 @@ Resolve global, workspace and runtime persistence layout and path policies as a 
 from polaris.cells.storage.layout import (
     PolarisStorageLayout,     # Path resolver class
     PolarisStorageRoots,      # HP-specific storage roots (config_root anchored at polaris_home())
-    polaris_home,             # HP home dir: POLARIS_HOME > KERNELONE_HOME/.polaris > ~/.polaris
+    polaris_home,             # HP home dir: KERNELONE_HOME > KERNELONE_HOME/.polaris > ~/.polaris
     default_polaris_cache_base,  # Cross-platform default cache base
     resolve_polaris_roots,   # Core roots resolver (HP-specific config_root)
     resolve_storage_layout,       # ResolveStorageLayoutQueryV1 handler
@@ -63,7 +63,7 @@ from polaris.cells.storage.layout import (
 ### Key Behaviours
 
 **`polaris_home()` resolution order**
-1. `POLARIS_HOME` env var (if set and non-empty)
+1. `KERNELONE_HOME` env var (if set and non-empty)
 2. `KERNELONE_HOME/.polaris` (if `KERNELONE_HOME` is set)
 3. `~/.polaris` (default fallback)
 

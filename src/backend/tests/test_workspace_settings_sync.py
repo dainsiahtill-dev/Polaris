@@ -21,8 +21,8 @@ def test_settings_route_updates_workspace_env_and_persists_workspace(
     workspace_b.mkdir(parents=True, exist_ok=True)
 
     config_root = tmp_path / "config-root"
-    monkeypatch.setenv("POLARIS_ROOT", str(config_root))
-    monkeypatch.setenv("POLARIS_TOKEN", test_token)
+    monkeypatch.setenv("KERNELONE_ROOT", str(config_root))
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     monkeypatch.delenv(SELF_UPGRADE_MODE_ENV, raising=False)
 
     app = create_app(Settings(workspace=str(workspace_a), ramdisk_root=""))
@@ -54,7 +54,7 @@ def test_load_persisted_settings_recovers_workspace_local_settings(
     )
 
     config_root = tmp_path / "config-root"
-    monkeypatch.setenv("POLARIS_ROOT", str(config_root))
+    monkeypatch.setenv("KERNELONE_ROOT", str(config_root))
 
     payload = load_persisted_settings(str(workspace))
 
@@ -74,8 +74,8 @@ def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(
     workspace.mkdir(parents=True, exist_ok=True)
 
     config_root = tmp_path / "config-root"
-    monkeypatch.setenv("POLARIS_ROOT", str(config_root))
-    monkeypatch.setenv("POLARIS_TOKEN", test_token)
+    monkeypatch.setenv("KERNELONE_ROOT", str(config_root))
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     monkeypatch.delenv(SELF_UPGRADE_MODE_ENV, raising=False)
 
     app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
@@ -100,8 +100,8 @@ def test_settings_route_allows_meta_project_workspace_with_self_upgrade(
     project_root = get_meta_project_root()
 
     config_root = tmp_path / "config-root"
-    monkeypatch.setenv("POLARIS_ROOT", str(config_root))
-    monkeypatch.setenv("POLARIS_TOKEN", test_token)
+    monkeypatch.setenv("KERNELONE_ROOT", str(config_root))
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     monkeypatch.delenv(SELF_UPGRADE_MODE_ENV, raising=False)
 
     app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))

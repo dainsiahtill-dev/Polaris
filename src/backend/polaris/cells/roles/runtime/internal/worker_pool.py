@@ -270,8 +270,8 @@ class Worker:
 
         env = os.environ.copy()
         env.update(task.env)
-        env["POLARIS_WORKER_ID"] = self.config.worker_id
-        env["POLARIS_TASK_ID"] = str(task.task_id)
+        env["KERNELONE_WORKER_ID"] = self.config.worker_id
+        env["KERNELONE_TASK_ID"] = str(task.task_id)
 
         try:
             tokens = _split_worker_command(task.command)
@@ -513,8 +513,8 @@ class AsyncWorker:
         # Build execution environment with UTF-8 settings
         env = dict(os.environ)
         env.update(task.env)
-        env["POLARIS_WORKER_ID"] = self.config.worker_id
-        env["POLARIS_TASK_ID"] = str(task.task_id)
+        env["KERNELONE_WORKER_ID"] = self.config.worker_id
+        env["KERNELONE_TASK_ID"] = str(task.task_id)
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
 

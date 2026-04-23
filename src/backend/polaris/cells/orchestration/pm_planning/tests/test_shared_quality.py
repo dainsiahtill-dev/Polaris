@@ -195,7 +195,7 @@ class TestTailNonEmptyLines:
 
 class TestDetectIntegrationVerifyCommand:
     def test_env_override(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setenv("POLARIS_INTEGRATION_QA_COMMAND", "npm test")
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_COMMAND", "npm test")
         result = detect_integration_verify_command(str(tmp_path))
         assert result == "npm test"
 
@@ -238,8 +238,8 @@ class TestDetectIntegrationVerifyCommand:
 
 class TestRunIntegrationVerifyRunner:
     def test_rejects_invalid_command(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setenv("POLARIS_INTEGRATION_QA_COMMAND", "")
-        monkeypatch.setenv("POLARIS_INTEGRATION_QA_TIMEOUT_SECONDS", "60")
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_COMMAND", "")
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_TIMEOUT_SECONDS", "60")
         monkeypatch.setattr(
             "polaris.cells.orchestration.pm_planning.internal.shared_quality.detect_integration_verify_command",
             lambda ws: "nonexistent_cmd_xyz",
@@ -249,7 +249,7 @@ class TestRunIntegrationVerifyRunner:
         assert "rejected" in summary.lower() or "failed" in summary.lower()
 
     def test_command_parse_error(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setenv("POLARIS_INTEGRATION_QA_COMMAND", "")
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_COMMAND", "")
         monkeypatch.setattr(
             "polaris.cells.orchestration.pm_planning.internal.shared_quality.detect_integration_verify_command",
             lambda ws: "echo 'unclosed",
@@ -258,8 +258,8 @@ class TestRunIntegrationVerifyRunner:
         assert ok is False
 
     def test_timeout_env_clamped(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setenv("POLARIS_INTEGRATION_QA_COMMAND", "echo hello")
-        monkeypatch.setenv("POLARIS_INTEGRATION_QA_TIMEOUT_SECONDS", "bad")
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_COMMAND", "echo hello")
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_TIMEOUT_SECONDS", "bad")
         # Should use default 300
         ok, summary, _ = run_integration_verify_runner(str(tmp_path))
         # Either passes or fails — does not raise

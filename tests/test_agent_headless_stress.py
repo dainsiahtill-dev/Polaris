@@ -103,7 +103,7 @@ def test_desktop_backend_info_path_uses_polaris_home_override(
 ) -> None:
     stress = _load_module()
     home = tmp_path / ".polaris"
-    monkeypatch.setenv("POLARIS_HOME", str(home))
+    monkeypatch.setenv("KERNELONE_HOME", str(home))
 
     resolved = stress._desktop_backend_info_path()
 
@@ -138,7 +138,7 @@ def test_resolve_backend_connection_falls_back_to_desktop_backend_info(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("POLARIS_HOME", str(home))
+    monkeypatch.setenv("KERNELONE_HOME", str(home))
 
     base_url, token, metadata = asyncio.run(
         stress._resolve_backend_connection("", "", discovery_timeout_seconds=0),
@@ -176,7 +176,7 @@ def test_resolve_backend_connection_prefers_explicit_values_over_desktop_backend
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("POLARIS_HOME", str(home))
+    monkeypatch.setenv("KERNELONE_HOME", str(home))
 
     base_url, token, metadata = asyncio.run(
         stress._resolve_backend_connection(

@@ -7,7 +7,7 @@ const { formatLogLine } = require("./log-pretty");
 const repoRoot = path.join(__dirname, "..", "..");
 const runtimeDir = path.join(repoRoot, ".polaris", "runtime");
 const devStatePath = path.join(runtimeDir, "dev-runner-state.json");
-const preferredPortRaw = Number(process.env.POLARIS_RENDERER_PORT || "5173");
+const preferredPortRaw = Number(process.env.KERNELONE_RENDERER_PORT || "5173");
 const preferredPort = Number.isFinite(preferredPortRaw) && preferredPortRaw > 0 ? preferredPortRaw : 5173;
 const maxPortChecks = 20;
 const probeHosts = ["127.0.0.1", "::1"];
@@ -109,7 +109,7 @@ function isAutoKillCandidate(pid) {
 }
 
 async function cleanupRememberedPort() {
-  if (String(process.env.POLARIS_AUTOKILL_LAST_PORT || "1") === "0") {
+  if (String(process.env.KERNELONE_AUTOKILL_LAST_PORT || "1") === "0") {
     return;
   }
 
@@ -264,7 +264,7 @@ function buildCorsOrigins(rendererPort) {
     `http://localhost:${rendererPort}`,
     `http://127.0.0.1:${rendererPort}`,
   ];
-  const configuredOrigins = String(process.env.POLARIS_CORS_ORIGINS || "")
+  const configuredOrigins = String(process.env.KERNELONE_CORS_ORIGINS || "")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
@@ -296,16 +296,16 @@ async function main() {
 
   const env = {
     ...process.env,
-    POLARIS_RENDERER_PORT: String(rendererPort),
-    POLARIS_DEV_SERVER_URL: rendererUrl,
-    POLARIS_CORS_ORIGINS: corsOrigins,
+    KERNELONE_RENDERER_PORT: String(rendererPort),
+    KERNELONE_DEV_SERVER_URL: rendererUrl,
+    KERNELONE_CORS_ORIGINS: corsOrigins,
   };
-  const skipElectron = isTruthyEnv(env.POLARIS_DEV_SKIP_ELECTRON);
+  const skipElectron = isTruthyEnv(env.KERNELONE_DEV_SKIP_ELECTRON);
 
   const renderer = runNpmScript("dev:renderer", env);
   const electron = skipElectron ? null : runNpmScript("dev:electron", env);
   if (skipElectron) {
-    console.log("[dev-runner] skipping dev:electron because POLARIS_DEV_SKIP_ELECTRON=1");
+    console.log("[dev-runner] skipping dev:electron because KERNELONE_DEV_SKIP_ELECTRON=1");
   }
 
   writeDevState({

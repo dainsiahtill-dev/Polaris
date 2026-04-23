@@ -454,7 +454,7 @@ class TestLLMCallerCall:
         monkeypatch,
     ):
         mock_profile.role_id = "director"
-        monkeypatch.setenv("POLARIS_DIRECTOR_LLM_TIMEOUT_SECONDS", "420")
+        monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", "420")
 
         mock_response = MagicMock()
         mock_response.output = "ok"

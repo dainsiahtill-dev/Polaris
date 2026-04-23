@@ -4,9 +4,9 @@ const waitOn = require("wait-on");
 
 const repoRoot = path.join(__dirname, "..", "..");
 const runElectronScript = path.join(__dirname, "run-electron.js");
-const defaultPortRaw = Number(process.env.POLARIS_RENDERER_PORT || "5173");
+const defaultPortRaw = Number(process.env.KERNELONE_RENDERER_PORT || "5173");
 const defaultPort = Number.isFinite(defaultPortRaw) && defaultPortRaw > 0 ? defaultPortRaw : 5173;
-const rendererUrl = process.env.POLARIS_DEV_SERVER_URL || `http://localhost:${defaultPort}`;
+const rendererUrl = process.env.KERNELONE_DEV_SERVER_URL || `http://localhost:${defaultPort}`;
 const dryRun = process.argv.includes("--dry-run");
 
 async function main() {

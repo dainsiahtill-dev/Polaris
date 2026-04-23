@@ -1130,7 +1130,7 @@ class ToolLoopController:
 
         max_total_tool_calls = (
             cls._read_int_env(
-                "POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS",
+                "KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS",
                 default=int(max_calls_override) if max_calls_override else 64,
                 minimum=1,
                 maximum=512,
@@ -1141,7 +1141,7 @@ class ToolLoopController:
 
         max_stall_cycles = (
             cls._read_int_env(
-                "POLARIS_TOOL_LOOP_MAX_STALL_CYCLES",
+                "KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES",
                 default=int(stall_cycles_override) if stall_cycles_override else 2,
                 minimum=0,
                 maximum=16,
@@ -1152,7 +1152,7 @@ class ToolLoopController:
 
         max_wall_time_seconds = (
             cls._read_int_env(
-                "POLARIS_TOOL_LOOP_MAX_WALL_TIME_SECONDS",
+                "KERNELONE_TOOL_LOOP_MAX_WALL_TIME_SECONDS",
                 default=int(wall_time_override) if wall_time_override else 900,
                 minimum=30,
                 maximum=7200,

@@ -422,9 +422,9 @@ def get_blocked_policy_from_env() -> tuple[str, int]:
     Returns:
         Tuple of (strategy, degrade_max_retries)
     """
-    strategy = os.environ.get("POLARIS_PM_BLOCKED_STRATEGY", "auto")
+    strategy = os.environ.get("KERNELONE_PM_BLOCKED_STRATEGY", "auto")
     try:
-        degrade_max_retries = int(os.environ.get("POLARIS_PM_BLOCKED_DEGRADE_RETRIES", "1"))
+        degrade_max_retries = int(os.environ.get("KERNELONE_PM_BLOCKED_DEGRADE_RETRIES", "1"))
     except ValueError:
         degrade_max_retries = 1
     return strategy, degrade_max_retries

@@ -131,7 +131,7 @@ def _should_spawn_new_console_window(env: dict[str, str] | None = None) -> bool:
         return False
 
     env_map = env or dict(os.environ)
-    force_inline = str(env_map.get("POLARIS_STRESS_OBSERVER_INLINE") or "").strip().lower()
+    force_inline = str(env_map.get("KERNELONE_STRESS_OBSERVER_INLINE") or "").strip().lower()
     if force_inline in {"1", "true", "yes", "on"}:
         return False
 

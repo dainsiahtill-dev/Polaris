@@ -29,9 +29,9 @@ class TestTurnEngineConfig:
     def test_from_env_with_custom_values(self) -> None:
         env_backup = os.environ.copy()
         try:
-            os.environ["POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS"] = "100"
-            os.environ["POLARIS_TOOL_LOOP_MAX_STALL_CYCLES"] = "5"
-            os.environ["POLARIS_TURN_ENGINE_STREAM"] = "false"
+            os.environ["KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS"] = "100"
+            os.environ["KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES"] = "5"
+            os.environ["KERNELONE_TURN_ENGINE_STREAM"] = "false"
             config = TurnEngineConfig.from_env()
             assert config.max_turns == 100
             assert config.max_total_tool_calls == 100
@@ -44,7 +44,7 @@ class TestTurnEngineConfig:
     def test_from_env_with_invalid_values_uses_defaults(self) -> None:
         env_backup = os.environ.copy()
         try:
-            os.environ["POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS"] = "invalid"
+            os.environ["KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS"] = "invalid"
             config = TurnEngineConfig.from_env()
             assert config.max_turns == 64
         finally:

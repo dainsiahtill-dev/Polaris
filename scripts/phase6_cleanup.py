@@ -2,7 +2,7 @@
 """Phase 6 cleanup script - Remove feature flags and legacy code paths.
 
 This script performs the final cleanup for the "Thin CLI + Core OO" refactoring:
-1. Removes POLARIS_USE_NEW_BOOTSTRAP feature flag
+1. Removes KERNELONE_USE_NEW_BOOTSTRAP feature flag
 2. Archives legacy implementations
 3. Updates entry points to use new architecture only
 4. Verifies no legacy code remains in active paths
@@ -37,7 +37,7 @@ LEGACY_FILES: List[tuple[str, str]] = [
 
 # Patterns to remove from active code
 DEPRECATED_PATTERNS: List[str] = [
-    "POLARIS_USE_NEW_BOOTSTRAP",
+    "KERNELONE_USE_NEW_BOOTSTRAP",
     "USE_NEW_BOOTSTRAP",
     "_use_legacy_bootstrap",
     "legacy_bootstrap",

@@ -5,7 +5,7 @@
 ## 设计目标
 
 - 前端设置 `workspace` 后，后端内存状态立即切换
-- `POLARIS_WORKSPACE` 进程环境立即同步
+- `KERNELONE_WORKSPACE` 进程环境立即同步
 - 全局持久化配置立即落盘
 - Electron 主进程与 backend 读取同一份全局 settings
 - 旧请求不能覆盖新的 `workspace` 设置结果
@@ -15,7 +15,7 @@
 当前 `workspace` 的统一真相源有三层，但优先级必须一致：
 
 1. 当前 backend 进程内的 `state.settings.workspace`
-2. 当前 backend 进程环境变量 `POLARIS_WORKSPACE`
+2. 当前 backend 进程环境变量 `KERNELONE_WORKSPACE`
 3. 全局持久化文件 `~/.polaris/config/settings.json` 或等价平台目录
 
 约束：
@@ -67,7 +67,7 @@
   - 读取与 backend 相同的全局 `settings.json`
   - 避免 Windows 下 Electron 与 backend 读写不同目录
   - 启动 backend 时，默认显式传入“上次持久化的 workspace”
-  - 除非设置 `POLARIS_WORKSPACE_FORCE=1`，否则持久化 workspace 优先于临时环境变量
+  - 除非设置 `KERNELONE_WORKSPACE_FORCE=1`，否则持久化 workspace 优先于临时环境变量
 
 ## 已修复的问题
 
@@ -83,12 +83,12 @@
 - 在 `useSettings` 中引入请求序号
 - 只有最新请求的响应允许写回状态
 
-### 2. `POLARIS_WORKSPACE` 不刷新
+### 2. `KERNELONE_WORKSPACE` 不刷新
 
 根因：
 
 - `/settings` 更新只改了 `state.settings.workspace`
-- 没有同步 `os.environ["POLARIS_WORKSPACE"]`
+- 没有同步 `os.environ["KERNELONE_WORKSPACE"]`
 
 修复：
 

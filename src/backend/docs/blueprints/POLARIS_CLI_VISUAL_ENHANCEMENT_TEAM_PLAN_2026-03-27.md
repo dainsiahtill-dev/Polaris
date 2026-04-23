@@ -2,7 +2,7 @@
 **文档版本**: 1.1.0
 **创建日期**: 2026-03-27
 **更新日期**: 2026-03-27
-**蓝图**: `POLARIS_CLI_VISUAL_ENHANCEMENT_BLUEPRINT_2026-03-27.md`
+**蓝图**: `KERNELONE_CLI_VISUAL_ENHANCEMENT_BLUEPRINT_2026-03-27.md`
 **团队规模**: 10 人高级 Python 工程师
 **关键需求**: 每条信息（消息级别）可折叠，包括 DEBUG 信息
 

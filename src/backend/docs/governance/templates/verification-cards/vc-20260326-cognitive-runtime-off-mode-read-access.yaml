@@ -47,7 +47,7 @@ verification_plan:
         -q
       status: existing_fix
   manual_check:
-    - "设置 POLARIS_COGNITIVE_RUNTIME_MODE=off 后，通过 API 查询历史 receipt 应可返回"
+    - "设置 KERNELONE_COGNITIVE_RUNTIME_MODE=off 后，通过 API 查询历史 receipt 应可返回"
 
 related_adrs: []
 

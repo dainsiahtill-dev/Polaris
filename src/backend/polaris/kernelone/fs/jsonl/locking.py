@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 # Configure module logger
 logger = logging.getLogger(__name__)
 
-# Lock configuration from environment (KERNELONE_* primary, POLARIS_* fallback)
+# Lock configuration from environment (KERNELONE_* primary, KERNELONE_* fallback)
 # Use _runtime_config for consistent fallback resolution
 _JSONL_LOCK_STALE_SEC = _runtime_config.resolve_env_float("jsonl_lock_stale_sec") or JSONL_LOCK_STALE_SECONDS
 

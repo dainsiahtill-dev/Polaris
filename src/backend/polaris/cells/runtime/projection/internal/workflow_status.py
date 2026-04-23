@@ -42,9 +42,9 @@ _WORKFLOW_STATE_MAP = {
     "terminated": "terminated",
 }
 _RUNTIME_ENV_KEYS = (
-    "POLARIS_RUNTIME_DB",
-    "POLARIS_RUNTIME_CACHE_ROOT",
-    "POLARIS_CONTEXT_ROOT",
+    "KERNELONE_RUNTIME_DB",
+    "KERNELONE_RUNTIME_CACHE_ROOT",
+    "KERNELONE_CONTEXT_ROOT",
 )
 _RUNTIME_ENV_LOCK = threading.Lock()
 
@@ -170,12 +170,12 @@ def _workflow_runtime_environment(workspace: str, cache_root: str):
     cache_root_value = str(cache_root or "").strip()
     overrides: dict[str, str] = {}
     if cache_root_value:
-        overrides["POLARIS_RUNTIME_CACHE_ROOT"] = cache_root_value
+        overrides["KERNELONE_RUNTIME_CACHE_ROOT"] = cache_root_value
     if workspace_value:
-        overrides["POLARIS_CONTEXT_ROOT"] = workspace_value
+        overrides["KERNELONE_CONTEXT_ROOT"] = workspace_value
     runtime_db = _runtime_db_path(cache_root_value)
     if runtime_db and os.path.isfile(runtime_db):
-        overrides["POLARIS_RUNTIME_DB"] = runtime_db
+        overrides["KERNELONE_RUNTIME_DB"] = runtime_db
     if not overrides:
         yield
         return

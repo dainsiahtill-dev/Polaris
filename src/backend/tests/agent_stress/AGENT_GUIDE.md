@@ -18,8 +18,8 @@
 cat %APPDATA%/.polaris/runtime/desktop-backend.json
 
 # 方式二：通过环境变量
-echo $POLARIS_BASE_URL
-echo $POLARIS_TOKEN
+echo $KERNELONE_BASE_URL
+echo $KERNELONE_TOKEN
 
 # 方式三：运行预检，确认 backend 可达
 python -c "

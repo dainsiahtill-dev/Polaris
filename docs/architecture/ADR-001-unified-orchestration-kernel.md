@@ -232,7 +232,7 @@ class CompatibilityMapper:
 | 兼容层性能损耗 | shim 层只做转发，开销可忽略 |
 | 状态字段漂移导致 UI 断更 | 统一 RunStatus 枚举，强制所有角色使用 |
 | 双写/双调度 | 旧 orchestrator 只保留读取 API，写入走统一服务 |
-| 回滚需求 | 保留 POLARIS_UNIFIED_ORCH 特性开关 |
+| 回滚需求 | 保留 KERNELONE_UNIFIED_ORCH 特性开关 |
 
 ## 验证
 

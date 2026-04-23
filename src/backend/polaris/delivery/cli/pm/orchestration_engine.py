@@ -116,8 +116,8 @@ from polaris.kernelone.traceability.public.service import create_traceability_se
 logger = logging.getLogger(__name__)
 
 # Constants
-_PM_TASK_QUALITY_MODE_ENV = "POLARIS_PM_TASK_QUALITY_MODE"
-_PM_TASK_QUALITY_RETRIES_ENV = "POLARIS_PM_TASK_QUALITY_RETRIES"
+_PM_TASK_QUALITY_MODE_ENV = "KERNELONE_PM_TASK_QUALITY_MODE"
+_PM_TASK_QUALITY_RETRIES_ENV = "KERNELONE_PM_TASK_QUALITY_RETRIES"
 _PM_TASK_QUALITY_MODES = {"off", "warn", "strict"}
 _PM_TASK_QUALITY_DEFAULT_MODE = "strict"
 _ORCHESTRATION_RUNTIME_OPTIONS = set(SUPPORTED_ORCHESTRATION_RUNTIMES)
@@ -171,8 +171,8 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
     cache_root_full = build_cache_root(ramdisk_root, workspace_full) or ""
     if state_to_ramdisk_enabled() and not cache_root_full:
         raise RuntimeError(
-            "POLARIS_STATE_TO_RAMDISK is enabled but no ramdisk cache root is available. "
-            "Set POLARIS_RAMDISK_ROOT (e.g. X:\\) or disable POLARIS_STATE_TO_RAMDISK."
+            "KERNELONE_STATE_TO_RAMDISK is enabled but no ramdisk cache root is available. "
+            "Set KERNELONE_RAMDISK_ROOT (e.g. X:\\) or disable KERNELONE_STATE_TO_RAMDISK."
         )
 
     pm_report_full = resolve_artifact_path(workspace_full, cache_root_full, args.pm_report)
@@ -1166,7 +1166,7 @@ def _run_dispatch_pipeline_with_workflow(
     runtime_db_path = os.path.join(runtime_root_for_db, "state", "workflow.runtime.db")
     try:
         os.makedirs(os.path.dirname(runtime_db_path), exist_ok=True)
-        os.environ["POLARIS_RUNTIME_DB"] = runtime_db_path
+        os.environ["KERNELONE_RUNTIME_DB"] = runtime_db_path
     except (RuntimeError, ValueError):
         logger.debug("DEBUG: orchestration_engine.py:{1117} {exc} (swallowed)")
 
@@ -1188,7 +1188,7 @@ def _run_dispatch_pipeline_with_workflow(
             "docs_stage": docs_stage if isinstance(docs_stage, dict) else {},
             "director_config": {
                 "type": str(
-                    getattr(args, "director_type", os.environ.get("POLARIS_DIRECTOR_TYPE", "auto")) or "auto"
+                    getattr(args, "director_type", os.environ.get("KERNELONE_DIRECTOR_TYPE", "auto")) or "auto"
                 )
                 .strip()
                 .lower(),

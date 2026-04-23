@@ -144,7 +144,7 @@ class ScriptDirectorAdapter(DirectorInterface):
             # Leave a safety margin so loop-director can write result before process kill.
             return min(max(int(self.timeout) - 30, 30), 1800)
 
-        env_raw = os.environ.get("POLARIS_DIRECTOR_TASK_TIMEOUT", "600")
+        env_raw = os.environ.get("KERNELONE_DIRECTOR_TASK_TIMEOUT", "600")
         env_timeout = timeout_seconds_or_none(env_raw, default=600)
         if env_timeout is None:
             return 600
@@ -469,7 +469,7 @@ def create_director(
 
     # 如果没有指定类型，从环境变量或自动检测
     if director_type is None:
-        director_type = os.getenv("POLARIS_DIRECTOR_TYPE", "auto")
+        director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "auto")
 
     if director_type == "auto":
         # 优先使用 script，如果不可用则使用 NoDirector

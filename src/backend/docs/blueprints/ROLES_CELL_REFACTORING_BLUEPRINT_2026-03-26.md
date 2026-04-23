@@ -253,7 +253,7 @@ class KernelConfig:
 | ID | 问题 | 解决方案 | 验收标准 |
 |----|------|----------|----------|
 | L1 | 缓存统计未导出 | 添加Prometheus metrics端点 | L1-L3命中率可观测 |
-| L2 | 质量阈值硬编码 | 环境变量+Profile覆盖 | `POLARIS_QUALITY_THRESHOLD`支持 |
+| L2 | 质量阈值硬编码 | 环境变量+Profile覆盖 | `KERNELONE_QUALITY_THRESHOLD`支持 |
 | L3 | 日志级别不一致 | 统一使用logger级别规范 | 所有kernel日志符合规范 |
 
 ---

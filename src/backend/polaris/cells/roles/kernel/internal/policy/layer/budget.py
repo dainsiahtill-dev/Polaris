@@ -107,19 +107,19 @@ class BudgetPolicy:
             return raw in ("true", "1", "yes", "on")
 
         return cls(
-            max_tool_calls=_int("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
-            max_turns=_int("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
-            max_stall_cycles=_int("POLARIS_TOOL_LOOP_MAX_STALL_CYCLES", default=2, minimum=0, maximum=16),
+            max_tool_calls=_int("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
+            max_turns=_int("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
+            max_stall_cycles=_int("KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES", default=2, minimum=0, maximum=16),
             max_wall_time_seconds=_float(
-                "POLARIS_TOOL_LOOP_MAX_WALL_TIME_SECONDS",
+                "KERNELONE_TOOL_LOOP_MAX_WALL_TIME_SECONDS",
                 default=900.0,
                 minimum=30.0,
                 maximum=7200.0,
             ),
             # Phase 5 新增环境变量
-            enable_adaptive_stall=_bool("POLARIS_ADAPTIVE_STALL", True),
-            min_stall_cycles=_int("POLARIS_STALL_MIN_CYCLES", default=3, minimum=0, maximum=16),
-            max_stall_cycles_limit=_int("POLARIS_STALL_MAX_CYCLES", default=8, minimum=2, maximum=32),
+            enable_adaptive_stall=_bool("KERNELONE_ADAPTIVE_STALL", True),
+            min_stall_cycles=_int("KERNELONE_STALL_MIN_CYCLES", default=3, minimum=0, maximum=16),
+            max_stall_cycles_limit=_int("KERNELONE_STALL_MAX_CYCLES", default=8, minimum=2, maximum=32),
         )
 
     @classmethod

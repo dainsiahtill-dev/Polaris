@@ -7,12 +7,18 @@ Usage:
     python server.py [--host HOST] [--port PORT] [--workspace PATH]
 
 Environment Variables:
-    POLARIS_WORKSPACE: Default workspace path
-    POLARIS_BACKEND_PORT: Default port
-    POLARIS_LOG_LEVEL: Logging level (debug, info, warning, error)
+    KERNELONE_WORKSPACE: Default workspace path (deprecated: KERNELONE_WORKSPACE)
+    KERNELONE_BACKEND_PORT: Default port (deprecated: KERNELONE_BACKEND_PORT)
+    KERNELONE_LOG_LEVEL: Logging level (deprecated: KERNELONE_LOG_LEVEL)
 """
 
 from __future__ import annotations
+
+# ─── Early env-var normalization (must run before any polaris.kernelone import)
+from polaris._env_compat import normalize_env_prefix
+
+normalize_env_prefix()
+# ────────────────────────────────────────────────────────────────────────────
 
 import argparse
 import asyncio

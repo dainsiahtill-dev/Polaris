@@ -78,7 +78,7 @@ def test_pm_loop_writes_outputs(tmp_path, monkeypatch):
     loop_pm = _load_loop_pm()
     from storage_layout import resolve_storage_roots
 
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     workspace = tmp_path / "workspace"
     (workspace / "docs").mkdir(parents=True, exist_ok=True)

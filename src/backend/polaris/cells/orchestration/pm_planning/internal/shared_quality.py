@@ -144,7 +144,7 @@ def _tail_non_empty_lines(text: str, *, limit: int = 8) -> list[str]:
 
 
 def detect_integration_verify_command(workspace_full: str) -> str:
-    override = str(os.environ.get("POLARIS_INTEGRATION_QA_COMMAND") or "").strip()
+    override = str(os.environ.get("KERNELONE_INTEGRATION_QA_COMMAND") or "").strip()
     if override:
         return override
 
@@ -226,7 +226,7 @@ def detect_integration_verify_command(workspace_full: str) -> str:
 
 def run_integration_verify_runner(workspace_full: str) -> tuple[bool, str, list[str]]:
     command = detect_integration_verify_command(workspace_full)
-    timeout_seconds_raw = os.environ.get("POLARIS_INTEGRATION_QA_TIMEOUT_SECONDS", "300")
+    timeout_seconds_raw = os.environ.get("KERNELONE_INTEGRATION_QA_TIMEOUT_SECONDS", "300")
     try:
         timeout_seconds = max(int(timeout_seconds_raw), 30)
     except (RuntimeError, ValueError):

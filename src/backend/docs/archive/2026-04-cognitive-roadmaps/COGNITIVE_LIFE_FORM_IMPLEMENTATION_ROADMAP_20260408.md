@@ -201,9 +201,9 @@ ContextOS (现有) ──Bridge──→ IntentGraph (新)
 每个 Phase 独立 feature flag，按 workspace 级别控制：
 
 ```python
-POLARIS_COGNITIVE_PERCEPTION = "perception_v1"
-POLARIS_COGNITIVE_REASONING = "reasoning_v1"
-POLARIS_COGNITIVE_EXECUTION = "execution_v1"
+KERNELONE_COGNITIVE_PERCEPTION = "perception_v1"
+KERNELONE_COGNITIVE_REASONING = "reasoning_v1"
+KERNELONE_COGNITIVE_EXECUTION = "execution_v1"
 ```
 
 ### 3.3 风险等级定义

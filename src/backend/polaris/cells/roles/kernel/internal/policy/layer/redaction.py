@@ -61,8 +61,8 @@ class RedactionPolicy:
     @classmethod
     def from_env(cls) -> RedactionPolicy:
         """从环境变量构造。"""
-        redact_logs = os.environ.get("POLARIS_REDACT_LOGS", "true").lower() not in ("false", "0", "no")
-        redact_trace = os.environ.get("POLARIS_REDACT_TRACE", "true").lower() not in ("false", "0", "no")
+        redact_logs = os.environ.get("KERNELONE_REDACT_LOGS", "true").lower() not in ("false", "0", "no")
+        redact_trace = os.environ.get("KERNELONE_REDACT_TRACE", "true").lower() not in ("false", "0", "no")
         return cls(
             redact_in_logs=redact_logs,
             redact_in_trace=redact_trace,

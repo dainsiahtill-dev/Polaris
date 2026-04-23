@@ -32,7 +32,7 @@ def test_director_default_write_budget_splits_excess_calls(tmp_path) -> None:
 
 
 def test_role_write_budget_env_override(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("POLARIS_ROLE_WRITE_CALLS_PER_TURN_DIRECTOR", "1")
+    monkeypatch.setenv("KERNELONE_ROLE_WRITE_CALLS_PER_TURN_DIRECTOR", "1")
     kernel = RoleExecutionKernel(workspace=str(tmp_path))
     calls = [
         _call("write_file", file="a.py", content="a"),

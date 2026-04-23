@@ -120,7 +120,7 @@ class CliRouter:
             choices=CLI_LOG_LEVEL_CHOICES,
             default=default,
             help=(
-                "CLI logging level. Supports debug/info/warn/warning/error/critical (or env POLARIS_CLI_LOG_LEVEL)."
+                "CLI logging level. Supports debug/info/warn/warning/error/critical (or env KERNELONE_CLI_LOG_LEVEL)."
             ),
         )
 

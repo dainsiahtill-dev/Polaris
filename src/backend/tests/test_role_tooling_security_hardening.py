@@ -104,15 +104,15 @@ signature: {signature}
     # 设置 secret 后应通过
     import os
 
-    previous = os.environ.get("POLARIS_TOOL_SIGNATURE_SECRET")
-    os.environ["POLARIS_TOOL_SIGNATURE_SECRET"] = secret
+    previous = os.environ.get("KERNELONE_TOOL_SIGNATURE_SECRET")
+    os.environ["KERNELONE_TOOL_SIGNATURE_SECRET"] = secret
     try:
         calls = PromptBasedToolParser.parse(text, require_signature=True)
     finally:
         if previous is None:
-            del os.environ["POLARIS_TOOL_SIGNATURE_SECRET"]
+            del os.environ["KERNELONE_TOOL_SIGNATURE_SECRET"]
         else:
-            os.environ["POLARIS_TOOL_SIGNATURE_SECRET"] = previous
+            os.environ["KERNELONE_TOOL_SIGNATURE_SECRET"] = previous
 
     assert len(calls) == 1
     assert calls[0].arguments["query"] == "secure-call"

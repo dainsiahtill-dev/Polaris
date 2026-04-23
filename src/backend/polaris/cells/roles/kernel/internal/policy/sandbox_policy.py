@@ -59,7 +59,7 @@ class SandboxPolicy:
     def from_env(cls) -> SandboxPolicy:
         instance = cls()
 
-        ports_raw = str(os.environ.get("POLARIS_SANDBOX_BLOCKED_PORTS", "") or "").strip()
+        ports_raw = str(os.environ.get("KERNELONE_SANDBOX_BLOCKED_PORTS", "") or "").strip()
         if ports_raw:
             parsed_ports: list[int] = []
             for token in ports_raw.split(","):
@@ -73,7 +73,7 @@ class SandboxPolicy:
             if parsed_ports:
                 instance.BLOCKED_PORTS = tuple(parsed_ports)
 
-        hosts_raw = str(os.environ.get("POLARIS_SANDBOX_ALLOWED_HOSTS", "") or "").strip()
+        hosts_raw = str(os.environ.get("KERNELONE_SANDBOX_ALLOWED_HOSTS", "") or "").strip()
         if hosts_raw:
             hosts = tuple(item.strip() for item in hosts_raw.split(",") if item.strip())
             if hosts:

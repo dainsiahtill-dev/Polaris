@@ -238,7 +238,7 @@ def write_gate_check(
         return False
 
     def _load_companion_allowlist() -> list[str]:
-        raw = str(os.environ.get("POLARIS_SCOPE_GATE_COMPANION_ALLOWLIST", "") or "").strip()
+        raw = str(os.environ.get("KERNELONE_SCOPE_GATE_COMPANION_ALLOWLIST", "") or "").strip()
         defaults = [
             "tests/**",
             "test/**",
@@ -269,7 +269,7 @@ def write_gate_check(
             fnmatch.fnmatch(normalized, pattern) or fnmatch.fnmatch(base, pattern) for pattern in companion_allowlist
         )
 
-    scope_gate_mode = str(os.environ.get("POLARIS_SCOPE_GATE_MODE", "adaptive") or "").strip().lower()
+    scope_gate_mode = str(os.environ.get("KERNELONE_SCOPE_GATE_MODE", "adaptive") or "").strip().lower()
     enforce_scope = scope_gate_mode in ("strict", "hard", "enforce")
     scope_warnings: list[str] = []
 

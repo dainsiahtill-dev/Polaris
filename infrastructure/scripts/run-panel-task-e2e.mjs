@@ -23,8 +23,8 @@ function parseArgs(argv) {
   let dictionaryPath = "";
   let allowProviderFallback = false;
   let allowFieldFallback = false;
-  let semanticFallback = parseBool(process.env.POLARIS_PANEL_SEMANTIC_FALLBACK, true);
-  let semanticCommand = String(process.env.POLARIS_PANEL_SEMANTIC_CMD || "").trim();
+  let semanticFallback = parseBool(process.env.KERNELONE_PANEL_SEMANTIC_FALLBACK, true);
+  let semanticCommand = String(process.env.KERNELONE_PANEL_SEMANTIC_CMD || "").trim();
   const promptParts = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -253,7 +253,7 @@ async function main() {
       prompt,
     } = parseArgs(process.argv.slice(2));
 
-    const allowLlmTests = isTruthyEnv("POLARIS_E2E_ALLOW_LLM_TESTS");
+    const allowLlmTests = isTruthyEnv("KERNELONE_E2E_ALLOW_LLM_TESTS");
     const promptLooksLlm = isLlmSensitiveText(prompt);
     let taskFileLooksLlm = false;
 
@@ -282,7 +282,7 @@ async function main() {
     if (!allowLlmTests && (promptLooksLlm || taskFileLooksLlm)) {
       console.error(
         "[task-e2e] Blocked LLM-related task by default. " +
-        "Set POLARIS_E2E_ALLOW_LLM_TESTS=1 only when you intentionally need to test LLM settings.",
+        "Set KERNELONE_E2E_ALLOW_LLM_TESTS=1 only when you intentionally need to test LLM settings.",
       );
       process.exit(2);
     }

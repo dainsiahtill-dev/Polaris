@@ -49,7 +49,7 @@ def resolve_managed_nats_storage_root() -> Path:
 
 def resolve_nats_server_executable() -> Path | None:
     explicit = str(
-        os.environ.get("KERNELONE_NATS_SERVER_BIN") or os.environ.get("POLARIS_NATS_SERVER_BIN") or ""
+        os.environ.get("KERNELONE_NATS_SERVER_BIN") or os.environ.get("KERNELONE_NATS_SERVER_BIN") or ""
     ).strip()
     if explicit:
         candidate = Path(explicit).expanduser().resolve()

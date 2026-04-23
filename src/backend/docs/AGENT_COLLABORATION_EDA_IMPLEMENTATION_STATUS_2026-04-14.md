@@ -32,7 +32,7 @@
 **v1.2 新增能力（2026-04-15 milestone）：**
 
 8. **revision-first hardening 已落地**：`detect_revision_drift()` 检测 work items 的 plan_revision_id 滞后于最新 revision；`analyze_change_order_impact()` 提供只读变更影响预览（不修改任何状态）；`validate_dependency_dag()` 使用 DFS 白/灰/黑着色检测 `depends_on` 图中的环和孤儿引用。`_classify_impact()` 静态方法从 `_apply_change_order_impact` 提取只读分类逻辑。
-9. **HITL hardening 已落地**：`resolve_review()` 新增 authority 验证（resolver 角色必须匹配 review 的 `current_role`，`"human"` 终端角色始终允许）；DDL 新增 `current_role`、`next_role`、`escalation_deadline`、`last_escalated_at` 一等列；`create_review_request()` 自动计算 escalation_deadline（默认 3600s，`POLARIS_TASK_MARKET_ESCALATION_TIMEOUT_SECONDS` 可配）；`sweep_escalation_timeouts()` 实现自动升级 sweep，已集成到 `TaskReconciliationLoop.run_once()`；`RequestHumanReviewCommandV1` 和 `ResolveHumanReviewCommandV1` 新增 `callback_url` 字段，通过 outbox 模式投递 webhook 事件。
+9. **HITL hardening 已落地**：`resolve_review()` 新增 authority 验证（resolver 角色必须匹配 review 的 `current_role`，`"human"` 终端角色始终允许）；DDL 新增 `current_role`、`next_role`、`escalation_deadline`、`last_escalated_at` 一等列；`create_review_request()` 自动计算 escalation_deadline（默认 3600s，`KERNELONE_TASK_MARKET_ESCALATION_TIMEOUT_SECONDS` 可配）；`sweep_escalation_timeouts()` 实现自动升级 sweep，已集成到 `TaskReconciliationLoop.run_once()`；`RequestHumanReviewCommandV1` 和 `ResolveHumanReviewCommandV1` 新增 `callback_url` 字段，通过 outbox 模式投递 webhook 事件。
 10. **E2E integration test 已落地**：`test_e2e_pipeline.py` 包含 FakeCEConsumer/FakeDirectorConsumer/FakeQAConsumer，通过 ConsumerLoopManager daemon 线程自动完成 PM publish → CE → Director → QA → resolved 全链路；测试覆盖 happy path、dead letter path、human review escalation and resolve 三个场景。
 
 **v1.3 新增能力（2026-04-15 milestone）：**
@@ -124,7 +124,7 @@
 9. `internal/store_sqlite.py`
    - SQLite WAL 后端已存在。
 10. `internal/store.py`
-   - `POLARIS_TASK_MARKET_STORE` 已支持 `sqlite` 默认值与 `json` fallback。
+   - `KERNELONE_TASK_MARKET_STORE` 已支持 `sqlite` 默认值与 `json` fallback。
 11. `internal/consumer_loop.py`（v1.1 新增）
    - `ConsumerLoopManager`：管理 CE/Director/QA daemon 线程 + outbox relay 线程，per workspace。
 12. `internal/metrics.py`（v1.1 新增）
@@ -160,10 +160,10 @@
    - histograms: `task_market_operation_duration_ms{operation,le}`
    - gauges: `task_market_queue_depth{stage}`
    - counters: `task_market_outbox_relay_sent/failed_total`、`task_market_consumer_poll_total{role}`
-   - 环境变量：`POLARIS_TASK_MARKET_METRICS_ENABLED`（默认 true）
+   - 环境变量：`KERNELONE_TASK_MARKET_METRICS_ENABLED`（默认 true）
 2. `internal/tracing.py` — `TaskMarketTracer`
    - OTel span wrapper，NoOpSpan fallback
-   - 环境变量：`POLARIS_TASK_MARKET_TRACING_ENABLED`（默认 false）
+   - 环境变量：`KERNELONE_TASK_MARKET_TRACING_ENABLED`（默认 false）
 3. service 13 个操作已埋点：`publish`、`claim`、`renew_lease`、`acknowledge`、`fail`、`requeue`、`dead_letter`、`human_review_request`、`human_review_resolve`、`revision_register`、`change_order`、`reconcile`、`outbox_relay`
 4. `/metrics` endpoint 已集成 task_market 业务指标
 
@@ -183,7 +183,7 @@
 | `PR-07 DLQ + HITL + Tri-Council` | ✅ `已完成` | authority 验证 + auto-escalation timeout + webhook callback 已落地；DDL 新增 4 列 |
 | `PR-08 Projection + observability` | ✅ `已完成` | projection API + Prometheus counters/histograms/gauges + OTel tracing + `/metrics` endpoint + 16 操作埋点 |
 | `PR-09 Graph + governance + schemas` | ✅ `已完成` | graph 与 fitness rules 已同步到 v1.2；6 个 schema pack 文件已验证完整 |
-| `PR-10 config + rollback` | ✅ `已完成` | `POLARIS_TASK_MARKET_ESCALATION_TIMEOUT_SECONDS` 已加入；rollback 无新需求 |
+| `PR-10 config + rollback` | ✅ `已完成` | `KERNELONE_TASK_MARKET_ESCALATION_TIMEOUT_SECONDS` 已加入；rollback 无新需求 |
 
 ---
 

@@ -305,16 +305,16 @@ class TestEnvConfiguration:
 
     def test_get_blocked_policy_from_env_defaults(self, monkeypatch) -> None:
         """Test that default values are returned when env vars are not set."""
-        monkeypatch.delenv("POLARIS_PM_BLOCKED_STRATEGY", raising=False)
-        monkeypatch.delenv("POLARIS_PM_BLOCKED_DEGRADE_RETRIES", raising=False)
+        monkeypatch.delenv("KERNELONE_PM_BLOCKED_STRATEGY", raising=False)
+        monkeypatch.delenv("KERNELONE_PM_BLOCKED_DEGRADE_RETRIES", raising=False)
         strategy, retries = get_blocked_policy_from_env()
         assert strategy == "auto"
         assert retries == 1
 
     def test_get_blocked_policy_from_env_custom(self, monkeypatch) -> None:
         """Test that custom values are read from env vars."""
-        monkeypatch.setenv("POLARIS_PM_BLOCKED_STRATEGY", "skip")
-        monkeypatch.setenv("POLARIS_PM_BLOCKED_DEGRADE_RETRIES", "3")
+        monkeypatch.setenv("KERNELONE_PM_BLOCKED_STRATEGY", "skip")
+        monkeypatch.setenv("KERNELONE_PM_BLOCKED_DEGRADE_RETRIES", "3")
         strategy, retries = get_blocked_policy_from_env()
         assert strategy == "skip"
         assert retries == 3

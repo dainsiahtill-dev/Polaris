@@ -11,7 +11,7 @@ import pytest
 
 
 def _real_ollama_enabled() -> bool:
-    raw = os.environ.get("POLARIS_RUN_REAL_OLLAMA", "").strip().lower()
+    raw = os.environ.get("KERNELONE_RUN_REAL_OLLAMA", "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
@@ -30,7 +30,7 @@ def _load_loop_pm():
 
 
 def _ollama_model() -> str:
-    return os.environ.get("POLARIS_OLLAMA_MODEL", "").strip()
+    return os.environ.get("KERNELONE_OLLAMA_MODEL", "").strip()
 
 
 def _ollama_available() -> bool:
@@ -65,11 +65,11 @@ def _model_installed(model: str) -> bool:
 def _require_ollama() -> str:
     if not _real_ollama_enabled():
         pytest.skip(
-            "Real Ollama smoke test is opt-in. Set POLARIS_RUN_REAL_OLLAMA=1 to enable."
+            "Real Ollama smoke test is opt-in. Set KERNELONE_RUN_REAL_OLLAMA=1 to enable."
         )
     model = _ollama_model()
     if not model:
-        pytest.skip("Set POLARIS_OLLAMA_MODEL to run real Ollama integration tests.")
+        pytest.skip("Set KERNELONE_OLLAMA_MODEL to run real Ollama integration tests.")
     if not _ollama_available():
         pytest.skip("ollama CLI not found in PATH.")
     if not _model_installed(model):
@@ -81,8 +81,8 @@ def _require_ollama() -> str:
 @pytest.mark.slow
 def test_pm_loop_real_ollama_smoke(tmp_path, monkeypatch):
     model = _require_ollama()
-    monkeypatch.setenv("POLARIS_PROMPT_PROFILE", "generic")
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_PROMPT_PROFILE", "generic")
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     loop_pm = _load_loop_pm()
 
@@ -103,7 +103,7 @@ def test_pm_loop_real_ollama_smoke(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    timeout = int(os.environ.get("POLARIS_OLLAMA_TIMEOUT", "120") or 120)
+    timeout = int(os.environ.get("KERNELONE_OLLAMA_TIMEOUT", "120") or 120)
     args = SimpleNamespace(
         pm_backend="ollama",
         workspace=str(workspace),

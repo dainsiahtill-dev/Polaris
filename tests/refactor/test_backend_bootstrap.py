@@ -222,7 +222,7 @@ class TestConfigLoaderWithEnvironment:
 
     def test_load_env_port(self, monkeypatch):
         """Test loading port from environment."""
-        monkeypatch.setenv("POLARIS_BACKEND_PORT", "8080")
+        monkeypatch.setenv("KERNELONE_BACKEND_PORT", "8080")
 
         loader = ConfigLoader()
         snapshot = loader.load()
@@ -232,7 +232,7 @@ class TestConfigLoaderWithEnvironment:
 
     def test_load_env_log_level(self, monkeypatch):
         """Test loading log level from environment."""
-        monkeypatch.setenv("POLARIS_LOG_LEVEL", "debug")
+        monkeypatch.setenv("KERNELONE_LOG_LEVEL", "debug")
 
         loader = ConfigLoader()
         snapshot = loader.load()
@@ -242,7 +242,7 @@ class TestConfigLoaderWithEnvironment:
     def test_load_env_cors_origins(self, monkeypatch):
         """Test loading CORS origins from environment."""
         monkeypatch.setenv(
-            "POLARIS_CORS_ORIGINS",
+            "KERNELONE_CORS_ORIGINS",
             "http://localhost:3000,http://localhost:3001"
         )
 
@@ -255,7 +255,7 @@ class TestConfigLoaderWithEnvironment:
 
     def test_env_overrides_default(self, monkeypatch):
         """Test environment overrides defaults."""
-        monkeypatch.setenv("POLARIS_BACKEND_PORT", "9000")
+        monkeypatch.setenv("KERNELONE_BACKEND_PORT", "9000")
 
         loader = ConfigLoader()
         snapshot = loader.load(cli_overrides={"server.port": 8080})

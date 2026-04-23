@@ -223,7 +223,7 @@ class TestReconcileUsesReportsPort:
         """reconcile_llm_test_index must not call os.listdir when a port is injected."""
         # Isolate all global root paths to tmp_path so we don't touch the
         # real ~/.polaris during the test.
-        monkeypatch.setenv("POLARIS_ROOT", str(tmp_path))
+        monkeypatch.setenv("KERNELONE_ROOT", str(tmp_path))
         monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / ".polaris"))
         monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
 
@@ -275,7 +275,7 @@ class TestReconcileUsesReportsPort:
     def test_port_injection_isolation(self, tmp_path, monkeypatch):
         """set_reports_port replaces the active port for subsequent calls."""
         # Isolate all global root paths so writes go to tmp_path only.
-        monkeypatch.setenv("POLARIS_ROOT", str(tmp_path))
+        monkeypatch.setenv("KERNELONE_ROOT", str(tmp_path))
         monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / ".polaris"))
         monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
 
@@ -296,7 +296,7 @@ class TestLoadAndUpdateIndexNoDirectOs:
     def test_load_returns_default_when_no_file(self, tmp_path, monkeypatch):
         """load_llm_test_index returns DEFAULT_INDEX_PAYLOAD when no file exists."""
         monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
-        monkeypatch.setenv("POLARIS_ROOT", str(tmp_path))
+        monkeypatch.setenv("KERNELONE_ROOT", str(tmp_path))
         monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / ".polaris"))
 
         result = load_llm_test_index(str(tmp_path))
@@ -308,7 +308,7 @@ class TestLoadAndUpdateIndexNoDirectOs:
     def test_update_index_stores_report(self, tmp_path, monkeypatch):
         """update_index_with_report writes to the expected path."""
         monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
-        monkeypatch.setenv("POLARIS_ROOT", str(tmp_path))
+        monkeypatch.setenv("KERNELONE_ROOT", str(tmp_path))
         monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / ".polaris"))
 
         report = {

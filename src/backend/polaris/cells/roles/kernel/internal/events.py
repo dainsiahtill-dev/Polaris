@@ -138,7 +138,7 @@ class LLMEventEmitter:
         self._open_lifecycle: dict[str, dict[str, Any]] = {}
         self._max_lifecycle_age_seconds = max(
             10.0,
-            float(os.environ.get("POLARIS_LLM_LIFECYCLE_MAX_AGE_SECONDS", "300")),
+            float(os.environ.get("KERNELONE_LLM_LIFECYCLE_MAX_AGE_SECONDS", "300")),
         )
         self._closed_without_start_count = 0
         self._reopened_without_close_count = 0
@@ -471,7 +471,7 @@ def _resolve_runtime_workspace(event: LLMCallEvent) -> str:
     for candidate in (
         metadata.get("workspace"),
         extra_fields.get("workspace"),
-        os.environ.get("POLARIS_WORKSPACE"),
+        os.environ.get("KERNELONE_WORKSPACE"),
         os.getcwd(),
     ):
         token = str(candidate or "").strip()

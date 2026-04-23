@@ -645,7 +645,7 @@ class RetryConfig:
 
         # 支持环境变量配置
         env_val = os.environ.get("KERNELONE_PLATFORM_RETRY_MAX") or os.environ.get(
-            "POLARIS_PLATFORM_RETRY_MAX", "1"
+            "KERNELONE_PLATFORM_RETRY_MAX", "1"
         )
         platform_retry_max = int(env_val) if env_val else 1
 

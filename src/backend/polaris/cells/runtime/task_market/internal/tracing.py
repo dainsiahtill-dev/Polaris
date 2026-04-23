@@ -1,7 +1,7 @@
 """OpenTelemetry tracing wrapper for ``runtime.task_market`` operations.
 
 Follows the same pattern as ``polaris.kernelone.cognitive.telemetry.CognitiveTelemetry``:
-- Enabled via ``POLARIS_TASK_MARKET_TRACING_ENABLED`` (default: ``false``)
+- Enabled via ``KERNELONE_TASK_MARKET_TRACING_ENABLED`` (default: ``false``)
 - NoOpSpan fallback when disabled
 - Lazy OTel SDK import to avoid hard dependency at module load
 """
@@ -49,7 +49,7 @@ class TaskMarketTracer:
         if enabled is not None:
             self._enabled = enabled
         else:
-            raw = str(os.environ.get("POLARIS_TASK_MARKET_TRACING_ENABLED", "false") or "false").strip().lower()
+            raw = str(os.environ.get("KERNELONE_TASK_MARKET_TRACING_ENABLED", "false") or "false").strip().lower()
             self._enabled = raw in {"1", "true", "yes", "on"}
 
         self._tracer: Any = None

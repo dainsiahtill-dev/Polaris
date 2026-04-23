@@ -444,7 +444,7 @@ def build_pm_prompt(
         )
 
     query = f"{requirements}\n{plan_text}"
-    context_root = str(workspace_root or os.environ.get("POLARIS_CONTEXT_ROOT") or PROJECT_ROOT).strip()
+    context_root = str(workspace_root or os.environ.get("KERNELONE_CONTEXT_ROOT") or PROJECT_ROOT).strip()
     if not context_root or not os.path.isdir(context_root):
         context_root = PROJECT_ROOT
     context_root = os.path.abspath(context_root)

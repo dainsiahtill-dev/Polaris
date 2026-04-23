@@ -4,7 +4,7 @@
 支持证据链追踪、失败重试分析、性能监控。
 
 This module is product-agnostic: it uses the workspace metadata directory name
-injected by the bootstrap layer and checks KERNELONE_* env vars with POLARIS_*
+injected by the bootstrap layer and checks KERNELONE_* env vars with KERNELONE_*
 fallback for backward compatibility.
 """
 
@@ -223,7 +223,7 @@ class AuditLogger:
         self.workspace = workspace
         self._sessions: dict[str, SessionAuditLog] = {}
         self._enabled = (
-            os.environ.get("KERNELONE_PROTOCOL_AUDIT") or os.environ.get("POLARIS_PROTOCOL_AUDIT", "true")
+            os.environ.get("KERNELONE_PROTOCOL_AUDIT") or os.environ.get("KERNELONE_PROTOCOL_AUDIT", "true")
         ).lower() in ("true", "1", "yes")
         metadata_dir = get_workspace_metadata_dir_name()
         self._log_dir = Path(workspace) / metadata_dir / "audit" if workspace else Path(metadata_dir) / "audit"

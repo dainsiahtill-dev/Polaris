@@ -166,7 +166,7 @@ Acceptance:
 ## 5. Rollout Strategy
 
 1. Implement H1-H3 first before new features.
-2. Keep `POLARIS_COGNITIVE_RUNTIME_MODE=shadow` as default during hardening.
+2. Keep `KERNELONE_COGNITIVE_RUNTIME_MODE=shadow` as default during hardening.
 3. Promote only after H6 gate proves regression-safe behavior.
 
 ---

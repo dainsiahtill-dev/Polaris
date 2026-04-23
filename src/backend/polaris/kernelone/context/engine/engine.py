@@ -508,7 +508,7 @@ Summary:"""
         enabled = policy.get("snapshot_context")
         if enabled is None:
             enabled = str(
-                os.environ.get("KERNELONE_CONTEXT_SNAPSHOT") or os.environ.get("POLARIS_CONTEXT_SNAPSHOT", "1")
+                os.environ.get("KERNELONE_CONTEXT_SNAPSHOT") or os.environ.get("KERNELONE_CONTEXT_SNAPSHOT", "1")
             ).strip().lower() not in (
                 "0",
                 "false",

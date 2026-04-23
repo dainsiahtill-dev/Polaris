@@ -16,8 +16,8 @@
 > `context.engine` public-service overlay consumption,
 > and CLI/runtime consumers have been landed in code and covered by tests.
 > Unified runtime switches are now wired and default-on:
-> `POLARIS_CONTEXT_OS_ENABLED` (default: enabled) and
-> `POLARIS_COGNITIVE_RUNTIME_MODE` (default: `shadow`).
+> `KERNELONE_CONTEXT_OS_ENABLED` (default: enabled) and
+> `KERNELONE_COGNITIVE_RUNTIME_MODE` (default: `shadow`).
 > Remaining phases in this plan: none.
 > Post-landing hardening work is tracked separately in:
 > `docs/KERNELONE_CONTEXT_OS_COGNITIVE_RUNTIME_HARDENING_PLAN_2026-03-27.md`.
@@ -415,7 +415,7 @@ Current landed scope:
 3. `agent` / `role_session` HTTP restore consumers on top of canonical `roles.session`
 4. `context.engine` public-service continuity overlay support
 5. `context.engine` session-aware continuity/context_os overlay hydration via `session_id`
-6. unified enable switches (default-on): `POLARIS_CONTEXT_OS_ENABLED`, `POLARIS_COGNITIVE_RUNTIME_MODE`
+6. unified enable switches (default-on): `KERNELONE_CONTEXT_OS_ENABLED`, `KERNELONE_COGNITIVE_RUNTIME_MODE`
 
 Acceptance:
 
@@ -547,8 +547,8 @@ This plan is considered complete with the following closure facts:
 1. `Phase 0` through `Phase 6` are landed.
 2. Context OS and Cognitive Runtime are runtime-switchable.
 3. Default behavior is enabled:
-   - `POLARIS_CONTEXT_OS_ENABLED` -> enabled by default
-   - `POLARIS_COGNITIVE_RUNTIME_MODE` -> `shadow` by default
+   - `KERNELONE_CONTEXT_OS_ENABLED` -> enabled by default
+   - `KERNELONE_COGNITIVE_RUNTIME_MODE` -> `shadow` by default
 4. `roles.session` remains canonical raw-truth owner.
 5. `context.engine` remains public facade.
 6. `Cognitive Runtime` remains non-blocking sidecar authority unless explicitly promoted.

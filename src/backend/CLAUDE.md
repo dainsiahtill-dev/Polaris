@@ -142,7 +142,7 @@
 - `pytest --collect-only -q`（2026-04-17）：**11860 collected / 0 errors**
 - Descriptor 覆盖已提升至 **54 / 54**
 - 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 遗留）
-- `POLARIS_` 与 `KERNELONE_` 仍混用
+- `KERNELONE_` 与 `KERNELONE_` 仍混用
 
 ### 6.4 当前工具入口
 

@@ -36,7 +36,7 @@ DEFAULT_MODEL = "modelscope.cn/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:latest"
 
 
 def resolve_default_workspace(start: str | None = None) -> str:
-    # Priority: KERNELONE_WORKSPACE env var (via _runtime_config), then POLARIS_WORKSPACE fallback
+    # Priority: KERNELONE_WORKSPACE env var (via _runtime_config), then KERNELONE_WORKSPACE fallback
     explicit = get_workspace()
     if explicit:
         return os.path.abspath(explicit)

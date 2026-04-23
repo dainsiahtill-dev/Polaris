@@ -33,8 +33,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Constants for PM task quality evaluation
-_PM_TASK_QUALITY_MODE_ENV = "POLARIS_PM_TASK_QUALITY_MODE"
-_PM_TASK_QUALITY_RETRIES_ENV = "POLARIS_PM_TASK_QUALITY_RETRIES"
+_PM_TASK_QUALITY_MODE_ENV = "KERNELONE_PM_TASK_QUALITY_MODE"
+_PM_TASK_QUALITY_RETRIES_ENV = "KERNELONE_PM_TASK_QUALITY_RETRIES"
 _PM_TASK_QUALITY_MODES = {"off", "warn", "strict"}
 _PM_TASK_QUALITY_DEFAULT_MODE = "strict"
 
@@ -502,7 +502,7 @@ def run_pm_planning_iteration(
     strict_quality = quality_mode == "strict"
     max_quality_attempts = 1 if resumed_from_manual else 1 + _resolve_pm_task_quality_retries()
 
-    os.environ["POLARIS_CONTEXT_ROOT"] = workspace_full
+    os.environ["KERNELONE_CONTEXT_ROOT"] = workspace_full
 
     prompt = ""
     retry_feedback: dict[str, Any] | None = None

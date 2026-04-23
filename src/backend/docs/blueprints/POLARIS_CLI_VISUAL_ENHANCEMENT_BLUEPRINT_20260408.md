@@ -101,7 +101,7 @@ def _suppress_startup_logs():
 
 def _restore_logs():
     """Restore logging after Banner display."""
-    level = os.environ.get("POLARIS_CLI_LOG_LEVEL", "WARNING")
+    level = os.environ.get("KERNELONE_CLI_LOG_LEVEL", "WARNING")
     logging.getLogger("polaris").setLevel(getattr(logging, level))
 
 # 在 _print_banner() 前后调用
@@ -115,7 +115,7 @@ _restore_logs()
 **设计：**
 ```python
 # 简洁的 ASCII art
-POLARIS_ART = """
+KERNELONE_ART = """
 [cyan bold]
     ╔══════════════════════════════════════════╗
     ║   ◈  Polaris CLI  ·  Polaris        ║

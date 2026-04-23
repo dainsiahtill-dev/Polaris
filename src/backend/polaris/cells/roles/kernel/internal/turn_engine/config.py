@@ -76,10 +76,10 @@ class TurnEngineConfig:
         """从环境变量构造配置（与 ToolLoopController 保持一致）。
 
         环境变量：
-            - POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS: max_turns 和 max_total_tool_calls
-            - POLARIS_TOOL_LOOP_MAX_STALL_CYCLES: max_stall_cycles
-            - POLARIS_TOOL_LOOP_MAX_WALL_TIME_SECONDS: max_wall_time_seconds
-            - POLARIS_TURN_ENGINE_STREAM: enable_streaming
+            - KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS: max_turns 和 max_total_tool_calls
+            - KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES: max_stall_cycles
+            - KERNELONE_TOOL_LOOP_MAX_WALL_TIME_SECONDS: max_wall_time_seconds
+            - KERNELONE_TURN_ENGINE_STREAM: enable_streaming
 
         Returns:
             TurnEngineConfig 实例，使用环境变量值或默认值。
@@ -101,16 +101,16 @@ class TurnEngineConfig:
             return max(minimum, min(parsed, maximum))
 
         return cls(
-            max_turns=_int("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
-            max_total_tool_calls=_int("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
-            max_stall_cycles=_int("POLARIS_TOOL_LOOP_MAX_STALL_CYCLES", default=2, minimum=0, maximum=16),
+            max_turns=_int("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
+            max_total_tool_calls=_int("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", default=64, minimum=1, maximum=512),
+            max_stall_cycles=_int("KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES", default=2, minimum=0, maximum=16),
             max_wall_time_seconds=_int(
-                "POLARIS_TOOL_LOOP_MAX_WALL_TIME_SECONDS",
+                "KERNELONE_TOOL_LOOP_MAX_WALL_TIME_SECONDS",
                 default=900,
                 minimum=30,
                 maximum=7200,
             ),
-            enable_streaming=os.environ.get("POLARIS_TURN_ENGINE_STREAM", "true").lower() in ("true", "1", "yes"),
+            enable_streaming=os.environ.get("KERNELONE_TURN_ENGINE_STREAM", "true").lower() in ("true", "1", "yes"),
         )
 
 

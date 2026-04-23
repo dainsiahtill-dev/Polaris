@@ -185,7 +185,7 @@ def _resolve_pm_doc_stage_mode() -> str:
     """Resolve docs stage mode from environment."""
     import os
 
-    return str(os.environ.get("POLARIS_PM_DOC_STAGE_MODE", "off")).strip().lower()
+    return str(os.environ.get("KERNELONE_PM_DOC_STAGE_MODE", "off")).strip().lower()
 
 
 def _read_json_file(path: str) -> dict[str, Any] | None:

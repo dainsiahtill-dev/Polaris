@@ -940,8 +940,8 @@ def test_reconciliation_loop_can_start_and_stop_manually(tmp_path: Path) -> None
 
 
 def test_publish_auto_starts_reconciliation_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLARIS_TASK_MARKET_ENABLE_RECONCILIATION_LOOP", "1")
-    monkeypatch.setenv("POLARIS_TASK_MARKET_RECONCILIATION_INTERVAL_SECONDS", "0.05")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_ENABLE_RECONCILIATION_LOOP", "1")
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_RECONCILIATION_INTERVAL_SECONDS", "0.05")
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -1173,7 +1173,7 @@ def test_atomic_write_preserves_items_and_outbox_together(tmp_path: Path) -> Non
     """
     import os
 
-    os.environ["POLARIS_TASK_MARKET_STORE"] = "sqlite"
+    os.environ["KERNELONE_TASK_MARKET_STORE"] = "sqlite"
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskMarketService()
@@ -1218,7 +1218,7 @@ def test_atomic_rollback_on_store_failure(tmp_path: Path) -> None:
     """
     import os
 
-    os.environ["POLARIS_TASK_MARKET_STORE"] = "sqlite"
+    os.environ["KERNELONE_TASK_MARKET_STORE"] = "sqlite"
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 

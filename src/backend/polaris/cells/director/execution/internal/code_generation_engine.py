@@ -58,7 +58,7 @@ class CodeGenerationEngine:
 
     def resolve_llm_timeout(self, default_timeout: int) -> int:
         """Resolve per-call LLM timeout with sane upper/lower bounds."""
-        raw = os.environ.get("POLARIS_WORKER_LLM_TIMEOUT", "")
+        raw = os.environ.get("KERNELONE_WORKER_LLM_TIMEOUT", "")
         try:
             timeout = int(raw) if raw else int(default_timeout)
         except ValueError:
@@ -69,7 +69,7 @@ class CodeGenerationEngine:
 
     def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
         """Resolve total timeout budget for one task, not per round."""
-        raw = os.environ.get("POLARIS_WORKER_TOTAL_TIMEOUT", "")
+        raw = os.environ.get("KERNELONE_WORKER_TOTAL_TIMEOUT", "")
         try:
             configured = int(raw) if raw else 0
         except ValueError:
@@ -89,7 +89,7 @@ class CodeGenerationEngine:
 
     def resolve_patch_retry_attempts(self) -> int:
         """Resolve retry attempts for legacy call sites."""
-        raw = os.environ.get("POLARIS_WORKER_PATCH_RETRIES", "2")
+        raw = os.environ.get("KERNELONE_WORKER_PATCH_RETRIES", "2")
         try:
             attempts = int(raw)
         except ValueError:
@@ -110,7 +110,7 @@ class CodeGenerationEngine:
 
     def stress_strict_mode_enabled(self) -> bool:
         """Return strict-mode switch."""
-        return self._env_flag("POLARIS_STRESS_STRICT", default=False)
+        return self._env_flag("KERNELONE_STRESS_STRICT", default=False)
 
     def allow_template_fallback(self, task: Any | None = None) -> bool:
         """Always deny template fallback to enforce policy."""
@@ -123,7 +123,7 @@ class CodeGenerationEngine:
 
     def resolve_spin_guard_repeat_limit(self) -> int:
         """Resolve spin-guard limit for legacy call sites."""
-        raw = os.environ.get("POLARIS_WORKER_SPIN_MAX_REPEAT", "3")
+        raw = os.environ.get("KERNELONE_WORKER_SPIN_MAX_REPEAT", "3")
         try:
             repeats = int(raw)
         except ValueError:
@@ -135,7 +135,7 @@ class CodeGenerationEngine:
     def is_low_signal_response(self, response: str) -> bool:
         """Check low-signal responses (utility retained for compatibility)."""
         text = str(response or "").strip()
-        raw = os.environ.get("POLARIS_WORKER_LOW_SIGNAL_CHARS", "180")
+        raw = os.environ.get("KERNELONE_WORKER_LOW_SIGNAL_CHARS", "180")
         try:
             min_chars = int(raw)
         except ValueError:

@@ -172,7 +172,7 @@ async def test_execute_task_completion_emits_cognitive_runtime_shadow_receipt(mo
 
 def test_emit_shadow_task_artifacts_respects_mode_off(monkeypatch) -> None:
     service = _build_service()
-    monkeypatch.setenv("POLARIS_COGNITIVE_RUNTIME_MODE", "off")
+    monkeypatch.setenv("KERNELONE_COGNITIVE_RUNTIME_MODE", "off")
 
     def _raise_if_called() -> NoReturn:
         raise AssertionError("cognitive runtime service should not be called when mode=off")

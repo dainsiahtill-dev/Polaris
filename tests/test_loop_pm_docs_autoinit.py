@@ -32,8 +32,8 @@ class TestLoopPmDocsAutoInit(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "POLARIS_HOME": hp_home,
-                    "POLARIS_DOCS_INIT_MODE": "auto",
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_DOCS_INIT_MODE": "auto",
                 },
                 clear=False,
             ):
@@ -56,8 +56,8 @@ class TestLoopPmDocsAutoInit(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "POLARIS_HOME": hp_home,
-                    "POLARIS_DOCS_INIT_MODE": "strict",
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_DOCS_INIT_MODE": "strict",
                 },
                 clear=False,
             ):
@@ -245,8 +245,8 @@ TBD
             with patch.dict(
                 os.environ,
                 {
-                    "POLARIS_HOME": hp_home,
-                    "POLARIS_PM_DOC_STAGE_MODE": "on",
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_PM_DOC_STAGE_MODE": "on",
                 },
                 clear=False,
             ):
@@ -327,8 +327,8 @@ TBD
             with patch.dict(
                 os.environ,
                 {
-                    "POLARIS_HOME": hp_home,
-                    "POLARIS_PM_DOC_STAGE_MODE": "on",
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_PM_DOC_STAGE_MODE": "on",
                 },
                 clear=False,
             ):
@@ -393,7 +393,7 @@ TBD
             with patch.dict(
                 os.environ,
                 {
-                    "POLARIS_HOME": hp_home,
+                    "KERNELONE_HOME": hp_home,
                 },
                 clear=False,
             ):

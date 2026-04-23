@@ -489,7 +489,7 @@ async def test_run_and_stream_produce_equivalent_tool_results() -> None:
 async def test_run_and_stream_surface_workflow_handoff_for_repeated_tool_failure(monkeypatch) -> None:
     """Repeated failed tool intent now escalates through workflow handoff."""
     kernel = _build_kernel()
-    monkeypatch.setenv("POLARIS_TOOL_LOOP_MAX_STALL_CYCLES", "0")
+    monkeypatch.setenv("KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES", "0")
 
     async def ns_call(**_kw):
         return SimpleNamespace(

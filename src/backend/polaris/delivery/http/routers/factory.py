@@ -383,7 +383,7 @@ def _read_docs_pipeline_state(workspace: str) -> dict[str, Any]:
 
 
 def _resolve_loop_max_cycles() -> int:
-    raw = os.getenv("POLARIS_FACTORY_LOOP_MAX_CYCLES", str(_DEFAULT_LOOP_MAX_CYCLES))
+    raw = os.getenv("KERNELONE_FACTORY_LOOP_MAX_CYCLES", str(_DEFAULT_LOOP_MAX_CYCLES))
     try:
         value = int(raw)
     except (RuntimeError, ValueError):
@@ -392,7 +392,7 @@ def _resolve_loop_max_cycles() -> int:
 
 
 def _resolve_loop_stall_threshold() -> int:
-    raw = os.getenv("POLARIS_FACTORY_LOOP_STALL_THRESHOLD", str(_DEFAULT_LOOP_STALL_THRESHOLD))
+    raw = os.getenv("KERNELONE_FACTORY_LOOP_STALL_THRESHOLD", str(_DEFAULT_LOOP_STALL_THRESHOLD))
     try:
         value = int(raw)
     except (RuntimeError, ValueError):

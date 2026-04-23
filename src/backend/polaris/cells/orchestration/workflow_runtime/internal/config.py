@@ -49,7 +49,7 @@ def resolve_orchestration_runtime(
 ) -> str:
     values = dict(environ or os.environ)
 
-    token = str(raw or values.get("POLARIS_ORCHESTRATION_RUNTIME", "workflow") or "workflow").strip().lower()
+    token = str(raw or values.get("KERNELONE_ORCHESTRATION_RUNTIME", "workflow") or "workflow").strip().lower()
 
     if token not in SUPPORTED_ORCHESTRATION_RUNTIMES:
         return "workflow"
@@ -80,37 +80,37 @@ class WorkflowConfig:
         return cls(
             # workflow is the only supported runtime and is always enabled.
             enabled=True,
-            namespace=str(values.get("POLARIS_WORKFLOW_NAMESPACE", "polaris") or "polaris"),
-            task_queue=str(values.get("POLARIS_WORKFLOW_TASK_QUEUE", "polaris-queue") or "polaris-queue"),
+            namespace=str(values.get("KERNELONE_WORKFLOW_NAMESPACE", "polaris") or "polaris"),
+            task_queue=str(values.get("KERNELONE_WORKFLOW_TASK_QUEUE", "polaris-queue") or "polaris-queue"),
             retry_max_attempts=max(
                 1,
-                _parse_int(values.get("POLARIS_WORKFLOW_RETRY_MAX_ATTEMPTS", 3), 3),
+                _parse_int(values.get("KERNELONE_WORKFLOW_RETRY_MAX_ATTEMPTS", 3), 3),
             ),
             retry_initial_interval_seconds=max(
                 0.1,
                 _parse_float(
-                    values.get("POLARIS_WORKFLOW_RETRY_INITIAL_INTERVAL_SECONDS", 1.0),
+                    values.get("KERNELONE_WORKFLOW_RETRY_INITIAL_INTERVAL_SECONDS", 1.0),
                     1.0,
                 ),
             ),
             retry_backoff_coefficient=max(
                 1.0,
                 _parse_float(
-                    values.get("POLARIS_WORKFLOW_RETRY_BACKOFF_COEFFICIENT", 2.0),
+                    values.get("KERNELONE_WORKFLOW_RETRY_BACKOFF_COEFFICIENT", 2.0),
                     2.0,
                 ),
             ),
             workflow_execution_timeout_seconds=max(
                 60,
                 _parse_int(
-                    values.get("POLARIS_WORKFLOW_WORKFLOW_TIMEOUT_SECONDS", MAX_WORKFLOW_TIMEOUT_SECONDS),
+                    values.get("KERNELONE_WORKFLOW_WORKFLOW_TIMEOUT_SECONDS", MAX_WORKFLOW_TIMEOUT_SECONDS),
                     MAX_WORKFLOW_TIMEOUT_SECONDS,
                 ),
             ),
             rpc_timeout_seconds=max(
                 0.1,
                 _parse_float(
-                    values.get("POLARIS_WORKFLOW_RPC_TIMEOUT_SECONDS", 1.0),
+                    values.get("KERNELONE_WORKFLOW_RPC_TIMEOUT_SECONDS", 1.0),
                     1.0,
                 ),
             ),

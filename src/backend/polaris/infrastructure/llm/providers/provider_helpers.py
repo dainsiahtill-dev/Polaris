@@ -104,7 +104,7 @@ class _LightweightAiohttpModule:
 def _should_use_lightweight_stream_session_mode() -> bool:
     mode = str(
         os.environ.get("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS")
-        or os.environ.get("POLARIS_LIGHTWEIGHT_STREAM_SESSIONS")
+        or os.environ.get("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS")
         or ""
     ).strip()
     if mode:
@@ -437,10 +437,10 @@ class _LRUSessionRegistry:
 
 # Replace simple dict with LRU registry
 _STREAM_SESSION_REGISTRY = _LRUSessionRegistry(  # type: ignore[no-redef,assignment]
-    max_sessions=int(os.environ.get("KERNELONE_MAX_SESSIONS") or os.environ.get("POLARIS_MAX_SESSIONS", "10")),
+    max_sessions=int(os.environ.get("KERNELONE_MAX_SESSIONS") or os.environ.get("KERNELONE_MAX_SESSIONS", "10")),
     idle_timeout_seconds=float(
         os.environ.get("KERNELONE_SESSION_IDLE_TIMEOUT")
-        or os.environ.get("POLARIS_SESSION_IDLE_TIMEOUT", str(DEFAULT_OPERATION_TIMEOUT_SECONDS))
+        or os.environ.get("KERNELONE_SESSION_IDLE_TIMEOUT", str(DEFAULT_OPERATION_TIMEOUT_SECONDS))
     ),
 )
 
@@ -834,11 +834,11 @@ def list_models_from_api(
 # Uses fixed delay: configured seconds between retries, max configured attempts
 
 _STREAM_RETRY_DELAY_SEC: float = float(
-    os.environ.get("KERNELONE_STREAM_RETRY_DELAY_SEC") or os.environ.get("POLARIS_STREAM_RETRY_DELAY_SEC", "5.0")
+    os.environ.get("KERNELONE_STREAM_RETRY_DELAY_SEC") or os.environ.get("KERNELONE_STREAM_RETRY_DELAY_SEC", "5.0")
 )
 _STREAM_RETRY_MAX_ATTEMPTS: int = int(
     os.environ.get("KERNELONE_STREAM_RETRY_MAX_ATTEMPTS")
-    or os.environ.get("POLARIS_STREAM_RETRY_MAX_ATTEMPTS", "3")
+    or os.environ.get("KERNELONE_STREAM_RETRY_MAX_ATTEMPTS", "3")
 )
 
 

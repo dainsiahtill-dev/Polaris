@@ -70,7 +70,7 @@ def _resolve_bootstrap_ramdisk_root(ramdisk_root: Path | None) -> Path:
 
 
 def _resolve_python_executable() -> str:
-    configured = str(os.environ.get("POLARIS_PYTHON") or "").strip()
+    configured = str(os.environ.get("KERNELONE_PYTHON") or "").strip()
     if configured and Path(configured).exists():
         candidate = str(Path(configured).resolve())
         _validate_python_environment(candidate)
@@ -87,7 +87,7 @@ def _resolve_python_executable() -> str:
         _validate_python_environment(candidate)
         return candidate
 
-    # No POLARIS_PYTHON, no .venv: validate sys.executable before using it.
+    # No KERNELONE_PYTHON, no .venv: validate sys.executable before using it.
     _validate_python_environment(str(Path(sys.executable).resolve()))
     return str(Path(sys.executable).resolve())
 
@@ -540,8 +540,8 @@ async def _auto_bootstrap_backend(
     env["PYTHONIOENCODING"] = "utf-8"
     # Stress runner currently targets the stable Director adapter flow.
     # Keep Sequential opt-in for this bootstrap path unless caller overrides.
-    env.setdefault("POLARIS_SEQ_ENABLED", "0")
-    env.setdefault("POLARIS_SEQ_USE_HYBRID", "0")
+    env.setdefault("KERNELONE_SEQ_ENABLED", "0")
+    env.setdefault("KERNELONE_SEQ_USE_HYBRID", "0")
 
     _write_desktop_backend_info(
         desktop_info_path,
@@ -656,7 +656,7 @@ async def ensure_backend_session(
         return session
 
     allow_desktop_context = str(
-        os.environ.get("POLARIS_STRESS_ALLOW_DESKTOP_CONTEXT") or ""
+        os.environ.get("KERNELONE_STRESS_ALLOW_DESKTOP_CONTEXT") or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
     if (
         auto_bootstrap

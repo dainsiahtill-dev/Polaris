@@ -368,5 +368,5 @@ def patch_director_runtime() -> None:
 
 
 # 自动修补（如果环境变量启用）
-if os.getenv("POLARIS_ENABLE_LLM_TOOLS", "0") == "1":
+if os.getenv("KERNELONE_ENABLE_LLM_TOOLS", "0") == "1":
     patch_director_runtime()

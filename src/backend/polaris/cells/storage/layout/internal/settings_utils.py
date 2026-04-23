@@ -25,11 +25,11 @@ def get_polaris_root() -> str:
     def _expand(path: str) -> str:
         return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
 
-    root_override = str(os.environ.get("KERNELONE_ROOT") or os.environ.get("POLARIS_ROOT") or "").strip()
+    root_override = str(os.environ.get("KERNELONE_ROOT") or os.environ.get("KERNELONE_ROOT") or "").strip()
     if root_override:
         return _expand(root_override)
 
-    home_override = str(os.environ.get("KERNELONE_HOME") or os.environ.get("POLARIS_HOME") or "").strip()
+    home_override = str(os.environ.get("KERNELONE_HOME") or os.environ.get("KERNELONE_HOME") or "").strip()
     if home_override:
         expanded = _expand(home_override)
         trimmed = expanded.rstrip("\\/")
@@ -144,9 +144,9 @@ def sync_process_settings_environment(settings: "Settings") -> None:
     """
     workspace_root = _normalize_abs_path(getattr(settings, "workspace", ""))
     if workspace_root:
-        os.environ["POLARIS_WORKSPACE"] = workspace_root
+        os.environ["KERNELONE_WORKSPACE"] = workspace_root
     else:
-        os.environ.pop("POLARIS_WORKSPACE", None)
+        os.environ.pop("KERNELONE_WORKSPACE", None)
 
     if bool(getattr(settings, "self_upgrade_mode", False)):
         os.environ[SELF_UPGRADE_MODE_ENV] = "1"
@@ -155,55 +155,55 @@ def sync_process_settings_environment(settings: "Settings") -> None:
 
     ramdisk_root = _normalize_abs_path(getattr(settings, "ramdisk_root", ""))
     if ramdisk_root:
-        os.environ["POLARIS_RAMDISK_ROOT"] = ramdisk_root
+        os.environ["KERNELONE_RAMDISK_ROOT"] = ramdisk_root
     else:
-        os.environ.pop("POLARIS_RAMDISK_ROOT", None)
+        os.environ.pop("KERNELONE_RAMDISK_ROOT", None)
 
     nats_settings = getattr(settings, "nats", None)
     if nats_settings is not None:
-        os.environ["POLARIS_NATS_ENABLED"] = "1" if bool(getattr(nats_settings, "enabled", True)) else "0"
-        os.environ["POLARIS_NATS_REQUIRED"] = "1" if bool(getattr(nats_settings, "required", True)) else "0"
+        os.environ["KERNELONE_NATS_ENABLED"] = "1" if bool(getattr(nats_settings, "enabled", True)) else "0"
+        os.environ["KERNELONE_NATS_REQUIRED"] = "1" if bool(getattr(nats_settings, "required", True)) else "0"
         nats_url = str(getattr(nats_settings, "url", "") or "").strip()
         if nats_url:
-            os.environ["POLARIS_NATS_URL"] = nats_url
+            os.environ["KERNELONE_NATS_URL"] = nats_url
         else:
-            os.environ.pop("POLARIS_NATS_URL", None)
+            os.environ.pop("KERNELONE_NATS_URL", None)
         nats_user = str(getattr(nats_settings, "user", "") or "").strip()
         if nats_user:
-            os.environ["POLARIS_NATS_USER"] = nats_user
+            os.environ["KERNELONE_NATS_USER"] = nats_user
         else:
-            os.environ.pop("POLARIS_NATS_USER", None)
+            os.environ.pop("KERNELONE_NATS_USER", None)
         nats_password = str(getattr(nats_settings, "password", "") or "").strip()
         if nats_password:
-            os.environ["POLARIS_NATS_PASSWORD"] = nats_password
+            os.environ["KERNELONE_NATS_PASSWORD"] = nats_password
         else:
-            os.environ.pop("POLARIS_NATS_PASSWORD", None)
-        os.environ["POLARIS_NATS_CONNECT_TIMEOUT"] = str(
+            os.environ.pop("KERNELONE_NATS_PASSWORD", None)
+        os.environ["KERNELONE_NATS_CONNECT_TIMEOUT"] = str(
             float(getattr(nats_settings, "connect_timeout_sec", 3.0) or 3.0)
         )
-        os.environ["POLARIS_NATS_RECONNECT_WAIT"] = str(
+        os.environ["KERNELONE_NATS_RECONNECT_WAIT"] = str(
             float(getattr(nats_settings, "reconnect_wait_sec", 1.0) or 1.0)
         )
-        os.environ["POLARIS_NATS_MAX_RECONNECT"] = str(
+        os.environ["KERNELONE_NATS_MAX_RECONNECT"] = str(
             int(getattr(nats_settings, "max_reconnect_attempts", -1) or -1)
         )
         nats_stream_name = str(getattr(nats_settings, "stream_name", "") or "").strip()
         if nats_stream_name:
-            os.environ["POLARIS_NATS_STREAM_NAME"] = nats_stream_name
+            os.environ["KERNELONE_NATS_STREAM_NAME"] = nats_stream_name
         else:
-            os.environ.pop("POLARIS_NATS_STREAM_NAME", None)
+            os.environ.pop("KERNELONE_NATS_STREAM_NAME", None)
 
-    os.environ["POLARIS_AUDIT_LLM_ENABLED"] = "1" if bool(getattr(settings, "audit_llm_enabled", True)) else "0"
+    os.environ["KERNELONE_AUDIT_LLM_ENABLED"] = "1" if bool(getattr(settings, "audit_llm_enabled", True)) else "0"
     audit_role = str(getattr(settings, "audit_llm_role", "qa") or "").strip().lower()
     if audit_role:
-        os.environ["POLARIS_AUDIT_LLM_ROLE"] = audit_role
+        os.environ["KERNELONE_AUDIT_LLM_ROLE"] = audit_role
     else:
-        os.environ.pop("POLARIS_AUDIT_LLM_ROLE", None)
-    os.environ["POLARIS_AUDIT_LLM_TIMEOUT"] = str(int(getattr(settings, "audit_llm_timeout", 180) or 180))
-    os.environ["POLARIS_AUDIT_LLM_PREFER_LOCAL_OLLAMA"] = (
+        os.environ.pop("KERNELONE_AUDIT_LLM_ROLE", None)
+    os.environ["KERNELONE_AUDIT_LLM_TIMEOUT"] = str(int(getattr(settings, "audit_llm_timeout", 180) or 180))
+    os.environ["KERNELONE_AUDIT_LLM_PREFER_LOCAL_OLLAMA"] = (
         "1" if bool(getattr(settings, "audit_llm_prefer_local_ollama", True)) else "0"
     )
-    os.environ["POLARIS_AUDIT_LLM_ALLOW_REMOTE_FALLBACK"] = (
+    os.environ["KERNELONE_AUDIT_LLM_ALLOW_REMOTE_FALLBACK"] = (
         "1" if bool(getattr(settings, "audit_llm_allow_remote_fallback", True)) else "0"
     )
 

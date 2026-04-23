@@ -212,7 +212,7 @@ class CEConsumer:
             ``no_touch_zones``, and ``scope_paths``.
         """
         # Resolve paths from payload, falling back to environment / workspace.
-        resolved_workspace = str(payload.get("workspace", os.environ.get("POLARIS_WORKSPACE", ""))).strip()
+        resolved_workspace = str(payload.get("workspace", os.environ.get("KERNELONE_WORKSPACE", ""))).strip()
         run_dir = str(payload.get("run_dir", "")).strip()
         cache_root = str(payload.get("cache_root", "")).strip()
         run_id = str(payload.get("run_id", "")).strip()

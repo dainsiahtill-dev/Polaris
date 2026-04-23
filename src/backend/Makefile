@@ -6,7 +6,7 @@
 # Default Python interpreter
 PYTHON := python
 # Directories to check
-POLARIS_DIRS := polaris/bootstrap polaris/kernelone polaris/domain polaris/application polaris/delivery polaris/infrastructure polaris/cells
+KERNELONE_DIRS := polaris/bootstrap polaris/kernelone polaris/domain polaris/application polaris/delivery polaris/infrastructure polaris/cells
 TEST_DIRS := polaris/tests polaris/kernelone/tests polaris/bootstrap/tests
 
 help:
@@ -34,19 +34,19 @@ install:
 
 lint:
 	@echo "Running Ruff linter..."
-	ruff check $(POLARIS_DIRS) --output-format=concise
+	ruff check $(KERNELONE_DIRS) --output-format=concise
 
 lint-fix:
 	@echo "Running Ruff linter with auto-fix..."
-	ruff check $(POLARIS_DIRS) --fix
+	ruff check $(KERNELONE_DIRS) --fix
 
 format:
 	@echo "Running Ruff format check..."
-	ruff format --check $(POLARIS_DIRS)
+	ruff format --check $(KERNELONE_DIRS)
 
 format-fix:
 	@echo "Running Ruff formatter..."
-	ruff format $(POLARIS_DIRS)
+	ruff format $(KERNELONE_DIRS)
 
 typecheck:
 	@echo "Running Mypy type checker..."

@@ -156,15 +156,15 @@ def test_fallback_code_content_prefers_python_test_templates_over_basename_match
 
 
 def test_deterministic_repair_disabled_when_require_llm(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLARIS_STRESS_STRICT", "1")
-    monkeypatch.setenv("POLARIS_STRESS_REQUIRE_LLM", "1")
-    monkeypatch.setenv("POLARIS_WORKER_ALLOW_DETERMINISTIC_REPAIR", "0")
+    monkeypatch.setenv("KERNELONE_STRESS_STRICT", "1")
+    monkeypatch.setenv("KERNELONE_STRESS_REQUIRE_LLM", "1")
+    monkeypatch.setenv("KERNELONE_WORKER_ALLOW_DETERMINISTIC_REPAIR", "0")
     executor = WorkerExecutor(workspace=".")
     assert executor._deterministic_repair_enabled() is False
 
 
 def test_build_code_generation_rounds_splits_construction_plan(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_CE_ROUND_FILE_CHUNK", "1")
+    monkeypatch.setenv("KERNELONE_CE_ROUND_FILE_CHUNK", "1")
     executor = WorkerExecutor(workspace=".")
     task = Task(
         id="task-5",
@@ -208,7 +208,7 @@ def test_apply_response_operations_supports_patch_format(tmp_path: Path) -> None
 
 
 def test_worker_spin_guard_blocks_identical_loop(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_WORKER_SPIN_MAX_REPEAT", "2")
+    monkeypatch.setenv("KERNELONE_WORKER_SPIN_MAX_REPEAT", "2")
     executor = WorkerExecutor(workspace=".")
     tracker: dict[str, dict[str, object]] = {}
     executor._register_spin_guard(
@@ -227,7 +227,7 @@ def test_worker_spin_guard_blocks_identical_loop(monkeypatch) -> None:
 
 
 def test_build_prompt_respects_prompt_size_limit(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_WORKER_PROMPT_MAX_CHARS", "2400")
+    monkeypatch.setenv("KERNELONE_WORKER_PROMPT_MAX_CHARS", "2400")
     executor = WorkerExecutor(workspace=".")
     long_desc = "A" * 12000
     task = Task(
@@ -244,8 +244,8 @@ def test_invoke_generation_with_retries_uses_deterministic_repair_in_strict_mode
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("POLARIS_STRESS_STRICT", "1")
-    monkeypatch.setenv("POLARIS_WORKER_PATCH_RETRIES", "1")
+    monkeypatch.setenv("KERNELONE_STRESS_STRICT", "1")
+    monkeypatch.setenv("KERNELONE_WORKER_PATCH_RETRIES", "1")
     executor = WorkerExecutor(workspace=str(tmp_path))
     task = Task(
         id="PM-0001-R1",
@@ -285,7 +285,7 @@ def test_invoke_generation_with_retries_uses_deterministic_repair_in_strict_mode
 def test_deterministic_repair_uses_phase_hint_for_modify(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POLARIS_WORKER_DETERMINISTIC_REPAIR", "1")
+    monkeypatch.setenv("KERNELONE_WORKER_DETERMINISTIC_REPAIR", "1")
     executor = WorkerExecutor(workspace=".")
     task = Task(
         id="PM-0001-R2",
@@ -305,7 +305,7 @@ def test_deterministic_repair_generates_tests_for_test_only_round(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("POLARIS_STRESS_STRICT", "1")
+    monkeypatch.setenv("KERNELONE_STRESS_STRICT", "1")
     executor = WorkerExecutor(workspace=str(tmp_path))
     (tmp_path / "commands.py").write_text(
         "def help_command() -> str:\n    return 'ok'\n",
@@ -330,8 +330,8 @@ def test_invoke_generation_with_retries_uses_rust_deterministic_repair_in_strict
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("POLARIS_STRESS_STRICT", "1")
-    monkeypatch.setenv("POLARIS_WORKER_PATCH_RETRIES", "1")
+    monkeypatch.setenv("KERNELONE_STRESS_STRICT", "1")
+    monkeypatch.setenv("KERNELONE_WORKER_PATCH_RETRIES", "1")
     executor = WorkerExecutor(workspace=str(tmp_path))
     task = Task(
         id="PM-0001-F1",

@@ -164,10 +164,10 @@ class Budgets:
                 parsed = default
             return max(minimum, min(parsed, maximum))
 
-        self.max_tool_calls = _int("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", 64, 1, 512)
-        self.max_turns = _int("POLARIS_TOOL_LOOP_MAX_TURNS", 64, 1, 512)
-        self.max_stall_cycles = _int("POLARIS_TOOL_LOOP_MAX_STALL_CYCLES", 2, 0, 16)
-        self.max_wall_time_seconds = float(_int("POLARIS_TOOL_LOOP_MAX_WALL_TIME_SECONDS", 900, 30, 7200))
+        self.max_tool_calls = _int("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", 64, 1, 512)
+        self.max_turns = _int("KERNELONE_TOOL_LOOP_MAX_TURNS", 64, 1, 512)
+        self.max_stall_cycles = _int("KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES", 2, 0, 16)
+        self.max_wall_time_seconds = float(_int("KERNELONE_TOOL_LOOP_MAX_WALL_TIME_SECONDS", 900, 30, 7200))
 
     def tick_wall_time(self) -> None:
         """更新墙上时间。"""

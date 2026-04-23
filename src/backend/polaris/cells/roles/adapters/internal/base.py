@@ -73,7 +73,7 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         env = {
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
-            "POLARIS_WORKSPACE": self.workspace,
+            "KERNELONE_WORKSPACE": self.workspace,
         }
 
         if overrides:
@@ -442,13 +442,13 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         策略:
         - 默认关闭（各层只产出 signals，不做动作级硬裁决）
         - 可通过 context["validate_output"] 显式覆盖
-        - 可通过环境变量 POLARIS_<ROLE>_VALIDATE_OUTPUT 覆盖
+        - 可通过环境变量 KERNELONE_<ROLE>_VALIDATE_OUTPUT 覆盖
         """
         if isinstance(context, dict) and "validate_output" in context:
             return bool(context.get("validate_output"))
 
         normalized_role = str(role_token or "").strip().lower()
-        env_name = f"POLARIS_{normalized_role.upper()}_VALIDATE_OUTPUT"
+        env_name = f"KERNELONE_{normalized_role.upper()}_VALIDATE_OUTPUT"
         env_value = str(os.environ.get(env_name, "") or "").strip().lower()
         if env_value in {"1", "true", "yes", "on"}:
             return True
@@ -464,7 +464,7 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         允许通过环境变量覆盖为 0..3。
         """
         normalized_role = str(role_token or "").strip().lower()
-        env_name = f"POLARIS_{normalized_role.upper()}_KERNEL_MAX_RETRIES"
+        env_name = f"KERNELONE_{normalized_role.upper()}_KERNEL_MAX_RETRIES"
         default_value = "1"
         raw_value = str(os.environ.get(env_name, default_value)).strip()
         try:

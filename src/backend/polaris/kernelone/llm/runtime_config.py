@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _ROLE_BINDING_MODE_ENV_KEYS = (
     "KERNELONE_ROLE_MODEL_BINDING_MODE",
-    "POLARIS_ROLE_MODEL_BINDING_MODE",
+    "KERNELONE_ROLE_MODEL_BINDING_MODE",
 )
 _ROLE_BINDING_MODES = {"strict", "warn"}
 _DEFAULT_ROLE_BINDING_MODE = "strict"
@@ -90,7 +90,7 @@ class RuntimeConfigManager:
             path = str(self._config_path_resolver() or "").strip()
             if path:
                 return path
-        env_path = os.environ.get("KERNELONE_LLM_CONFIG") or os.environ.get("POLARIS_LLM_CONFIG")
+        env_path = os.environ.get("KERNELONE_LLM_CONFIG") or os.environ.get("KERNELONE_LLM_CONFIG")
         if env_path:
             return str(env_path)
         return resolve_global_path("config/llm/llm_config.json")

@@ -49,7 +49,7 @@ POST /arsenal/code/library/index；POST /arsenal/code/library/search；POST /ars
 arsenal.py
 分阶段实施（6 阶段，决策完整）
 Phase 0：基线与开关（1 周）
-增加功能开关：POLARIS_WORKS_DEPT_ENABLED=0、POLARIS_UI_DIRECTOR_ENABLED=0、POLARIS_KNOWLEDGE_HYBRID_ENABLED=0。
+增加功能开关：KERNELONE_WORKS_DEPT_ENABLED=0、KERNELONE_UI_DIRECTOR_ENABLED=0、KERNELONE_KNOWLEDGE_HYBRID_ENABLED=0。
 增加观测指标：任务一次通过率、返工轮次、平均时延、UI 任务命中率、检索命中率、Token 消耗。
 完成标准：不改现有行为，所有新增代码在开关关闭时零影响。
 Phase 1：根因重构角色硬编码（1.5 周）

@@ -27,7 +27,7 @@ class _FakeOrchestrationService:
 
 def test_pm_get_orchestration_uses_current_contract_without_snapshot_metadata(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-pm-orchestration-token"
-    monkeypatch.setenv("POLARIS_TOKEN", test_token)
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     snapshot = OrchestrationSnapshot(
         run_id="pm-demo-001",
         workspace=str(tmp_path),

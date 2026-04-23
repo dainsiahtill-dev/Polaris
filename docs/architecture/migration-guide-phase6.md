@@ -4,7 +4,7 @@
 
 Phase 6 是 "薄 CLI + 核心 OO 化" 重构的最后阶段，目标是：
 
-1. 移除 `POLARIS_USE_NEW_BOOTSTRAP` 功能开关
+1. 移除 `KERNELONE_USE_NEW_BOOTSTRAP` 功能开关
 2. 删除遗留代码路径
 3. 更新入口点以使用新架构
 4. 归档旧实现
@@ -15,8 +15,8 @@ Phase 6 是 "薄 CLI + 核心 OO 化" 重构的最后阶段，目标是：
 
 | 旧变量 | 状态 | 说明 |
 |--------|------|------|
-| `POLARIS_USE_NEW_BOOTSTRAP` | 已删除 | 新架构现在是默认且唯一路径 |
-| `POLARIS_USE_THIN_CLI` | 新增 | 控制是否使用薄 CLI (默认: 1) |
+| `KERNELONE_USE_NEW_BOOTSTRAP` | 已删除 | 新架构现在是默认且唯一路径 |
+| `KERNELONE_USE_THIN_CLI` | 新增 | 控制是否使用薄 CLI (默认: 1) |
 
 ### 2. 入口点变更
 
@@ -61,8 +61,8 @@ archive/phase6_legacy/
 
 ```bash
 # 设置环境变量使用旧架构
-export POLARIS_USE_NEW_BOOTSTRAP=0
-export POLARIS_USE_THIN_CLI=0
+export KERNELONE_USE_NEW_BOOTSTRAP=0
+export KERNELONE_USE_THIN_CLI=0
 
 # 启动服务
 python src/backend/server.py

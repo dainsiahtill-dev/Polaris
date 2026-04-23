@@ -188,7 +188,7 @@ def test_middleware_integration_summary():
             "Then passes enhanced context to role dialogue",
         ],
         "Environment Variables": [
-            "POLARIS_ENABLE_COGNITIVE_MIDDLEWARE=true|false",
+            "KERNELONE_ENABLE_COGNITIVE_MIDDLEWARE=true|false",
         ],
     }
 

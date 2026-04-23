@@ -107,7 +107,7 @@ def test_prefix_guards_polaris_compat(tmp_path: Path) -> None:
 
 def test_global_path_under_polaris_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     home = tmp_path / "hp-home"
-    monkeypatch.setenv("POLARIS_HOME", str(home))
+    monkeypatch.setenv("KERNELONE_HOME", str(home))
 
     cfg = Path(resolve_global_path("config/settings.json"))
     assert cfg.as_posix().endswith("/hp-home/config/settings.json")
@@ -120,8 +120,8 @@ def test_runtime_path_is_outside_workspace_when_external_runtime(
     workspace.mkdir(parents=True, exist_ok=True)
 
     runtime_root = tmp_path / "runtime-cache"
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     runtime_file = Path(resolve_runtime_path(str(workspace), "runtime/events/e.jsonl"))
     assert workspace.resolve() not in runtime_file.parents

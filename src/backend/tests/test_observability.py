@@ -58,15 +58,15 @@ class TestPolarisContext:
             workspace="/tmp/test",
         )
         env = ctx.to_env_vars()
-        assert env["POLARIS_TRACE_ID"] == "test-trace"
-        assert env["POLARIS_RUN_ID"] == "run-123"
+        assert env["KERNELONE_TRACE_ID"] == "test-trace"
+        assert env["KERNELONE_RUN_ID"] == "run-123"
         assert env["KERNELONE_WORKSPACE"] == "/tmp/test"
 
     def test_context_from_env_vars(self):
         """测试从环境变量恢复上下文"""
         import os
-        os.environ["POLARIS_TRACE_ID"] = "env-trace-123"
-        os.environ["POLARIS_RUN_ID"] = "env-run-456"
+        os.environ["KERNELONE_TRACE_ID"] = "env-trace-123"
+        os.environ["KERNELONE_RUN_ID"] = "env-run-456"
 
         ctx = PolarisContext.from_env_vars()
         assert ctx is not None
@@ -74,8 +74,8 @@ class TestPolarisContext:
         assert ctx.run_id == "env-run-456"
 
         # 清理
-        del os.environ["POLARIS_TRACE_ID"]
-        del os.environ["POLARIS_RUN_ID"]
+        del os.environ["KERNELONE_TRACE_ID"]
+        del os.environ["KERNELONE_RUN_ID"]
 
     def test_context_with_span(self):
         """测试添加span"""

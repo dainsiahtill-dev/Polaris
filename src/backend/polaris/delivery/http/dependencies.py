@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 def _append_debug(event: str, payload: dict[str, object]) -> None:
     """Best-effort backend debug event sink for stall diagnosis."""
     try:
-        log_path = Path(os.environ.get("POLARIS_BACKEND_DEBUG_LOG", "C:/Temp/hp_backend_debug.jsonl"))
+        log_path = Path(os.environ.get("KERNELONE_BACKEND_DEBUG_LOG", "C:/Temp/hp_backend_debug.jsonl"))
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "ts": time.time(),

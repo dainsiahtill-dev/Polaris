@@ -134,14 +134,14 @@ class TestAdapterWorkflowIntegration:
         mock_factory.register.assert_called_once_with("qa", adapter)
 
     def test_build_env_includes_polaris_workspace(self) -> None:
-        """Test adapter build_env includes POLARIS_WORKSPACE."""
+        """Test adapter build_env includes KERNELONE_WORKSPACE."""
         from polaris.cells.roles.adapters.public.service import create_role_adapter
 
         adapter = create_role_adapter(role_id="architect", workspace="/test/path")
         env = adapter._build_env()
 
-        assert "POLARIS_WORKSPACE" in env
-        assert env["POLARIS_WORKSPACE"] == "/test/path"
+        assert "KERNELONE_WORKSPACE" in env
+        assert env["KERNELONE_WORKSPACE"] == "/test/path"
 
     def test_build_env_with_overrides(self) -> None:
         """Test adapter build_env respects overrides."""

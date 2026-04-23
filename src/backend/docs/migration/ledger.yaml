@@ -29,10 +29,10 @@ status_model:
   blocked:
     meaning: Migration paused due to upstream dependency or graph gap
 legacy_policies:
-  POLARIS_rename_required:
+  KERNELONE_rename_required:
     >
-      All POLARIS_* environment variable references in polaris/ code must be
-      renamed to KERNELONE_* before old-root retirement. POLARIS_* may be
+      All KERNELONE_* environment variable references in polaris/ code must be
+      renamed to KERNELONE_* before old-root retirement. KERNELONE_* may be
       retained as a backward-compat alias in bootstrap config only, never in
       polaris/ business logic.
   no_new_shim:
@@ -478,24 +478,24 @@ units:
   # Wave 3: Cross-cutting concerns
   # ─────────────────────────────────────────────────────────────────────────────
   - id: mig-env-var-prefix
-    title: Environment variable prefix POLARIS_ → KERNELONE_ migration
+    title: Environment variable prefix KERNELONE_ → KERNELONE_ migration
     wave: 3
     category: infrastructure
     scope: file_family
     status: planned
     current_impl_state: mixed
     owner: infrastructure-engineer
-    legacy_policy: POLARIS_rename_required
+    legacy_policy: KERNELONE_rename_required
     depends_on:
       - mig-kernelone-core
     blockers:
-      - "249 unique POLARIS_* var names referenced across 161 files (746 total occurrences)"
+      - "249 unique KERNELONE_* var names referenced across 161 files (746 total occurrences)"
       - "No complete KERNELONE_* equivalence mapping documented"
     notes:
-      - "Snapshot (2026-03-23): POLARIS_=746 (polaris:483, tests:172) vs KERNELONE_=159 (polaris:143, tests:9, docs:4)"
+      - "Snapshot (2026-03-23): KERNELONE_=746 (polaris:483, tests:172) vs KERNELONE_=159 (polaris:143, tests:9, docs:4)"
       - "Top files: config.py(86), _runtime_config.py(27), config_loader.py(24)"
-      - "POLARIS_* may be kept as backward-compat aliases in bootstrap config only"
-      - "Never retain POLARIS_* in polaris/ business logic"
+      - "KERNELONE_* may be kept as backward-compat aliases in bootstrap config only"
+      - "Never retain KERNELONE_* in polaris/ business logic"
       - "Timeline: Wave 3 — after application cellization batches complete"
     target:
       cell: kernelone.base
@@ -518,26 +518,26 @@ units:
       - path: polaris/kernelone/_runtime_config.py
         kind: file
         coverage: partial
-        note: "27 POLARIS_ occurrences — rename to KERNELONE_ equivalents"
+        note: "27 KERNELONE_ occurrences — rename to KERNELONE_ equivalents"
       - path: polaris/bootstrap/config_loader.py
         kind: file
         coverage: partial
-        note: "24 POLARIS_ occurrences — add KERNELONE_ primary + POLARIS_ alias"
+        note: "24 KERNELONE_ occurrences — add KERNELONE_ primary + KERNELONE_ alias"
       - path: polaris/delivery/cli/pm/config.py
         kind: file
         coverage: partial
-        note: "13 POLARIS_ occurrences — migrate to KERNELONE_"
+        note: "13 KERNELONE_ occurrences — migrate to KERNELONE_"
       - path: config.py
         kind: file
         coverage: partial
-        note: "86 POLARIS_ occurrences — root config; highest priority"
+        note: "86 KERNELONE_ occurrences — root config; highest priority"
       - path: tests/
         kind: directory
         coverage: partial
-        note: "172 POLARIS_ occurrences — tests follow polaris/ migration"
+        note: "172 KERNELONE_ occurrences — tests follow polaris/ migration"
     verification:
       checks:
-        - "grep -r 'POLARIS_' polaris/ | wc -l  (expect 0)"
+        - "grep -r 'KERNELONE_' polaris/ | wc -l  (expect 0)"
         - "pytest polaris/kernelone/tests/test_runtime_config.py -q"
         - "pytest polaris/bootstrap/tests/ -q"
       required_tests:
@@ -548,8 +548,8 @@ units:
       graph_updates:
         - docs/ARCHITECTURE_STANDARD.md (env var section updated)
     delete_when:
-      - "grep -r 'POLARIS_' polaris/ returns 0 results"
-      - "POLARIS_ aliases removed from bootstrap config"
+      - "grep -r 'KERNELONE_' polaris/ returns 0 results"
+      - "KERNELONE_ aliases removed from bootstrap config"
 
   - id: mig-descriptor-pack
     title: Descriptor pack generation for all 41 Cells

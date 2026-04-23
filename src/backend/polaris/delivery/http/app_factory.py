@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
 
     # Refresh Auth from the environment at startup time so that tokens
     # injected after create_app() (e.g. in tests or subprocesses) are picked up.
-    app.state.auth = Auth(os.environ.get("POLARIS_TOKEN", ""))
+    app.state.auth = Auth(os.environ.get("KERNELONE_TOKEN", ""))
 
     workspace = str(getattr(app.state.settings, "workspace", "") or "").strip()
     if workspace:
@@ -112,7 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.state.settings = settings
     app.state.app_state = AppState(settings=settings)
-    app.state.auth = Auth(os.environ.get("POLARIS_TOKEN", ""))
+    app.state.auth = Auth(os.environ.get("KERNELONE_TOKEN", ""))
     app.state.connection_state = ConnectionState()
 
     _setup_observability(app)

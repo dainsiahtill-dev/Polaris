@@ -51,10 +51,10 @@ class VisionNotAvailableError(RuntimeError):
 
 
 def _trust_remote_code_enabled() -> bool:
-    raw = str(os.environ.get("POLARIS_VISION_TRUST_REMOTE_CODE") or "").strip().lower()
+    raw = str(os.environ.get("KERNELONE_VISION_TRUST_REMOTE_CODE") or "").strip().lower()
     enabled = raw in {"1", "true", "yes", "on"}
     if enabled:
-        logger.warning("POLARIS_VISION_TRUST_REMOTE_CODE is enabled; remote model code execution is allowed.")
+        logger.warning("KERNELONE_VISION_TRUST_REMOTE_CODE is enabled; remote model code execution is allowed.")
     return enabled
 
 

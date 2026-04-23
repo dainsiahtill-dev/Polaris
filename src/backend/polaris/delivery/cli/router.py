@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 class WorkspaceGuard:
     """Validates and normalizes the workspace path."""
 
-    _POLARIS_MARKER = ".polaris"
+    _KERNELONE_MARKER = ".polaris"
 
     @staticmethod
     def _initialize_workspace(resolved: Path) -> None:
@@ -393,7 +393,7 @@ def _route_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
-    os.environ.setdefault("POLARIS_WORKSPACE", str(workspace))
+    os.environ.setdefault("KERNELONE_WORKSPACE", str(workspace))
     print(f"[polaris-cli] Starting server on {host}:{port} workspace={workspace}")
     try:
         from polaris.delivery.http.app_factory import create_app

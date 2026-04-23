@@ -65,13 +65,13 @@ class TestWorkspaceMetadataDirName:
 
 
 class TestEnvResolution:
-    """Tests for KERNELONE_* + POLARIS_* fallback resolution."""
+    """Tests for KERNELONE_* + KERNELONE_* fallback resolution."""
 
     def test_kern优先_polaris_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.kernelone._runtime_config import resolve_env_str
 
         monkeypatch.setenv("KERNELONE_WORKSPACE", "/kern/path")
-        monkeypatch.setenv("POLARIS_WORKSPACE", "/hp/path")
+        monkeypatch.setenv("KERNELONE_WORKSPACE", "/hp/path")
 
         assert resolve_env_str("workspace") == "/kern/path"
 
@@ -79,7 +79,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_str
 
         monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
-        monkeypatch.setenv("POLARIS_WORKSPACE", "/hp/path")
+        monkeypatch.setenv("KERNELONE_WORKSPACE", "/hp/path")
 
         assert resolve_env_str("workspace") == "/hp/path"
 
@@ -87,7 +87,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_str
 
         monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
-        monkeypatch.delenv("POLARIS_WORKSPACE", raising=False)
+        monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
 
         # runtime_base has a non-empty default
         assert resolve_env_str("runtime_base") == "runtime"
@@ -98,7 +98,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_float
 
         monkeypatch.setenv("KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC", "2.5")
-        monkeypatch.setenv("POLARIS_RUNTIME_EVENT_DEDUP_WINDOW_SEC", "99.0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC", "99.0")
 
         assert resolve_env_float("runtime_event_dedup_window_sec") == 2.5
 
@@ -106,7 +106,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_float
 
         monkeypatch.delenv("KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC", raising=False)
-        monkeypatch.setenv("POLARIS_RUNTIME_EVENT_DEDUP_WINDOW_SEC", "3.5")
+        monkeypatch.setenv("KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC", "3.5")
 
         assert resolve_env_float("runtime_event_dedup_window_sec") == 3.5
 
@@ -114,7 +114,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_float
 
         monkeypatch.setenv("KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC", "not-a-float")
-        monkeypatch.delenv("POLARIS_RUNTIME_EVENT_DEDUP_WINDOW_SEC", raising=False)
+        monkeypatch.delenv("KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC", raising=False)
 
         assert resolve_env_float("runtime_event_dedup_window_sec") == 0.0
 
@@ -122,7 +122,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_int
 
         monkeypatch.setenv("KERNELONE_JSONL_FLUSH_BATCH", "100")
-        monkeypatch.setenv("POLARIS_JSONL_FLUSH_BATCH", "999")
+        monkeypatch.setenv("KERNELONE_JSONL_FLUSH_BATCH", "999")
 
         assert resolve_env_int("jsonl_flush_batch") == 100
 
@@ -130,7 +130,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_int
 
         monkeypatch.delenv("KERNELONE_JSONL_FLUSH_BATCH", raising=False)
-        monkeypatch.setenv("POLARIS_JSONL_FLUSH_BATCH", "200")
+        monkeypatch.setenv("KERNELONE_JSONL_FLUSH_BATCH", "200")
 
         assert resolve_env_int("jsonl_flush_batch") == 200
 
@@ -138,7 +138,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_int
 
         monkeypatch.setenv("KERNELONE_JSONL_FLUSH_BATCH", "bad")
-        monkeypatch.delenv("POLARIS_JSONL_FLUSH_BATCH", raising=False)
+        monkeypatch.delenv("KERNELONE_JSONL_FLUSH_BATCH", raising=False)
 
         assert resolve_env_int("jsonl_flush_batch") == 0
 
@@ -165,7 +165,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_bool
 
         monkeypatch.setenv("KERNELONE_JSONL_BUFFERED", "0")
-        monkeypatch.setenv("POLARIS_JSONL_BUFFERED", "1")
+        monkeypatch.setenv("KERNELONE_JSONL_BUFFERED", "1")
 
         assert resolve_env_bool("jsonl_buffered") is False
 
@@ -173,7 +173,7 @@ class TestEnvResolution:
         from polaris.kernelone._runtime_config import resolve_env_bool
 
         monkeypatch.delenv("KERNELONE_JSONL_BUFFERED", raising=False)
-        monkeypatch.setenv("POLARIS_JSONL_BUFFERED", "0")
+        monkeypatch.setenv("KERNELONE_JSONL_BUFFERED", "0")
 
         assert resolve_env_bool("jsonl_buffered") is False
 
@@ -185,7 +185,7 @@ class TestConvenienceAccessors:
         from polaris.kernelone._runtime_config import get_workspace
 
         monkeypatch.setenv("KERNELONE_WORKSPACE", "/kern/ws")
-        monkeypatch.setenv("POLARIS_WORKSPACE", "/hp/ws")
+        monkeypatch.setenv("KERNELONE_WORKSPACE", "/hp/ws")
 
         assert get_workspace() == "/kern/ws"
 
@@ -193,7 +193,7 @@ class TestConvenienceAccessors:
         from polaris.kernelone._runtime_config import get_workspace
 
         monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
-        monkeypatch.setenv("POLARIS_WORKSPACE", "/hp/ws")
+        monkeypatch.setenv("KERNELONE_WORKSPACE", "/hp/ws")
 
         assert get_workspace() == "/hp/ws"
 
@@ -201,7 +201,7 @@ class TestConvenienceAccessors:
         from polaris.kernelone._runtime_config import get_workspace
 
         monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
-        monkeypatch.delenv("POLARIS_WORKSPACE", raising=False)
+        monkeypatch.delenv("KERNELONE_WORKSPACE", raising=False)
 
         assert get_workspace() == ""
 
@@ -209,7 +209,7 @@ class TestConvenienceAccessors:
         from polaris.kernelone._runtime_config import get_runtime_base
 
         monkeypatch.delenv("KERNELONE_RUNTIME_BASE", raising=False)
-        monkeypatch.delenv("POLARIS_RUNTIME_BASE", raising=False)
+        monkeypatch.delenv("KERNELONE_RUNTIME_BASE", raising=False)
 
         assert get_runtime_base() == "runtime"
 
@@ -217,7 +217,7 @@ class TestConvenienceAccessors:
         from polaris.kernelone._runtime_config import get_trace_id
 
         monkeypatch.delenv("KERNELONE_TRACE_ID", raising=False)
-        monkeypatch.delenv("POLARIS_TRACE_ID", raising=False)
+        monkeypatch.delenv("KERNELONE_TRACE_ID", raising=False)
 
         assert get_trace_id() is None
 
@@ -225,7 +225,7 @@ class TestConvenienceAccessors:
         from polaris.kernelone._runtime_config import get_trace_id
 
         monkeypatch.setenv("KERNELONE_TRACE_ID", "kern-trace-123")
-        monkeypatch.setenv("POLARIS_TRACE_ID", "hp-trace-456")
+        monkeypatch.setenv("KERNELONE_TRACE_ID", "hp-trace-456")
 
         assert get_trace_id() == "kern-trace-123"
 
@@ -244,12 +244,12 @@ class TestIntegrationWithStorageLayout:
         from polaris.kernelone.storage.layout import kernelone_home
 
         monkeypatch.setenv("KERNELONE_HOME", "/kern/home")
-        monkeypatch.setenv("POLARIS_HOME", "/hp/home")
+        monkeypatch.setenv("KERNELONE_HOME", "/hp/home")
 
         assert kernelone_home() == str(Path("/kern/home").resolve())
 
     def test_polaris_home_from_polaris_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that kernelone_home falls back to POLARIS_HOME.
+        """Test that kernelone_home falls back to KERNELONE_HOME.
 
         Note: The polaris_home alias has been removed. For Polaris-specific
         home paths, use polaris_home() from polaris.cells.storage.layout.internal.layout_business.
@@ -259,7 +259,7 @@ class TestIntegrationWithStorageLayout:
         from polaris.kernelone.storage.layout import kernelone_home
 
         monkeypatch.delenv("KERNELONE_HOME", raising=False)
-        monkeypatch.setenv("POLARIS_HOME", "/hp/home")
+        monkeypatch.setenv("KERNELONE_HOME", "/hp/home")
 
         assert kernelone_home() == str(Path("/hp/home").resolve())
 

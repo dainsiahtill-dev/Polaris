@@ -11,7 +11,7 @@
           "type": "text",
           "style": "plain",
           "foreground": "#22c55e",
-          "template": "{{ if .Env.POLARIS_ROLE }}{{ .Env.POLARIS_ROLE }}{{ else }}role{{ end }}"
+          "template": "{{ if .Env.KERNELONE_ROLE }}{{ .Env.KERNELONE_ROLE }}{{ else }}role{{ end }}"
         },
         {
           "type": "text",
@@ -23,7 +23,7 @@
           "type": "text",
           "style": "plain",
           "foreground": "#60a5fa",
-          "template": "{{ if .Env.POLARIS_SESSION_ID }}{{ .Env.POLARIS_SESSION_ID }}{{ else }}session{{ end }}"
+          "template": "{{ if .Env.KERNELONE_SESSION_ID }}{{ .Env.KERNELONE_SESSION_ID }}{{ else }}session{{ end }}"
         },
         {
           "type": "text",

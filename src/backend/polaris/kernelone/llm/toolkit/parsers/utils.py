@@ -94,7 +94,7 @@ def resolve_signature_requirement(require_signature: bool | None) -> bool:
     raw = (
         str(
             os.environ.get("KERNELONE_REQUIRE_SIGNED_TOOL_TAGS")
-            or os.environ.get("POLARIS_REQUIRE_SIGNED_TOOL_TAGS", "")
+            or os.environ.get("KERNELONE_REQUIRE_SIGNED_TOOL_TAGS", "")
         )
         .strip()
         .lower()

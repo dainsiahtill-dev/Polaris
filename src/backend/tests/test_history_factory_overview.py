@@ -16,7 +16,7 @@ def _write_json(path: Path, payload: dict) -> None:
 def test_history_factory_overview_aggregates_round_flow(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-history-token"
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
-    monkeypatch.setenv("POLARIS_TOKEN", test_token)
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     workspace = tmp_path
     runtime_root = Path(resolve_storage_roots(str(workspace)).runtime_root)
 

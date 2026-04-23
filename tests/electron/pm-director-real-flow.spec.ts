@@ -172,7 +172,7 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
 test.setTimeout(25 * 60 * 1000);
 
 test("real PM -> Director flow reaches PM and Director workspaces", async ({ window, testEnv }) => {
-  test.skip(!testEnv.useRealSettings, "Set POLARIS_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
+  test.skip(!testEnv.useRealSettings, "Set KERNELONE_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
 
   const settings = await fetchJson<SettingsPayload>(window, "/settings");
   expect(String(settings.workspace || "").trim(), "real settings workspace should not be empty").not.toBe("");

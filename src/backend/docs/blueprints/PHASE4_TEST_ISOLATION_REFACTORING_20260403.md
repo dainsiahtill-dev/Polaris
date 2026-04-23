@@ -21,7 +21,7 @@ Phase 4 专注于消除测试污染问题，通过以下措施：
 | 序号 | 文件路径 | Fixture 名称 | 污染程度 | 评估 | 建议处理 |
 |------|----------|--------------|----------|------|----------|
 | 1 | `tests/test_agent32_kernelone_role_enum_migration.py` | `_reset_audit_singletons` | **CRITICAL** | 重置 KernelAuditRuntime singleton | 可保留，但需改为显式依赖 |
-| 2 | `polaris/tests/test_llm_realtime_bridge.py` | `_configure_runtime_bridge` | **CRITICAL** | 清除 POLARIS_WORKSPACE roots 缓存 | 重构为 session-scope + module-scope |
+| 2 | `polaris/tests/test_llm_realtime_bridge.py` | `_configure_runtime_bridge` | **CRITICAL** | 清除 KERNELONE_WORKSPACE roots 缓存 | 重构为 session-scope + module-scope |
 | 3 | `polaris/cells/storage/layout/tests/test_storage_layout_cell.py` | `_hp_bootstrap` | **CRITICAL** | 设置 workspace metadata dir | 改为 session-scope |
 | 4 | `polaris/cells/context/engine/tests/test_search_gateway.py` | `reset_singleton` | **CRITICAL** | 重置 SearchService singleton | 可保留，但需记录依赖 |
 | 5 | `polaris/cells/roles/session/tests/test_role_session_service.py` | `_reset_conversation_singleton` | **CRITICAL** | 重置 SessionService singleton | 可保留 |
@@ -29,13 +29,13 @@ Phase 4 专注于消除测试污染问题，通过以下措施：
 | 7 | `tests/test_kernelone_jsonl_ops.py` | `_reset_jsonl_module_state` | **HIGH** | 清除 _JSONL_BUFFER | 可保留 |
 | 8 | `tests/test_llm_evaluation_abstraction.py` | `_reset_embedding_port` | **HIGH** | 重置 embedding 模块全局变量 | 使用 isolation.py 管理 |
 | 9 | `tests/test_llm_evaluation_abstraction.py` | `_reset_reports_port` | **HIGH** | 重置 reports 模块全局变量 | 使用 isolation.py 管理 |
-| 10 | `tests/test_llm_phase0_regression.py` | `isolate_polaris_root` | **HIGH** | 设置 POLARIS_ROOT 环境变量 | 改为使用 `env_isolation()` |
+| 10 | `tests/test_llm_phase0_regression.py` | `isolate_polaris_root` | **HIGH** | 设置 KERNELONE_ROOT 环境变量 | 改为使用 `env_isolation()` |
 | 11 | `tests/test_llm_test_index_reconcile.py` | `_isolate_polaris_root` | **HIGH** | 同上 | 改为使用 `env_isolation()` |
 | 12 | `tests/test_llm_test_index_thread_safety.py` | `_isolate_reports_port` | **HIGH** | 重置 reports port | 使用 isolation.py 管理 |
 | 13 | `tests/test_storage_layout_v4.py` | `_polaris_metadata_dir` | **HIGH** | 设置 metadata dir | 改为 session-scope |
 | 14 | `polaris/kernelone/events/tests/test_sourcing_store.py` | `_inject_kernel_fs_adapter` | **MEDIUM** | 设置默认 adapter | 改为 module-scope |
 | 15 | `polaris/cells/factory/pipeline/tests/test_projection_*.py` x4 | `_configure_default_adapter` | **MEDIUM** | 4 个测试文件重复设置 | 合并到共享 conftest.py |
-| 16 | `polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py` | `_reset_env` | **MEDIUM** | 重置 POLARIS_TOOL_LOOP_MAX_STALL_CYCLES | 使用 `env_isolation()` |
+| 16 | `polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py` | `_reset_env` | **MEDIUM** | 重置 KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES | 使用 `env_isolation()` |
 | 17 | `tests/architecture/test_architecture_invariants.py` | `setup` | **MEDIUM** | 类级别 setup fixture | 可保留 |
 | 18 | `tests/test_llm_caller.py` | `clear_event_history` | **MEDIUM** | 清除事件历史 | 可保留 |
 | 19 | `polaris/kernelone/context/tests/conftest.py` | `configure_kernelone_test_defaults` | **MEDIUM** | 全局默认设置 | 可保留（session-scope） |
@@ -137,8 +137,8 @@ finally:
     manager.restore_modules(snapshot)
 
 # 示例 2: 环境变量隔离
-with manager.env_isolation(["POLARIS_ROOT"], {"POLARIS_ROOT": "/tmp/test"}):
-    os.environ["POLARIS_ROOT"] = "/tmp/test"
+with manager.env_isolation(["KERNELONE_ROOT"], {"KERNELONE_ROOT": "/tmp/test"}):
+    os.environ["KERNELONE_ROOT"] = "/tmp/test"
 
 # 示例 3: 模块全局变量隔离
 with manager.module_globals_isolation(
@@ -168,7 +168,7 @@ with reset_singletons({
 - **330 处** `monkeypatch.setenv/delenv` 调用
 - **61 个文件**使用 monkeypatch
 - 主要用途：
-  1. 环境变量隔离 (POLARIS_ROOT, KERNELONE_*)
+  1. 环境变量隔离 (KERNELONE_ROOT, KERNELONE_*)
   2. 模块属性修改
   3. sys.modules 操作
 

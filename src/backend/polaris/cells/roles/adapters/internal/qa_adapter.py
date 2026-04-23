@@ -302,7 +302,7 @@ class QAAdapter(BaseRoleAdapter):
     def _resolve_rework_retry_budget() -> int:
         raw = str(
             os.environ.get(
-                "POLARIS_DIRECTOR_TASK_REWORK_MAX_RETRIES",
+                "KERNELONE_DIRECTOR_TASK_REWORK_MAX_RETRIES",
                 str(_DEFAULT_DIRECTOR_TASK_REWORK_MAX_RETRIES),
             )
             or ""

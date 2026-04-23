@@ -112,8 +112,8 @@ function parseArgs(argv) {
     taskFile: "",
     dictionaryPath: "",
     dryRun: false,
-    untilPass: parseBoolEnv("POLARIS_HYBRID_UNTIL_PASS", true),
-    maxRounds: parseIntArg(process.env.POLARIS_HYBRID_MAX_ROUNDS, 0, "POLARIS_HYBRID_MAX_ROUNDS"),
+    untilPass: parseBoolEnv("KERNELONE_HYBRID_UNTIL_PASS", true),
+    maxRounds: parseIntArg(process.env.KERNELONE_HYBRID_MAX_ROUNDS, 0, "KERNELONE_HYBRID_MAX_ROUNDS"),
     configPath: defaultConfigPath,
     outputJson: "",
     allowProviderFallback: false,
@@ -123,11 +123,11 @@ function parseArgs(argv) {
     omniparserCommand: "",
     airtestCommand: "",
     sikulixCommand: "",
-    playwrightTimeoutMs: parseIntArg(process.env.POLARIS_HYBRID_PLAYWRIGHT_TIMEOUT_MS, 30 * 60 * 1000, "POLARIS_HYBRID_PLAYWRIGHT_TIMEOUT_MS"),
-    semanticTimeoutMs: parseIntArg(process.env.POLARIS_HYBRID_SEMANTIC_TIMEOUT_MS, 20 * 60 * 1000, "POLARIS_HYBRID_SEMANTIC_TIMEOUT_MS"),
-    computerUseTimeoutMs: parseIntArg(process.env.POLARIS_HYBRID_COMPUTER_USE_TIMEOUT_MS, 30 * 60 * 1000, "POLARIS_HYBRID_COMPUTER_USE_TIMEOUT_MS"),
-    omniparserTimeoutMs: parseIntArg(process.env.POLARIS_HYBRID_OMNIPARSER_TIMEOUT_MS, 10 * 60 * 1000, "POLARIS_HYBRID_OMNIPARSER_TIMEOUT_MS"),
-    visionTimeoutMs: parseIntArg(process.env.POLARIS_HYBRID_VISION_TIMEOUT_MS, 20 * 60 * 1000, "POLARIS_HYBRID_VISION_TIMEOUT_MS"),
+    playwrightTimeoutMs: parseIntArg(process.env.KERNELONE_HYBRID_PLAYWRIGHT_TIMEOUT_MS, 30 * 60 * 1000, "KERNELONE_HYBRID_PLAYWRIGHT_TIMEOUT_MS"),
+    semanticTimeoutMs: parseIntArg(process.env.KERNELONE_HYBRID_SEMANTIC_TIMEOUT_MS, 20 * 60 * 1000, "KERNELONE_HYBRID_SEMANTIC_TIMEOUT_MS"),
+    computerUseTimeoutMs: parseIntArg(process.env.KERNELONE_HYBRID_COMPUTER_USE_TIMEOUT_MS, 30 * 60 * 1000, "KERNELONE_HYBRID_COMPUTER_USE_TIMEOUT_MS"),
+    omniparserTimeoutMs: parseIntArg(process.env.KERNELONE_HYBRID_OMNIPARSER_TIMEOUT_MS, 10 * 60 * 1000, "KERNELONE_HYBRID_OMNIPARSER_TIMEOUT_MS"),
+    visionTimeoutMs: parseIntArg(process.env.KERNELONE_HYBRID_VISION_TIMEOUT_MS, 20 * 60 * 1000, "KERNELONE_HYBRID_VISION_TIMEOUT_MS"),
   };
 
   const trailingPrompt = [];
@@ -524,12 +524,12 @@ async function main() {
     );
   }
 
-  const allowLlmTests = parseBoolEnv("POLARIS_E2E_ALLOW_LLM_TESTS", false);
+  const allowLlmTests = parseBoolEnv("KERNELONE_E2E_ALLOW_LLM_TESTS", false);
   const llmSensitive = isLlmSensitiveText(options.prompt) || taskFileLooksLlmSensitive(options.taskFile);
   if (!allowLlmTests && llmSensitive) {
     throw new Error(
       "Blocked LLM-related hybrid task by default. " +
-      "Set POLARIS_E2E_ALLOW_LLM_TESTS=1 only when you intentionally need to test LLM settings.",
+      "Set KERNELONE_E2E_ALLOW_LLM_TESTS=1 only when you intentionally need to test LLM settings.",
     );
   }
 
@@ -572,19 +572,19 @@ async function main() {
 
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   const semanticCommand = options.semanticCommand
-    || String(process.env.POLARIS_HYBRID_SEMANTIC_CMD || "")
+    || String(process.env.KERNELONE_HYBRID_SEMANTIC_CMD || "")
     || String(config?.semantic?.command || "");
   const computerUseCommand = options.computerUseCommand
-    || String(process.env.POLARIS_COMPUTER_USE_CMD || "")
+    || String(process.env.KERNELONE_COMPUTER_USE_CMD || "")
     || String(config?.computer_use?.command || "");
   const omniparserCommand = options.omniparserCommand
-    || String(process.env.POLARIS_HYBRID_OMNIPARSER_CMD || "")
+    || String(process.env.KERNELONE_HYBRID_OMNIPARSER_CMD || "")
     || String(config?.vision_fallback?.omniparser?.command || "");
   const airtestCommand = options.airtestCommand
-    || String(process.env.POLARIS_AIRTEST_CMD || "")
+    || String(process.env.KERNELONE_AIRTEST_CMD || "")
     || String(config?.vision_fallback?.airtest?.command || "");
   const sikulixCommand = options.sikulixCommand
-    || String(process.env.POLARIS_SIKULIX_CMD || "")
+    || String(process.env.KERNELONE_SIKULIX_CMD || "")
     || String(config?.vision_fallback?.sikulix?.command || "");
   const semanticEnabled = config?.semantic?.enabled !== false;
   const computerUseEnabled = config?.computer_use?.enabled !== false;
@@ -646,8 +646,8 @@ async function main() {
       risks.push("Computer Use stage disabled: OPENAI_API_KEY is missing.");
     } else {
       const startUrl = String(
-        process.env.POLARIS_COMPUTER_USE_START_URL
-        || process.env.POLARIS_DEV_SERVER_URL
+        process.env.KERNELONE_COMPUTER_USE_START_URL
+        || process.env.KERNELONE_DEV_SERVER_URL
         || "http://127.0.0.1:5173",
       ).trim();
 
@@ -657,7 +657,7 @@ async function main() {
           computerUseStageEnabled = false;
           risks.push(
             `Computer Use stage disabled: start URL is unreachable (${startUrl}). ` +
-            "Start renderer (npm run dev:renderer) or set POLARIS_COMPUTER_USE_START_URL.",
+            "Start renderer (npm run dev:renderer) or set KERNELONE_COMPUTER_USE_START_URL.",
           );
         }
       }

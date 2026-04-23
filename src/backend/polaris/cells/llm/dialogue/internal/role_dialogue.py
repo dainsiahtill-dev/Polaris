@@ -65,12 +65,12 @@ _ROLE_TOOL_ROUND_OVERRIDES = {
 def _resolve_role_tool_rounds(role: str) -> int:
     normalized_role = str(role or "").strip().lower()
     role_default = _ROLE_TOOL_ROUND_OVERRIDES.get(normalized_role, _DEFAULT_ROLE_TOOL_ROUNDS)
-    role_env_key = f"POLARIS_ROLE_TOOL_ROUNDS_{normalized_role.upper()}" if normalized_role else ""
+    role_env_key = f"KERNELONE_ROLE_TOOL_ROUNDS_{normalized_role.upper()}" if normalized_role else ""
     raw_value = ""
     if role_env_key:
         raw_value = str(os.environ.get(role_env_key, "")).strip()
     if not raw_value:
-        raw_value = str(os.environ.get("POLARIS_ROLE_TOOL_ROUNDS", str(role_default))).strip()
+        raw_value = str(os.environ.get("KERNELONE_ROLE_TOOL_ROUNDS", str(role_default))).strip()
     try:
         parsed = int(raw_value)
     except (TypeError, ValueError):
@@ -275,11 +275,11 @@ def _execute_pending_tool_calls_via_orchestrator(
 
 # 角色输出质量分数阈值，可通过环境变量配置
 # 低于此分数的输出将被视为不成功
-_ROLE_QUALITY_SCORE_THRESHOLD = int(os.environ.get("POLARIS_ROLE_QUALITY_THRESHOLD", "60"))
+_ROLE_QUALITY_SCORE_THRESHOLD = int(os.environ.get("KERNELONE_ROLE_QUALITY_THRESHOLD", "60"))
 # 验证阈值范围
 if not 0 <= _ROLE_QUALITY_SCORE_THRESHOLD <= 100:
     logger.warning(
-        f"Invalid POLARIS_ROLE_QUALITY_THRESHOLD value: {_ROLE_QUALITY_SCORE_THRESHOLD}, using default 60"
+        f"Invalid KERNELONE_ROLE_QUALITY_THRESHOLD value: {_ROLE_QUALITY_SCORE_THRESHOLD}, using default 60"
     )
     _ROLE_QUALITY_SCORE_THRESHOLD = 60
 

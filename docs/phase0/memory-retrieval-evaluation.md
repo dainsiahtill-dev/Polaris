@@ -244,8 +244,8 @@ dependencies:
 
 # 可选配置
 environment:
-  POLARIS_EMBEDDING_MODEL: "nomic-embed-text"
-  POLARIS_MEMORY_REFS_MODE: "soft"  # soft | strict | off
+  KERNELONE_EMBEDDING_MODEL: "nomic-embed-text"
+  KERNELONE_MEMORY_REFS_MODE: "soft"  # soft | strict | off
 ```
 
 #### 测试数据准备

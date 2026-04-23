@@ -16,7 +16,7 @@ def _load_engine_module():
 
 def test_tri_council_is_deferred_before_retry_threshold(tmp_path, monkeypatch):
     mod = _load_engine_module()
-    monkeypatch.setenv("POLARIS_TRI_COUNCIL_START_RETRY", "5")
+    monkeypatch.setenv("KERNELONE_TRI_COUNCIL_START_RETRY", "5")
 
     payload = mod._run_tri_council_round(
         stage="post_qa_failure",
@@ -46,7 +46,7 @@ def test_tri_council_is_deferred_before_retry_threshold(tmp_path, monkeypatch):
 
 def test_tri_council_starts_after_retry_threshold(tmp_path, monkeypatch):
     mod = _load_engine_module()
-    monkeypatch.setenv("POLARIS_TRI_COUNCIL_START_RETRY", "5")
+    monkeypatch.setenv("KERNELONE_TRI_COUNCIL_START_RETRY", "5")
 
     payload = mod._run_tri_council_round(
         stage="post_qa_failure",

@@ -302,7 +302,7 @@ class TestEmitAuditEvent:
     def reset_gateway(self, tmp_path, monkeypatch):
         """重置 gateway 并设置环境变量"""
         AuditGateway.reset_instance(tmp_path)
-        monkeypatch.setenv("POLARIS_RUNTIME_BASE", str(tmp_path))
+        monkeypatch.setenv("KERNELONE_RUNTIME_BASE", str(tmp_path))
 
     def test_emit_audit_event(self, tmp_path):
         """测试便捷函数"""

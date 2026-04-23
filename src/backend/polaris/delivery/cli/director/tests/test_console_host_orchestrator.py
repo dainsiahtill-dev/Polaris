@@ -35,23 +35,23 @@ class TestUseOrchestrator:
     """Tests for _use_orchestrator feature flag logic."""
 
     def test_env_var_true_enables(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
         assert RoleConsoleHost._use_orchestrator({}) is True
 
     def test_env_var_false_disables(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "false")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "false")
         assert RoleConsoleHost._use_orchestrator({"enable_session_orchestrator": True}) is False
 
     def test_capability_profile_true_enables(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", raising=False)
+        monkeypatch.delenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", raising=False)
         assert RoleConsoleHost._use_orchestrator({"enable_session_orchestrator": True}) is True
 
     def test_capability_profile_false_disables(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", raising=False)
+        monkeypatch.delenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", raising=False)
         assert RoleConsoleHost._use_orchestrator({"enable_session_orchestrator": False}) is False
 
     def test_default_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", raising=False)
+        monkeypatch.delenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", raising=False)
         assert RoleConsoleHost._use_orchestrator({}) is False
 
 
@@ -205,7 +205,7 @@ class TestStreamTurnOrchestratorPath:
     def test_stream_turn_uses_orchestrator_when_flag_enabled(
         self, mock_host: RoleConsoleHost, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
 
         create_payload = {
             "id": "sess-orch",
@@ -254,7 +254,7 @@ class TestStreamTurnOrchestratorPath:
     def test_stream_turn_falls_back_to_legacy_on_controller_failure(
         self, mock_host: RoleConsoleHost, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
 
         create_payload = {
             "id": "sess-fallback",
@@ -297,7 +297,7 @@ class TestStreamTurnOrchestratorPath:
     def test_session_events_written_to_isolated_log(
         self, mock_host: RoleConsoleHost, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("POLARIS_ENABLE_SESSION_ORCHESTRATOR", "1")
+        monkeypatch.setenv("KERNELONE_ENABLE_SESSION_ORCHESTRATOR", "1")
         mock_host.workspace = str(tmp_path)
 
         create_payload = {

@@ -82,7 +82,7 @@ class TaskMarketService:
     - ``TaskStageFSM`` — state transition validation
 
     The store backend (JSON or SQLite) is selected via
-    ``POLARIS_TASK_MARKET_STORE`` or the ``get_store()`` factory.
+    ``KERNELONE_TASK_MARKET_STORE`` or the ``get_store()`` factory.
     """
 
     def __init__(self) -> None:
@@ -93,11 +93,11 @@ class TaskMarketService:
         self._consumer_loop_managers: dict[str, ConsumerLoopManager] = {}
         self._consumer_loop_managers_guard = threading.Lock()
         self._auto_reconciliation_enabled = self._read_bool_env(
-            "POLARIS_TASK_MARKET_ENABLE_RECONCILIATION_LOOP",
+            "KERNELONE_TASK_MARKET_ENABLE_RECONCILIATION_LOOP",
             default=False,
         )
         self._auto_reconciliation_interval_seconds = self._read_float_env(
-            "POLARIS_TASK_MARKET_RECONCILIATION_INTERVAL_SECONDS",
+            "KERNELONE_TASK_MARKET_RECONCILIATION_INTERVAL_SECONDS",
             default=30.0,
             min_value=1.0,
         )

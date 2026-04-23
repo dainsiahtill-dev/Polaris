@@ -416,7 +416,7 @@ class RoleAvailabilityProbe:
 
     @staticmethod
     def _generation_probe_attempts() -> int:
-        raw = str(os.environ.get("POLARIS_STRESS_PROBE_GENERATION_ATTEMPTS") or "").strip()
+        raw = str(os.environ.get("KERNELONE_STRESS_PROBE_GENERATION_ATTEMPTS") or "").strip()
         if raw:
             try:
                 value = int(raw)
@@ -428,7 +428,7 @@ class RoleAvailabilityProbe:
 
     def _generation_probe_timeout_seconds(self) -> float:
         raw = str(
-            os.environ.get("POLARIS_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS") or ""
+            os.environ.get("KERNELONE_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS") or ""
         ).strip()
         if raw:
             try:

@@ -81,7 +81,7 @@ python -m tests.agent_stress.observer --workspace C:/Temp/agent-stress-workspace
 框架按以下优先级解析 backend URL 和 token，无需手动配置端口：
 
 1. **CLI 参数**：`--backend-url` / `--token`（最高优先级）
-2. **环境变量**：`POLARIS_BASE_URL` / `POLARIS_TOKEN`
+2. **环境变量**：`KERNELONE_BASE_URL` / `KERNELONE_TOKEN`
 3. **Desktop backend info 文件**：`~/.polaris/runtime/desktop-backend.json`（Electron 桌面版写入）
 4. **自动自举**：若以上均无效，`backend_bootstrap.py` 会自动启动临时 backend 进程
 

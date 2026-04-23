@@ -394,8 +394,8 @@ def test_engine_qa_contract_failure_blocks_task(tmp_path, monkeypatch):
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_QA_MODE", "blocking")
-    monkeypatch.delenv("POLARIS_QA_UI_PLUGIN_ENABLED", raising=False)
+    monkeypatch.setenv("KERNELONE_QA_MODE", "blocking")
+    monkeypatch.delenv("KERNELONE_QA_UI_PLUGIN_ENABLED", raising=False)
 
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
@@ -496,8 +496,8 @@ def test_engine_delivery_floor_fails_thin_stress_project(tmp_path, monkeypatch):
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_QA_MODE", "blocking")
-    monkeypatch.setenv("POLARIS_DELIVERY_FLOOR_ENABLED", "1")
+    monkeypatch.setenv("KERNELONE_QA_MODE", "blocking")
+    monkeypatch.setenv("KERNELONE_DELIVERY_FLOOR_ENABLED", "1")
 
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
@@ -601,8 +601,8 @@ def test_engine_delivery_floor_passes_substantive_stress_project(tmp_path, monke
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_QA_MODE", "blocking")
-    monkeypatch.setenv("POLARIS_DELIVERY_FLOOR_ENABLED", "1")
+    monkeypatch.setenv("KERNELONE_QA_MODE", "blocking")
+    monkeypatch.setenv("KERNELONE_DELIVERY_FLOOR_ENABLED", "1")
 
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
@@ -700,8 +700,8 @@ def test_engine_delivery_floor_uses_workspace_lines_and_target_files_when_result
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_QA_MODE", "blocking")
-    monkeypatch.setenv("POLARIS_DELIVERY_FLOOR_ENABLED", "1")
+    monkeypatch.setenv("KERNELONE_QA_MODE", "blocking")
+    monkeypatch.setenv("KERNELONE_DELIVERY_FLOOR_ENABLED", "1")
 
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
@@ -812,8 +812,8 @@ def test_engine_ui_task_without_plugin_uses_rules_v1(tmp_path, monkeypatch):
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_QA_MODE", "blocking")
-    monkeypatch.delenv("POLARIS_QA_UI_PLUGIN_ENABLED", raising=False)
+    monkeypatch.setenv("KERNELONE_QA_MODE", "blocking")
+    monkeypatch.delenv("KERNELONE_QA_UI_PLUGIN_ENABLED", raising=False)
 
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
@@ -907,8 +907,8 @@ def test_engine_qa_failed_final_writes_human_queue(tmp_path, monkeypatch):
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_QA_MODE", "blocking")
-    monkeypatch.delenv("POLARIS_QA_UI_PLUGIN_ENABLED", raising=False)
+    monkeypatch.setenv("KERNELONE_QA_MODE", "blocking")
+    monkeypatch.delenv("KERNELONE_QA_UI_PLUGIN_ENABLED", raising=False)
 
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
@@ -1013,10 +1013,10 @@ def test_engine_tri_council_round_limit_escalates_to_architect(tmp_path, monkeyp
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_QA_MODE", "blocking")
-    monkeypatch.delenv("POLARIS_QA_UI_PLUGIN_ENABLED", raising=False)
-    monkeypatch.setenv("POLARIS_TRI_COUNCIL_ENABLED", "1")
-    monkeypatch.setenv("POLARIS_TRI_COUNCIL_MAX_ROUNDS", "2")
+    monkeypatch.setenv("KERNELONE_QA_MODE", "blocking")
+    monkeypatch.delenv("KERNELONE_QA_UI_PLUGIN_ENABLED", raising=False)
+    monkeypatch.setenv("KERNELONE_TRI_COUNCIL_ENABLED", "1")
+    monkeypatch.setenv("KERNELONE_TRI_COUNCIL_MAX_ROUNDS", "2")
 
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
@@ -1124,7 +1124,7 @@ def test_engine_dispatch_budget_preserves_dependency_closure(tmp_path, monkeypat
         result_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return 0
 
-    monkeypatch.setenv("POLARIS_ENGINE_MAX_TASKS_PER_ITERATION", "2")
+    monkeypatch.setenv("KERNELONE_ENGINE_MAX_TASKS_PER_ITERATION", "2")
     config = loop_pm.EngineRuntimeConfig(
         director_execution_mode="single",
         max_directors=1,

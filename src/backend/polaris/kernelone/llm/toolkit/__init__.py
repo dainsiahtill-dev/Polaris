@@ -293,7 +293,7 @@ def _check_duplicate_modules() -> None:
     ]
 
     strict = str(
-        os.environ.get("KERNELONE_TOOLKIT_STRICT_IMPORTS") or os.environ.get("POLARIS_TOOLKIT_STRICT_IMPORTS", "0")
+        os.environ.get("KERNELONE_TOOLKIT_STRICT_IMPORTS") or os.environ.get("KERNELONE_TOOLKIT_STRICT_IMPORTS", "0")
     ).strip().lower() in {
         "1",
         "true",

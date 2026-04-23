@@ -319,7 +319,7 @@ class NoopPmInvokePort:
 
 
 def _use_context_engine_v2() -> bool:
-    value = str(os.environ.get("POLARIS_CONTEXT_ENGINE", "")).strip().lower()
+    value = str(os.environ.get("KERNELONE_CONTEXT_ENGINE", "")).strip().lower()
     return value in ("v2", "context_v2", "engine_v2", "context-engine-v2")
 
 
@@ -352,7 +352,7 @@ def _build_pm_prompt_impl(
         )
 
     query = f"{requirements}\n{plan_text}"
-    context_root = str(workspace_root or os.environ.get("POLARIS_CONTEXT_ROOT") or os.getcwd()).strip()
+    context_root = str(workspace_root or os.environ.get("KERNELONE_CONTEXT_ROOT") or os.getcwd()).strip()
     if not context_root or not os.path.isdir(context_root):
         context_root = os.getcwd()
     context_root = os.path.abspath(context_root)

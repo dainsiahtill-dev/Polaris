@@ -18,8 +18,8 @@ def _import_io_utils():
 class TestRamdiskPaths(unittest.TestCase):
     def test_resolve_artifact_path_routes_hot_files_to_cache_root(self):
         io_utils = _import_io_utils()
-        prev_state = os.environ.get("POLARIS_STATE_TO_RAMDISK")
-        os.environ["POLARIS_STATE_TO_RAMDISK"] = "0"
+        prev_state = os.environ.get("KERNELONE_STATE_TO_RAMDISK")
+        os.environ["KERNELONE_STATE_TO_RAMDISK"] = "0"
         with tempfile.TemporaryDirectory() as workspace_dir, tempfile.TemporaryDirectory() as ramdisk_dir:
             workspace = os.path.abspath(workspace_dir)
             cache_root = io_utils.build_cache_root(ramdisk_dir, workspace)
@@ -49,9 +49,9 @@ class TestRamdiskPaths(unittest.TestCase):
             )
             self.assertTrue(os.path.commonpath([cold, cache_root]) == cache_root)
         if prev_state is None:
-            os.environ.pop("POLARIS_STATE_TO_RAMDISK", None)
+            os.environ.pop("KERNELONE_STATE_TO_RAMDISK", None)
         else:
-            os.environ["POLARIS_STATE_TO_RAMDISK"] = prev_state
+            os.environ["KERNELONE_STATE_TO_RAMDISK"] = prev_state
 
 
 if __name__ == "__main__":

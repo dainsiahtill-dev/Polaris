@@ -77,11 +77,11 @@ class TestDefaultBackendRoot:
         assert (root / "docs" / "graph" / "catalog" / "cells.yaml").is_file()
 
     def test_resolve_workspace_uses_env_var(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """`POLARIS_WORKSPACE` env var takes precedence."""
+        """`KERNELONE_WORKSPACE` env var takes precedence."""
         catalog_dir = tmp_path / "docs" / "graph" / "catalog"
         catalog_dir.mkdir(parents=True, exist_ok=True)
         (catalog_dir / "cells.yaml").write_text("cells: []\n", encoding="utf-8")
-        monkeypatch.setenv("POLARIS_WORKSPACE", str(tmp_path))
+        monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
         # Force module-level re-eval by patching at definition time won't work
         # for already-imported module constants; exercise through SearchService
         svc = SearchService(workspace=tmp_path)

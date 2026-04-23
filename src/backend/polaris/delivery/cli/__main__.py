@@ -112,7 +112,7 @@ def _add_log_level_argument(
         "--log-level",
         choices=CLI_LOG_LEVEL_CHOICES,
         default=default,
-        help=("CLI logging level. Supports debug/info/warn/warning/error/critical (or env POLARIS_CLI_LOG_LEVEL)."),
+        help=("CLI logging level. Supports debug/info/warn/warning/error/critical (or env KERNELONE_CLI_LOG_LEVEL)."),
     )
 
 
@@ -886,9 +886,9 @@ def _resolve_workspace(workspace: str) -> Path:
 
 
 def _bind_workspace_env(workspace: Path) -> None:
-    os.environ["POLARIS_CONTEXT_ROOT"] = str(workspace)
-    if not os.environ.get("POLARIS_RUNTIME_ROOT"):
-        os.environ["POLARIS_RUNTIME_ROOT"] = str(Path(workspace) / "runtime")
+    os.environ["KERNELONE_CONTEXT_ROOT"] = str(workspace)
+    if not os.environ.get("KERNELONE_RUNTIME_ROOT"):
+        os.environ["KERNELONE_RUNTIME_ROOT"] = str(Path(workspace) / "runtime")
 
 
 # ---------------------------------------------------------------------------

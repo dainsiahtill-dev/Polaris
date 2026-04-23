@@ -29,14 +29,14 @@ class TaskMarketMetrics:
         ``task_market_queue_depth{stage}``
         ``task_market_consumer_poll_total{role}``
 
-    Enabled via ``POLARIS_TASK_MARKET_METRICS_ENABLED`` (default: ``true``).
+    Enabled via ``KERNELONE_TASK_MARKET_METRICS_ENABLED`` (default: ``true``).
     """
 
     def __init__(self, enabled: bool | None = None) -> None:
         if enabled is not None:
             self._enabled = enabled
         else:
-            raw = str(os.environ.get("POLARIS_TASK_MARKET_METRICS_ENABLED", "true") or "true").strip().lower()
+            raw = str(os.environ.get("KERNELONE_TASK_MARKET_METRICS_ENABLED", "true") or "true").strip().lower()
             self._enabled = raw not in ("false", "0", "no", "off")
 
         # Counter: (operation, stage, ok) -> count

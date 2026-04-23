@@ -8,10 +8,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Environment variable constants
-_DOCS_INIT_MODE_ENV = "POLARIS_DOCS_INIT_MODE"
+_DOCS_INIT_MODE_ENV = "KERNELONE_DOCS_INIT_MODE"
 _DOCS_INIT_MODES = {"auto", "strict"}
 _DEFAULT_DOCS_INIT_MODE = "auto"
-_PM_DOC_STAGE_MODE_ENV = "POLARIS_PM_DOC_STAGE_MODE"
+_PM_DOC_STAGE_MODE_ENV = "KERNELONE_PM_DOC_STAGE_MODE"
 _PM_DOC_STAGE_MODES = {"auto", "on", "off"}
 
 # Path constants
@@ -105,19 +105,19 @@ def _load_cli_directive(args: Any) -> str:
 
 def _role_llm_docs_enabled() -> bool:
     """Check if role LLM docs generation is enabled."""
-    token = str(os.environ.get("POLARIS_ARCHITECT_LLM_DOCS_MODE", "on") or "on").strip().lower()
+    token = str(os.environ.get("KERNELONE_ARCHITECT_LLM_DOCS_MODE", "on") or "on").strip().lower()
     return token not in {"0", "false", "no", "off"}
 
 
 def _role_llm_docs_required() -> bool:
     """Check if role LLM docs generation is required."""
-    token = str(os.environ.get("POLARIS_ARCHITECT_LLM_DOCS_REQUIRED", "on") or "on").strip().lower()
+    token = str(os.environ.get("KERNELONE_ARCHITECT_LLM_DOCS_REQUIRED", "on") or "on").strip().lower()
     return token in {"1", "true", "yes", "on", "required", "strict"}
 
 
 def _role_llm_fields_enabled() -> bool:
     """Check if role LLM fields generation is enabled."""
-    token = str(os.environ.get("POLARIS_ARCHITECT_FIELDS_LLM_MODE", "on") or "on").strip().lower()
+    token = str(os.environ.get("KERNELONE_ARCHITECT_FIELDS_LLM_MODE", "on") or "on").strip().lower()
     return token not in {"0", "false", "no", "off"}
 
 

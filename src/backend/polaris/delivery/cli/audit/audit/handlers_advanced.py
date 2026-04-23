@@ -81,7 +81,7 @@ def handle_diagnose(args: argparse.Namespace, runtime_root: Path | None) -> int:
         if discovered:
             runtime_root = discovered
         else:
-            print("错误: 需要指定 --root 或设置 POLARIS_RUNTIME_BASE", file=sys.stderr)
+            print("错误: 需要指定 --root 或设置 KERNELONE_RUNTIME_BASE", file=sys.stderr)
             return 1
 
     result = diagnose_runtime(runtime_root)
@@ -99,7 +99,7 @@ def handle_factory_events(args: argparse.Namespace, runtime_root: Path | None) -
         if discovered:
             runtime_root = discovered
         else:
-            print("错误: 需要指定 --root 或设置 POLARIS_RUNTIME_BASE", file=sys.stderr)
+            print("错误: 需要指定 --root 或设置 KERNELONE_RUNTIME_BASE", file=sys.stderr)
             return 1
 
     collection = collect_factory_events(
@@ -158,7 +158,7 @@ def handle_search_errors(
         if discovered:
             runtime_root = discovered
         else:
-            print("错误: 需要指定 --root 或设置 POLARIS_RUNTIME_BASE", file=sys.stderr)
+            print("错误: 需要指定 --root 或设置 KERNELONE_RUNTIME_BASE", file=sys.stderr)
             return 1
 
     if not args.pattern:

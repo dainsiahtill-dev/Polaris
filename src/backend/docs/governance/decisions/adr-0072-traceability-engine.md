@@ -66,7 +66,7 @@ We will implement a structured **TraceabilityMatrix** as a first-class runtime a
 
 ## Related Documents
 
-- Blueprint: `docs/blueprints/POLARIS_V2_TRACEABILITY_BLUEPRINT_20260416.md`
+- Blueprint: `docs/blueprints/KERNELONE_V2_TRACEABILITY_BLUEPRINT_20260416.md`
 - Schema: `docs/governance/schemas/traceability-matrix.schema.yaml`
 - Gate: `docs/governance/ci/scripts/run_traceability_gate.py`
 - Verification Card: `docs/governance/templates/verification-cards/vc-20260416-traceability-engine.yaml`

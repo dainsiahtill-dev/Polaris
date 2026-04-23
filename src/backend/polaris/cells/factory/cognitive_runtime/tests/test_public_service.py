@@ -476,7 +476,7 @@ def test_public_service_rejects_graph_catalog_path_outside_workspace() -> None:
 
 def test_public_service_respects_cognitive_runtime_mode_off(monkeypatch) -> None:
     workspace = tempfile.mkdtemp(prefix="cognitive-runtime-off-")
-    monkeypatch.setenv("POLARIS_COGNITIVE_RUNTIME_MODE", "off")
+    monkeypatch.setenv("KERNELONE_COGNITIVE_RUNTIME_MODE", "off")
     runtime = CognitiveRuntimeService(
         session_service=cast("IRoleSessionService | None", _FakeRoleSessionService()),
         context_memory_service=cast("IRoleSessionContextMemoryService | None", _FakeContextMemoryService()),

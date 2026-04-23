@@ -81,7 +81,7 @@ def test_plan_parser_parses_cli_style_items() -> None:
 
 
 def test_write_gate_check_enforces_act_and_pm_scopes(monkeypatch) -> None:
-    monkeypatch.delenv("POLARIS_SCOPE_GATE_MODE", raising=False)
+    monkeypatch.delenv("KERNELONE_SCOPE_GATE_MODE", raising=False)
     ok, reason = write_gate_check(
         changed_files=["src/app.py"],
         act_files=["src/app.py", "src/utils.py"],
@@ -98,7 +98,7 @@ def test_write_gate_check_enforces_act_and_pm_scopes(monkeypatch) -> None:
     assert ok is True
     assert "scope expanded" in reason
 
-    monkeypatch.setenv("POLARIS_SCOPE_GATE_MODE", "strict")
+    monkeypatch.setenv("KERNELONE_SCOPE_GATE_MODE", "strict")
     ok, reason = write_gate_check(
         changed_files=["src/app.py", "scripts/build.py"],
         act_files=["src/app.py"],

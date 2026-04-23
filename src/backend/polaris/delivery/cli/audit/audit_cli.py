@@ -311,9 +311,9 @@ def build_parser() -> argparse.ArgumentParser:
         conflict_handler="resolve",
         epilog="""
 Environment Variables:
-  POLARIS_BACKEND_PORT   - Backend API port (default: 49977)
-  POLARIS_RUNTIME_BASE   - Runtime root directory
-  POLARIS_WORKSPACE      - Workspace path
+  KERNELONE_BACKEND_PORT   - Backend API port (default: 49977)
+  KERNELONE_RUNTIME_BASE   - Runtime root directory
+  KERNELONE_WORKSPACE      - Workspace path
 
 Exit Codes:
   0 - Success
@@ -603,7 +603,7 @@ def main() -> int:
     command = str(args.command)
     params = _command_params(args)
 
-    effective_workspace = workspace or os.environ.get("POLARIS_WORKSPACE") or "."
+    effective_workspace = workspace or os.environ.get("KERNELONE_WORKSPACE") or "."
     if command == "role-info":
         result = {
             "command": "role-info",

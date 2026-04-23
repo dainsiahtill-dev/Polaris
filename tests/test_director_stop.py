@@ -21,7 +21,7 @@ from core.polaris_loop.io_flags import (  # noqa: E402
 
 
 def test_director_stop_flag_roundtrip(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 

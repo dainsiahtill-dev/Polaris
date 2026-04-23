@@ -42,7 +42,7 @@ def list_ollama_models(project_root: str | None = None) -> list[str]:
 
     timeout_sec = 0
     try:
-        timeout_sec = int(str(os.environ.get("POLARIS_OLLAMA_CLI_TIMEOUT", "15")).strip())
+        timeout_sec = int(str(os.environ.get("KERNELONE_OLLAMA_CLI_TIMEOUT", "15")).strip())
     except (ValueError, TypeError):
         timeout_sec = 15
     timeout_val = timeout_sec if timeout_sec and timeout_sec > 0 else 15
@@ -98,7 +98,7 @@ def ollama_stop(project_root: str | None = None) -> dict[str, Any]:
 
     timeout_sec = 0
     try:
-        timeout_sec = int(str(os.environ.get("POLARIS_OLLAMA_CLI_TIMEOUT", "15")).strip())
+        timeout_sec = int(str(os.environ.get("KERNELONE_OLLAMA_CLI_TIMEOUT", "15")).strip())
     except (ValueError, TypeError):
         timeout_sec = 15
     timeout_val = timeout_sec if timeout_sec and timeout_sec > 0 else 15

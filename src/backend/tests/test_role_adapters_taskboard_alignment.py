@@ -100,7 +100,7 @@ async def test_director_adapter_disables_internal_tool_rounds_by_default(
             captured_context.update(context)
         return {"response": "ok"}
 
-    monkeypatch.delenv("POLARIS_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS", raising=False)
+    monkeypatch.delenv("KERNELONE_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS", raising=False)
     monkeypatch.setattr(director_adapter_module, "generate_role_response", _fake_generate_role_response)
 
     result = await adapter._call_role_llm("hello", context={})
@@ -125,7 +125,7 @@ async def test_director_adapter_can_enable_internal_tool_rounds_via_env(
             captured_context.update(context)
         return {"response": "ok"}
 
-    monkeypatch.setenv("POLARIS_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS", "1")
+    monkeypatch.setenv("KERNELONE_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS", "1")
     monkeypatch.setattr(director_adapter_module, "generate_role_response", _fake_generate_role_response)
 
     result = await adapter._call_role_llm("hello", context={})
@@ -1009,7 +1009,7 @@ async def test_director_call_role_llm_honors_retry_budget_env(
 
     monkeypatch.setattr(config_module, "get_settings", lambda: SimpleNamespace())
     monkeypatch.setattr(director_adapter_module, "generate_role_response", _fake_generate_role_response)
-    monkeypatch.setenv("POLARIS_DIRECTOR_KERNEL_MAX_RETRIES", "0")
+    monkeypatch.setenv("KERNELONE_DIRECTOR_KERNEL_MAX_RETRIES", "0")
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
     result = await adapter._call_role_llm("执行任务")
@@ -1100,13 +1100,13 @@ async def test_director_adapter_emits_trace_on_first_call_format_failure(
     and seq.error events are emitted through the trace pipeline.
 
     The key insight: patching _call_role_llm_with_timeout on the adapter instance
-    only works when the sequential engine actually runs. Since POLARIS_SEQ_ENABLED
+    only works when the sequential engine actually runs. Since KERNELONE_SEQ_ENABLED
     is false by default, _execute_sequential returns {"success": False} before
     invoking the engine. Therefore we patch _execute_sequential directly to
     simulate the engine's error path and verify the event emission.
     """
     import config as config_module
-    monkeypatch.setenv("POLARIS_SEQ_ENABLED", "true")
+    monkeypatch.setenv("KERNELONE_SEQ_ENABLED", "true")
     monkeypatch.setattr(config_module, "get_settings", lambda: SimpleNamespace())
 
     adapter = DirectorAdapter(workspace=str(tmp_path))
@@ -1422,7 +1422,7 @@ async def test_qa_adapter_marks_failed_when_rework_retry_exhausted(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("POLARIS_DIRECTOR_TASK_REWORK_MAX_RETRIES", "2")
+    monkeypatch.setenv("KERNELONE_DIRECTOR_TASK_REWORK_MAX_RETRIES", "2")
     adapter = QAAdapter(workspace=str(tmp_path))
     director_task = adapter.task_board.create(subject="实现账单导出", description="A", metadata={})
     adapter.task_board.update(

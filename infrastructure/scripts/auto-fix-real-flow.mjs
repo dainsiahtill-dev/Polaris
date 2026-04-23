@@ -69,17 +69,17 @@ function quoteForDisplay(value) {
 function parseArgs(argv) {
   const options = {
     dryRun: false,
-    skipBuild: parseBooleanEnv("POLARIS_REAL_FLOW_AUTOFIX_SKIP_BUILD", false),
+    skipBuild: parseBooleanEnv("KERNELONE_REAL_FLOW_AUTOFIX_SKIP_BUILD", false),
     maxFixAttempts: parseNonNegativeInt(
-      process.env.POLARIS_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS,
+      process.env.KERNELONE_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS,
       2,
-      "POLARIS_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS",
+      "KERNELONE_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS",
     ),
-    claudeModel: String(process.env.POLARIS_CLAUDE_MODEL || "").trim() || undefined,
-    permissionMode: String(process.env.POLARIS_CLAUDE_PERMISSION_MODE || "").trim() || "bypassPermissions",
-    agentName: String(process.env.POLARIS_CLAUDE_AGENT || "").trim() || undefined,
-    allowedTools: String(process.env.POLARIS_CLAUDE_ALLOWED_TOOLS || "").trim() || undefined,
-    noSessionPersistence: parseBooleanEnv("POLARIS_CLAUDE_NO_SESSION_PERSISTENCE", true),
+    claudeModel: String(process.env.KERNELONE_CLAUDE_MODEL || "").trim() || undefined,
+    permissionMode: String(process.env.KERNELONE_CLAUDE_PERMISSION_MODE || "").trim() || "bypassPermissions",
+    agentName: String(process.env.KERNELONE_CLAUDE_AGENT || "").trim() || undefined,
+    allowedTools: String(process.env.KERNELONE_CLAUDE_ALLOWED_TOOLS || "").trim() || undefined,
+    noSessionPersistence: parseBooleanEnv("KERNELONE_CLAUDE_NO_SESSION_PERSISTENCE", true),
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -285,7 +285,7 @@ function buildClaudePrompt(round, maxFixAttempts, artifactPaths) {
   const artifactLines = artifactPaths.length > 0
     ? artifactPaths.map((item) => `- ${item}`).join("\n")
     : "- test-results/electron/** (no specific file was detected yet)";
-  const realFlowCommand = `set POLARIS_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- ${toUnixPath(realFlowSpecRelativePath)}`;
+  const realFlowCommand = `set KERNELONE_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- ${toUnixPath(realFlowSpecRelativePath)}`;
   const lines = [
     "You are running a supervised Polaris repair round for the real PM/Director E2E flow.",
     `Round: ${round}/${maxFixAttempts}`,
@@ -482,7 +482,7 @@ async function main() {
   const buildArgs = ["run", "build"];
   const testEnv = {
     ...process.env,
-    POLARIS_E2E_USE_REAL_SETTINGS: "1",
+    KERNELONE_E2E_USE_REAL_SETTINGS: "1",
   };
   const auditPayload = {
     status: "FAIL",
@@ -516,7 +516,7 @@ async function main() {
         status: "DRY_RUN",
         preview: {
           build_command: `${npmCommand} ${buildArgs.join(" ")}`,
-          test_command: `set POLARIS_E2E_USE_REAL_SETTINGS=1 && ${npmCommand} ${testArgs.join(" ")}`,
+          test_command: `set KERNELONE_E2E_USE_REAL_SETTINGS=1 && ${npmCommand} ${testArgs.join(" ")}`,
           claude_command: `${claudeCommand} ${buildClaudeArgs(options).map((item) => quoteForDisplay(item)).join(" ")} < stdin:prompt`,
         },
       };

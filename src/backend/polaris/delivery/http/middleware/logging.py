@@ -3,10 +3,10 @@
 Provides structured request/response logging with timing information.
 
 Configuration:
-- POLARIS_LOG_REQUESTS: Enable/disable request logging (default: true)
-- POLARIS_LOG_REQUEST_BODY: Log request bodies (default: false for security)
-- POLARIS_LOG_RESPONSE_BODY: Log response bodies (default: false)
-- POLARIS_LOG_SLOW_REQUEST_MS: Threshold for slow request warning (default: 1000)
+- KERNELONE_LOG_REQUESTS: Enable/disable request logging (default: true)
+- KERNELONE_LOG_REQUEST_BODY: Log request bodies (default: false for security)
+- KERNELONE_LOG_RESPONSE_BODY: Log response bodies (default: false)
+- KERNELONE_LOG_SLOW_REQUEST_MS: Threshold for slow request warning (default: 1000)
 """
 
 from __future__ import annotations
@@ -55,10 +55,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
         # Explicit parameters take precedence over environment variables.
-        env_log_requests = os.environ.get("POLARIS_LOG_REQUESTS", "true").lower() not in ("false", "0", "no", "off")
+        env_log_requests = os.environ.get("KERNELONE_LOG_REQUESTS", "true").lower() not in ("false", "0", "no", "off")
         self._log_requests = log_requests if log_requests is not None else env_log_requests
 
-        env_log_request_body = os.environ.get("POLARIS_LOG_REQUEST_BODY", "false").lower() not in (
+        env_log_request_body = os.environ.get("KERNELONE_LOG_REQUEST_BODY", "false").lower() not in (
             "false",
             "0",
             "no",
@@ -66,7 +66,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         )
         self._log_request_body = log_request_body if log_request_body is not None else env_log_request_body
 
-        env_log_response_body = os.environ.get("POLARIS_LOG_RESPONSE_BODY", "false").lower() not in (
+        env_log_response_body = os.environ.get("KERNELONE_LOG_RESPONSE_BODY", "false").lower() not in (
             "false",
             "0",
             "no",
@@ -74,7 +74,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         )
         self._log_response_body = log_response_body if log_response_body is not None else env_log_response_body
 
-        self._slow_request_ms = float(os.environ.get("POLARIS_LOG_SLOW_REQUEST_MS", str(slow_request_ms)))
+        self._slow_request_ms = float(os.environ.get("KERNELONE_LOG_SLOW_REQUEST_MS", str(slow_request_ms)))
 
         if self._log_request_body:
             logger.warning(

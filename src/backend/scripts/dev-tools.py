@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 # Configuration
-POLARIS_DIRS = [
+KERNELONE_DIRS = [
     "polaris/bootstrap",
     "polaris/kernelone",
     "polaris/domain",
@@ -74,7 +74,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "check"] + POLARIS_DIRS + ["--output-format=concise"]
+    cmd = ["ruff", "check"] + KERNELONE_DIRS + ["--output-format=concise"]
     return run_command(cmd, "Ruff linter check")
 
 
@@ -84,7 +84,7 @@ def cmd_lint_fix(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "check"] + POLARIS_DIRS + ["--fix"]
+    cmd = ["ruff", "check"] + KERNELONE_DIRS + ["--fix"]
     return run_command(cmd, "Ruff linter with auto-fix")
 
 
@@ -94,7 +94,7 @@ def cmd_format(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "format", "--check"] + POLARIS_DIRS
+    cmd = ["ruff", "format", "--check"] + KERNELONE_DIRS
     return run_command(cmd, "Ruff format check")
 
 
@@ -104,7 +104,7 @@ def cmd_format_fix(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "format"] + POLARIS_DIRS
+    cmd = ["ruff", "format"] + KERNELONE_DIRS
     return run_command(cmd, "Ruff formatter")
 
 

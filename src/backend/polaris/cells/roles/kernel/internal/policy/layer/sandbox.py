@@ -48,9 +48,9 @@ class SandboxPolicy:
     @classmethod
     def from_env(cls) -> SandboxPolicy:
         """从环境变量构造（Phase 3 默认全允许）。"""
-        raw_allowed = os.environ.get("POLARIS_SANDBOX_ALLOWED_PATHS", "").strip()
-        raw_readonly = os.environ.get("POLARIS_SANDBOX_READONLY_PATHS", "").strip()
-        network = os.environ.get("POLARIS_SANDBOX_NETWORK", "true").lower() not in ("false", "0", "no")
+        raw_allowed = os.environ.get("KERNELONE_SANDBOX_ALLOWED_PATHS", "").strip()
+        raw_readonly = os.environ.get("KERNELONE_SANDBOX_READONLY_PATHS", "").strip()
+        network = os.environ.get("KERNELONE_SANDBOX_NETWORK", "true").lower() not in ("false", "0", "no")
         return cls(
             allowed_paths=[p.strip() for p in raw_allowed.split(",") if p.strip()],
             read_only_paths=[p.strip() for p in raw_readonly.split(",") if p.strip()],

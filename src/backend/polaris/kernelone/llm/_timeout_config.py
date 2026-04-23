@@ -5,7 +5,7 @@ LLM invocations. It serves as the single source of truth for timeout settings,
 replacing scattered global variables and duplicate env var handling.
 
 Design principles:
-1. KERNELONE_* / POLARIS_* env vars are the canonical source (via _runtime_config.py)
+1. KERNELONE_* / KERNELONE_* env vars are the canonical source (via _runtime_config.py)
 2. Stream and non-stream timeouts are configurable independently but managed together
 3. Backward compatibility via deprecated globals that delegate to this module
 """
@@ -43,7 +43,7 @@ def _load_config_from_env() -> None:
     """Load timeout configuration from environment variables.
 
     Called once at module import. Uses _runtime_config.py's fallback chain:
-    KERNELONE_* -> POLARIS_* -> default
+    KERNELONE_* -> KERNELONE_* -> default
     """
     global _global_invoke_timeout, _global_stream_timeout, _global_token_timeout, _global_max_concurrency
 

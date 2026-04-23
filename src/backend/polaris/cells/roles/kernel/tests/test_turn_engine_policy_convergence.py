@@ -430,8 +430,8 @@ class TestTurnEnginePolicyIntegration:
     @pytest.fixture(autouse=True)
     def _reset_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Reset PolicyLayer budget env vars before each test."""
-        monkeypatch.delenv("POLARIS_TOOL_LOOP_MAX_STALL_CYCLES", raising=False)
-        monkeypatch.delenv("POLARIS_TOOL_LOOP_MAX_TOTAL_CALLS", raising=False)
+        monkeypatch.delenv("KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES", raising=False)
+        monkeypatch.delenv("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", raising=False)
 
     def test_run_single_failed_tool_cycle_does_not_trigger_stall(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Single-turn kernel.run() under TransactionKernel: one tool call + LLM_ONCE finalization.

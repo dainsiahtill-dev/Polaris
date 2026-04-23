@@ -51,13 +51,13 @@ class QualityChecker:
 
     def __init__(self, workspace: str = "") -> None:
         self.workspace = workspace
-        # Quality threshold from environment variable (POLARIS_QUALITY_THRESHOLD)
+        # Quality threshold from environment variable (KERNELONE_QUALITY_THRESHOLD)
         self._quality_threshold = self._resolve_quality_threshold()
 
     @classmethod
     def _resolve_quality_threshold(cls) -> float:
         """Resolve quality threshold from environment variable."""
-        env_value = os.environ.get("POLARIS_QUALITY_THRESHOLD", "").strip()
+        env_value = os.environ.get("KERNELONE_QUALITY_THRESHOLD", "").strip()
         if env_value:
             try:
                 threshold = float(env_value)

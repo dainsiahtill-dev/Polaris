@@ -84,7 +84,7 @@ def _infer_workspace_from_plan_path(path: str) -> str:
     if docs_root:
         return docs_root
 
-    env_workspace = str(os.environ.get("POLARIS_WORKSPACE") or "").strip()
+    env_workspace = str(os.environ.get("KERNELONE_WORKSPACE") or "").strip()
     if env_workspace:
         env_workspace_abs = os.path.abspath(env_workspace)
         env_docs_root = _find_workspace_root(env_workspace_abs)

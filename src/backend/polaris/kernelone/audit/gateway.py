@@ -192,7 +192,7 @@ class AuditGateway:
         return [_to_legacy_event(item) for item in self._runtime.query_by_trace_id(trace_id, limit=limit)]
 
     def get_corruption_log(self, limit: int = 100) -> list[dict[str, Any]]:
-        # Priority: KERNELONE_WORKSPACE env var (via _runtime_config), then POLARIS_WORKSPACE fallback
+        # Priority: KERNELONE_WORKSPACE env var (via _runtime_config), then KERNELONE_WORKSPACE fallback
         ws = get_workspace()
         workspace = ws if ws else os.getcwd()
         return self._runtime.get_corruption_log(workspace=workspace, limit=limit)
@@ -220,7 +220,7 @@ class AuditGateway:
 
 def get_gateway(runtime_root: Path | None = None) -> AuditGateway:
     if runtime_root is None:
-        # Priority: KERNELONE_RUNTIME_BASE (via _runtime_config), then POLARIS_RUNTIME_BASE fallback
+        # Priority: KERNELONE_RUNTIME_BASE (via _runtime_config), then KERNELONE_RUNTIME_BASE fallback
         base = get_runtime_base() or "runtime"
         runtime_root = Path(base).resolve()
     return AuditGateway.get_instance(runtime_root)

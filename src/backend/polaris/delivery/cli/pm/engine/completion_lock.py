@@ -125,8 +125,8 @@ def _apply_task_stability_filters(
     if not isinstance(completed_fps, set):
         completed_fps = set()
 
-    max_tasks = _env_positive_int("POLARIS_ENGINE_MAX_TASKS_PER_ITERATION", 3)
-    max_touches_per_file = _env_positive_int("POLARIS_ENGINE_MAX_TOUCHES_PER_FILE", 3)
+    max_tasks = _env_positive_int("KERNELONE_ENGINE_MAX_TASKS_PER_ITERATION", 3)
+    max_touches_per_file = _env_positive_int("KERNELONE_ENGINE_MAX_TOUCHES_PER_FILE", 3)
     touch_counts = completion_state.get("touch_counts")
     if not isinstance(touch_counts, dict):
         touch_counts = {}

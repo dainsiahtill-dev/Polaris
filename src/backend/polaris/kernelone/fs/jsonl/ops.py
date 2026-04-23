@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════
 # Module-level configuration (initialized at import time)
-# Uses _runtime_config for KERNELONE_* / POLARIS_* fallback
+# Uses _runtime_config for KERNELONE_* / KERNELONE_* fallback
 # ═══════════════════════════════════════════════════════════════════
 _JSONL_LOCK_STALE_SEC: float = _runtime_config.resolve_env_float("jsonl_lock_stale_sec") or JSONL_LOCK_STALE_SECONDS
 _JSONL_BUFFER_ENABLED: bool = _runtime_config.resolve_env_bool("jsonl_buffered")

@@ -78,9 +78,9 @@ Polaris 审计系统由四个核心组件构成，形成完整的证据收集、
 
 所有审计数据存储在 workspace 外部，避免污染目标项目：
 
-1. **优先**: Ramdisk (`X:\`) - 若 `POLARIS_STATE_TO_RAMDISK` 启用
+1. **优先**: Ramdisk (`X:\`) - 若 `KERNELONE_STATE_TO_RAMDISK` 启用
 2. **备选**: 系统缓存目录 (`%LOCALAPPDATA%\Polaris\cache` 或 `~/.cache/polaris`)
-3. **兜底**: 显式 `POLARIS_RUNTIME_ROOT`
+3. **兜底**: 显式 `KERNELONE_RUNTIME_ROOT`
 
 路径结构: `{runtime_base}/.polaris/projects/{workspace_key}/runtime/`
 

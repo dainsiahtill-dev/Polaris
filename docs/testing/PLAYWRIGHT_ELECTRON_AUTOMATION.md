@@ -1,7 +1,7 @@
 # Playwright Electron 自动化流程手册
 
 > 默认会阻断 LLM 相关测试任务，避免覆盖本地 LLM 配置与角色连线。  
-> 如需显式放开，设置 `POLARIS_E2E_ALLOW_LLM_TESTS=1`。
+> 如需显式放开，设置 `KERNELONE_E2E_ALLOW_LLM_TESTS=1`。
 
 ## 最短命令速查
 
@@ -14,7 +14,7 @@ npx playwright install
 npm run test:e2e -- tests/electron/realtime-visibility.spec.ts tests/electron/panel-error.spec.ts
 
 # PM -> Director 全链路（需要真实设置）
-set POLARIS_E2E_USE_REAL_SETTINGS=1
+set KERNELONE_E2E_USE_REAL_SETTINGS=1
 npm run test:e2e -- tests/electron/pm-director-real-flow.spec.ts
 
 # Claude 无人值守修复循环（真实 PM -> Director 全链路）
@@ -75,7 +75,7 @@ npm run test:e2e
 
 1. 安装依赖：`npm install`
 2. 安装 Playwright 浏览器：`npx playwright install`
-3. Python 后端建议准备 `.venv`（夹具会优先使用），或设置 `POLARIS_PYTHON`
+3. Python 后端建议准备 `.venv`（夹具会优先使用），或设置 `KERNELONE_PYTHON`
 
 ---
 
@@ -86,7 +86,7 @@ npm run test:e2e
 3. 非 LLM 可见性回归：
    `npm run test:e2e -- tests/electron/realtime-visibility.spec.ts tests/electron/panel-error.spec.ts`
 4. PM -> Director 全链路：
-   `set POLARIS_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- tests/electron/pm-director-real-flow.spec.ts`
+   `set KERNELONE_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- tests/electron/pm-director-real-flow.spec.ts`
 5. 任务合同 dry-run（仅结构检查，不执行）：
    `npm run test:e2e:task -- --dry-run --task-file infrastructure/e2e/tasks/complex-project-fullstack.task.json`
 6. 混合栈 dry-run：
@@ -157,8 +157,8 @@ npm run test:e2e
 9. `E2E_PANEL_TASK_DICTIONARY`（可替代命令行 `--dictionary`）
 10. `E2E_PANEL_REQUIRE_ARIA_SNAPSHOT=1`（默认开启）
 11. `E2E_PANEL_SEMANTIC_CLICK=1`（默认开启）
-12. `POLARIS_PANEL_SEMANTIC_FALLBACK=1`（`run-panel-task-e2e` 失败后尝试语义兜底）
-13. `POLARIS_PANEL_SEMANTIC_CMD`（语义兜底命令模板，支持 `{prompt}` `{task_file}` `{workspace}`）
+12. `KERNELONE_PANEL_SEMANTIC_FALLBACK=1`（`run-panel-task-e2e` 失败后尝试语义兜底）
+13. `KERNELONE_PANEL_SEMANTIC_CMD`（语义兜底命令模板，支持 `{prompt}` `{task_file}` `{workspace}`）
 
 ### 7.2 panel-error.spec.ts 专用
 1. `E2E_PANEL_TRIGGER_SELECTOR` / `E2E_PANEL_TRIGGER_TEXT`
@@ -171,34 +171,34 @@ npm run test:e2e
 4. `E2E_PANEL_CODEX_DANGEROUS=1`
 
 ### 7.4 Claude 真实全链路修复循环
-1. `POLARIS_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS`（默认 2）
-2. `POLARIS_REAL_FLOW_AUTOFIX_SKIP_BUILD=1`
-3. `POLARIS_CLAUDE_MODEL`
-4. `POLARIS_CLAUDE_PERMISSION_MODE`（默认 `bypassPermissions`）
-5. `POLARIS_CLAUDE_AGENT`
-6. `POLARIS_CLAUDE_ALLOWED_TOOLS`
-7. `POLARIS_CLAUDE_NO_SESSION_PERSISTENCE=0`（默认关闭会话持久化）
+1. `KERNELONE_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS`（默认 2）
+2. `KERNELONE_REAL_FLOW_AUTOFIX_SKIP_BUILD=1`
+3. `KERNELONE_CLAUDE_MODEL`
+4. `KERNELONE_CLAUDE_PERMISSION_MODE`（默认 `bypassPermissions`）
+5. `KERNELONE_CLAUDE_AGENT`
+6. `KERNELONE_CLAUDE_ALLOWED_TOOLS`
+7. `KERNELONE_CLAUDE_NO_SESSION_PERSISTENCE=0`（默认关闭会话持久化）
 8. 基础提示词合同：`docs/prompt/元设计师-自动化测试v5.1.md`
 
 ### 7.5 Computer Use（OpenAI 适配器）
 1. `OPENAI_API_KEY`（必需）
 2. `OPENAI_BASE_URL`（可选）
-3. `POLARIS_COMPUTER_USE_MODEL`
-4. `POLARIS_COMPUTER_USE_START_URL`
-5. `POLARIS_COMPUTER_USE_MAX_STEPS`
-6. `POLARIS_COMPUTER_USE_HEADLESS`
+3. `KERNELONE_COMPUTER_USE_MODEL`
+4. `KERNELONE_COMPUTER_USE_START_URL`
+5. `KERNELONE_COMPUTER_USE_MAX_STEPS`
+6. `KERNELONE_COMPUTER_USE_HEADLESS`
 
 ### 7.6 Semantic / Stagehand
-1. `POLARIS_STAGEHAND_MODEL`（默认 `gpt-4.1-mini`）
-2. `POLARIS_STAGEHAND_START_URL`
-3. `POLARIS_STAGEHAND_TIMEOUT_MS`
-4. `POLARIS_STAGEHAND_HEADLESS`
-5. `POLARIS_STAGEHAND_VERIFY_CMD`
+1. `KERNELONE_STAGEHAND_MODEL`（默认 `gpt-4.1-mini`）
+2. `KERNELONE_STAGEHAND_START_URL`
+3. `KERNELONE_STAGEHAND_TIMEOUT_MS`
+4. `KERNELONE_STAGEHAND_HEADLESS`
+5. `KERNELONE_STAGEHAND_VERIFY_CMD`
 
 ### 7.7 OmniParser
-1. `POLARIS_HYBRID_OMNIPARSER_CMD`（hybrid 阶段命令模板）
-2. `POLARIS_OMNIPARSER_ENGINE_CMD`（外部 OmniParser 引擎命令，可选）
-3. `POLARIS_OMNIPARSER_TIMEOUT_MS`
+1. `KERNELONE_HYBRID_OMNIPARSER_CMD`（hybrid 阶段命令模板）
+2. `KERNELONE_OMNIPARSER_ENGINE_CMD`（外部 OmniParser 引擎命令，可选）
+3. `KERNELONE_OMNIPARSER_TIMEOUT_MS`
 
 ---
 
@@ -263,7 +263,7 @@ npm run test:e2e
 通常是 `panel-locators.json` 别名或 selectorCandidates 不够稳定。现在默认严格匹配会直接报错，优先补词典和 `data-testid`，不要长期依赖 fallback。
 
 2. 为什么本机运行和 CI 表现不同？  
-检查 `POLARIS_DEV_SERVER_URL`、本地 `.venv`、以及是否有额外弹窗/权限提示。
+检查 `KERNELONE_DEV_SERVER_URL`、本地 `.venv`、以及是否有额外弹窗/权限提示。
 
 3. 自动修复为什么不生效？  
 `auto:fix:panel` 依赖本地 Codex CLI 能执行（含登录态），并且需要可写工作区。

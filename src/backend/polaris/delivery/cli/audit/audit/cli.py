@@ -107,8 +107,8 @@ def _create_parser() -> argparse.ArgumentParser:
   %(prog)s query-repl --root X:/.../runtime        # 启动交互式查询
 
 环境变量:
-  POLARIS_RUNTIME_BASE    # 自动检测 runtime 目录
-  POLARIS_BACKEND_PORT    # 后端端口 (默认 49977)
+  KERNELONE_RUNTIME_BASE    # 自动检测 runtime 目录
+  KERNELONE_BACKEND_PORT    # 后端端口 (默认 49977)
         """,
     )
 
@@ -191,7 +191,7 @@ def main() -> None:
             runtime_root = discovered
         else:
             logger.error("错误: 未能自动发现 runtime 目录")
-            logger.error("提示: 请手动指定 --root 或设置 POLARIS_RUNTIME_BASE")
+            logger.error("提示: 请手动指定 --root 或设置 KERNELONE_RUNTIME_BASE")
             sys.exit(1)
 
     if args.root:

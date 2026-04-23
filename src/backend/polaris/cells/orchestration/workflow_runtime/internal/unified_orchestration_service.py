@@ -787,7 +787,7 @@ class UnifiedOrchestrationService(OrchestrationService):
             from polaris.cells.archive.run_archive.public.service import trigger_run_archive
 
             # Try to get workspace from environment variable first
-            workspace = os.environ.get("POLARIS_WORKSPACE")
+            workspace = os.environ.get("KERNELONE_WORKSPACE")
             if not workspace:
                 # Fallback to current directory.
                 workspace = "."

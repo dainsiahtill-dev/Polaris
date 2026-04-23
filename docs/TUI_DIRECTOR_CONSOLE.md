@@ -743,5 +743,5 @@ await pilot.pause(0.6)  # Full stream duration
 
 - **Textual Docs**: https://textual.textualize.io/
 - **Rich Console**: https://rich.readthedocs.io/
-- **Product Memo**: `docs/POLARIS_CLI_PRODUCT_MEMO_2026-03-23.md`
+- **Product Memo**: `docs/KERNELONE_CLI_PRODUCT_MEMO_2026-03-23.md`
 - **Cell Specification**: `polaris/cells/director/delivery/cell.yaml`
