@@ -88,7 +88,7 @@ class CellToKernelExecutorAdapter(ToolExecutorPort):
             # This is a synchronous method, so we need to block
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as pool:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 future = pool.submit(asyncio.run, coro)
                 result_dict = future.result()
         except RuntimeError:

@@ -208,7 +208,15 @@ class AsyncIndexManager:
     _workspace_key: str
 
     def __new__(cls, workspace: str | Path, *args, **kwargs) -> AsyncIndexManager:
-        """工作区隔离的单例模式 - 每个 workspace 独立一个管理器实例."""
+        """工作区隔离的单例模式 - 每个 workspace 独立一个管理器实例.
+
+        NOTE: This method creates asyncio.Lock objects inside threading.Lock
+        protected sections. This is safe here because:
+        1. asyncio.Lock() constructor does NOT require a running event loop
+        2. The lock is only acquired (async with) in async contexts where a
+           running loop is guaranteed to exist
+        3. We only modify dict structures, no async operations during lock
+        """
         workspace_key = str(Path(workspace).resolve())
 
         # 获取或创建该 workspace 的锁

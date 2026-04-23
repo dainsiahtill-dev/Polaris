@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -86,21 +87,22 @@ class ContentStore:
         self._hits: int = 0
         self._misses: int = 0
         self._evict_count: int = 0
-        # Unified asyncio.Lock for all state modifications
-        self._async_lock = asyncio.Lock()
+        # Use single threading.Lock for both sync and async paths
+        # to prevent deadlock from mixed lock types (see llm/engine/executor.py)
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
-    # Async core methods
+    # Sync core methods (used by both sync and async paths)
     # ------------------------------------------------------------------
 
-    async def _intern_async(self, content: str) -> ContentRef:
-        """Intern a string and return its canonical ContentRef (async core)."""
+    def _intern_sync(self, content: str) -> ContentRef:
+        """Intern a string and return its canonical ContentRef (sync core)."""
         raw = content.encode("utf-8")
         size = len(raw)
         h = hashlib.sha256(raw).hexdigest()[:24]
         mime = self._guess_mime(content)
 
-        async with self._async_lock:
+        with self._lock:
             if h in self._store:
                 # Collision detection
                 if self._store[h] != content:
@@ -116,7 +118,7 @@ class ContentStore:
                 return ContentRef(hash=h, size=size, mime=mime)
 
             # New entry -- ensure capacity first
-            await self._evict_if_needed_async(size)
+            self._evict_if_needed_sync(size)
 
             self._store[h] = content
             self._refs[h] = 1
@@ -134,9 +136,9 @@ class ContentStore:
 
             return ContentRef(hash=h, size=size, mime=mime)
 
-    async def _get_async(self, ref: ContentRef) -> str:
-        """Retrieve content by ref (async core)."""
-        async with self._async_lock:
+    def _get_sync(self, ref: ContentRef) -> str:
+        """Retrieve content by ref (sync core)."""
+        with self._lock:
             content = self._store.get(ref.hash)
             if content is not None:
                 self._access[ref.hash] = int(time.monotonic())
@@ -144,26 +146,26 @@ class ContentStore:
             self._misses += 1
             return f"<evicted:{ref.hash}>"
 
-    async def _get_if_present_async(self, ref: ContentRef) -> str | None:
-        """Retrieve content without affecting miss statistics (async core)."""
-        async with self._async_lock:
+    def _get_if_present_sync(self, ref: ContentRef) -> str | None:
+        """Retrieve content without affecting miss statistics (sync core)."""
+        with self._lock:
             content = self._store.get(ref.hash)
             if content is not None:
                 self._access[ref.hash] = int(time.monotonic())
                 return content
             return None
 
-    async def _release_async(self, ref: ContentRef) -> None:
-        """Decrement the reference count for a stored entry (async core)."""
-        async with self._async_lock:
+    def _release_sync(self, ref: ContentRef) -> None:
+        """Decrement the reference count for a stored entry (sync core)."""
+        with self._lock:
             count = self._refs.get(ref.hash, 0)
             if count <= 1:
                 self._refs[ref.hash] = 0
             else:
                 self._refs[ref.hash] = count - 1
 
-    async def _evict_if_needed_async(self, incoming_bytes: int) -> None:
-        """Evict entries to make room for *incoming_bytes* (async core).
+    def _evict_if_needed_sync(self, incoming_bytes: int) -> None:
+        """Evict entries to make room for *incoming_bytes* (sync core).
 
         Strategy:
             1. Evict all entries with ``ref_count == 0`` (oldest first).

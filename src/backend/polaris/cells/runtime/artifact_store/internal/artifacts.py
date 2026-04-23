@@ -682,7 +682,7 @@ def _build_pm_status(state: AppState) -> dict[str, Any]:
                 return None
 
         # Run in thread pool to avoid blocking
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future = executor.submit(asyncio.run, get_pm_service_status())
             pm_status = future.result(timeout=10)
     except (RuntimeError, ValueError) as exc:

@@ -28,6 +28,12 @@ import asyncio
 import atexit
 import codecs
 import concurrent.futures
+import os
+import time
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from polaris.kernelone.concurrency import UnifiedConcurrencyManager
 import json
 import logging
 import os
@@ -146,14 +152,77 @@ def _track_background_task(task: asyncio.Task[Any]) -> None:
 # directly, which blocks only the calling thread (not the event loop thread).
 # ---------------------------------------------------------------------------
 
-# Bounded pool for HTTP calls (reused across all provider helpers).
-# max_workers=32 matches the default ThreadPoolExecutor limit and is appropriate
-# for a moderate number of concurrent provider invocations.
-_BLOCKING_HTTP_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=32, thread_name_prefix="hp_blocking_http")
+# Lazy-loaded pools using UnifiedConcurrencyManager.
+# These are functions (not module-level singletons) to ensure proper event-loop
+# context initialization when get_concurrency_manager() is first called.
+_MAX_HTTP_WORKERS: int = int(os.environ.get("KERNELONE_HTTP_POOL_WORKERS", "32"))
+_MAX_SLEEP_WORKERS: int = int(os.environ.get("KERNELONE_SLEEP_POOL_WORKERS", "4"))
 
-# Dedicated pool for blocking sleeps (separated from HTTP to avoid head-of-line
-# blocking when slow HTTP calls occupy the HTTP pool).
-_SLEEP_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="hp_blocking_sleep")
+
+def _get_http_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Get or create the shared HTTP blocking pool."""
+    from polaris.kernelone.concurrency import get_concurrency_manager
+
+    return get_concurrency_manager().get_http_pool(max_workers=_MAX_HTTP_WORKERS)
+
+
+def _get_sleep_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Get or create the shared sleep pool."""
+    from polaris.kernelone.concurrency import get_concurrency_manager
+
+    return get_concurrency_manager().get_sleep_pool(max_workers=_MAX_SLEEP_WORKERS)
+
+
+# Backward compatibility: module-level pool references for external code that
+# may directly reference _BLOCKING_HTTP_POOL or _SLEEP_POOL.
+# These are initialized lazily on first access.
+_blocking_http_pool: concurrent.futures.ThreadPoolExecutor | None = None
+_sleep_pool: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_blocking_http_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Get the module-level HTTP pool (lazy initialization)."""
+    global _blocking_http_pool
+    if _blocking_http_pool is None:
+        _blocking_http_pool = _get_http_pool()
+    return _blocking_http_pool
+
+
+def _get_blocking_sleep_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Get the module-level sleep pool (lazy initialization)."""
+    global _sleep_pool
+    if _sleep_pool is None:
+        _sleep_pool = _get_sleep_pool()
+    return _sleep_pool
+
+
+# For backward compatibility with code that directly references _BLOCKING_HTTP_POOL
+class _LazyPool:
+    """Lazy pool proxy that defers initialization until first access.
+
+    Args:
+        pool_getter: A callable that returns the desired ThreadPoolExecutor.
+    """
+
+    __slots__ = ("_pool", "_pool_getter")
+
+    def __init__(self, pool_getter: Any) -> None:
+        self._pool: concurrent.futures.ThreadPoolExecutor | None = None
+        self._pool_getter = pool_getter
+
+    def __getattr__(self, name: str) -> Any:
+        if self._pool is None:
+            self._pool = self._pool_getter()
+        return getattr(self._pool, name)
+
+    def submit(self, fn: Any, *args: Any, **kwargs: Any) -> concurrent.futures.Future:
+        if self._pool is None:
+            self._pool = self._pool_getter()
+        return self._pool.submit(fn, *args, **kwargs)
+
+
+_BLOCKING_HTTP_POOL_LAZY = _LazyPool(_get_http_pool)
+_SLEEP_POOL_LAZY = _LazyPool(_get_blocking_sleep_pool)
 
 
 class CircuitOpenError(RuntimeError):
@@ -207,7 +276,7 @@ def _blocking_http_post(
         # ThreadPoolExecutor ensures we get a concurrent.futures.Future whose
         # .result() blocks correctly (not an asyncio.Future that raises
         # InvalidStateError).
-        future = _BLOCKING_HTTP_POOL.submit(_do_requests_post, url, headers, payload, timeout)
+        future = _get_blocking_http_pool().submit(_do_requests_post, url, headers, payload, timeout)
         return future.result()
 
     # Loop exists but is not running -- call directly.
@@ -235,7 +304,7 @@ def _blocking_sleep(seconds: float) -> None:
         # ThreadPoolExecutor ensures we get a concurrent.futures.Future whose
         # .result() blocks correctly (not an asyncio.Future that raises
         # InvalidStateError).
-        future = _SLEEP_POOL.submit(time.sleep, seconds)
+        future = _get_blocking_sleep_pool().submit(time.sleep, seconds)
         future.result()
     else:
         time.sleep(seconds)
@@ -791,7 +860,7 @@ def _blocking_http_get(
         # ThreadPoolExecutor ensures we get a concurrent.futures.Future whose
         # .result() blocks correctly (not an asyncio.Future that raises
         # InvalidStateError).
-        future = _BLOCKING_HTTP_POOL.submit(_do_requests_get, url, headers, timeout)
+        future = _get_blocking_http_pool().submit(_do_requests_get, url, headers, timeout)
         return future.result()
 
     return _do_requests_get(url, headers, timeout)

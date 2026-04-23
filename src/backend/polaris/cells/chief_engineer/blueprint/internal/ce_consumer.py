@@ -311,7 +311,7 @@ class CEConsumer:
             return asyncio.run(coro)
         except RuntimeError:
             loop = asyncio.new_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as pool:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 return pool.submit(loop.run_until_complete, coro).result()
 
 
