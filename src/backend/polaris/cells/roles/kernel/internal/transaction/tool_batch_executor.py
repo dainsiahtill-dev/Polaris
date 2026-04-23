@@ -30,6 +30,11 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     BlockedReason,
     DeliveryMode,
 )
+from polaris.cells.roles.kernel.internal.transaction.effect_policy import (
+    CompiledEffectPolicy,
+    EffectPolicyViolationError,
+    get_effect_policy_mode,
+)
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import build_workflow_handoff_context
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent as _default_requires_mutation_intent,
@@ -226,6 +231,7 @@ class ToolBatchExecutor:
         handoff_handler: Any,
         requires_mutation_intent: Callable[[str], bool] | None = None,
         tool_failure_circuit_breaker: ToolFailureCircuitBreaker | None = None,
+        effect_policy: CompiledEffectPolicy | None = None,
     ) -> None:
         self.tool_runtime = tool_runtime
         self.config = config
@@ -235,6 +241,7 @@ class ToolBatchExecutor:
         self.handoff_handler = handoff_handler
         self.requires_mutation_intent = requires_mutation_intent or _default_requires_mutation_intent
         self._tool_failure_circuit_breaker = tool_failure_circuit_breaker or ToolFailureCircuitBreaker()
+        self._effect_policy = effect_policy
         # FIX-20250422: Track files already read in this session to block redundant reads
         self._session_read_files: set[str] = set()
 
@@ -263,6 +270,59 @@ class ToolBatchExecutor:
                 dict(metadata),
             )
         raise RuntimeError(message)
+
+    def _check_effect_policy(
+        self,
+        invocations: list[Any],
+        turn_id: str,
+    ) -> None:
+        """Check tool invocations against the cell's effect policy.
+
+        In 'warn' mode: log violations but allow execution.
+        In 'strict' mode: raise EffectPolicyViolationError on first violation.
+        In 'off' mode: skip entirely.
+        """
+        mode = get_effect_policy_mode()
+        if mode == "off" or self._effect_policy is None:
+            return
+
+        for invocation in invocations:
+            tool_name = str(
+                invocation.get("tool_name", "")
+                if isinstance(invocation, dict)
+                else getattr(invocation, "tool_name", "")
+            )
+            effect_type = str(
+                invocation.get("effect_type", "")
+                if isinstance(invocation, dict)
+                else getattr(invocation, "effect_type", "")
+            )
+            arguments = (
+                dict(invocation.get("arguments", {}))
+                if isinstance(invocation, dict) and isinstance(invocation.get("arguments"), dict)
+                else {}
+            )
+
+            if not effect_type:
+                continue
+
+            verdict = self._effect_policy.check_tool_invocation(
+                tool_name=tool_name,
+                effect_type=effect_type,
+                arguments=arguments,
+            )
+
+            if not verdict.allowed:
+                if mode == "strict":
+                    raise EffectPolicyViolationError(verdict)
+                # warn mode: log and continue
+                logger.warning(
+                    "effect_policy_violation: turn_id=%s tool=%s effect=%s reason=%s",
+                    turn_id,
+                    tool_name,
+                    effect_type,
+                    verdict.reason,
+                )
 
     def _build_tool_batch_runtime(
         self,
@@ -744,6 +804,9 @@ class ToolBatchExecutor:
             len(self._session_read_files),
             turn_id,
         )
+
+        # Effect policy enforcement gate
+        self._check_effect_policy(invocations, turn_id)
 
         # === Phase 4a: 开始执行 ===
         if state_machine.current_state != TurnState.TOOL_BATCH_EXECUTING:

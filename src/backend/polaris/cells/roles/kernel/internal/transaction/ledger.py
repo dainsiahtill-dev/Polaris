@@ -88,6 +88,31 @@ class TransactionConfig:
     # === 重试配置 ===
     max_retry_attempts: int = 4
 
+    # === Effect Policy 模式 ===
+    effect_policy_mode: str = "default"
+
+    def __post_init__(self) -> None:
+        """Validate configuration invariants."""
+        if self.max_tool_execution_time_ms < 1000:
+            raise ValueError(f"max_tool_execution_time_ms must be >= 1000, got {self.max_tool_execution_time_ms}")
+        if self.max_retry_attempts < 0:
+            raise ValueError(f"max_retry_attempts must be >= 0, got {self.max_retry_attempts}")
+        if self.max_per_tool_result_chars < 100:
+            raise ValueError(f"max_per_tool_result_chars must be >= 100, got {self.max_per_tool_result_chars}")
+        if self.max_total_result_chars < self.max_per_tool_result_chars:
+            raise ValueError(
+                f"max_total_result_chars ({self.max_total_result_chars}) must be >= "
+                f"max_per_tool_result_chars ({self.max_per_tool_result_chars})"
+            )
+        if self.handoff_threshold_tools < 1:
+            raise ValueError(f"handoff_threshold_tools must be >= 1, got {self.handoff_threshold_tools}")
+        if not (0.0 <= self.inline_patch_escape_threshold <= 1.0):
+            raise ValueError(
+                f"inline_patch_escape_threshold must be in [0.0, 1.0], got {self.inline_patch_escape_threshold}"
+            )
+        if not (0.0 <= self.intent_embedding_threshold <= 1.0):
+            raise ValueError(f"intent_embedding_threshold must be in [0.0, 1.0], got {self.intent_embedding_threshold}")
+
 
 @dataclass
 class VisibleOutput:

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.cells.roles.kernel.internal.speculation.models import CancelToken, check_cancel
 from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolCallId,
     ToolEffectType,
@@ -109,11 +110,15 @@ class ExplorationWorkflowRuntime:
         synthesis_llm: Callable | None = None,  # async def synthesize(context) -> str
         max_steps: int = 10,
         timeout_ms: int = 60000,
+        cancel_token: CancelToken | None = None,
     ) -> None:
         self.tool_executor = tool_executor
         self.synthesis_llm = synthesis_llm
         self.max_steps = max_steps
         self.timeout_ms = timeout_ms
+
+        # Structured cancellation support
+        self._cancel_token: CancelToken | None = cancel_token
 
         # 探索历史
         self._explored_paths: set[str] = set()
@@ -139,6 +144,9 @@ class ExplorationWorkflowRuntime:
         start_ms = int(time.time() * 1000)
         decision.get("metadata", {})
 
+        # Check cancellation before starting work
+        check_cancel(self._cancel_token)
+
         # 构建探索计划
         plan = self._create_plan(decision)
 
@@ -148,6 +156,7 @@ class ExplorationWorkflowRuntime:
         try:
             # 执行初始工具批次
             if plan.initial_tools:
+                check_cancel(self._cancel_token)
                 initial_results = await self._execute_tools(plan.initial_tools)
                 tools_executed.extend(initial_results)
 
@@ -158,6 +167,7 @@ class ExplorationWorkflowRuntime:
             # 继续探索（如果需要）
             remaining_steps = plan.max_steps - len(plan.initial_tools)
             if remaining_steps > 0 and plan.strategy != "single_batch":
+                check_cancel(self._cancel_token)
                 additional_results = await self._continue_exploration(plan, remaining_steps)
                 tools_executed.extend(additional_results)
 
@@ -176,6 +186,28 @@ class ExplorationWorkflowRuntime:
                 duration_ms=duration_ms,
             )
             self._ledger.append({"phase": "execute", "turn_id": str(turn_id), "status": "completed"})
+            return result
+
+        except asyncio.CancelledError:
+            duration_ms = int(time.time() * 1000) - start_ms
+            cancel_reason = (
+                self._cancel_token.reason
+                if self._cancel_token is not None and self._cancel_token.cancelled
+                else "cancelled"
+            )
+            result = ExplorationResult(
+                turn_id=turn_id,
+                status=ExplorationStatus.CANCELLED,
+                steps_completed=len(tools_executed),
+                tools_executed=tools_executed,
+                discoveries=list(self._discovery_cache.keys()),
+                synthesis=None,
+                duration_ms=duration_ms,
+                error=cancel_reason,
+            )
+            self._ledger.append(
+                {"phase": "execute", "turn_id": str(turn_id), "status": "cancelled", "reason": cancel_reason}
+            )
             return result
 
         except asyncio.TimeoutError:
@@ -226,6 +258,9 @@ class ExplorationWorkflowRuntime:
         tools_executed: list[dict] = []
 
         try:
+            # Check cancellation before starting stream
+            check_cancel(self._cancel_token)
+
             # 执行初始工具批次
             if plan.initial_tools:
                 async for event in self._execute_tools_stream(plan.initial_tools, str(turn_id)):
@@ -258,6 +293,7 @@ class ExplorationWorkflowRuntime:
             # 继续探索
             remaining_steps = plan.max_steps - len(plan.initial_tools)
             if remaining_steps > 0 and plan.strategy != "single_batch":
+                check_cancel(self._cancel_token)
                 async for event in self._continue_exploration_stream(plan, remaining_steps, str(turn_id)):
                     yield event
                     if (
@@ -397,6 +433,9 @@ class ExplorationWorkflowRuntime:
         results = []
 
         for tool in tools:
+            # Check cancellation before each tool execution
+            check_cancel(self._cancel_token)
+
             tool_name = tool.get("tool_name", "unknown")
             arguments = tool.get("arguments", {})
             call_id = str(tool.get("call_id", ""))
@@ -454,6 +493,9 @@ class ExplorationWorkflowRuntime:
     ) -> AsyncIterator[ToolBatchEvent]:
         """流式执行工具列表，产出 ToolBatchEvent。"""
         for tool in tools:
+            # Check cancellation before each tool execution
+            check_cancel(self._cancel_token)
+
             tool_name = tool.get("tool_name", "unknown")
             arguments = dict(tool.get("arguments", {}))
             call_id = str(tool.get("call_id", ""))
@@ -536,6 +578,8 @@ class ExplorationWorkflowRuntime:
 
         # 简单策略：根据已有发现推断下一步
         for i in range(min(max_additional, 3)):  # 最多再执行3步
+            check_cancel(self._cancel_token)
+
             if not self._discovery_cache:
                 break
 
@@ -571,6 +615,8 @@ class ExplorationWorkflowRuntime:
             return
 
         for i in range(min(max_additional, 3)):
+            check_cancel(self._cancel_token)
+
             if not self._discovery_cache:
                 break
 
@@ -687,10 +733,16 @@ class ExplorationWorkflowRuntime:
         result = await self.synthesis_llm(context)
         return result  # type: ignore[no-any-return]
 
-    def cancel(self) -> None:
-        """取消探索"""
-        # 可以实现取消令牌
-        pass
+    def cancel(self, reason: str = "exploration_cancelled") -> None:
+        """Cancel the exploration workflow via its cancel token.
+
+        If no token was provided at construction time, one is created
+        internally so that subsequent ``check_cancel`` calls will observe
+        the cancellation.
+        """
+        if self._cancel_token is None:
+            self._cancel_token = CancelToken()
+        self._cancel_token.cancel(reason)
 
 
 # Backward compatibility alias

@@ -157,6 +157,19 @@ class CancelToken:
     def reason(self) -> str | None:
         return self._reason
 
+    def cancel_after(self, timeout_seconds: float, *, reason: str = "timeout") -> asyncio.TimerHandle | None:
+        """Schedule automatic cancellation after *timeout_seconds*.
+
+        Returns the :class:`asyncio.TimerHandle` so the caller can call
+        ``.cancel()`` on it to disarm the timer, or ``None`` when no running
+        event loop is available.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.call_later(timeout_seconds, self.cancel, reason)
+        except RuntimeError:
+            return None
+
 
 def check_cancel(token: CancelToken | None) -> None:
     """在工具 runner 的关键位置调用，主动响应取消."""

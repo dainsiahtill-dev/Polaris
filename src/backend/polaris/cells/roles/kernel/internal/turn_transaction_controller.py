@@ -275,6 +275,10 @@ class TurnTransactionController:
             guard_assert_single_tool_batch=_proxy_guard_assert_single_tool_batch,
             emit_event=self._emit_phase_event,
         )
+        # Active TruthLog recorder — set during execute()/execute_stream(),
+        # used by _emit_phase_event() for best-effort callback-path recording.
+        self._active_truthlog_recorder: TurnTruthLogRecorder | None = None
+
         self._stream_orchestrator = StreamOrchestrator(
             llm_provider=self.llm_provider,
             llm_provider_stream=self.llm_provider_stream,
@@ -780,6 +784,32 @@ class TurnTransactionController:
                 logger.warning("Event handler failed: %s", e)
                 continue
 
+        # Best-effort TruthLog recording for callback-emitted events.
+        # _emit_phase_event is synchronous but recorder.record() is async,
+        # so we schedule a fire-and-forget task on the running event loop.
+        recorder = self._active_truthlog_recorder
+        if recorder is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                turn_id_fallback = getattr(event_with_request_id, "turn_id", "") or ""
+                request_id_fallback = (
+                    getattr(event_with_request_id, "turn_request_id", "") or _TURN_REQUEST_ID_CONTEXT.get() or ""
+                )
+                _task = loop.create_task(
+                    self._record_turn_truthlog_event(
+                        recorder,
+                        event=event_with_request_id,
+                        turn_id_fallback=turn_id_fallback,
+                        turn_request_id_fallback=request_id_fallback,
+                    ),
+                    name="truthlog_callback_record",
+                )
+                # Fire-and-forget: suppress unhandled exception warnings
+                _task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            except RuntimeError:
+                # No running event loop (e.g., during shutdown)
+                pass
+
     # ---------------------------------------------------------------------------
     # 意图分类（hybrid 版本保留在 Facade，纯 regex 版本已下沉到 intent_classifier）
     # ---------------------------------------------------------------------------
@@ -986,47 +1016,66 @@ class TurnTransactionController:
         else:
             self._session_modification_contract = ledger.modification_contract
 
+        # Correlation context vars — mirror execute_stream() so that
+        # _emit_phase_event() can attach request/span IDs in non-stream mode.
+        effective_turn_request_id = self._generate_turn_request_id()
+        effective_turn_span_id = self._generate_span_id(prefix="turnspan")
+        request_id_token = _TURN_REQUEST_ID_CONTEXT.set(effective_turn_request_id)
+        span_id_token = _TURN_SPAN_ID_CONTEXT.set(effective_turn_span_id)
+        parent_span_token = _TURN_PARENT_SPAN_ID_CONTEXT.set(None)
+        truthlog_recorder = self._build_turn_truthlog_recorder(context)
+        self._active_truthlog_recorder = truthlog_recorder
         try:
-            logger.debug("[DEBUG] turn_execute_start: turn_id=%s mode=run", turn_id)
-            result = await self._execute_turn(turn_id, context, tool_definitions, state_machine, ledger, stream=False)
-            result["state_trajectory"] = [s[0] for s in ledger.state_history]
-            logger.debug(
-                "[DEBUG] turn_execute_end: turn_id=%s kind=%s terminal=%s",
-                turn_id,
-                result.get("kind", "unknown"),
-                state_machine.is_terminal(),
-            )
-
-            # Phase 3.2: Record successful turn outcome
-            metrics = result.get("metrics", {})
-            tokens_used = metrics.get("llm_calls", 0) * 500
-            self._record_turn_outcome(
-                turn_id=turn_id,
-                success=True,
-                tokens_used=tokens_used,
-            )
-
-            return result
-        except Exception as e:
-            logger.exception("execute failed: turn_id=%s", turn_id)
-
-            # Phase 3.2: Record failed turn outcome
-            self._record_turn_outcome(
-                turn_id=turn_id,
-                success=False,
-                error=str(e),
-            )
-
-            ledger.finalize()
-            self._emit_phase_event(
-                ErrorEvent(
-                    turn_id=turn_id,
-                    error_type=type(e).__name__,
-                    message=str(e),
-                    state_at_error=state_machine.state.name,
+            try:
+                logger.debug("[DEBUG] turn_execute_start: turn_id=%s mode=run", turn_id)
+                result = await self._execute_turn(
+                    turn_id, context, tool_definitions, state_machine, ledger, stream=False
                 )
-            )
-            raise
+                result["state_trajectory"] = [s[0] for s in ledger.state_history]
+                logger.debug(
+                    "[DEBUG] turn_execute_end: turn_id=%s kind=%s terminal=%s",
+                    turn_id,
+                    result.get("kind", "unknown"),
+                    state_machine.is_terminal(),
+                )
+
+                # Phase 3.2: Record successful turn outcome
+                metrics = result.get("metrics", {})
+                tokens_used = metrics.get("llm_calls", 0) * 500
+                self._record_turn_outcome(
+                    turn_id=turn_id,
+                    success=True,
+                    tokens_used=tokens_used,
+                )
+
+                return result
+            except Exception as e:
+                logger.exception("execute failed: turn_id=%s", turn_id)
+
+                # Phase 3.2: Record failed turn outcome
+                self._record_turn_outcome(
+                    turn_id=turn_id,
+                    success=False,
+                    error=str(e),
+                )
+
+                ledger.finalize()
+                self._emit_phase_event(
+                    ErrorEvent(
+                        turn_id=turn_id,
+                        error_type=type(e).__name__,
+                        message=str(e),
+                        state_at_error=state_machine.state.name,
+                    )
+                )
+                raise
+        finally:
+            self._active_truthlog_recorder = None
+            if truthlog_recorder is not None:
+                await self._shutdown_turn_truthlog_recorder(truthlog_recorder)
+            _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
+            _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
+            _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
 
     async def execute_stream(
         self,
@@ -1072,6 +1121,7 @@ class TurnTransactionController:
         span_id_token = _TURN_SPAN_ID_CONTEXT.set(effective_turn_span_id)
         parent_span_token = _TURN_PARENT_SPAN_ID_CONTEXT.set(parent_span_id)
         truthlog_recorder = self._build_turn_truthlog_recorder(context)
+        self._active_truthlog_recorder = truthlog_recorder
         try:
             try:
                 async for event in self._execute_turn_stream(turn_id, context, tool_definitions, state_machine, ledger):
@@ -1113,6 +1163,7 @@ class TurnTransactionController:
                 yield error_event
                 raise
         finally:
+            self._active_truthlog_recorder = None
             if truthlog_recorder is not None:
                 await self._shutdown_turn_truthlog_recorder(truthlog_recorder)
             _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)

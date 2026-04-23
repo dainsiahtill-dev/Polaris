@@ -421,8 +421,24 @@ class ToolBatchRuntime:
         context: ToolExecutionContext | None = None,
     ) -> list[BatchReceipt]:
         """并行执行只读工具"""
-        tasks = [self._execute_single(tool, turn_id, context=context) for tool in tools]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        loop = asyncio.get_running_loop()
+        _pending_tasks: list[asyncio.Task[ToolResult]] = [
+            loop.create_task(self._execute_single(tool, turn_id, context=context)) for tool in tools
+        ]
+
+        try:
+            results = await asyncio.gather(*_pending_tasks, return_exceptions=True)
+        finally:
+            # Cancel any still-running tasks on early exit (e.g. CancelledError
+            # propagating from the caller or from a CancelToken check).
+            for t in _pending_tasks:
+                if not t.done():
+                    t.cancel()
+            # Allow cancelled tasks to finish their cancellation path so they
+            # don't become orphaned coroutines.
+            still_running = [t for t in _pending_tasks if not t.done()]
+            if still_running:
+                await asyncio.gather(*still_running, return_exceptions=True)
 
         # 收集成功和失败的结果
         successful_results: list[ToolResult] = []

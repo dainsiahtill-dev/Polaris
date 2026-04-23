@@ -228,6 +228,9 @@ class SessionStartedEvent:
 
     session_id: str
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -241,6 +244,9 @@ class SessionWaitingHumanEvent:
     session_id: str
     reason: str
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -254,6 +260,9 @@ class SessionCompletedEvent:
     session_id: str
     reason: str | None = None
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:

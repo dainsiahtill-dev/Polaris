@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from polaris.cells.roles.kernel.public.transaction_contracts import (
     ModificationContract,
@@ -649,6 +650,8 @@ class RoleSessionOrchestrator:
         """流式执行多 Turn 会话编排。"""
         del context
 
+        session_span_id = f"session_{uuid4().hex}"
+
         if self.state.turn_count == 0:
             try:
                 from polaris.cells.roles.kernel.public.transaction_contracts import (
@@ -659,7 +662,10 @@ class RoleSessionOrchestrator:
             except Exception:  # noqa: BLE001
                 logger.debug("SLM singleton warmup trigger failed", exc_info=True)
 
-        yield SessionStartedEvent(session_id=self.session_id)
+        yield SessionStartedEvent(
+            session_id=self.session_id,
+            span_id=session_span_id,
+        )
         first_prompt = prompt
         envelope: TurnOutcomeEnvelope | None = None
         completion_event: CompletionEvent | None = None
@@ -755,6 +761,7 @@ class RoleSessionOrchestrator:
                         yield SessionWaitingHumanEvent(
                             session_id=self.session_id,
                             reason=f"DESTRUCTIVE_OPERATION_REQUIRES_APPROVAL:{hard_gate_check}",
+                            span_id=session_span_id,
                         )
                         return
                 if not is_first_turn and self.state.session_invariants.is_frozen():
@@ -812,6 +819,7 @@ class RoleSessionOrchestrator:
                     turn_id=f"{self.session_id}_turn{self.state.turn_count}",
                     context=turn_context,
                     tool_definitions=tool_definitions,
+                    parent_span_id=session_span_id,
                 ):
                     yield event
                     if isinstance(event, CompletionEvent):
@@ -886,6 +894,7 @@ class RoleSessionOrchestrator:
                     session_terminal_event = SessionWaitingHumanEvent(
                         session_id=self.session_id,
                         reason=turn_record["stop_reason"],
+                        span_id=session_span_id,
                     )
                     break
 
@@ -946,7 +955,11 @@ class RoleSessionOrchestrator:
         if session_terminal_event is not None:
             yield session_terminal_event
         elif not suppress_session_completion:
-            yield SessionCompletedEvent(session_id=self.session_id, reason=session_completed_reason)
+            yield SessionCompletedEvent(
+                session_id=self.session_id,
+                reason=session_completed_reason,
+                span_id=session_span_id,
+            )
 
     def _apply_read_only_termination_exemption(self, envelope: TurnOutcomeEnvelope) -> TurnOutcomeEnvelope:
         """Convert read-only auto-continue turns with visible output into final answers."""
