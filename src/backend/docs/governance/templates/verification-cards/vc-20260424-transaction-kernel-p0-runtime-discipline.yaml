@@ -1,0 +1,189 @@
+card_id: "vc-20260424-transaction-kernel-p0-runtime-discipline"
+bug_summary: >
+  Polaris 在 TransactionKernel 主路径上仍缺少 P0 运行时纪律闭环：
+  turn 级 correlation 主键不统一、缺少全事件 TruthLog、缺少 turn 内工具失败熔断、
+  以及 effects_allowed 到执行层的强制适配链路，导致可追溯性、安全收敛与副作用审计存在结构性风险。
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+  method: "execute_stream + tool execution pipeline"
+  symptom: "事件可关联性不足、过程事实不完整、turn 内失败收敛不足、策略与执行存在缝隙"
+
+assumptions:
+  - id: "A1"
+    statement: "TurnEvent 目前未携带统一 turn_request_id correlation 主键。"
+    status: verified_true
+    evidence: "polaris/cells/roles/kernel/public/turn_events.py:30,44,83,98,119,140,185"
+
+  - id: "A2"
+    statement: "工具并行执行仍以 asyncio.gather/wait_for 为主，尚未形成 turn 内失败熔断闭环。"
+    status: verified_true
+    evidence: "polaris/cells/roles/kernel/internal/tool_batch_runtime.py:97,345,425,525"
+
+  - id: "A3"
+    statement: "现有 Circuit Breaker 更偏语义停滞检测，不等价于工具失败阈值熔断。"
+    status: verified_true
+    evidence: "polaris/cells/roles/kernel/internal/circuit_breaker.py:1,246"
+
+  - id: "A4"
+    statement: "SandboxPolicy 已存在策略层判定，但执行层统一 enforcement adapter 尚未成型。"
+    status: verified_true
+    evidence: "polaris/cells/roles/kernel/internal/policy/layer/sandbox.py:22,60"
+
+  - id: "A5"
+    statement: "KernelOne 已具备可复用 async process 契约，可作为 enforcement adapter 执行后端基础。"
+    status: verified_true
+    evidence: "polaris/kernelone/process/async_contracts.py:300,353,396"
+
+  - id: "A6"
+    statement: "对标实现显示 Correlation+TruthLog+Fail-Closed 可显著提升可审计性。"
+    status: verified_true
+    evidence: >
+      codex-rs protocol/src/protocol.rs:126,133,1502;
+      rollout/src/recorder.rs:102,104,108,111,190,1604;
+      core/src/guardian/mod.rs:44,46,47;
+      sandboxing/src/manager.rs:24,142,171
+
+evidence:
+  - id: "E1"
+    source: "Polaris"
+    detail: "TurnEvent 结构以 turn_id 为中心，缺少统一 request correlation 字段。"
+    refs:
+      - "polaris/cells/roles/kernel/public/turn_events.py:30"
+      - "polaris/cells/roles/kernel/public/turn_events.py:44"
+
+  - id: "E2"
+    source: "Polaris"
+    detail: "ToolBatchRuntime 以 gather/wait_for 执行，缺少 turn 内失败阈值熔断语义。"
+    refs:
+      - "polaris/cells/roles/kernel/internal/tool_batch_runtime.py:425"
+      - "polaris/cells/roles/kernel/internal/tool_batch_runtime.py:525"
+
+  - id: "E3"
+    source: "Polaris"
+    detail: "SandboxPolicy 已存在，但主要停留在 policy evaluate 层。"
+    refs:
+      - "polaris/cells/roles/kernel/internal/policy/layer/sandbox.py:60"
+
+  - id: "E4"
+    source: "Codex-RS reference"
+    detail: "Submission/Event correlation 与 trace 上下文在协议层固化。"
+    refs:
+      - "C:/Users/dains/Downloads/codex-main/codex-rs/protocol/src/protocol.rs:126"
+      - "C:/Users/dains/Downloads/codex-main/codex-rs/protocol/src/protocol.rs:1502"
+
+  - id: "E5"
+    source: "Codex-RS reference"
+    detail: "Rollout writer 使用 append-only JSONL 与显式 Persist/Flush/Shutdown 控制。"
+    refs:
+      - "C:/Users/dains/Downloads/codex-main/codex-rs/rollout/src/recorder.rs:102"
+      - "C:/Users/dains/Downloads/codex-main/codex-rs/rollout/src/recorder.rs:190"
+
+pre_mortem:
+  failure_point: >
+    如果只引入字段或日志而不形成“Correlation -> TruthLog -> Breaker -> Enforcement”闭环，
+    系统会得到形式化增强但无法在高压场景下真正 fail-closed，最终仍出现不可追溯和越权执行风险。
+  risk_zone:
+    - "polaris/cells/roles/kernel/public/turn_events.py"
+    - "polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+    - "polaris/cells/roles/kernel/internal/tool_batch_runtime.py"
+    - "polaris/cells/roles/kernel/internal/policy/layer/*"
+    - "polaris/kernelone/process/*"
+
+verification_plan:
+  static_checks:
+    - description: "Ruff 规范与自动修复（最小变更路径）"
+      command: >
+        ruff check polaris/cells/roles/kernel/public/turn_events.py
+        polaris/cells/roles/kernel/internal/turn_transaction_controller.py
+        polaris/cells/roles/kernel/internal/transaction
+        polaris/cells/roles/kernel/internal/policy
+        polaris/kernelone/process --fix
+      expected: "0 errors / 0 warnings"
+      status: planned
+    - description: "Ruff 格式化"
+      command: >
+        ruff format polaris/cells/roles/kernel/public/turn_events.py
+        polaris/cells/roles/kernel/internal/turn_transaction_controller.py
+        polaris/cells/roles/kernel/internal/transaction
+        polaris/cells/roles/kernel/internal/policy
+        polaris/kernelone/process
+      expected: "All files formatted"
+      status: planned
+    - description: "Mypy 严格类型门禁（最小路径）"
+      command: >
+        mypy polaris/cells/roles/kernel/public/turn_events.py
+        polaris/cells/roles/kernel/internal/turn_transaction_controller.py
+        polaris/cells/roles/kernel/internal/transaction
+        polaris/cells/roles/kernel/internal/policy
+        polaris/kernelone/process
+      expected: "Success: no issues found"
+      status: planned
+
+  unit_tests:
+    - file: "polaris/cells/roles/kernel/tests/test_turn_event_correlation_lineage.py"
+      description: "所有 TurnEvent 携带 turn_request_id/span lineage。"
+      expected: "关键事件链路 100% 关联成功"
+      status: planned
+    - file: "polaris/cells/roles/kernel/tests/test_turn_truthlog_recorder.py"
+      description: "TruthLog append-only、顺序正确、支持 replay。"
+      expected: "同一 turn 可完整重放"
+      status: planned
+    - file: "polaris/cells/roles/kernel/tests/test_tool_failure_circuit_breaker.py"
+      description: "turn 内失败阈值熔断与计数重置策略。"
+      expected: "连续失败/累计失败触发 break，成功后重置连续计数"
+      status: planned
+    - file: "polaris/cells/roles/kernel/tests/test_effect_enforcement_adapter.py"
+      description: "策略编译与执行强制转换（fail-closed）。"
+      expected: "禁止副作用调用在执行层被拒绝"
+      status: planned
+
+  integration_tests:
+    - description: "Kernel+Runtime 最小回归"
+      command: >
+        pytest -q
+        polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py
+        polaris/cells/roles/kernel/tests/test_phase_timeout_loop_fix.py
+        polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py
+        polaris/cells/roles/kernel/tests/test_modification_contract.py
+      expected: "All pass"
+      status: planned
+
+  manual_check:
+    - "抽样核查 TruthLog JSONL：同一 turn_request_id 事件链必须可逆向串联。"
+    - "抽样核查 enforcement 拒绝事件：必须含 policy/effect_scope/decision_reason。"
+    - "抽样核查熔断事件：必须有 threshold hit 和 cancel propagation 证据。"
+
+risk:
+  - id: "R1"
+    severity: high
+    scenario: "Correlation 字段新增导致下游老消费者解析失败。"
+    mitigation: "字段增量兼容 + 默认值 + 契约回归测试。"
+  - id: "R2"
+    severity: high
+    scenario: "TruthLog 写入阻塞影响主链路时延。"
+    mitigation: "异步 writer + 有界队列 + 背压指标 + 降级策略。"
+  - id: "R3"
+    severity: high
+    scenario: "熔断阈值过低导致误中断。"
+    mitigation: "按 tool/effect_scope 分级阈值 + 可配置 + A/B 灰度。"
+  - id: "R4"
+    severity: high
+    scenario: "enforcement adapter 异常回退为 fail-open。"
+    mitigation: "强制 fail-closed，异常即拒绝执行并出具审计事件。"
+  - id: "R5"
+    severity: medium
+    scenario: "跨平台执行后端差异导致行为不一致。"
+    mitigation: "统一 EnforcementPlan 契约 + 平台后端能力矩阵测试。"
+
+related_adrs:
+  - "adr-0071-transaction-kernel-single-commit-and-context-plane-isolation"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-04-24"
+  verified_by: "codex-gpt-5"
+  verified_at: "2026-04-24"
+

@@ -53,10 +53,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Any
+from contextvars import ContextVar
+from dataclasses import asdict, is_dataclass, replace
+from typing import Any, cast
+from uuid import uuid4
 
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.kernel_guard import KernelGuard, KernelGuardError
@@ -96,6 +100,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     extract_latest_user_message,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
+from polaris.cells.roles.kernel.internal.transaction.truthlog_recorder import TurnTruthLogRecorder
 from polaris.cells.roles.kernel.internal.turn_decision_decoder import DecodeConfig, TurnDecisionDecoder
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -110,6 +115,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnEvent,
     TurnPhaseEvent,
 )
+from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +127,10 @@ _MONITORING_METRIC_KEYS: tuple[str, ...] = (
     "speculative.hit_rate",
     "speculative.false_positive_rate",
 )
+
+_TURN_REQUEST_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_request_id_context", default=None)
+_TURN_SPAN_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_span_id_context", default=None)
+_TURN_PARENT_SPAN_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_parent_span_id_context", default=None)
 
 
 class TurnTransactionController:
@@ -631,11 +641,141 @@ class TurnTransactionController:
         """注册事件处理器"""
         self._event_handlers.append(handler)
 
+    @staticmethod
+    def _generate_turn_request_id() -> str:
+        """生成单次 execute_stream 调用内稳定的 request id。"""
+        return f"turnreq_{uuid4().hex}"
+
+    @staticmethod
+    def _generate_span_id(*, prefix: str = "span") -> str:
+        """生成 span id。"""
+        return f"{prefix}_{uuid4().hex}"
+
+    @classmethod
+    def _attach_event_correlation(
+        cls,
+        event: TurnEvent,
+        *,
+        turn_request_id: str | None,
+        turn_span_id: str | None,
+        parent_span_id: str | None,
+    ) -> TurnEvent:
+        """给事件附加 correlation 信息（request/span/parent_span）。"""
+        has_request_field = hasattr(event, "turn_request_id")
+        has_span_field = hasattr(event, "span_id")
+        has_parent_span_field = hasattr(event, "parent_span_id")
+        if not any((has_request_field, has_span_field, has_parent_span_field)):
+            return event
+
+        updates: dict[str, Any] = {}
+
+        if (
+            has_request_field
+            and turn_request_id is not None
+            and getattr(event, "turn_request_id", None) != turn_request_id
+        ):
+            updates["turn_request_id"] = turn_request_id
+
+        if has_span_field:
+            current_span = getattr(event, "span_id", None)
+            if not current_span:
+                updates["span_id"] = cls._generate_span_id(prefix="span")
+
+        if has_parent_span_field:
+            current_parent = getattr(event, "parent_span_id", None)
+            resolved_parent = parent_span_id or turn_span_id
+            if not current_parent and resolved_parent:
+                updates["parent_span_id"] = resolved_parent
+
+        if not updates:
+            return event
+        return cast(TurnEvent, replace(cast(Any, event), **updates))
+
+    @staticmethod
+    def _resolve_workspace_for_truthlog(context: list[dict]) -> str:
+        """Resolve workspace path for turn truthlog persistence."""
+        for message in reversed(context):
+            if not isinstance(message, Mapping):
+                continue
+
+            metadata = message.get("metadata")
+            if isinstance(metadata, Mapping):
+                workspace = str(metadata.get("workspace", "") or metadata.get("cwd", "")).strip()
+                if workspace:
+                    return os.path.abspath(workspace)
+
+            workspace_direct = str(message.get("workspace", "") or message.get("cwd", "")).strip()
+            if workspace_direct:
+                return os.path.abspath(workspace_direct)
+
+        env_workspace = str(os.environ.get("KERNELONE_WORKSPACE", "")).strip()
+        if env_workspace:
+            return os.path.abspath(env_workspace)
+        return os.path.abspath(os.getcwd())
+
+    @classmethod
+    def _build_turn_truthlog_recorder(cls, context: list[dict]) -> TurnTruthLogRecorder | None:
+        """Build per-turn truthlog recorder. Failures are non-fatal for turn execution."""
+        try:
+            workspace = cls._resolve_workspace_for_truthlog(context)
+            runtime_root = resolve_polaris_roots(workspace).runtime_root
+            log_path = os.path.join(runtime_root, "events", "kernel.turn.truthlog.events.jsonl")
+            return TurnTruthLogRecorder(log_path)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("turn truthlog recorder init failed: %s", exc)
+            return None
+
+    @staticmethod
+    async def _record_turn_truthlog_event(
+        recorder: TurnTruthLogRecorder,
+        *,
+        event: TurnEvent,
+        turn_id_fallback: str,
+        turn_request_id_fallback: str,
+    ) -> None:
+        """Best-effort append of one turn event into TruthLog."""
+        if is_dataclass(event):
+            payload: Any = asdict(event)
+        else:
+            payload = {"repr": repr(event)}
+
+        event_turn_id = str(getattr(event, "turn_id", turn_id_fallback) or turn_id_fallback)
+        event_request_id = str(getattr(event, "turn_request_id", turn_request_id_fallback) or turn_request_id_fallback)
+        event_type = type(event).__name__
+
+        try:
+            await recorder.record(
+                turn_id=event_turn_id,
+                turn_request_id=event_request_id,
+                event_type=event_type,
+                payload=payload,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            logger.warning("turn truthlog record failed: %s", exc)
+
+    @staticmethod
+    async def _shutdown_turn_truthlog_recorder(recorder: TurnTruthLogRecorder) -> None:
+        """Best-effort flush and shutdown for TruthLog recorder."""
+        try:
+            await recorder.flush()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            logger.warning("turn truthlog flush failed: %s", exc)
+        try:
+            await recorder.shutdown()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            logger.warning("turn truthlog shutdown failed: %s", exc)
+
     def _emit_phase_event(self, event: TurnEvent) -> None:
         """发送事件"""
+        event_with_request_id = self._attach_event_correlation(
+            event,
+            turn_request_id=_TURN_REQUEST_ID_CONTEXT.get(),
+            turn_span_id=_TURN_SPAN_ID_CONTEXT.get(),
+            parent_span_id=_TURN_PARENT_SPAN_ID_CONTEXT.get(),
+        )
         for handler in self._event_handlers:
             try:
-                handler(event)
+                handler(event_with_request_id)
             except (RuntimeError, ValueError) as e:
                 logger.warning("Event handler failed: %s", e)
                 continue
@@ -889,7 +1029,12 @@ class TurnTransactionController:
             raise
 
     async def execute_stream(
-        self, turn_id: str, context: list[dict], tool_definitions: list[dict]
+        self,
+        turn_id: str,
+        context: list[dict],
+        tool_definitions: list[dict],
+        turn_request_id: str | None = None,
+        parent_span_id: str | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """
         流式执行turn
@@ -921,16 +1066,58 @@ class TurnTransactionController:
         else:
             self._session_modification_contract = ledger.modification_contract
 
+        effective_turn_request_id = turn_request_id or self._generate_turn_request_id()
+        effective_turn_span_id = self._generate_span_id(prefix="turnspan")
+        request_id_token = _TURN_REQUEST_ID_CONTEXT.set(effective_turn_request_id)
+        span_id_token = _TURN_SPAN_ID_CONTEXT.set(effective_turn_span_id)
+        parent_span_token = _TURN_PARENT_SPAN_ID_CONTEXT.set(parent_span_id)
+        truthlog_recorder = self._build_turn_truthlog_recorder(context)
         try:
-            async for event in self._execute_turn_stream(turn_id, context, tool_definitions, state_machine, ledger):
-                yield event
-        except Exception as e:
-            logger.exception("execute_stream failed: turn_id=%s", turn_id)
-            ledger.finalize()
-            yield ErrorEvent(
-                turn_id=turn_id, error_type=type(e).__name__, message=str(e), state_at_error=state_machine.state.name
-            )
-            raise
+            try:
+                async for event in self._execute_turn_stream(turn_id, context, tool_definitions, state_machine, ledger):
+                    event_with_request_id = self._attach_event_correlation(
+                        event,
+                        turn_request_id=effective_turn_request_id,
+                        turn_span_id=effective_turn_span_id,
+                        parent_span_id=parent_span_id,
+                    )
+                    if truthlog_recorder is not None:
+                        await self._record_turn_truthlog_event(
+                            truthlog_recorder,
+                            event=event_with_request_id,
+                            turn_id_fallback=turn_id,
+                            turn_request_id_fallback=effective_turn_request_id,
+                        )
+                    yield event_with_request_id
+            except Exception as e:
+                logger.exception("execute_stream failed: turn_id=%s", turn_id)
+                ledger.finalize()
+                error_event = self._attach_event_correlation(
+                    ErrorEvent(
+                        turn_id=turn_id,
+                        error_type=type(e).__name__,
+                        message=str(e),
+                        state_at_error=state_machine.state.name,
+                    ),
+                    turn_request_id=effective_turn_request_id,
+                    turn_span_id=effective_turn_span_id,
+                    parent_span_id=parent_span_id,
+                )
+                if truthlog_recorder is not None:
+                    await self._record_turn_truthlog_event(
+                        truthlog_recorder,
+                        event=error_event,
+                        turn_id_fallback=turn_id,
+                        turn_request_id_fallback=effective_turn_request_id,
+                    )
+                yield error_event
+                raise
+        finally:
+            if truthlog_recorder is not None:
+                await self._shutdown_turn_truthlog_recorder(truthlog_recorder)
+            _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
+            _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
+            _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
 
     # ---------------------------------------------------------------------------
     # Core orchestration

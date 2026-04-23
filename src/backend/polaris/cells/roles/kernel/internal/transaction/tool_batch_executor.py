@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any, NoReturn, cast
 
+from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
@@ -43,6 +44,9 @@ from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
     record_receipts_to_ledger,
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_latest_user_message
+from polaris.cells.roles.kernel.internal.transaction.tool_failure_circuit_breaker import (
+    ToolFailureCircuitBreaker,
+)
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
@@ -221,6 +225,7 @@ class ToolBatchExecutor:
         finalization_handler: Any,
         handoff_handler: Any,
         requires_mutation_intent: Callable[[str], bool] | None = None,
+        tool_failure_circuit_breaker: ToolFailureCircuitBreaker | None = None,
     ) -> None:
         self.tool_runtime = tool_runtime
         self.config = config
@@ -229,6 +234,7 @@ class ToolBatchExecutor:
         self.finalization_handler = finalization_handler
         self.handoff_handler = handoff_handler
         self.requires_mutation_intent = requires_mutation_intent or _default_requires_mutation_intent
+        self._tool_failure_circuit_breaker = tool_failure_circuit_breaker or ToolFailureCircuitBreaker()
         # FIX-20250422: Track files already read in this session to block redundant reads
         self._session_read_files: set[str] = set()
 
@@ -265,6 +271,7 @@ class ToolBatchExecutor:
         batch_idempotency_key: str = "",
         side_effect_class: str = "readonly",
         turn_id: str = "",
+        cancel_token: CancelToken | None = None,
     ) -> ToolBatchRuntime:
         return ToolBatchRuntime(
             executor=self.tool_runtime,
@@ -272,6 +279,7 @@ class ToolBatchExecutor:
                 workspace=workspace or ".",
                 timeout_ms=self.config.max_tool_execution_time_ms,
                 turn_id=turn_id,
+                cancel_token=cancel_token,
                 batch_idempotency_key=batch_idempotency_key,
                 side_effect_class=side_effect_class,  # type: ignore[arg-type]
             ),
@@ -746,6 +754,7 @@ class ToolBatchExecutor:
         # Speculative Execution Kernel v2 integration
         receipts_as_dicts: list[dict] = []
         replay_invocations: list[Any] = []
+        batch_cancel_token = CancelToken()
 
         if shadow_engine is not None and hasattr(shadow_engine, "resolve_or_execute"):
             for invocation in invocations:
@@ -817,7 +826,11 @@ class ToolBatchExecutor:
                     inv for inv in replay_invocations if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT
                 ],
             )
-            receipts = await self._build_tool_batch_runtime(workspace, turn_id=turn_id).execute_batch(
+            receipts = await self._build_tool_batch_runtime(
+                workspace,
+                turn_id=turn_id,
+                cancel_token=batch_cancel_token,
+            ).execute_batch(
                 replay_batch,
                 TurnId(turn_id),
             )
@@ -930,6 +943,25 @@ class ToolBatchExecutor:
         ):
             raise RuntimeError(
                 "single_batch_contract_violation: stale_edit blocked write invocation; requires_bootstrap_read"
+            )
+
+        breaker_snapshot = self._tool_failure_circuit_breaker.evaluate_batch(
+            turn_id=turn_id,
+            receipts=receipts_as_dicts,
+            invocations=invocations,
+        )
+        if breaker_snapshot.triggered:
+            batch_cancel_token.cancel("tool_failure_circuit_breaker_triggered")
+            raise RuntimeError(
+                "single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
+                f"turn_id={breaker_snapshot.turn_id} "
+                f"batch_failures={breaker_snapshot.batch_failures} "
+                f"consecutive_failures={breaker_snapshot.consecutive_failures} "
+                f"total_failures={breaker_snapshot.total_failures} "
+                f"consecutive_threshold={breaker_snapshot.consecutive_threshold} "
+                f"total_threshold={breaker_snapshot.total_threshold} "
+                f"trigger_reason={breaker_snapshot.trigger_reason} "
+                f"triggered_dimension={breaker_snapshot.triggered_dimension or 'none'}"
             )
 
         # === Phase 4b: 执行完成 ===

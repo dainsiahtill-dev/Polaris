@@ -12,7 +12,10 @@ Tests for Turn Transaction Controller
 """
 
 import json
+import shutil
+from pathlib import Path
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from polaris.cells.roles.kernel.internal.metrics import MetricsCollector
@@ -25,6 +28,7 @@ from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     TurnTransactionController,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
+from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 
 
 def _native_tool_call(
@@ -827,6 +831,146 @@ class TestStreaming:
 
         # 有完成事件
         assert any(isinstance(e, CompletionEvent) for e in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_execute_uses_provided_turn_request_id(
+        self, controller, mock_llm_provider, basic_context, basic_tool_definitions
+    ) -> None:
+        """execute_stream 显式传入 turn_request_id 时应贯穿所有 TurnEvent。"""
+        mock_llm_provider.return_value = {
+            "content": "Streamed answer with explicit request id.",
+            "model": "claude",
+            "usage": {"prompt_tokens": 80, "completion_tokens": 20},
+        }
+
+        request_id = "req_explicit_123"
+        events: list[object] = []
+        async for event in controller.execute_stream(
+            turn_id="turn_stream_explicit_request_id",
+            context=basic_context,
+            tool_definitions=basic_tool_definitions,
+            turn_request_id=request_id,
+        ):
+            events.append(event)
+
+        assert events
+        assert any(isinstance(e, CompletionEvent) for e in events)
+        assert all(getattr(event, "turn_request_id", None) == request_id for event in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_execute_auto_generates_turn_request_id(
+        self, controller, mock_llm_provider, basic_context, basic_tool_definitions
+    ) -> None:
+        """execute_stream 未传 turn_request_id 时应自动生成且在同次流内稳定。"""
+        mock_llm_provider.return_value = {
+            "content": "Streamed answer with generated request id.",
+            "model": "claude",
+            "usage": {"prompt_tokens": 80, "completion_tokens": 20},
+        }
+
+        events: list[object] = []
+        async for event in controller.execute_stream(
+            turn_id="turn_stream_auto_request_id",
+            context=basic_context,
+            tool_definitions=basic_tool_definitions,
+        ):
+            events.append(event)
+
+        assert events
+        request_ids = {getattr(event, "turn_request_id", None) for event in events}
+        assert len(request_ids) == 1
+        generated_request_id = request_ids.pop()
+        assert generated_request_id is not None
+        assert generated_request_id.startswith("turnreq_")
+
+    @pytest.mark.asyncio
+    async def test_stream_execute_attaches_span_lineage(
+        self, controller, mock_llm_provider, basic_context, basic_tool_definitions
+    ) -> None:
+        """execute_stream 应为每个事件注入 span_id，并透传 parent_span_id。"""
+        mock_llm_provider.return_value = {
+            "content": "Streamed answer with span lineage.",
+            "model": "claude",
+            "usage": {"prompt_tokens": 80, "completion_tokens": 20},
+        }
+        parent_span_id = "root_span_parent_1"
+
+        events: list[object] = []
+        async for event in controller.execute_stream(
+            turn_id="turn_stream_span_lineage",
+            context=basic_context,
+            tool_definitions=basic_tool_definitions,
+            parent_span_id=parent_span_id,
+        ):
+            events.append(event)
+
+        assert events
+        span_ids = [getattr(event, "span_id", None) for event in events]
+        assert all(isinstance(span_id, str) and span_id.startswith("span_") for span_id in span_ids)
+        assert len(set(span_ids)) == len(span_ids)
+        assert all(getattr(event, "parent_span_id", None) == parent_span_id for event in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_execute_records_truthlog_events(
+        self,
+        controller,
+        mock_llm_provider,
+        basic_tool_definitions,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """execute_stream 应写入 turn truthlog，并保持 turn_request_id 可追踪。"""
+        mock_llm_provider.return_value = {
+            "content": "Streamed answer with truthlog.",
+            "model": "claude",
+            "usage": {"prompt_tokens": 80, "completion_tokens": 20},
+        }
+        case_root = Path(__file__).resolve().parent / "_truthlog_stream_cases" / f"case_{uuid4().hex}"
+        workspace_root = case_root / "workspace"
+        runtime_base = case_root / "runtime_base"
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        runtime_base.mkdir(parents=True, exist_ok=True)
+        try:
+            monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_base))
+            monkeypatch.setenv("KERNELONE_HOME", str(case_root / "home"))
+            context = [
+                {
+                    "role": "user",
+                    "content": "Read main.py and summarize.",
+                    "metadata": {"workspace": str(workspace_root)},
+                }
+            ]
+            request_id = "req_truthlog_1"
+            events: list[object] = []
+            async for event in controller.execute_stream(
+                turn_id="turn_stream_truthlog",
+                context=context,
+                tool_definitions=basic_tool_definitions,
+                turn_request_id=request_id,
+            ):
+                events.append(event)
+
+            assert events
+            assert any(isinstance(event, CompletionEvent) for event in events)
+
+            runtime_root = Path(resolve_polaris_roots(str(workspace_root)).runtime_root)
+            log_path = runtime_root / "events" / "kernel.turn.truthlog.events.jsonl"
+            assert log_path.exists()
+            lines = [line for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            assert lines
+            rows = [json.loads(line) for line in lines]
+            assert any(isinstance(row, dict) and row.get("event_type") == "CompletionEvent" for row in rows)
+            request_ids = {str(row.get("turn_request_id", "")) for row in rows}
+            assert request_ids == {request_id}
+            turn_ids = {str(row.get("turn_id", "")) for row in rows}
+            assert turn_ids == {"turn_stream_truthlog"}
+            payloads = [row.get("payload") for row in rows if isinstance(row, dict)]
+            assert all(isinstance(payload, dict) for payload in payloads)
+            assert all(str(payload.get("span_id", "")).startswith("span_") for payload in payloads if payload)
+            assert all(
+                str(payload.get("parent_span_id", "")).startswith("turnspan_") for payload in payloads if payload
+            )
+        finally:
+            shutil.rmtree(case_root, ignore_errors=True)
 
 
 class TestMonkeypatchPropagation:

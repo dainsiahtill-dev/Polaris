@@ -23,6 +23,9 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
+from polaris.cells.roles.kernel.internal.transaction.tool_failure_circuit_breaker import (
+    ToolFailureCircuitBreaker,
+)
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -46,6 +49,51 @@ def mock_guard_assert() -> Any:
     return lambda **kw: None
 
 
+def _build_decoded_state_machine(turn_id: str) -> TurnStateMachine:
+    state_machine = TurnStateMachine(turn_id=turn_id)
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    return state_machine
+
+
+def _build_readonly_decision(
+    turn_id: str,
+    *,
+    batch_suffix: str,
+    invocation_count: int = 1,
+    should_fail: bool = False,
+) -> TurnDecision:
+    invocations: list[dict[str, Any]] = []
+    for idx in range(invocation_count):
+        invocations.append(
+            {
+                "call_id": f"call_{batch_suffix}_{idx}",
+                "tool_name": "read_file",
+                "arguments": {
+                    "file": "README.md",
+                    "should_fail": should_fail,
+                    "invocation_index": idx,
+                },
+                "execution_mode": "readonly_parallel",
+                "effect_type": "read",
+            }
+        )
+    return cast(
+        TurnDecision,
+        {
+            "turn_id": turn_id,
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": f"batch_{batch_suffix}",
+                "invocations": invocations,
+            },
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # ToolBatchExecutor 层测试
 # ---------------------------------------------------------------------------
@@ -61,6 +109,235 @@ def test_authoritative_write_invocation_ignores_session_patch_file() -> None:
     ]
 
     assert tool_batch_has_authoritative_write_invocation(invocations) is False
+
+
+@pytest.mark.asyncio
+async def test_tool_failure_circuit_breaker_triggers_after_three_consecutive_failures(
+    mock_emit_event: Any,
+    mock_guard_assert: Any,
+) -> None:
+    """连续 3 个失败批次后必须触发工具失败熔断。"""
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(return_value={"success": False, "error": "forced failure"}),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=mock_emit_event,
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    turn_id = "turn_tool_failure_consecutive"
+    context = [{"role": "user", "content": "读取 README.md"}]
+
+    for idx in range(2):
+        await executor.execute_tool_batch(
+            _build_readonly_decision(turn_id, batch_suffix=f"consecutive_{idx}", should_fail=True),
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            context,
+            stream=False,
+        )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
+            r".*consecutive_failures=3 .*total_failures=3"
+        ),
+    ):
+        await executor.execute_tool_batch(
+            _build_readonly_decision(turn_id, batch_suffix="consecutive_2", should_fail=True),
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            context,
+            stream=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_tool_failure_circuit_breaker_resets_consecutive_after_success_batch(
+    mock_emit_event: Any,
+    mock_guard_assert: Any,
+) -> None:
+    """成功批次后 consecutive 计数必须重置。"""
+    tool_runtime = AsyncMock(
+        side_effect=[
+            {"success": False, "error": "failure_1"},
+            {"success": True, "result": {"file": "README.md", "content": "ok"}},
+            {"success": False, "error": "failure_2"},
+            {"success": False, "error": "failure_3"},
+            {"success": False, "error": "failure_4"},
+        ]
+    )
+    executor = ToolBatchExecutor(
+        tool_runtime=tool_runtime,
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=mock_emit_event,
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    turn_id = "turn_tool_failure_reset"
+    context = [{"role": "user", "content": "读取 README.md"}]
+
+    for suffix, should_fail in [
+        ("reset_fail_1", True),
+        ("reset_success", False),
+        ("reset_fail_2", True),
+        ("reset_fail_3", True),
+    ]:
+        await executor.execute_tool_batch(
+            _build_readonly_decision(turn_id, batch_suffix=suffix, should_fail=should_fail),
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            context,
+            stream=False,
+        )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
+            r".*consecutive_failures=3 .*total_failures=4"
+        ),
+    ):
+        await executor.execute_tool_batch(
+            _build_readonly_decision(turn_id, batch_suffix="reset_fail_4", should_fail=True),
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            context,
+            stream=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_tool_failure_circuit_breaker_triggers_on_total_failures(
+    mock_emit_event: Any,
+    mock_guard_assert: Any,
+) -> None:
+    """累计失败达到 10 时必须触发熔断（即使 consecutive 未达到阈值）。"""
+
+    async def selective_tool_runtime(_tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if bool(arguments.get("should_fail", False)):
+            return {"success": False, "error": "forced failure"}
+        return {"success": True, "result": {"file": "README.md", "content": "ok"}}
+
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(side_effect=selective_tool_runtime),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=mock_emit_event,
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    turn_id = "turn_tool_failure_total"
+    context = [{"role": "user", "content": "读取 README.md"}]
+
+    for cycle in range(4):
+        await executor.execute_tool_batch(
+            _build_readonly_decision(
+                turn_id,
+                batch_suffix=f"total_fail_cycle_{cycle}",
+                invocation_count=2,
+                should_fail=True,
+            ),
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            context,
+            stream=False,
+        )
+        await executor.execute_tool_batch(
+            _build_readonly_decision(
+                turn_id,
+                batch_suffix=f"total_success_cycle_{cycle}",
+                invocation_count=1,
+                should_fail=False,
+            ),
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            context,
+            stream=False,
+        )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
+            r".*consecutive_failures=1 .*total_failures=10"
+        ),
+    ):
+        await executor.execute_tool_batch(
+            _build_readonly_decision(
+                turn_id,
+                batch_suffix="total_fail_cycle_4",
+                invocation_count=2,
+                should_fail=True,
+            ),
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            context,
+            stream=False,
+        )
+
+
+def test_tool_failure_circuit_breaker_applies_effect_scope_threshold_override() -> None:
+    """effect_scope=write 可配置为更严格阈值，并在首个失败批次触发。"""
+    breaker = ToolFailureCircuitBreaker(
+        consecutive_failure_threshold=99,
+        total_failure_threshold=99,
+        effect_threshold_overrides={"write": (1, 1)},
+    )
+    snapshot = breaker.evaluate_batch(
+        turn_id="turn_dim_write_override",
+        invocations=[
+            {"call_id": "call_write_1", "tool_name": "write_file", "effect_type": "write"},
+        ],
+        receipts=[
+            {
+                "results": [
+                    {
+                        "call_id": "call_write_1",
+                        "tool_name": "write_file",
+                        "status": "error",
+                        "error": "forced failure",
+                    }
+                ]
+            }
+        ],
+    )
+
+    assert snapshot.triggered is True
+    assert snapshot.trigger_reason == "dimension_consecutive_threshold"
+    assert snapshot.triggered_dimension == "write_file|write|error"
+
+
+def test_tool_failure_circuit_breaker_resets_consecutive_per_dimension() -> None:
+    """不同维度失败应打断目标维度的 consecutive 计数。"""
+    breaker = ToolFailureCircuitBreaker(
+        consecutive_failure_threshold=99,
+        total_failure_threshold=99,
+        effect_threshold_overrides={"read": (2, 99)},
+    )
+
+    first = breaker.evaluate_batch(
+        turn_id="turn_dim_reset",
+        invocations=[{"call_id": "call_read_1", "tool_name": "read_file", "effect_type": "read"}],
+        receipts=[{"results": [{"call_id": "call_read_1", "tool_name": "read_file", "status": "error"}]}],
+    )
+    assert first.triggered is False
+
+    middle = breaker.evaluate_batch(
+        turn_id="turn_dim_reset",
+        invocations=[{"call_id": "call_write_1", "tool_name": "write_file", "effect_type": "write"}],
+        receipts=[{"results": [{"call_id": "call_write_1", "tool_name": "write_file", "status": "error"}]}],
+    )
+    assert middle.triggered is False
+
+    last = breaker.evaluate_batch(
+        turn_id="turn_dim_reset",
+        invocations=[{"call_id": "call_read_2", "tool_name": "read_file", "effect_type": "read"}],
+        receipts=[{"results": [{"call_id": "call_read_2", "tool_name": "read_file", "status": "error"}]}],
+    )
+    assert last.triggered is False
 
 
 @pytest.mark.asyncio

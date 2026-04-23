@@ -42,6 +42,9 @@ class TurnPhaseEvent:
     ]
     timestamp_ms: int
     metadata: dict[str, Any]
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         # frozen=True时需要在__init__后设置, 使用object.__setattr__
@@ -65,9 +68,20 @@ class TurnPhaseEvent:
             "failed",
         ],
         metadata: dict | None = None,
+        turn_request_id: str | None = None,
+        span_id: str | None = None,
+        parent_span_id: str | None = None,
     ) -> "TurnPhaseEvent":
         """工厂方法创建事件"""
-        return cls(turn_id=turn_id, phase=phase, timestamp_ms=int(time.time() * 1000), metadata=metadata or {})
+        return cls(
+            turn_id=turn_id,
+            phase=phase,
+            timestamp_ms=int(time.time() * 1000),
+            metadata=metadata or {},
+            turn_request_id=turn_request_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+        )
 
 
 @dataclass(frozen=True)
@@ -85,6 +99,9 @@ class ContentChunkEvent:
     is_thinking: bool = False
     is_finalization: bool = False
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -106,6 +123,9 @@ class ToolBatchEvent:
     error: str | None = None
     execution_time_ms: int = 0
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -120,6 +140,9 @@ class FinalizationEvent:
     mode: Literal["none", "local", "llm_once"]
     timestamp_ms: int = 0
     metadata: dict[str, Any] | None = None
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -155,6 +178,9 @@ class CompletionEvent:
     batch_receipt: dict[str, Any] = field(default_factory=dict)
     # Structured error message when status == "failed" (e.g. ask_user clarification)
     error: str | None = None
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -187,6 +213,9 @@ class ErrorEvent:
     message: str
     state_at_error: str = ""  # 错误时的状态机状态
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -238,6 +267,9 @@ class RuntimeStartedEvent:
     name: str
     turn_id: str = ""
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
@@ -250,6 +282,9 @@ class RuntimeCompletedEvent:
 
     turn_id: str = ""
     timestamp_ms: int = 0
+    turn_request_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.timestamp_ms == 0:
