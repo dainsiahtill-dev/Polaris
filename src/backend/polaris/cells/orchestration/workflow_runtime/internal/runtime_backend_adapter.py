@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from polaris.cells.orchestration.workflow_runtime.internal.config import WorkflowConfig
-from polaris.kernelone.storage import resolve_runtime_path
 from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackend, RuntimeBackendPort
 
 logger = logging.getLogger(__name__)

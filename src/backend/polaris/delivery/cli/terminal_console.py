@@ -2290,8 +2290,7 @@ def _run_super_turn(
             enable_cognitive=enable_cognitive,
         )
     logger.info(
-        "SUPER_MODE_PIPELINE_COMPLETE: final_role=%s saw_error=%s "
-        "architect=%s pm=%s ce=%s director=%s",
+        "SUPER_MODE_PIPELINE_COMPLETE: final_role=%s saw_error=%s architect=%s pm=%s ce=%s director=%s",
         last_result.role,
         last_result.saw_error,
         decision.use_architect,
@@ -2951,76 +2950,5 @@ __all__ = [
     "PolarisLazyClaude",
     "PolarisRoleConsole",
     "run_director_console",
-    "run_role_console",
-]
-    "PolarisLazyClaude",
-    "PolarisRoleConsole",
-    "run_director_console",
-    "run_role_console",
-]
-    return run_role_console(
-        workspace=workspace,
-        role=role or "director",
-        backend=backend,
-        session_id=session_id,
-        session_title=session_title,
-        prompt_style=prompt_style,
-        omp_config=omp_config,
-        json_render=json_render,
-        debug=debug,
-        batch=batch,
-        model=model,
-        dry_run=dry_run,
-        enable_cognitive=enable_cognitive,
-        super_mode=super_mode,
-    )
-
-
-__all__ = [
-    "PolarisLazyClaude",
-    "PolarisRoleConsole",
-    "run_director_console",
-    "run_role_console",
-]
-    super_mode: bool = False,
-) -> int:
-    """Legacy alias retained for compatibility with Director entry points."""
-    return run_role_console(
-        workspace=workspace,
-        role=role or "director",
-        backend=backend,
-        session_id=session_id,
-        session_title=session_title,
-        prompt_style=prompt_style,
-        omp_config=omp_config,
-        json_render=json_render,
-        debug=debug,
-        batch=batch,
-        model=model,
-        dry_run=dry_run,
-        enable_cognitive=enable_cognitive,
-        super_mode=super_mode,
-    )
-
-
-__all__ = [
-    "PolarisLazyClaude",
-    "PolarisRoleConsole",
-    "run_director_console",
-    "run_role_console",
-]
-        model=model,
-        dry_run=dry_run,
-        enable_cognitive=enable_cognitive,
-        super_mode=super_mode,
-    )
-
-
-__all__ = [
-    "PolarisLazyClaude",
-    "PolarisRoleConsole",
-    "run_director_console",
-    "run_role_console",
-]
     "run_role_console",
 ]

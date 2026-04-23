@@ -99,27 +99,20 @@ class PolarisContext:
     def to_env_vars(self) -> dict[str, str]:
         """转换为环境变量字典（用于子进程传递）。
 
-        同时写入 KERNELONE_* 和 KERNELONE_* 两套命名，
-        保证 KernelOne 独立运行和 Polaris 集成都能正常工作。
+        Uses KERNELONE_* naming consistently.
         """
-        env = {
-            "KERNELONE_TRACE_ID": self.trace_id,
-            "KERNELONE_TRACE_ID": self.trace_id,
-        }
+        env: dict[str, str] = {}
+        if self.trace_id:
+            env["KERNELONE_TRACE_ID"] = self.trace_id
         if self.run_id:
-            env["KERNELONE_RUN_ID"] = self.run_id
             env["KERNELONE_RUN_ID"] = self.run_id
         if self.request_id:
             env["KERNELONE_REQUEST_ID"] = self.request_id
-            env["KERNELONE_REQUEST_ID"] = self.request_id
         if self.workflow_id:
-            env["KERNELONE_WORKFLOW_ID"] = self.workflow_id
             env["KERNELONE_WORKFLOW_ID"] = self.workflow_id
         if self.task_id:
             env["KERNELONE_TASK_ID"] = self.task_id
-            env["KERNELONE_TASK_ID"] = self.task_id
         if self.workspace:
-            env["KERNELONE_WORKSPACE"] = self.workspace
             env["KERNELONE_WORKSPACE"] = self.workspace
         return env
 
@@ -127,10 +120,9 @@ class PolarisContext:
     def from_env_vars(cls) -> PolarisContext | None:
         """从环境变量恢复上下文。
 
-        优先读取 KERNELONE_* env vars，回退到 KERNELONE_*（向后兼容）。
-        Uses _runtime_config for consistent fallback resolution.
+        Uses KERNELONE_* env vars via _runtime_config.
         """
-        # Use _runtime_config for KERNELONE_* / KERNELONE_* fallback
+        # Use _runtime_config for KERNELONE_* resolution
         trace_id = _runtime_config.resolve_env_str("trace_id")
         if not trace_id:
             return None

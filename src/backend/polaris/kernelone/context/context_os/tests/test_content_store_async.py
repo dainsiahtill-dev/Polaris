@@ -118,8 +118,9 @@ class TestContentStoreAsyncEviction:
         """写入超过 max_bytes 后旧条目被正确驱逐."""
         store = ContentStore(max_entries=100, max_bytes=100)
 
+        # Use distinct content to ensure unique hashes and trigger eviction
         for i in range(5):
-            await store.write(f"key_{i}", "x" * 50)
+            await store.write(f"key_{i}", f"content_{i}_" + "x" * 40)
 
         stats = store.stats
         assert stats["bytes"] <= 100

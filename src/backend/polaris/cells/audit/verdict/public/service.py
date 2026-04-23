@@ -7,21 +7,22 @@ All internal imports are lazy-loaded to maintain proper architectural boundaries
 from __future__ import annotations
 
 __all__ = [
-    "ARTIFACT_REGISTRY",
-    "LEGACY_KEY_MAPPING",
-    "LEGACY_PATH_ALIASES",
-    "ArtifactService",
-    "AuditContext",
-    "CodeChange",
-    "IndependentAuditService",
-    "Review",
-    "ReviewEventType",
-    "ReviewGate",
-    "create_artifact_service",
-    "get_artifact_key",
-    "get_artifact_path",
-    "get_review_gate",
-    "list_artifact_keys",
+    # noqa: F822 — all names are lazily loaded via __getattr__ below
+    "ARTIFACT_REGISTRY",  # noqa: F822
+    "LEGACY_KEY_MAPPING",  # noqa: F822
+    "LEGACY_PATH_ALIASES",  # noqa: F822
+    "ArtifactService",  # noqa: F822
+    "AuditContext",  # noqa: F822
+    "CodeChange",  # noqa: F822
+    "IndependentAuditService",  # noqa: F822
+    "Review",  # noqa: F822
+    "ReviewEventType",  # noqa: F822
+    "ReviewGate",  # noqa: F822
+    "create_artifact_service",  # noqa: F822
+    "get_artifact_key",  # noqa: F822
+    "get_artifact_path",  # noqa: F822
+    "get_review_gate",  # noqa: F822
+    "list_artifact_keys",  # noqa: F822
 ]
 
 

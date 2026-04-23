@@ -303,8 +303,8 @@ class ContentStore:
         Returns:
             A frozen :class:`ContentRef` handle for the content.
         """
+        ref = await self._intern_async(content)
         async with self._async_lock:
-            ref = await self._intern_async(content)
             # Store key -> hash mapping for key-based lookup
             self._key_index[key] = ref.hash
             return ref
@@ -388,19 +388,19 @@ class ContentStore:
         Returns:
             A frozen :class:`ContentRef` handle for the new content.
         """
+        # Remove by key index if exists
+        h = self._key_index.pop(key, None)
+        if h is not None and h in self._store:
+            self._remove_entry(h)
+        # Also try direct key as hash
+        if key in self._store:
+            self._remove_entry(key)
+        # Also try by hash of key
+        key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+        if key_hash in self._store:
+            self._remove_entry(key_hash)
+        ref = await self._intern_async(content)
         async with self._async_lock:
-            # Remove by key index if exists
-            h = self._key_index.pop(key, None)
-            if h is not None and h in self._store:
-                self._remove_entry(h)
-            # Also try direct key as hash
-            if key in self._store:
-                self._remove_entry(key)
-            # Also try by hash of key
-            key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
-            if key_hash in self._store:
-                self._remove_entry(key_hash)
-            ref = await self._intern_async(content)
             # Store key -> hash mapping for key-based lookup
             self._key_index[key] = ref.hash
             return ref
