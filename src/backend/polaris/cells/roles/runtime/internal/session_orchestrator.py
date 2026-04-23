@@ -1029,9 +1029,15 @@ class RoleSessionOrchestrator:
         # FIX-20250421-v4: 注入 delivery_mode，确保跨 Turn 不丢失
         # FIX-20250422-SUPER: SUPER_MODE handoff 强制使用 materialize_changes
         _delivery_mode = getattr(self.state, "delivery_mode", None) or "unknown"
-        if "[SUPER_MODE_HANDOFF]" in goal or "[/SUPER_MODE_HANDOFF]" in goal:
+        _is_super_mode = "[SUPER_MODE_HANDOFF]" in goal or "[/SUPER_MODE_HANDOFF]" in goal
+        if _is_super_mode:
             _delivery_mode = "materialize_changes"
-        goal_block = f"【核心任务 - 不可变更】\n{goal}\n\n当前执行目标: {self.state.goal or goal}\n<DeliveryMode>{_delivery_mode}</DeliveryMode>"
+        # FIX-20250422-v7: SUPER_MODE 续回合时截断巨型 PM 计划，防止 LLM 注意力被分散。
+        # 首回合保留完整计划（供读取文件），后续回合只保留任务列表+原始请求。
+        _goal_for_display = goal
+        if _is_super_mode and turn > 0:
+            _goal_for_display = self._truncate_super_mode_goal_for_continuation(goal)
+        goal_block = f"【核心任务 - 不可变更】\n{_goal_for_display}\n\n当前执行目标: {self.state.goal or goal}\n<DeliveryMode>{_delivery_mode}</DeliveryMode>"
 
         # --- Zone 2: Progress ---
         phase_alias = self._state_reducer.current_phase().value
@@ -1355,6 +1361,64 @@ class RoleSessionOrchestrator:
             f"<WorkingMemory>\n{working_memory_block}\n</WorkingMemory>\n"
             f"<Instruction>\n{instruction}\n</Instruction>"
         )
+
+    @staticmethod
+    def _truncate_super_mode_goal_for_continuation(goal: str) -> str:
+        """截断 SUPER_MODE handoff 中的巨型 PM 计划，保留执行所需的最小信息。
+
+        根因：SUPER_MODE handoff 消息包含完整的 PM 计划（markdown 表格、代码块、
+        JSON 任务列表等），在 continuation turns 中会占用大量 token 并分散 LLM
+        注意力，导致 LLM 忽略 <Instruction> 区的强制写工具要求。
+
+        策略：
+        1. 保留 original_user_request 和 extracted_tasks（任务列表）
+        2. 截断 pm_plan 正文（只保留前 800 字符摘要）
+        3. 保留 instructions 和 target_files
+        """
+        if not goal or len(goal) < 2000:
+            return goal
+        lines: list[str] = []
+        in_pm_plan = False
+        pm_plan_buffer: list[str] = []
+        for line in goal.splitlines():
+            stripped = line.strip()
+            # 保留关键元数据行
+            if any(
+                stripped.startswith(prefix)
+                for prefix in (
+                    "original_user_request:",
+                    "execution_role:",
+                    "instructions:",
+                    "extracted_tasks:",
+                    "  ",  # 任务列表缩进
+                    "target_files:",
+                    "[SUPER_MODE",
+                    "[/SUPER_MODE",
+                )
+            ):
+                lines.append(line)
+                continue
+            # pm_plan 开始标记
+            if stripped.startswith("pm_plan:") or stripped.startswith("# ContextOS"):
+                in_pm_plan = True
+                pm_plan_buffer = []
+                continue
+            if in_pm_plan:
+                pm_plan_buffer.append(line)
+                continue
+            # 其他行（如 mode:materialize）保留
+            lines.append(line)
+        # 如果有 pm_plan，只保留前 800 字符作为摘要
+        if pm_plan_buffer:
+            pm_plan_text = "\n".join(pm_plan_buffer)
+            if len(pm_plan_text) > 800:
+                pm_plan_text = pm_plan_text[:800] + "\n... [PM 计划已截断，只保留摘要]"
+            lines.append(f"\npm_plan_summary:\n{pm_plan_text}")
+        result = "\n".join(lines)
+        # 兜底：如果还是太长，硬截断
+        if len(result) > 3000:
+            result = result[:3000] + "\n... [目标已截断]"
+        return result
 
     @staticmethod
     def _is_progression_shortcut(prompt: str) -> bool:

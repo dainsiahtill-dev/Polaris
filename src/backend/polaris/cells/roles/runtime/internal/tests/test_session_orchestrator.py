@@ -1160,3 +1160,59 @@ class TestCheckpointResume:
         assert orch.state.structured_findings["error_summary"] == "ok"
         # Unknown fields are simply ignored (not stored in state)
         assert "future_field_1" not in orch.state.__dict__
+
+
+class TestTruncateSuperModeGoal:
+    """测试 SUPER_MODE 目标截断逻辑。"""
+
+    def test_short_goal_preserved(self):
+        """短目标不应被截断。"""
+        goal = "[SUPER_MODE_HANDOFF]\noriginal_user_request: 修复 bug"
+        result = RoleSessionOrchestrator._truncate_super_mode_goal_for_continuation(goal)
+        assert result == goal
+
+    def test_pm_plan_truncated(self):
+        """长 PM 计划应被截断，保留任务列表和原始请求。"""
+        # 构建一个超过 2000 字符的 SUPER_MODE handoff 消息
+        pm_plan_body = "\n".join(
+            f"## 章节 {i}\n这是详细的计划描述，包含很多文字。" * 20
+            for i in range(10)
+        )
+        goal_lines = [
+            "[SUPER_MODE_HANDOFF]",
+            "original_user_request: 继续完善ContextOS",
+            "execution_role: director",
+            "instructions:",
+            "- 立即执行",
+            "extracted_tasks:",
+            "  1. 建立 models_v2.py 废弃计划",
+            "  2. 完善 ports.py",
+            "pm_plan:",
+            "# ContextOS 架构完善计划",
+            "## 一、架构现状总览",
+            "### 1.1 模块成熟度矩阵",
+            "| 模块 | 状态 |",
+            "|------|------|",
+            "| models_v2.py | 成熟 |",
+            pm_plan_body,
+            "[/SUPER_MODE_HANDOFF]",
+        ]
+        goal = "\n".join(goal_lines)
+        assert len(goal) > 2000, f"goal length {len(goal)} should be > 2000"
+        result = RoleSessionOrchestrator._truncate_super_mode_goal_for_continuation(goal)
+        # 保留关键元数据
+        assert "original_user_request: 继续完善ContextOS" in result
+        assert "extracted_tasks:" in result
+        assert "建立 models_v2.py 废弃计划" in result
+        # PM 计划应被截断为摘要
+        assert "pm_plan_summary:" in result
+        # 总长度应显著缩短
+        assert len(result) < len(goal)
+        assert len(result) <= 3000
+
+    def test_very_long_goal_hard_truncated(self):
+        """超长目标应被硬截断到 3000 字符以内。"""
+        goal = "[SUPER_MODE_HANDOFF]\noriginal_user_request: x\n" + "x" * 5000
+        result = RoleSessionOrchestrator._truncate_super_mode_goal_for_continuation(goal)
+        assert len(result) <= 3100
+        assert "[目标已截断]" in result
