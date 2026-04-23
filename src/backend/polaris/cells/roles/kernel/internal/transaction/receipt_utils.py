@@ -14,6 +14,9 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
     WRITE_TOOLS as _WRITE_TOOLS,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.write_authority import (
+    is_authoritative_write_result,
+)
 
 _DIRECT_READ_TOOLS: frozenset[str] = frozenset(
     {
@@ -151,7 +154,7 @@ def record_receipts_to_ledger(receipts: list[Any], ledger: TurnLedger) -> None:
             if status == "success" and _is_direct_read_tool(tool_name):
                 ledger.mutation_obligation.record_read_receipt()
             # 记录 write receipt 到 mutation obligation
-            if status == "success" and _is_write_tool(tool_name):
+            if status == "success" and _is_write_tool(tool_name) and is_authoritative_write_result(item):
                 ledger.mutation_obligation.record_write_receipt()
 
 

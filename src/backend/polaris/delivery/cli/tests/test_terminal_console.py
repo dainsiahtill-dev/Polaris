@@ -661,6 +661,57 @@ def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monk
     assert [call["role"] for call in host.stream_calls] == ["pm", "director"]
 
 
+def test_run_role_console_super_mode_architect_delivery_loops_director_until_complete(monkeypatch) -> None:
+    import polaris.delivery.cli.director.console_host as console_host_module
+
+    async def _stream_factory(**kwargs):
+        if kwargs["role"] == "architect":
+            assert "[SUPER_MODE_READONLY_STAGE]" in kwargs["message"]
+            yield {
+                "type": "complete",
+                "data": {
+                    "content": '{"tasks":[{"subject":"contextos","target_files":["polaris/kernelone/context/context_os/runtime.py"]}]}',
+                },
+            }
+            return
+        assert kwargs["role"] == "director"
+        if "[SUPER_MODE_DIRECTOR_CONTINUE]" in kwargs["message"]:
+            yield {"type": "complete", "data": {"content": "ALL_TASKS_COMPLETE"}}
+            return
+        assert "[SUPER_MODE_HANDOFF]" in kwargs["message"]
+        yield {
+            "type": "complete",
+            "data": {
+                "content": (
+                    "## 执行状态\n"
+                    "### 已完成\n"
+                    "- 读取 contracts.py\n"
+                    "- 读取 runtime.py\n\n"
+                    "下一回合将使用 edit_file 对 ContextOS 相关代码实施修改。"
+                )
+            },
+        }
+
+    _FakeRoleConsoleHost.instances.clear()
+    _FakeRoleConsoleHost.stream_factory = _stream_factory
+    monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    scripted_inputs = iter(["进一步完善ContextOS以及相关代码", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
+
+    try:
+        exit_code = terminal_console.run_role_console(
+            workspace=".",
+            role="director",
+            super_mode=True,
+        )
+    finally:
+        _FakeRoleConsoleHost.stream_factory = None
+
+    assert exit_code == 0
+    host = _FakeRoleConsoleHost.instances[0]
+    assert [call["role"] for call in host.stream_calls] == ["architect", "director", "director"]
+
+
 def test_run_role_console_super_mode_session_command_reports_super_role(monkeypatch, capsys) -> None:
     import polaris.delivery.cli.director.console_host as console_host_module
 

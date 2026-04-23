@@ -23,7 +23,7 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_target_files_from_message,
     receipts_have_stale_edit_failure,
     resolve_mutation_target_guard_violation,
-    tool_batch_has_write_invocation,
+    tool_batch_has_authoritative_write_invocation,
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     BlockedReason,
@@ -447,7 +447,7 @@ class ToolBatchExecutor:
         _has_broad_exploration = any(
             extract_invocation_tool_name(inv) in _broad_exploration_tools for inv in invocations
         )
-        _has_write = tool_batch_has_write_invocation(invocations)
+        _has_write = tool_batch_has_authoritative_write_invocation(invocations)
         tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
         non_empty_tool_names = [name for name in tool_names if name]
         only_broad_exploration = bool(non_empty_tool_names) and all(
@@ -669,7 +669,7 @@ class ToolBatchExecutor:
         # FIX-20250421: Upgrade to strict in implementing phase if broad exploration was attempted
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
             guard_mode = "strict"
-        if requires_mutation and not tool_batch_has_write_invocation(invocations):
+        if requires_mutation and not tool_batch_has_authoritative_write_invocation(invocations):
             if guard_mode == "strict":
                 raise RuntimeError(
                     "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch. "
@@ -925,7 +925,7 @@ class ToolBatchExecutor:
 
         if (
             requires_mutation
-            and tool_batch_has_write_invocation(invocations)
+            and tool_batch_has_authoritative_write_invocation(invocations)
             and receipts_have_stale_edit_failure(receipts_as_dicts)
         ):
             raise RuntimeError(
@@ -1014,7 +1014,7 @@ class ToolBatchExecutor:
             return False
         if ledger.mutation_obligation.mutation_satisfied:
             return False
-        if tool_batch_has_write_invocation(invocations):
+        if tool_batch_has_authoritative_write_invocation(invocations):
             return False
 
         # FIX-20250422: Phase timeout 熔断 —— 如果已经超时，允许 LLM_ONCE 收口
@@ -1045,7 +1045,7 @@ class ToolBatchExecutor:
             return False
         if not self.requires_mutation_intent(latest_user_request):
             return False
-        if tool_batch_has_write_invocation(invocations):
+        if tool_batch_has_authoritative_write_invocation(invocations):
             return False
         if ledger.mutation_obligation.mutation_satisfied:
             return False

@@ -1,0 +1,58 @@
+id: vc-20260423-super-mode-director-continuation-integrity
+title: Super Mode Director Continuation Integrity
+date: 2026-04-23
+status: draft
+classification: structural
+systemic: true
+scope:
+  - polaris/delivery/cli/terminal_console.py
+  - polaris/cells/roles/runtime/internal/session_orchestrator.py
+  - polaris/cells/roles/kernel/internal/transaction/phase_manager.py
+  - polaris/cells/roles/kernel/internal/transaction/write_authority.py
+  - polaris/cells/roles/kernel/internal/transaction/receipt_utils.py
+  - polaris/cells/roles/kernel/internal/transaction/contract_guards.py
+  - polaris/cells/roles/kernel/public/transaction_contracts.py
+assumptions:
+  - id: A1
+    statement: runtime/task_market 与 runtime/tasks 已真实产出，问题不在任务发布。
+    status: verified_true
+    evidence: >
+      已核对 X:/.polaris/projects/backend-8b8666f1238d/runtime/task_market/task_market.db
+      以及 runtime/tasks/task_1.json 至 task_5.json，时间戳均为 2026-04-23 16:55。
+  - id: A2
+    statement: architect 高层工程意图已稳定路由到 architect -> director，而不是 fallback director。
+    status: verified_true
+    evidence: >
+      已核对 polaris/delivery/cli/super_mode.py 与现有测试；
+      `进一步完善ContextOS` 当前命中 `architect_code_delivery`。
+  - id: A3
+    statement: 当前 Director 自动 loop 仅覆盖 code_delivery，未覆盖 architect_code_delivery。
+    status: verified_true
+    evidence: >
+      已核对 polaris/delivery/cli/terminal_console.py 中 `_run_super_turn()`，
+      `_run_director_execution_loop()` 触发条件为 `decision.reason == "code_delivery"`。
+  - id: A4
+    statement: runtime 当前把历史任意成功 write receipt 都当成 mutation satisfied。
+    status: verified_true
+    evidence: >
+      已核对 polaris/cells/roles/runtime/internal/session_orchestrator.py：
+      `mutation_obligation_satisfied()` 通过 `_has_successful_write_receipt()` 扫描当前与历史 receipt。
+  - id: A5
+    statement: SESSION_PATCH.md 与 .polaris 控制面写入会污染 mutation/phase 判定。
+    status: verified_true
+    evidence: >
+      日志中已出现 `append_to_file(file='SESSION_PATCH.md', ...)`；
+      当前 write 判定仅基于工具名，未区分目标路径语义。
+pre_mortem:
+  - Director auto-loop 若仅扩 reason 而不修正输出启发式，仍可能把“下一回合继续”的长文本误判为完成。
+  - 只修 runtime、不修 kernel authoritative write，会继续在 mutation obligation 与 phase manager 之间产生第二套真相。
+  - 只修 kernel、不阻止 SUPER Director auto-end，session 仍可能被 read-only exemption 提前打成 done。
+verification:
+  - command: python -m ruff check polaris/delivery/cli/terminal_console.py polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/phase_manager.py polaris/cells/roles/kernel/internal/transaction/write_authority.py polaris/cells/roles/kernel/internal/transaction/receipt_utils.py polaris/cells/roles/kernel/internal/transaction/contract_guards.py polaris/cells/roles/kernel/public/transaction_contracts.py polaris/delivery/cli/tests/test_super_mode.py polaris/delivery/cli/tests/test_terminal_console.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/tests/test_phase_timeout_loop_fix.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/kernel/tests/test_modification_contract.py --fix
+    expected: pass
+  - command: python -m ruff format polaris/delivery/cli/terminal_console.py polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/phase_manager.py polaris/cells/roles/kernel/internal/transaction/write_authority.py polaris/cells/roles/kernel/internal/transaction/receipt_utils.py polaris/cells/roles/kernel/internal/transaction/contract_guards.py polaris/cells/roles/kernel/public/transaction_contracts.py polaris/delivery/cli/tests/test_super_mode.py polaris/delivery/cli/tests/test_terminal_console.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/tests/test_phase_timeout_loop_fix.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/kernel/tests/test_modification_contract.py
+    expected: pass
+  - command: python -m mypy polaris/delivery/cli/terminal_console.py polaris/cells/roles/runtime/internal/session_orchestrator.py polaris/cells/roles/kernel/internal/transaction/phase_manager.py polaris/cells/roles/kernel/internal/transaction/write_authority.py polaris/cells/roles/kernel/internal/transaction/receipt_utils.py polaris/cells/roles/kernel/internal/transaction/contract_guards.py polaris/cells/roles/kernel/public/transaction_contracts.py
+    expected: pass
+  - command: python -m pytest -q polaris/delivery/cli/tests/test_super_mode.py polaris/delivery/cli/tests/test_terminal_console.py polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py polaris/cells/roles/kernel/tests/test_phase_timeout_loop_fix.py polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py polaris/cells/roles/kernel/tests/test_modification_contract.py
+    expected: pass

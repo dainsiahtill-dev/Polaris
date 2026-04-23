@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.cells.roles.kernel.internal.transaction.write_authority import (
+    extract_target_path_from_payload,
+    is_authoritative_write_path,
+)
+
 
 class Phase(str, Enum):
     """系统执行阶段枚举 — 这是唯一合法的阶段定义。
@@ -165,6 +170,8 @@ class ToolResult:
     success: bool = True
     bytes_read: int = 0  # 对于 read 工具，实际读取的字节数
     is_write: bool = False  # 是否有写副作用
+    is_authoritative_write: bool = False  # 是否满足 materialize 语义
+    target_path: str = ""  # 目标文件（若可解析）
 
     @classmethod
     def from_batch_result(cls, result: dict[str, Any]) -> ToolResult:
@@ -186,12 +193,16 @@ class ToolResult:
 
         # 判断是否有写副作用
         is_write = tool_name in _WRITE_TOOLS
+        target_path = extract_target_path_from_payload(result) or ""
+        is_authoritative_write = is_write and is_authoritative_write_path(target_path)
 
         return cls(
             tool_name=tool_name,
             success=success,
             bytes_read=bytes_read,
             is_write=is_write,
+            is_authoritative_write=is_authoritative_write,
+            target_path=target_path,
         )
 
 
@@ -249,7 +260,7 @@ class PhaseManager:
         tool_names = [r.tool_name for r in tool_results if r.success]
 
         # 规则 1: 任何写操作 → IMPLEMENTING
-        if any(r.is_write for r in tool_results if r.success):
+        if any(r.is_authoritative_write for r in tool_results if r.success):
             if self._current_phase != Phase.IMPLEMENTING:
                 self._phase_history.append((self._current_phase, tool_names))
                 self._current_phase = Phase.IMPLEMENTING
@@ -319,7 +330,7 @@ class PhaseManager:
 
         # CONTENT_GATHERED 阶段：允许读取验证，但必须开始写操作
         if self._current_phase == Phase.CONTENT_GATHERED:
-            has_write = any(r.is_write for r in tool_results if r.success)
+            has_write = any(r.is_authoritative_write for r in tool_results if r.success)
             has_read = any(r.bytes_read > 0 for r in tool_results if r.success)
             has_explore = any(r.tool_name in _BROAD_EXPLORATION_TOOLS for r in tool_results if r.success)
 
@@ -431,3 +442,11 @@ def extract_tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None
 
     results = batch_receipt.get("results") or batch_receipt.get("raw_results") or []
     return [ToolResult.from_batch_result(r) for r in results if isinstance(r, dict)]
+
+
+def has_authoritative_write_receipt(batch_receipt: dict[str, Any] | None) -> bool:
+    """Return True when at least one successful authoritative write exists in the receipt."""
+    return any(
+        result.success and result.is_authoritative_write
+        for result in extract_tool_results_from_batch_receipt(batch_receipt)
+    )

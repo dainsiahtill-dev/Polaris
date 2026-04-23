@@ -58,14 +58,14 @@ class CanonicalizerOutput:
 class StatePatcherOutput:
     """Output from Stage 3: built working state from transcript events."""
 
-    working_state: "WorkingState"
+    working_state: WorkingState
 
 
 @dataclass(frozen=True)
 class BudgetPlannerOutput:
     """Output from Stage 4: computed budget plan with invariants validated."""
 
-    budget_plan: "BudgetPlan"
+    budget_plan: BudgetPlan
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import tempfile
 from pathlib import Path
 
 from polaris.delivery.cli import router as cli_router
@@ -88,31 +89,35 @@ def test_build_super_readonly_message_forces_analyze_mode() -> None:
     assert "进一步完善 Session Orchestrator 相关代码" in message
 
 
-def test_route_console_passes_super_flag(monkeypatch, tmp_path: Path) -> None:
+def test_route_console_passes_super_flag(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def _fake_run_role_console(**kwargs):
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr(cli_router.WorkspaceGuard, "ensure_workspace", lambda _path: tmp_path)
-    monkeypatch.setattr("polaris.delivery.cli.terminal_console.run_role_console", _fake_run_role_console)
+    runtime_tmp_root = Path("runtime") / "pytest_workspaces"
+    runtime_tmp_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=runtime_tmp_root) as tmpdir:
+        tmp_path = Path(tmpdir)
+        monkeypatch.setattr(cli_router.WorkspaceGuard, "ensure_workspace", lambda _path: tmp_path)
+        monkeypatch.setattr("polaris.delivery.cli.terminal_console.run_role_console", _fake_run_role_console)
 
-    args = argparse.Namespace(
-        workspace=str(tmp_path),
-        role="director",
-        backend="auto",
-        session_id="",
-        session_title="",
-        prompt_style="plain",
-        omp_config="",
-        json_render="raw",
-        debug=False,
-        dry_run=False,
-        batch=False,
-        super=True,
-    )
+        args = argparse.Namespace(
+            workspace=str(tmp_path),
+            role="director",
+            backend="auto",
+            session_id="",
+            session_title="",
+            prompt_style="plain",
+            omp_config="",
+            json_render="raw",
+            debug=False,
+            dry_run=False,
+            batch=False,
+            super=True,
+        )
 
-    exit_code = cli_router._route_console(args)
-    assert exit_code == 0
-    assert captured["super_mode"] is True
+        exit_code = cli_router._route_console(args)
+        assert exit_code == 0
+        assert captured["super_mode"] is True

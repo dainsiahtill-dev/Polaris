@@ -169,6 +169,234 @@ class ExplorationPolicyConfig:
 
 
 # ------------------------------------------------------------------
+# Selector Policy Protocol
+# ------------------------------------------------------------------
+
+
+class SelectorPolicy(Protocol):
+    """Abstract interface for candidate selection strategies.
+
+    Implementations define how candidates are selected from a pool
+    based on context and budget constraints.
+    """
+
+    def select(
+        self,
+        candidates: list[AssetCandidate],
+        context: ExplorationContext,
+        budget: ContextBudget,
+    ) -> list[AssetCandidate]:
+        """Select candidates for expansion.
+
+        Args:
+            candidates: Pool of candidate assets to consider.
+            context: Current exploration context.
+            budget: Available budget for expansion.
+
+        Returns:
+            List of selected candidates in priority order.
+        """
+        ...
+
+    def should_compact(self, context: ExplorationContext) -> bool:
+        """Determine if compaction should be triggered.
+
+        Args:
+            context: Current exploration context.
+
+        Returns:
+            True if compaction should be triggered.
+        """
+        ...
+
+
+# ------------------------------------------------------------------
+# Selector Policy Implementations
+# ------------------------------------------------------------------
+
+
+class DefaultSelectorPolicy:
+    """Default selection policy with heuristic-based filtering.
+
+    Selection rules:
+        - Filter out already seen assets
+        - Filter out previously denied assets (if configured)
+        - Filter out assets exceeding max depth
+        - Filter out assets exceeding budget headroom
+        - Sort by priority (highest first)
+        - Auto-approve high-priority candidates
+    """
+
+    def __init__(self, config: ExplorationPolicyConfig | None = None) -> None:
+        self.config = config or ExplorationPolicyConfig()
+
+    def select(
+        self,
+        candidates: list[AssetCandidate],
+        context: ExplorationContext,
+        budget: ContextBudget,
+    ) -> list[AssetCandidate]:
+        """Select candidates using default heuristic rules."""
+        selected: list[AssetCandidate] = []
+
+        for candidate in candidates:
+            key = candidate.display_key
+
+            # 1. Deduplication
+            if key in context.seen_assets:
+                _logger.debug("select: %s already seen, skipping", key)
+                continue
+
+            # 2. Denied assets check
+            if key in context.denied_assets and self.config.deny_revisit_after_denied:
+                _logger.debug("select: %s previously denied, skipping", key)
+                continue
+
+            # 3. Depth check
+            if context.depth >= context.max_depth:
+                _logger.debug("select: max depth %d reached, skipping", context.max_depth)
+                continue
+
+            # 4. Budget check
+            if budget.headroom < candidate.estimated_tokens:
+                _logger.debug(
+                    "select: %s exceeds budget (headroom=%d < needed=%d), skipping",
+                    key,
+                    budget.headroom,
+                    candidate.estimated_tokens,
+                )
+                continue
+
+            selected.append(candidate)
+
+        # Sort by priority (highest first)
+        selected.sort(key=lambda c: c.priority, reverse=True)
+
+        return selected
+
+    def should_compact(self, context: ExplorationContext) -> bool:
+        """Check if compaction should be triggered based on expansion depth."""
+        return context.depth >= context.max_depth
+
+
+class GreedySelectorPolicy:
+    """Greedy selection policy prioritizing budget efficiency.
+
+    Selection rules:
+        - Select assets with best tokens-to-value ratio
+        - Prioritize smaller assets that fit within budget
+        - Maximize number of assets within budget constraint
+    """
+
+    def __init__(self, config: ExplorationPolicyConfig | None = None) -> None:
+        self.config = config or ExplorationPolicyConfig()
+
+    def select(
+        self,
+        candidates: list[AssetCandidate],
+        context: ExplorationContext,
+        budget: ContextBudget,
+    ) -> list[AssetCandidate]:
+        """Select candidates using greedy budget-efficient strategy."""
+        # Filter eligible candidates
+        eligible: list[AssetCandidate] = []
+
+        for candidate in candidates:
+            key = candidate.display_key
+
+            if key in context.seen_assets:
+                continue
+            if key in context.denied_assets and self.config.deny_revisit_after_denied:
+                continue
+            if context.depth >= context.max_depth:
+                continue
+            if budget.headroom < candidate.estimated_tokens:
+                continue
+
+            eligible.append(candidate)
+
+        # Sort by estimated_tokens ascending (smallest first) for greedy selection
+        # Break ties by priority (higher priority first)
+        eligible.sort(key=lambda c: (c.estimated_tokens, -c.priority))
+
+        selected: list[AssetCandidate] = []
+        remaining_budget = budget.headroom
+
+        for candidate in eligible:
+            if candidate.estimated_tokens <= remaining_budget:
+                selected.append(candidate)
+                remaining_budget -= candidate.estimated_tokens
+
+        return selected
+
+    def should_compact(self, context: ExplorationContext) -> bool:
+        """Trigger compaction when approaching depth limit."""
+        return context.depth >= context.max_depth - 1
+
+
+class SemanticRankSelectorPolicy:
+    """Semantic ranking selection policy prioritizing relevance.
+
+    Selection rules:
+        - Use semantic relevance scores from metadata
+        - Combine semantic score with priority for ranking
+        - Filter by same constraints as default policy
+    """
+
+    def __init__(
+        self,
+        config: ExplorationPolicyConfig | None = None,
+        semantic_weight: float = 0.7,
+        priority_weight: float = 0.3,
+    ) -> None:
+        self.config = config or ExplorationPolicyConfig()
+        self.semantic_weight = semantic_weight
+        self.priority_weight = priority_weight
+
+    def select(
+        self,
+        candidates: list[AssetCandidate],
+        context: ExplorationContext,
+        budget: ContextBudget,
+    ) -> list[AssetCandidate]:
+        """Select candidates using semantic relevance ranking."""
+        # Filter eligible candidates
+        eligible: list[AssetCandidate] = []
+
+        for candidate in candidates:
+            key = candidate.display_key
+
+            if key in context.seen_assets:
+                continue
+            if key in context.denied_assets and self.config.deny_revisit_after_denied:
+                continue
+            if context.depth >= context.max_depth:
+                continue
+            if budget.headroom < candidate.estimated_tokens:
+                continue
+
+            eligible.append(candidate)
+
+        # Calculate combined score: semantic_weight * semantic_score + priority_weight * normalized_priority
+        def _score(candidate: AssetCandidate) -> float:
+            semantic_score = float(candidate.metadata.get("semantic_score", 0.5))
+            # Normalize priority to 0-1 range (assuming max priority ~10)
+            normalized_priority = min(candidate.priority / 10.0, 1.0)
+            return (
+                self.semantic_weight * semantic_score
+                + self.priority_weight * normalized_priority
+            )
+
+        eligible.sort(key=_score, reverse=True)
+
+        return eligible
+
+    def should_compact(self, context: ExplorationContext) -> bool:
+        """Trigger compaction when expansion history is large."""
+        return len(context.expansion_history) >= 10
+
+
+# ------------------------------------------------------------------
 # Policy Protocol
 # ------------------------------------------------------------------
 
@@ -233,27 +461,28 @@ class ExplorationPolicyPort(Protocol):
 
 
 # ------------------------------------------------------------------
-# Default implementation
+# Exploration Policy (with pluggable SelectorPolicy)
 # ------------------------------------------------------------------
 
 
-class DefaultExplorationPolicy:
-    """Sane default exploration policy.
+class ExplorationPolicy:
+    """Exploration policy with pluggable selector strategy.
 
-    Phase flow:
-        MAP -> SEARCH -> SLICE -> EXPAND -> READ_FULL
-        (COMPACT is triggered by should_compact when budget is tight)
+    This class wraps a SelectorPolicy implementation and provides
+    the full ExplorationPolicyPort interface.
 
-    Expansion rules:
-        - Assets already in seen_assets are DENIED.
-        - Assets in denied_assets are DENIED (no re-review within the same pass).
-        - High-priority candidates (>= min_priority_for_auto_approve) are APPROVED.
-        - Over-budget candidates are DEFERRED so they can be flushed when budget frees up.
-        - Remaining candidates are DEFERRED to the end of the phase.
+    Backward compatibility:
+        - If no selector_policy is provided, uses DefaultSelectorPolicy
+        - Maintains same behavior as the original DefaultExplorationPolicy
     """
 
-    def __init__(self, config: ExplorationPolicyConfig | None = None) -> None:
+    def __init__(
+        self,
+        selector_policy: SelectorPolicy | None = None,
+        config: ExplorationPolicyConfig | None = None,
+    ) -> None:
         self.config = config or ExplorationPolicyConfig()
+        self.selector_policy = selector_policy or DefaultSelectorPolicy(self.config)
 
     async def should_expand(
         self,
@@ -261,44 +490,42 @@ class DefaultExplorationPolicy:
         candidate: AssetCandidate,
         ctx: ExplorationContext,
     ) -> ExpansionDecision:
-        # 1. Deduplication
-        key = candidate.display_key
-        if key in ctx.seen_assets:
-            _logger.debug("should_expand: %s already seen, DENIED", key)
+        """Decide whether to expand the working set with candidate.
+
+        Uses the underlying selector_policy to make decisions.
+        """
+        # Use selector_policy to check if candidate would be selected
+        candidates = [candidate]
+        selected = self.selector_policy.select(candidates, ctx, current_budget)
+
+        if not selected:
+            # Candidate was filtered out - determine if DENIED or DEFERRED
+            key = candidate.display_key
+
+            # Check if denied due to already seen or denied
+            if key in ctx.seen_assets:
+                return ExpansionDecision.DENIED
+            if key in ctx.denied_assets and self.config.deny_revisit_after_denied:
+                return ExpansionDecision.DENIED
+
+            # Check if denied due to depth
+            if ctx.depth >= ctx.max_depth:
+                return ExpansionDecision.DENIED
+
+            # Check if over budget - DEFERRED
+            if current_budget.headroom < candidate.estimated_tokens:
+                return ExpansionDecision.DEFERRED
+
+            # Low priority - DENIED
             return ExpansionDecision.DENIED
 
-        if key in ctx.denied_assets and self.config.deny_revisit_after_denied:
-            _logger.debug("should_expand: %s previously denied, DENIED", key)
-            return ExpansionDecision.DENIED
-
-        # 2. Depth check
-        if ctx.depth >= ctx.max_depth:
-            _logger.debug("should_expand: max depth %d reached, DENIED", ctx.max_depth)
-            return ExpansionDecision.DENIED
-
-        # 3. Budget feasibility — over-budget assets are DEFERRED so they can be
-        #    reconsidered when budget frees up during the phase.  This applies to
-        #    all priority levels; priority gates (step 4) only run when the
-        #    candidate fits within available headroom.
-        if current_budget.headroom < candidate.estimated_tokens:
-            _logger.debug(
-                "should_expand: %s exceeds budget (headroom=%d < needed=%d), DEFERRED",
-                key,
-                current_budget.headroom,
-                candidate.estimated_tokens,
-            )
-            return ExpansionDecision.DEFERRED
-
-        # 4. Within available budget — apply priority gates
+        # Candidate was selected - check priority for APPROVED vs DEFERRED
         if candidate.priority >= self.config.min_priority_for_auto_approve:
-            _logger.debug("should_expand: %s auto-approved (priority=%d)", key, candidate.priority)
             return ExpansionDecision.APPROVED
 
         if candidate.priority >= self.config.min_priority_for_defer:
-            _logger.debug("should_expand: %s DEFERRED (priority=%d)", key, candidate.priority)
             return ExpansionDecision.DEFERRED
 
-        _logger.debug("should_expand: %s low priority, DENIED", key)
         return ExpansionDecision.DENIED
 
     async def select_next_tools(
@@ -324,6 +551,7 @@ class DefaultExplorationPolicy:
         effective_limit: int,
         phase: ExplorationPhase,
     ) -> bool:
+        """Return True when compaction should be triggered."""
         if effective_limit <= 0:
             return True
         ratio = current_tokens / effective_limit
@@ -344,6 +572,36 @@ class DefaultExplorationPolicy:
         if "repo_read" in last:
             return ExplorationPhase.EXPAND
         return ExplorationPhase.SEARCH
+
+
+# ------------------------------------------------------------------
+# Default implementation (backward compatibility alias)
+# ------------------------------------------------------------------
+
+
+class DefaultExplorationPolicy(ExplorationPolicy):
+    """Sane default exploration policy.
+
+    This is a backward-compatible alias that uses DefaultSelectorPolicy.
+
+    Phase flow:
+        MAP -> SEARCH -> SLICE -> EXPAND -> READ_FULL
+        (COMPACT is triggered by should_compact when budget is tight)
+
+    Expansion rules:
+        - Assets already in seen_assets are DENIED.
+        - Assets in denied_assets are DENIED (no re-review within the same pass).
+        - High-priority candidates (>= min_priority_for_auto_approve) are APPROVED.
+        - Over-budget candidates are DEFERRED so they can be flushed when budget frees up.
+        - Remaining candidates are DEFERRED to the end of the phase.
+    """
+
+    def __init__(self, config: ExplorationPolicyConfig | None = None) -> None:
+        effective_config = config or ExplorationPolicyConfig()
+        super().__init__(
+            selector_policy=DefaultSelectorPolicy(effective_config),
+            config=effective_config,
+        )
 
 
 # ------------------------------------------------------------------
@@ -397,9 +655,14 @@ __all__ = [
     "AssetCandidate",
     "AssetKind",
     "DefaultExplorationPolicy",
+    "DefaultSelectorPolicy",
     "ExpansionDecision",
     "ExplorationContext",
     "ExplorationPhase",
+    "ExplorationPolicy",
     "ExplorationPolicyConfig",
     "ExplorationPolicyPort",
+    "GreedySelectorPolicy",
+    "SelectorPolicy",
+    "SemanticRankSelectorPolicy",
 ]

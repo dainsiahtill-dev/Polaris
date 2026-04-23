@@ -1771,22 +1771,28 @@ _DIRECTOR_CONTINUE_MARKER = (
     "remaining",
     "pending",
     "next step",
+    "next turn",
+    "next round",
     "下一步",
+    "下一回合",
+    "下一轮",
     "继续执行",
     "未完成",
     "incomplete",
+    "执行状态",
+    "将使用",
+    "i will",
 )
 _DIRECTOR_DONE_MARKER = (
     "全部完成",
-    "已完成",
+    "任务已全部完成",
     "执行完毕",
     "all tasks complete",
     "all_tasks_complete",
     "all done",
-    "finished",
-    "completed",
 )
 _MAX_DIRECTOR_LOOPS = 5
+_SUPER_DIRECTOR_MULTI_TURN_REASONS = {"code_delivery", "architect_code_delivery"}
 
 
 def _director_output_suggests_more_work(content: str) -> bool:
@@ -1999,7 +2005,7 @@ def _run_super_turn(
         # FIX-20250422-v5: For Director in SUPER mode, loop until work is complete
         # or safety limit reached. Directors often need multiple turns to execute
         # all tasks from a PM plan.
-        if next_role == "director" and decision.reason == "code_delivery":
+        if next_role == "director" and decision.reason in _SUPER_DIRECTOR_MULTI_TURN_REASONS:
             last_result = _run_director_execution_loop(
                 host,
                 session_id=next_session_id,

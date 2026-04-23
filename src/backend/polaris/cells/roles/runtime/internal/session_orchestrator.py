@@ -21,6 +21,7 @@ from polaris.cells.roles.kernel.public.transaction_contracts import (
     Phase,
     PhaseManager,
     extract_tool_results_from_batch_receipt,
+    has_authoritative_write_receipt,
     resolve_delivery_mode,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -80,6 +81,13 @@ _READ_TOOL_NAMES = {
     "repo_read_around",
     "repo_read_range",
 }
+
+_SUPER_MODE_MARKERS = (
+    "[SUPER_MODE_HANDOFF]",
+    "[/SUPER_MODE_HANDOFF]",
+    "[SUPER_MODE_DIRECTOR_CONTINUE]",
+    "[/SUPER_MODE_DIRECTOR_CONTINUE]",
+)
 
 _EXPLORATION_ONLY_TOOLS = {
     "glob",
@@ -156,7 +164,7 @@ class SessionStateReducer:
         self.restore_task_contract(payload)
 
     def mutation_obligation_satisfied(self, batch_receipt: Any | None = None) -> bool:
-        """Return True when a successful write receipt has already been observed."""
+        """Return True when an authoritative write receipt has already been observed."""
         if self._has_successful_write_receipt(batch_receipt):
             return True
         return any(
@@ -174,10 +182,7 @@ class SessionStateReducer:
 
     @staticmethod
     def _has_successful_write_receipt(batch_receipt: Any | None) -> bool:
-        tool_results = extract_tool_results_from_batch_receipt(
-            SessionStateReducer._normalize_batch_receipt(batch_receipt)
-        )
-        return any(result.success and result.is_write for result in tool_results)
+        return has_authoritative_write_receipt(SessionStateReducer._normalize_batch_receipt(batch_receipt))
 
     def _is_materialize_changes_mode(self) -> bool:
         """Return True when the current session is running in mutation mode."""
@@ -374,7 +379,7 @@ class SessionStateReducer:
             if name:
                 tool_names.append(name)
 
-        has_write = any(name in _WRITE_TOOL_NAMES for name in tool_names)
+        has_write = self._has_successful_write_receipt(batch_receipt)
         has_read = any(name in _READ_TOOL_NAMES for name in tool_names)
         only_exploration = bool(tool_names) and all(name in _EXPLORATION_ONLY_TOOLS for name in tool_names)
 
@@ -553,6 +558,13 @@ class RoleSessionOrchestrator:
             _role_profile_cache[self.role] = ("", [])
 
         return _role_profile_cache.get(self.role, ("", []))
+
+    def _is_super_materialize_director_session(self) -> bool:
+        """Return True when the current session is a SUPER-mode Director materialize workflow."""
+        if self.role != "director" or not self._state_reducer._is_materialize_changes_mode():
+            return False
+        goal_text = f"{self.state.original_goal or ''}\n{self.state.goal or ''}"
+        return any(marker in goal_text for marker in _SUPER_MODE_MARKERS)
 
     async def _retrieve_bootstrapping_knowledge(self, query: str) -> str:
         """Retrieve relevant historical knowledge for session bootstrapping.
@@ -942,6 +954,8 @@ class RoleSessionOrchestrator:
             return envelope
         if envelope.turn_result.kind == "continue_multi_turn":
             return envelope
+        if self._is_super_materialize_director_session():
+            return envelope
 
         receipt = self._state_reducer._normalize_batch_receipt(envelope.turn_result.batch_receipt)
         if self._state_reducer._is_materialize_changes_mode() and not self._state_reducer.mutation_obligation_satisfied(
@@ -1029,7 +1043,7 @@ class RoleSessionOrchestrator:
         # FIX-20250421-v4: 注入 delivery_mode，确保跨 Turn 不丢失
         # FIX-20250422-SUPER: SUPER_MODE handoff 强制使用 materialize_changes
         _delivery_mode = getattr(self.state, "delivery_mode", None) or "unknown"
-        _is_super_mode = "[SUPER_MODE_HANDOFF]" in goal or "[/SUPER_MODE_HANDOFF]" in goal
+        _is_super_mode = any(marker in goal for marker in _SUPER_MODE_MARKERS)
         if _is_super_mode:
             _delivery_mode = "materialize_changes"
         # FIX-20250422-v7: SUPER_MODE 续回合时截断巨型 PM 计划，防止 LLM 注意力被分散。
@@ -1273,7 +1287,7 @@ class RoleSessionOrchestrator:
         _mandatory_line = f"【系统强制要求】{_mandatory_instruction}\n" if _mandatory_instruction else ""
         _exploration_streak = int(findings.get("_exploration_only_streak", 0) or 0)
         # FIX-20250422-v4: SUPER_MODE 下跳过探索阶段，直接执行修改
-        _is_super_mode = "[SUPER_MODE_HANDOFF]" in goal or "[/SUPER_MODE_HANDOFF]" in goal
+        _is_super_mode = any(marker in goal for marker in _SUPER_MODE_MARKERS)
         _materialize_exploring_instruction = (
             "当前任务是代码修改（MATERIALIZE_CHANGES）。本回合必须执行工具动作，禁止纯文本分析。"
         )

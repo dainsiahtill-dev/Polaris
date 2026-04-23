@@ -274,7 +274,9 @@ class TestContentGatheredPreExecutionBlock:
         ledger = _make_ledger_in_content_gathered("turn_cg_block", turns_in_phase=3)
         context = [{"role": "user", "content": "进一步完善 Session Orchestrator 相关代码"}]
 
-        with pytest.raises(RuntimeError, match=r"CONTENT_GATHERED phase timeout|CONTENT_GATHERED phase requires write tools"):
+        with pytest.raises(
+            RuntimeError, match=r"CONTENT_GATHERED phase timeout|CONTENT_GATHERED phase requires write tools"
+        ):
             await executor.execute_tool_batch(decision, sm, ledger, context, stream=False)
 
         assert any(
@@ -398,3 +400,60 @@ class TestPhaseManagerTimeout:
 
         assert restored.current_phase == Phase.CONTENT_GATHERED
         assert restored._turns_in_current_phase == 5
+
+    def test_auxiliary_session_patch_write_does_not_advance_to_implementing(self) -> None:
+        """SESSION_PATCH.md 辅助写入不得推进到 IMPLEMENTING。"""
+        from polaris.cells.roles.kernel.internal.transaction.phase_manager import ToolResult
+
+        pm = PhaseManager()
+        pm.transition([ToolResult("read_file", bytes_read=128)])
+        assert pm.current_phase == Phase.CONTENT_GATHERED
+
+        pm.transition(
+            [
+                ToolResult.from_batch_result(
+                    {
+                        "tool_name": "append_to_file",
+                        "status": "success",
+                        "arguments": {"file": "SESSION_PATCH.md", "content": "note"},
+                        "result": {"effect_receipt": {"file": "SESSION_PATCH.md"}},
+                    }
+                )
+            ]
+        )
+
+        assert pm.current_phase == Phase.CONTENT_GATHERED
+
+    def test_dot_polaris_runtime_write_is_not_authoritative(self) -> None:
+        """`.polaris/**` 运行时写入不得满足 authoritative write。"""
+        from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+            ToolResult,
+            has_authoritative_write_receipt,
+        )
+
+        result = ToolResult.from_batch_result(
+            {
+                "tool_name": "write_file",
+                "status": "success",
+                "arguments": {"file": "X:/.polaris/projects/backend/runtime/tasks/task_1.json"},
+                "result": {"file": "X:/.polaris/projects/backend/runtime/tasks/task_1.json"},
+            }
+        )
+
+        assert result.is_write is True
+        assert result.is_authoritative_write is False
+        assert (
+            has_authoritative_write_receipt(
+                {
+                    "results": [
+                        {
+                            "tool_name": "write_file",
+                            "status": "success",
+                            "arguments": {"file": "X:/.polaris/projects/backend/runtime/tasks/task_1.json"},
+                            "result": {"file": "X:/.polaris/projects/backend/runtime/tasks/task_1.json"},
+                        }
+                    ]
+                }
+            )
+            is False
+        )

@@ -54,3 +54,30 @@ def test_assess_director_request_clarity_treats_continuation_as_executable() -> 
     assert _assess_director_request_clarity("go on") == RequestClarity.EXECUTABLE
     assert _assess_director_request_clarity("下一步") == RequestClarity.EXECUTABLE
     assert _assess_director_request_clarity("ok") == RequestClarity.EXECUTABLE
+
+
+def test_assess_director_request_clarity_super_mode_handoff_is_executable() -> None:
+    """SUPER_MODE handoff messages must NEVER be blocked as vague.
+
+    The handoff contains a structured PM plan with [mode:materialize] and
+    explicit tool instructions. The vague_keywords check (e.g. '完善') would
+    incorrectly block these without this exemption."""
+    handoff = (
+        "[mode:materialize]\n"
+        "[SUPER_MODE_HANDOFF]\n"
+        "original_user_request: 进一步完善ContextOS以及相关代码\n\n"
+        "pm_plan: 1. read file\n2. modify logic\n"
+        "[/SUPER_MODE_HANDOFF]"
+    )
+    assert _assess_director_request_clarity(handoff) == RequestClarity.EXECUTABLE
+
+
+def test_assess_director_request_clarity_super_mode_continue_is_executable() -> None:
+    """SUPER_MODE director continuation prompts must also pass the clarity gate."""
+    continuation = (
+        "[mode:materialize]\n"
+        "[SUPER_MODE_DIRECTOR_CONTINUE]\n"
+        "instructions: Continue executing remaining tasks.\n"
+        "[/SUPER_MODE_DIRECTOR_CONTINUE]"
+    )
+    assert _assess_director_request_clarity(continuation) == RequestClarity.EXECUTABLE

@@ -1,5 +1,7 @@
 """Tests for RoleSessionOrchestrator."""
 
+import shutil
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -23,6 +25,12 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnPhaseEvent,
 )
 from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
+
+
+def _make_local_workspace(prefix: str) -> str:
+    root = Path("runtime") / "pytest_workspaces"
+    root.mkdir(parents=True, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix, dir=root)
 
 
 class MockKernel:
@@ -52,10 +60,12 @@ class TestRoleSessionOrchestrator:
     """测试 RoleSessionOrchestrator 的多 Turn 编排循环。"""
 
     @pytest.fixture
-    def tmp_workspace(self, tmp_path):
-        workspace = tmp_path / "ws"
-        workspace.mkdir()
-        return str(workspace)
+    def tmp_workspace(self):
+        workspace = _make_local_workspace("orch-")
+        try:
+            yield workspace
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
 
     @pytest.mark.asyncio
     async def test_single_turn_end_session(self, tmp_workspace):
@@ -223,6 +233,80 @@ class TestRoleSessionOrchestrator:
 
         assert result.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
         assert result.turn_result.kind == "continue_multi_turn"
+
+    @pytest.mark.asyncio
+    async def test_auxiliary_write_receipt_does_not_satisfy_materialize_obligation(self, tmp_workspace):
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        auxiliary_receipt = {
+            "results": [
+                {
+                    "tool_name": "append_to_file",
+                    "status": "success",
+                    "arguments": {"file": "SESSION_PATCH.md", "content": "note"},
+                    "result": {"effect_receipt": {"file": "SESSION_PATCH.md"}},
+                }
+            ]
+        }
+
+        assert orch._state_reducer.mutation_obligation_satisfied(auxiliary_receipt) is False
+
+    @pytest.mark.asyncio
+    async def test_super_materialize_director_read_only_turn_does_not_auto_end(self, tmp_workspace):
+        orch = RoleSessionOrchestrator(
+            session_id="sess-1",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.delivery_mode = DeliveryMode.MATERIALIZE_CHANGES.value
+        orch.state.original_goal = "[SUPER_MODE_HANDOFF]\noriginal_user_request: 完善ContextOS\n[/SUPER_MODE_HANDOFF]"
+        orch.state.goal = orch.state.original_goal
+        orch.state.turn_count = 2
+        orch.state.turn_history.append(
+            {
+                "batch_receipt": {
+                    "results": [
+                        {
+                            "tool_name": "edit_file",
+                            "status": "success",
+                            "arguments": {"file": "polaris/kernelone/context/contracts.py"},
+                            "result": {"file": "polaris/kernelone/context/contracts.py"},
+                        }
+                    ]
+                }
+            }
+        )
+        envelope = TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t-read",
+                kind="final_answer",
+                visible_content="读取完成，准备继续执行。",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "success",
+                            "result": {"content": "class Example: pass"},
+                        }
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            next_intent=None,
+            session_patch={},
+            artifacts_to_persist=[],
+            speculative_hints={},
+        )
+
+        result = orch._apply_read_only_termination_exemption(envelope)
+
+        assert result.continuation_mode == TurnContinuationMode.AUTO_CONTINUE
+        assert result.turn_result.kind == "final_answer"
 
     @pytest.mark.asyncio
     async def test_materialize_changes_failed_read_only_turn_keeps_session_open(self, tmp_workspace, monkeypatch):
@@ -930,10 +1014,12 @@ class TestCheckpointResume:
     """测试 Checkpoint Resume 加载（Step 10）。"""
 
     @pytest.fixture
-    def tmp_workspace(self, tmp_path):
-        workspace = tmp_path / "ws"
-        workspace.mkdir()
-        return str(workspace)
+    def tmp_workspace(self):
+        workspace = _make_local_workspace("checkpoint-")
+        try:
+            yield workspace
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
 
     @pytest.fixture
     def checkpoint_dir(self, tmp_workspace):
@@ -1174,10 +1260,7 @@ class TestTruncateSuperModeGoal:
     def test_pm_plan_truncated(self):
         """长 PM 计划应被截断，保留任务列表和原始请求。"""
         # 构建一个超过 2000 字符的 SUPER_MODE handoff 消息
-        pm_plan_body = "\n".join(
-            f"## 章节 {i}\n这是详细的计划描述，包含很多文字。" * 20
-            for i in range(10)
-        )
+        pm_plan_body = "\n".join(f"## 章节 {i}\n这是详细的计划描述，包含很多文字。" * 20 for i in range(10))
         goal_lines = [
             "[SUPER_MODE_HANDOFF]",
             "original_user_request: 继续完善ContextOS",

@@ -25,6 +25,10 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
     WRITE_TOOLS,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.write_authority import (
+    is_authoritative_write_invocation as _is_authoritative_write_invocation,
+    is_authoritative_write_path,
+)
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
@@ -197,6 +201,16 @@ def extract_write_targets_from_invocations(invocations: list[Any]) -> list[str]:
         seen.add(lowered)
         targets.append(normalized)
     return targets
+
+
+def is_authoritative_write_invocation(invocation: Any) -> bool:
+    """判定 invocation 是否为 authoritative write。"""
+    if not is_write_invocation(invocation):
+        return False
+    target_file = extract_target_file_from_invocation_args(invocation)
+    if target_file:
+        return is_authoritative_write_path(target_file)
+    return _is_authoritative_write_invocation(invocation)
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +527,11 @@ def tool_batch_has_write_invocation(invocations: list[dict[str, Any]] | list[Any
         if mode == str(ToolExecutionMode.WRITE_SERIAL):
             return True
     return False
+
+
+def tool_batch_has_authoritative_write_invocation(invocations: list[dict[str, Any]] | list[Any]) -> bool:
+    """判定工具批次中是否包含 authoritative write invocation。"""
+    return any(is_authoritative_write_invocation(invocation) for invocation in invocations)
 
 
 def has_available_write_tool(tool_definitions: list[dict[str, Any]] | list[Any]) -> bool:

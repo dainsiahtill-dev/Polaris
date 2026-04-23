@@ -141,6 +141,12 @@ def _assess_director_request_clarity(request: str) -> str:
     if _is_continuation_intent(token):
         return RequestClarity.EXECUTABLE
 
+    # FIX-20250422-v8: SUPER_MODE handoff messages are NEVER vague.
+    # They contain structured PM plans with explicit instructions to execute.
+    # The vague_keywords check (e.g. "完善") would incorrectly block these.
+    if "[SUPER_MODE_HANDOFF]" in token or "[SUPER_MODE_DIRECTOR_CONTINUE]" in token:
+        return RequestClarity.EXECUTABLE
+
     # Check for target file patterns (common code file extensions)
     has_target_file = bool(re.search(r"[\w/\\.-]+\.(py|ts|js|jsx|tsx|java|go|rs|cpp|c|h|yaml|yml|json|md)", token))
 
@@ -174,16 +180,16 @@ def _assess_director_request_clarity(request: str) -> str:
     has_location = bool(re.search(r"(第\d+行|line\s+\d+|:\d+|函数\w+|类\w+|方法\w+)", token))
 
     # Vague keywords that suggest exploration rather than execution
+    # FIX-20250422-v8: Removed "优化" — it is also in action_keywords, causing
+    # contradictory scoring (+40 and -30 = net +10). Keep only pure-exploration words.
     vague_keywords = [
         "完善",
         "改进",
-        "优化",
         "看看",
         "了解一下",
         "分析一下",
         "improve",
         "enhance",
-        "optimize",
         "explore",
         "investigate",
         "看看",

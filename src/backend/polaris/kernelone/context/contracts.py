@@ -226,6 +226,143 @@ class TurnEngineContextResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+# -----------------------------------------------------------------------------
+# ContextSessionProtocol Types (L4-L5 Boundary)
+# -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ArtifactRecord:
+    """Immutable artifact record for ContextOS session storage.
+
+    Represents a single piece of context data (file, memory, event, etc.)
+    stored within a session's working state.
+    """
+
+    artifact_id: str
+    artifact_type: str  # e.g. "file", "memory", "event", "task_result"
+    role: str
+    content: str
+    tokens: int
+    importance: float  # 0.0–1.0, used for eviction priority
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ContextQuery:
+    """Immutable query specification for artifact retrieval.
+
+    Supports filtering by type, role, importance threshold, and text search.
+    """
+
+    artifact_types: list[str] | None = None
+    roles: list[str] | None = None
+    min_importance: float = 0.0
+    max_results: int = 100
+    text_query: str | None = None
+    include_archived: bool = False
+
+
+class ContextSessionProtocol(Protocol):
+    """L4-L5 boundary protocol for ContextOS session operations.
+
+    This protocol defines the standard interface between Application Layer (L4)
+    and Kernel Layer (L5) for context session management. Implementations
+    provide persistent, queryable artifact storage with soft/hard deletion.
+
+    Design constraints:
+        - All operations are async (I/O bound)
+        - remove() performs soft deletion (marked deleted, recoverable)
+        - archive() performs hard deletion (permanent, non-recoverable)
+        - query() respects importance thresholds and role scoping
+
+    Implementations: ContextSessionStore (in-process), RemoteSessionAdapter.
+    """
+
+    async def add(
+        self,
+        artifact: ArtifactRecord,
+        *,
+        session_id: str,
+    ) -> None:
+        """Add an artifact to the session's working state.
+
+        Args:
+            artifact: The artifact record to store.
+            session_id: Target session identifier.
+
+        Raises:
+            ValueError: If artifact_id already exists in session.
+        """
+        ...
+
+    async def remove(
+        self,
+        artifact_id: str,
+        *,
+        session_id: str,
+        reason: str | None = None,
+    ) -> None:
+        """Remove an artifact from session (soft deletion).
+
+        The artifact is marked as deleted but remains recoverable.
+        Use archive() for permanent deletion.
+
+        Args:
+            artifact_id: Identifier of the artifact to remove.
+            session_id: Target session identifier.
+            reason: Optional reason for removal (audit trail).
+
+        Raises:
+            KeyError: If artifact_id not found in session.
+        """
+        ...
+
+    async def query(
+        self,
+        query: ContextQuery,
+        *,
+        session_id: str,
+    ) -> list[ArtifactRecord]:
+        """Query artifacts from session working state.
+
+        Returns artifacts matching all specified query criteria.
+        Results are ordered by importance (descending), then updated_at (descending).
+
+        Args:
+            query: Query specification with filters and limits.
+            session_id: Target session identifier.
+
+        Returns:
+            List of matching artifact records (may be empty).
+        """
+        ...
+
+    async def archive(
+        self,
+        artifact_id: str,
+        *,
+        session_id: str,
+        reason: str | None = None,
+    ) -> None:
+        """Archive an artifact (hard deletion).
+
+        Permanently removes the artifact from working state.
+        This operation is non-recoverable.
+
+        Args:
+            artifact_id: Identifier of the artifact to archive.
+            session_id: Target session identifier.
+            reason: Optional reason for archival (audit trail).
+
+        Raises:
+            KeyError: If artifact_id not found in session.
+        """
+        ...
+
+
 class ContextBuilderPort(Protocol):
     """Port for building LLM context from role-aware state.
 
@@ -246,12 +383,15 @@ class ContextBuilderPort(Protocol):
 
 
 __all__ = [
+    "ArtifactRecord",
     "CompactSnapshot",
     # Types
     "ContextBudget",
     "ContextBuilderPort",
     "ContextBudgetAllocatorPort",
     "ContextAllocatorBudgetPort",  # Backward compat alias (unique name)
+    "ContextQuery",
+    "ContextSessionProtocol",
     # Ports
     "ContextCompressorPort",
     "ContextPack",

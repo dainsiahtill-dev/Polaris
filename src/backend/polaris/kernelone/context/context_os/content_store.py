@@ -25,6 +25,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import threading
@@ -85,6 +86,16 @@ class ContentStore:
         self._misses: int = 0
         self._evict_count: int = 0
         self._lock = threading.RLock()
+        self._async_lock = asyncio.Lock()
+
+    # ------------------------------------------------------------------
+    # Async-safe helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def _async_lock_ctx(self):
+        """Return the async lock context manager for write operations."""
+        return self._async_lock
 
     # ------------------------------------------------------------------
     # Public API
@@ -207,6 +218,81 @@ class ContentStore:
         """
         for ref in refs:
             self.release(ref)
+
+    # ------------------------------------------------------------------
+    # Async-safe write/read API
+    # ------------------------------------------------------------------
+
+    async def write(self, key: str, content: str) -> ContentRef:
+        """Async-safe write content to store.
+
+        Interns the content and returns its ContentRef.
+        Uses async lock to ensure thread safety in async contexts.
+
+        Args:
+            key: Logical key for the content (used for tracking).
+            content: The string content to store.
+
+        Returns:
+            A frozen :class:`ContentRef` handle for the content.
+        """
+        async with self._async_lock:
+            return self.intern(content)
+
+    async def read(self, key: str) -> str:
+        """Async-safe read content from store by key.
+
+        Interns the key to get its hash, then retrieves the content.
+        This ensures consistency with write() which interns the content.
+
+        Args:
+            key: The key string to look up (will be interned to get hash).
+
+        Returns:
+            The original string, or empty string if not found.
+        """
+        async with self._async_lock:
+            # Intern the key to get the hash (same as write)
+            ref = self.intern(key)
+            # Now look up by the hash
+            content = self._store.get(ref.hash)
+            if content is not None:
+                self._access[ref.hash] = time.monotonic()
+                return content
+            self._misses += 1
+            return ""
+
+    async def delete(self, key: str) -> bool:
+        """Async-safe delete content from store.
+
+        Args:
+            key: The key (hash) of the content to delete.
+
+        Returns:
+            True if content was deleted, False if not found.
+        """
+        async with self._async_lock:
+            if key in self._store:
+                self._remove_entry(key)
+                return True
+            return False
+
+    async def update(self, key: str, content: str) -> ContentRef:
+        """Async-safe update content in store.
+
+        Deletes existing content and interns the new content.
+
+        Args:
+            key: The key (hash) of the content to update.
+            content: The new string content to store.
+
+        Returns:
+            A frozen :class:`ContentRef` handle for the new content.
+        """
+        async with self._async_lock:
+            if key in self._store:
+                self._remove_entry(key)
+            return self.intern(content)
 
     # ------------------------------------------------------------------
     # Serialization
@@ -382,7 +468,10 @@ class RefTracker:
     def __init__(self, store: ContentStore) -> None:
         self._store = store
         self._active: set[str] = set()
+        # RefTracker is used in both sync and async contexts; keep threading.Lock
+        # for sync safety and add async.Lock for async contexts
         self._lock = threading.Lock()
+        self._async_lock = asyncio.Lock()
 
     def acquire(self, ref: ContentRef) -> ContentRef:
         """Register *ref* as actively held by this tracker.

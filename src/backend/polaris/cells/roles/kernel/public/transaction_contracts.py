@@ -36,6 +36,7 @@ from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
     PhaseManager,
     ToolResult,
     extract_tool_results_from_batch_receipt,
+    has_authoritative_write_receipt,
 )
 
 __all__ = [
@@ -51,5 +52,6 @@ __all__ = [
     "evaluate_modification_readiness",
     "extract_tool_results_from_batch_receipt",
     "get_verification_patterns",
+    "has_authoritative_write_receipt",
     "resolve_delivery_mode",
 ]

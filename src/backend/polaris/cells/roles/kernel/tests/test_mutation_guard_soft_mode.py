@@ -13,6 +13,9 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    tool_batch_has_authoritative_write_invocation,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     BlockedReason,
     DeliveryContract,
@@ -46,6 +49,18 @@ def mock_guard_assert() -> Any:
 # ---------------------------------------------------------------------------
 # ToolBatchExecutor 层测试
 # ---------------------------------------------------------------------------
+
+
+def test_authoritative_write_invocation_ignores_session_patch_file() -> None:
+    """辅助 SESSION_PATCH 写入不能满足 mutation 写入要求。"""
+    invocations: list[dict[str, Any]] = [
+        {
+            "tool_name": "append_to_file",
+            "arguments": {"file": "SESSION_PATCH.md", "content": "trace"},
+        }
+    ]
+
+    assert tool_batch_has_authoritative_write_invocation(invocations) is False
 
 
 @pytest.mark.asyncio
