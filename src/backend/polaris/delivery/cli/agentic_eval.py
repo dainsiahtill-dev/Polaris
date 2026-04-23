@@ -18,7 +18,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.llm.evaluation.public.service import (
     list_baseline_library_sources,

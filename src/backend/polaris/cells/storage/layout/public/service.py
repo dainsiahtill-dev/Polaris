@@ -33,8 +33,8 @@ _logger = logging.getLogger(__name__)
 
 __all__ = [
     "PolarisStorageLayout",
-    "PolarisStorageRoots",
     "PolarisStorageLayout",
+    "PolarisStorageRoots",
     "PolarisStorageRoots",
     "RefreshStorageLayoutCommandV1",
     "ResolveRuntimePathQueryV1",
@@ -48,8 +48,8 @@ __all__ = [
     "default_polaris_cache_base",
     "get_polaris_root",
     "get_settings_path",
-    "polaris_home",
     "load_persisted_settings",
+    "polaris_home",
     "polaris_home",
     "refresh_storage_layout",
     "resolve_polaris_roots",

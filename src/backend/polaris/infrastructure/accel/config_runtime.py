@@ -4,11 +4,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .polaris_paths import default_accel_runtime_home
 from .language_profiles import (
     resolve_language_profile_registry,
     resolve_selected_language_profiles,
 )
+from .polaris_paths import default_accel_runtime_home
 from .semantic_ranker import clamp_ratio, normalize_semantic_provider
 
 _SYNTAX_PROVIDERS = {"off", "auto", "tree_sitter"}

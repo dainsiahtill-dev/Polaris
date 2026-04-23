@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
 from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+
 
 class DirectorConfig(BaseModel):
     """Director configuration."""

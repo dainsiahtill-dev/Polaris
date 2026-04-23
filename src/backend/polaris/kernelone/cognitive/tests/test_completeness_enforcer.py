@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
-
 from polaris.kernelone.cognitive.validators.completeness_enforcer import (
     BANNED_PLACEHOLDER_PATTERNS,
     OutputCompletenessEnforcer,
 )
 from polaris.kernelone.cognitive.validators.dispatcher import ValidationSeverity
-
 
 # -----------------------------------------------------------------------------
 # Placeholder Pattern Detection

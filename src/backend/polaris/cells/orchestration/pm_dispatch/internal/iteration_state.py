@@ -15,6 +15,12 @@ import os
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+# Cell-internal port – no delivery dependency
+from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
+    PM_SPIN_GUARD_STATUS,
+    append_pm_report,
+    get_task_signature,
+)
 from polaris.cells.runtime.state_owner.public.service import (
     merge_director_result_into_pm_state,
     write_json_atomic,
@@ -24,14 +30,6 @@ from polaris.cells.runtime.state_owner.public.service import (
 from polaris.kernelone.events import emit_dialogue, emit_event, emit_llm_event
 from polaris.kernelone.fs.control_flags import pause_flag_path
 from polaris.kernelone.fs.jsonl.ops import append_jsonl
-
-
-# Cell-internal port – no delivery dependency
-from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
-    PM_SPIN_GUARD_STATUS,
-    append_pm_report,
-    get_task_signature,
-)
 
 if TYPE_CHECKING:
     import argparse

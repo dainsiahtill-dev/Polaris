@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import pytest
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, StructuredFindings
 
 

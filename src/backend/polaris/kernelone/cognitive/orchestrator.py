@@ -109,8 +109,8 @@ class CognitiveOrchestrator:
         if self._enable_value_alignment:
             try:
                 # ACGA 2.0: Use IAlignmentService port via adapter
-                from polaris.kernelone.ports import IAlignmentService
                 from polaris.cells.adapters.kernelone import AlignmentServiceAdapter
+                from polaris.kernelone.ports import IAlignmentService
 
                 self._value_alignment = AlignmentServiceAdapter()
             except ImportError:

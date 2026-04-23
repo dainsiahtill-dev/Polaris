@@ -21,8 +21,8 @@ from polaris.domain.models.resident import (
     SkillArtifact,
     SkillProposal,
 )
-from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.fs.jsonl.ops import append_jsonl
+from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage import (
     resolve_runtime_path,
     resolve_workspace_persistent_path,

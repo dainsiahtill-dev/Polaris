@@ -9,8 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..polaris_paths import default_accel_runtime_home
 from ..language_profiles import resolve_extension_language_map
+from ..polaris_paths import default_accel_runtime_home
 
 LEGACY_DEFAULT_INDEX_INCLUDE = ["src/**", "accel/**", "tests/**"]
 DEFAULT_INDEX_EXCLUDES = [

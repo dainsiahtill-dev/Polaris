@@ -14,16 +14,16 @@ from typing import Any
 class Role(str, Enum):
     """已定义的角色枚举。新增角色必须在此注册。"""
 
-    PM = "PM"  # 尚书令 - 任务编排
-    CHIEF_ENGINEER = "ChiefEngineer"  # 工部尚书 - 设计图纸
-    DIRECTOR = "Director"  # 工部侍郎 - 按图施工
-    QA = "QA"  # 门下侍中 - 审计验收
-    POLICY = "Policy"  # 大理寺 - 策略闸门
-    FINOPS = "FinOps"  # 户部 - 预算控制
+    PM = "PM"  # Project Manager - 任务编排
+    CHIEF_ENGINEER = "ChiefEngineer"  # 技术负责人 - 设计图纸
+    DIRECTOR = "Director"  # 执行主管 - 按图施工
+    QA = "QA"  # 质量审计 - 审计验收
+    POLICY = "Policy"  # 策略闸门 - 合规检查
+    FINOPS = "FinOps"  # 预算控制 - 成本管理
 
     # 扩展角色（预留）
-    ARCHITECT = "Architect"  # 总建筑师 - 系统架构
-    SECURITY = "Security"  # 锦衣卫 - 安全审查
+    ARCHITECT = "Architect"  # 系统架构师 - 系统架构
+    SECURITY = "Security"  # 安全审查 - 安全审查
 
 
 class ViolationLevel(Enum):
@@ -47,7 +47,7 @@ class RoleBoundary:
     # 核心职责（必须做）
     responsibilities: frozenset[str]
 
-    # 绝对禁止（不得做）- 违反即触发封驳
+    # 绝对禁止（不得做）- 违反即触发否决
     prohibitions: frozenset[str]
 
     # 输入契约（可接收什么）
@@ -86,7 +86,7 @@ class RoleBoundary:
 
 CONSTITUTION: dict[Role, RoleBoundary] = {
     # ==========================================================================
-    # PM (尚书令) - 任务编排、章奏管理、路由调度
+    # PM (Project Manager) - 任务编排、需求管理、路由调度
     # ==========================================================================
     Role.PM: RoleBoundary(
         role=Role.PM,
@@ -95,7 +95,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
                 "parse_requirements",  # 解析需求
                 "decompose_tasks",  # 任务分解
                 "generate_task_contract",  # 生成任务契约
-                "route_to_chief_engineer",  # 路由到工部尚书
+                "route_to_chief_engineer",  # 路由到技术负责人
                 "collect_feedback",  # 收集反馈
             ]
         ),
@@ -136,7 +136,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
         ),
     ),
     # ==========================================================================
-    # ChiefEngineer (工部尚书) - 设计图纸、生成蓝图
+    # ChiefEngineer (技术负责人) - 设计图纸、生成蓝图
     # ==========================================================================
     Role.CHIEF_ENGINEER: RoleBoundary(
         role=Role.CHIEF_ENGINEER,
@@ -186,7 +186,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
         ),
     ),
     # ==========================================================================
-    # Director (工部侍郎) - 按图施工、代码实现
+    # Director (执行主管) - 按图施工、代码实现
     # ==========================================================================
     Role.DIRECTOR: RoleBoundary(
         role=Role.DIRECTOR,
@@ -235,7 +235,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
         ),
     ),
     # ==========================================================================
-    # QA (门下侍中) - 独立审计、封驳权、最终验收
+    # QA (质量审计) - 独立审计、否决权、最终验收
     # ==========================================================================
     Role.QA: RoleBoundary(
         role=Role.QA,
@@ -244,7 +244,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
                 "audit_code_quality",  # 审计代码质量
                 "verify_requirements_met",  # 验证需求满足
                 "execute_tests",  # 执行测试
-                "issue_veto",  # 行使封驳权
+                "issue_veto",  # 行使否决权
                 "request_changes",  # 请求变更
                 "provide_feedback",  # 提供反馈
             ]
@@ -270,7 +270,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
         output_contracts=frozenset(
             [
                 "audit_report",  # 审计报告
-                "veto_decision",  # 封驳决定
+                "veto_decision",  # 否决决定
                 "feedback_to_pm",  # 给 PM 的反馈
             ]
         ),
@@ -285,7 +285,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
         ),
     ),
     # ==========================================================================
-    # Policy (大理寺) - 非 LLM 策略闸门
+    # Policy (策略闸门) - 非 LLM 策略闸门
     # ==========================================================================
     Role.POLICY: RoleBoundary(
         role=Role.POLICY,
@@ -301,7 +301,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
             [
                 "modify_code",  # 禁止修改代码
                 "make_logical_changes",  # 禁止做逻辑变更
-                "bypass_veto",  # 禁止绕过封驳
+                "bypass_veto",  # 禁止绕过否决
                 "override_qa",  # 禁止覆盖 QA 决定
             ]
         ),
@@ -327,7 +327,7 @@ CONSTITUTION: dict[Role, RoleBoundary] = {
         ),
     ),
     # ==========================================================================
-    # FinOps (户部) - 预算控制
+    # FinOps (预算控制) - 预算控制
     # ==========================================================================
     Role.FINOPS: RoleBoundary(
         role=Role.FINOPS,
@@ -461,7 +461,7 @@ ALLOWED_COMMUNICATIONS: list[CommunicationProtocol] = [
 
 
 class AntiPattern(str, Enum):
-    """已识别的架构反模式。检测到即触发封驳。"""
+    """已识别的架构反模式。检测到即触发否决。"""
 
     # 角色越界
     ROLE_OVERREACH = "role_overreach"  # 角色做超出职责的事
@@ -665,7 +665,7 @@ def validate_architecture(roles: list[Role]) -> list[str]:
 
     # 检查循环依赖 - 使用独立的访问跟踪避免反馈闭环误报
     # QA->PM 是合法的反馈闭环，不应被视为循环依赖
-    FEEDBACK_LOOPS = frozenset(
+    _feedback_loops = frozenset(
         [
             (Role.QA, Role.PM),  # QA 反馈到 PM 是合法的
         ]
@@ -684,7 +684,7 @@ def validate_architecture(roles: list[Role]) -> list[str]:
                     cycle_start = path.index(role)
                     cycle = [*path[cycle_start:], role]
                     return any(
-                        (cycle[i], cycle[i + 1]) not in FEEDBACK_LOOPS for i in range(len(cycle) - 1)
+                        (cycle[i], cycle[i + 1]) not in _feedback_loops for i in range(len(cycle) - 1)
                     )  # 只是反馈闭环，合法
                 return False
 
@@ -696,7 +696,7 @@ def validate_architecture(roles: list[Role]) -> list[str]:
                 for downstream in boundary.downstream_roles:
                     if downstream not in role_set:
                         continue
-                    if (role, downstream) in FEEDBACK_LOOPS:
+                    if (role, downstream) in _feedback_loops:
                         continue
                     if dfs(downstream):
                         return True

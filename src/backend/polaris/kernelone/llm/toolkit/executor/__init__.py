@@ -19,7 +19,7 @@ executor/
 
 from __future__ import annotations
 
-import subprocess  # noqa: F401 - backward compatibility for test monkeypatching
+import subprocess
 
 # Re-export BudgetExceededError from unified exceptions for backward compatibility
 from polaris.kernelone.llm.exceptions import BudgetExceededError
@@ -38,9 +38,9 @@ from polaris.kernelone.llm.toolkit.executor.runtime import (
 )
 
 __all__ = [
+    "CODE_INTELLIGENCE_AVAILABLE",
     "AgentAccelToolExecutor",
     "BudgetExceededError",
-    "CODE_INTELLIGENCE_AVAILABLE",
     "KernelToolCallingRuntime",
     "build_tool_feedback",
     "execute_tool_call",

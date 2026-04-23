@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
 from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+
 
 class NATSConfig(BaseModel):
     """NATS configuration for runtime messaging.

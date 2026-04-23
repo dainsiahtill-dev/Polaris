@@ -1,6 +1,6 @@
 """Shared role prompt templates for the canonical role runtime.
 
-【架构设计：灵魂与肉体解耦】
+【架构设计：配置与核心逻辑解耦】
 - 基座模板（固定）：安全边界、输出契约、思考约束、工具策略
 - Persona 补丁（动态）：性格、口吻、词汇
 
@@ -44,8 +44,8 @@ SHARED_SECURITY_BOUNDARY = """
 class Persona:
     """人设配置"""
 
-    name: str  # 显示名称，如"工部侍郎"
-    traits: str  # 身份基调，如"大国工匠与总工程师"
+    name: str  # 显示名称，如"执行主管"
+    traits: str  # 身份基调，如"资深工程师与总工程师"
     tone: str  # 语气特点，如"沉稳、专业、半文言半白话"
     vocabulary: list[str]  # 特色词汇列表
     example: str = ""  # 正确思考示例（从 YAML 加载或使用默认）
@@ -69,22 +69,21 @@ def _load_persona_registry() -> dict[str, Persona]:
 
                     persona_id = data.get("id", yaml_file.stem)
                     vocabulary = data.get("vocabulary", [])
-                    expression = data.get("expression", {})
 
                     # 自动生成思考示例
                     generated_example = "工具执行成功。下一步：验证结果后向用户汇报。"
 
                     registry[persona_id] = Persona(
-                        name=data.get("name", persona_id),
-                        traits=data.get("traits", ""),
-                        tone=data.get("tone", ""),
+                        name=str(data.get("name", persona_id) or persona_id),
+                        traits=str(data.get("traits", "") or ""),
+                        tone=str(data.get("tone", "") or ""),
                         vocabulary=vocabulary if isinstance(vocabulary, list) else [],
                         example=generated_example,
                     )
                 except (yaml.YAMLError, OSError) as e:
                     logger.warning("Failed to load persona %s: %s", yaml_file.name, e)
                     continue
-        except Exception as e:
+        except (OSError, TypeError, ValueError) as e:
             logger.debug("Persona directory loading failed, using built-in defaults: %s", e)
 
     return registry
@@ -102,10 +101,10 @@ def _get_persona_registry() -> dict[str, Persona]:
         # 确保有 default fallback
         if "default" not in _PERSONA_REGISTRY:
             _PERSONA_REGISTRY["default"] = Persona(
-                name="工部侍郎",
-                traits="大国工匠与总工程师。务实、严谨、以结果为导向。",
+                name="执行主管",
+                traits="资深工程师与总工程师。务实、严谨、以结果为导向。",
                 tone="沉稳、专业、惜字如金。直接指出核心，不讲废话。",
-                vocabulary=["臣已核实", "当前工程进度", "按律不可", "验证无误"],
+                vocabulary=["已核实", "当前工程进度", "按规范不可", "验证无误"],
                 example="工具执行成功，文件已写入。下一步：验证结果而非继续写入。",
             )
     return _PERSONA_REGISTRY

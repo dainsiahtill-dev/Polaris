@@ -10,7 +10,6 @@ This module provides a sandboxed command execution environment with:
 from __future__ import annotations
 
 import re
-import shlex
 import subprocess
 import time
 from dataclasses import dataclass

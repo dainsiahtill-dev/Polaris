@@ -29,9 +29,7 @@ Port Interface (ACGA 2.0):
 from __future__ import annotations
 
 # ACGA 2.0: Import port interface from kernelone/ports (no Cells dependency)
-from polaris.kernelone.ports.bus_port import AgentEnvelope
-from polaris.kernelone.ports.bus_port import DeadLetterRecord
-from polaris.kernelone.ports.bus_port import IAgentBusPort as AgentBusPort
+from polaris.kernelone.ports.bus_port import AgentEnvelope, DeadLetterRecord, IAgentBusPort as AgentBusPort
 
 # Default poll interval for async polling (seconds)
 _DEFAULT_POLL_INTERVAL_SEC: float = 0.05

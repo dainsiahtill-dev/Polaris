@@ -1,8 +1,0 @@
-{
-  "modification_plan": [
-    {
-      "target_file": "materialize_next_step.md",
-      "action": "创建/追加下一步执行标记文件"
-    }
-  ]
-}

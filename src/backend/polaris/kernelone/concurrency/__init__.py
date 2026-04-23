@@ -16,13 +16,13 @@ from __future__ import annotations
 from polaris.kernelone.concurrency.manager import (
     ConcurrencyPoolConfig,
     ConcurrencyPoolType,
-    get_concurrency_manager,
     UnifiedConcurrencyManager,
+    get_concurrency_manager,
 )
 
 __all__ = [
     "ConcurrencyPoolConfig",
     "ConcurrencyPoolType",
-    "get_concurrency_manager",
     "UnifiedConcurrencyManager",
+    "get_concurrency_manager",
 ]

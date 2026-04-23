@@ -1,4 +1,3 @@
-# ruff: noqa: RUF001
 """Tests for the KernelOne session continuity engine."""
 
 from __future__ import annotations

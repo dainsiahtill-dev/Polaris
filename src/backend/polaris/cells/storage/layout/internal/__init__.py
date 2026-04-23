@@ -10,8 +10,8 @@ from polaris.cells.storage.layout.internal.layout_business import (
     resolve_polaris_roots,
 )
 from polaris.cells.storage.layout.internal.settings_utils import (
-    get_polaris_root,
     get_legacy_settings_path,
+    get_polaris_root,
     get_settings_path,
     get_workspace_settings_path,
     load_persisted_settings,

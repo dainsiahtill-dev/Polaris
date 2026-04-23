@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.roles.kernel.internal.transaction.read_strategy import (
     ReadStrategy,
     _should_use_slice_mode,

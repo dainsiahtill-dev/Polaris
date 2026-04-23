@@ -23,7 +23,6 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
-    ContentChunkEvent,
 )
 from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
 from polaris.delivery.cli.director.console_host import RoleConsoleHost
@@ -64,7 +63,6 @@ def _make_envelope(
     """Build a realistic TurnOutcomeEnvelope for testing."""
     from types import SimpleNamespace
 
-    from polaris.cells.roles.kernel.public.turn_contracts import TurnResult
 
     return SimpleNamespace(
         turn_result=TurnResult(

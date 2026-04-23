@@ -48,7 +48,7 @@ class OllamaRuntimeAdapter(KernelOllamaAdapter):
         }
         import requests
         response = requests.post(url, json=payload, timeout=timeout_seconds)
-        
+
         if response.status_code == 404:
             # Fallback to newer Ollama /api/embed endpoint
             url = f"{str(host).rstrip('/')}/api/embed"

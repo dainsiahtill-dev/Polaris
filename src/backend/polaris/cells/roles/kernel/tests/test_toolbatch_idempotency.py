@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import pytest
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolExecutionContext
 
 

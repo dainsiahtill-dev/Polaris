@@ -43,7 +43,6 @@ class DirectorStateTracker:
             return {}
         ignored_roots = {
             ".polaris",
-            ".polaris",
             "stress_reports",
             ".git",
             ".pytest_cache",

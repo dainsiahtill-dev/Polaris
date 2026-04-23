@@ -33,15 +33,13 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from polaris.kernelone.concurrency import UnifiedConcurrencyManager
+    pass
 import json
 import logging
-import os
 import random
 import threading
-import time
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import requests
 from polaris.kernelone.common.clock import ClockPort, RealClock

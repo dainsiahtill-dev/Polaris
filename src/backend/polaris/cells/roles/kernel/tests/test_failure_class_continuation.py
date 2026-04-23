@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import pytest
 from polaris.cells.roles.kernel.public.turn_contracts import (
     FailureClass,
     TurnContinuationMode,
@@ -63,8 +62,8 @@ class TestCanContinueWithFailureClass:
         failure_class: FailureClass | None = None,
         mode: TurnContinuationMode = TurnContinuationMode.AUTO_CONTINUE,
     ) -> TurnOutcomeEnvelope:
-        from polaris.cells.roles.kernel.public.turn_contracts import TurnDecision, TurnDecisionKind, FinalizeMode
-        
+        from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecision, TurnDecisionKind
+
         decision = TurnDecision(
             turn_id="t1",
             kind=TurnDecisionKind.FINAL_ANSWER,

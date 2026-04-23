@@ -328,34 +328,39 @@ Cell 是最小自治边界。
 
 ---
 
-## 15. 当前架构现实快照（2026-03-28）
+## 15. 当前架构现实快照（2026-04-24）
 
 本节记录当前事实，不得与目标态混写。修改须同步 `CLAUDE.md` 与 `GEMINI.md`。
 
 ### 15.1 Graph 图谱现状
 
 - `docs/graph/catalog/cells.yaml` — `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
-- cells.yaml 声明的 Cell：**51 个**
+- cells.yaml 声明的 Cell：**59 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-04-24）
 - `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**0 / 52**
 - `docs/graph/subgraphs/` 当前仅有：
   - `execution_governance_pipeline.yaml`
   - `storage_archive_pipeline.yaml`
 
-### 15.2 polaris/ 结构现状（`*.py` 快照，2026-03-28）
+### 15.2 polaris/ 结构现状（`*.py` 快照，2026-04-24）
 
-- `polaris/bootstrap/`: 15
-- `polaris/delivery/`: 236
+统计命令：`find polaris -name "*.py" | awk -F/ '{print $2}' | sort | uniq -c`
+
+- `polaris/bootstrap/`: 16
+- `polaris/delivery/`: 242
 - `polaris/application/`: 4
-- `polaris/domain/`: 42
-- `polaris/kernelone/`: 992
+- `polaris/domain/`: 44
+- `polaris/kernelone/`: 1068
 - `polaris/infrastructure/`: 155
-- `polaris/cells/`: 1030
-- `polaris/tests/`: 27（含4个.md报告文件）
-- **总计**：约 **2501** 个 Python 文件
+- `polaris/cells/`: 1167
+- `polaris/tests/`: 29
+- `polaris/config/`: 5
+- **总计**：**2732** 个 Python 文件
 
 ### 15.3 测试与收集现状
 
-- `pytest --collect-only -q`（2026-04-17）结果：**11860 collected / 0 errors**
+- `pytest --collect-only -q`（2026-04-24）结果：**13511 collected / 62 errors**
+- 真实覆盖率（2026-04-24）：**23.3%**（69360/297487 lines，`pytest --cov=polaris`）
+- 0% 覆盖率模块：390 个（delivery: 155, cells: 103, kernelone: 103, infrastructure: 20, bootstrap: 7, application: 1, domain: 1）
 
 ### 15.4 当前主要 gap
 

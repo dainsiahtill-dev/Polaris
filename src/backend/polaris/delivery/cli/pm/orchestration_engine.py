@@ -65,7 +65,6 @@ from polaris.delivery.cli.pm.blocked_policy import (
     should_apply_degrade_settings,
 )
 from polaris.delivery.cli.pm.config import PmRoleState
-from polaris.delivery.cli.pm.polaris_engine import EngineRuntimeConfig, PolarisEngine
 from polaris.delivery.cli.pm.orchestration_core import (
     archive_task_history,
     check_spin_guard,
@@ -74,6 +73,7 @@ from polaris.delivery.cli.pm.orchestration_core import (
     load_state_and_context,
     update_consecutive_counters,
 )
+from polaris.delivery.cli.pm.polaris_engine import EngineRuntimeConfig, PolarisEngine
 from polaris.delivery.cli.pm.report_utils import (
     append_pm_report,
     format_chief_engineer_for_report,
@@ -86,8 +86,13 @@ from polaris.delivery.cli.pm.tasks import (
 from polaris.delivery.cli.pm.tasks_utils import (
     build_requirements_fallback_payload,
 )
+from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.events import emit_event, emit_llm_event, set_dialogue_seq
+
+# Import io utilities
+from polaris.kernelone.fs.jsonl.ops import scan_last_seq
 from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
 from polaris.kernelone.storage import (
     resolve_ramdisk_root,
     state_to_ramdisk_enabled,
@@ -99,11 +104,6 @@ from polaris.kernelone.storage.io_paths import (
     resolve_workspace_path,
     update_latest_pointer,
 )
-from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
-
-# Import io utilities
-from polaris.kernelone.fs.jsonl.ops import scan_last_seq
-from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
 from polaris.kernelone.traceability.internal.safety import (
     safe_find_node,
     safe_link,

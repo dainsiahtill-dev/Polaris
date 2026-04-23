@@ -84,7 +84,7 @@ _UEP_LIFECYCLE_TO_TYPED: dict[str, str] = {
     EVENT_TYPE_LLM_CALL_END: "InstanceDisposed",
     EVENT_TYPE_LLM_ERROR: "SystemError",
     EVENT_TYPE_LLM_RETRY: "TaskRetry",
-    
+
     # Aliases explicitly published by events.py (LLM Call Lifecycle)
     "call_start": "InstanceStarted",
     "call_end": "InstanceDisposed",

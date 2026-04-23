@@ -46,12 +46,12 @@ class DirectorNode(BaseRoleNode):
         """Execute Director logic to dispatch and run tasks."""
         import argparse
 
-        from polaris.delivery.cli.pm.polaris_engine import PolarisEngine
         from polaris.delivery.cli.pm.orchestration_core import (
             get_shangshuling_ready_tasks,
             record_shangshuling_task_completion,
             sync_tasks_to_shangshuling,
         )
+        from polaris.delivery.cli.pm.polaris_engine import PolarisEngine
         from polaris.delivery.cli.pm.tasks import apply_task_status_updates, normalize_task_status
 
         workspace = context.workspace_full

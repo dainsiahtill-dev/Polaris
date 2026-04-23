@@ -43,9 +43,9 @@ from polaris.kernelone.fs.text_ops import (
     write_json_atomic,
     write_text_atomic,
 )
-from polaris.kernelone.storage.io_paths import resolve_artifact_path
 from polaris.kernelone.prompts.loader import get_template, render_template
 from polaris.kernelone.runtime.shared_types import strip_ansi
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 logger = logging.getLogger(__name__)
 

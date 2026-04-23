@@ -12,8 +12,8 @@ from uuid import uuid4
 
 from .config import init_project, resolve_effective_config
 from .eval.runner import load_benchmark_suite, run_benchmark_suite
-from .polaris_paths import resolve_artifact_path
 from .indexers import build_or_update_indexes
+from .polaris_paths import resolve_artifact_path
 from .query.context_compiler import (
     compile_context_pack,
     explain_context_selection,

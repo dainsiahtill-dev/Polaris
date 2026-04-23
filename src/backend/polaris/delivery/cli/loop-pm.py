@@ -97,8 +97,8 @@ from polaris.delivery.cli.pm.task_helpers import (
     _auto_assign_role,
     compute_task_fingerprint,
 )
-from polaris.kernelone.tool_execution.io_tools import ensure_ollama_available
 from polaris.kernelone.process.ollama_utils import invoke_ollama
+from polaris.kernelone.tool_execution.io_tools import ensure_ollama_available
 
 # Import DirectorInterface integration
 try:

@@ -10,9 +10,9 @@ import logging
 import os
 from contextlib import asynccontextmanager, suppress
 
-from polaris.bootstrap.config import Settings, get_settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from polaris.bootstrap.config import Settings, get_settings
 from polaris.cells.runtime.state_owner.public.service import AppState, Auth, ConnectionState
 from polaris.cells.storage.layout.public.service import sync_process_settings_environment
 from polaris.delivery.http.error_handlers import setup_exception_handlers

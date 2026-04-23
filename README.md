@@ -35,11 +35,21 @@
 | 写写 Python 代码 | 实现 **AI 的 Linux 内核**——文件系统、进程调度、内存管理全部为 AI 运行时重新设计 |
 | 拼接 RAG | 打造 **四层正交记忆系统**——TruthLog + WorkingState + ReceiptStore + ProjectionEngine 严格隔离 |
 
-### 你的代码将被 11,860+ 测试用例守护
+### 测试与质量状态
+
+> 注意: 此前展示的 `pytest --collect-only` 数字不代表实际通过率。
+> 当前正在进行测试基础设施整改，真实覆盖率报告见 `src/backend/htmlcov/`。
 
 ```
-pytest --collect-only -q → 11860 collected / 0 errors
+# 收集数量（非通过数量）
+pytest --collect-only -q → 13511 collected / 62 errors (2026-04-24)
+# 真实覆盖率: 23.3% (69360/297487 lines)
 ```
+
+整改目标:
+- [ ] LLM Provider 集成测试覆盖
+- [ ] HTTP Router 契约测试覆盖
+- [ ] 核心模块 `roles.kernel` 内部覆盖率提升
 
 ### 你不是一个人在战斗
 
@@ -470,7 +480,7 @@ python -m polaris.delivery.cli.director.cli --workspace . --iterations 1
 
 ```bash
 # 全部测试
-pytest --collect-only -q  # 11860 collected
+pytest --collect-only -q  # 13511 collected / 62 errors (2026-04-24)
 
 # 运行 lint + typecheck + test
 ruff check . --fix && ruff format . && mypy . && pytest . -q
@@ -480,11 +490,12 @@ ruff check . --fix && ruff format . && mypy . && pytest . -q
 
 ## 📈 项目规模
 
-| 指标 | 数值 |
-|------|------|
-| Python 文件 | ~2501 |
-| Cell 数量 | 59 |
-| 测试用例 | 11860 |
+| 指标 | 数值 | 统计方式 |
+|------|------|----------|
+| Python 文件 | 2732 | `find src/backend/polaris -name "*.py" \| wc -l` (2026-04-24) |
+| Cell 数量 | 59 | `grep "^  - id:" src/backend/docs/graph/catalog/cells.yaml \| wc -l` (2026-04-24) |
+| 测试收集 | 13511 | `pytest --collect-only -q` (2026-04-24) |
+| 真实覆盖率 | 23.3% | `pytest --cov=polaris` (69360/297487 lines) |
 | 架构约束规则 | 50+ |
 | Protocol 接口 | 197+ |
 | 冰冻数据类 | 1668 |

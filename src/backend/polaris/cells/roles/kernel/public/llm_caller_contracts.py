@@ -10,14 +10,12 @@ Public exports:
 
 from __future__ import annotations
 
-from typing import Any
-
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
     resolve_tool_call_provider,
 )
 
 __all__ = [
-    "resolve_tool_call_provider",
     "build_native_tool_schemas",
+    "resolve_tool_call_provider",
 ]

@@ -21,7 +21,7 @@ from polaris.kernelone.storage import resolve_runtime_path
 from .base import BaseRoleAdapter
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java", ".rs", ".json", ".yaml", ".yml"}
-_IGNORE_ROOTS = {".polaris", ".polaris", ".git", "node_modules", "__pycache__", ".venv", "venv"}
+_IGNORE_ROOTS = {".polaris", ".git", "node_modules", "__pycache__", ".venv", "venv"}
 _PLACEHOLDER_PATTERNS = (
     re.compile(r"\bTODO\b", re.IGNORECASE),
     re.compile(r"\bFIXME\b", re.IGNORECASE),

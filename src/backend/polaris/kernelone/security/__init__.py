@@ -14,8 +14,8 @@ from polaris.kernelone.security.audit import (
 from polaris.kernelone.security.command_auditor import (
     AuditConfig,
     CommandAuditEvent,
-    CommandAuditResult,
     CommandAuditor,
+    CommandAuditResult,
     SeverityLevel,
 )
 from polaris.kernelone.security.dangerous_patterns import (

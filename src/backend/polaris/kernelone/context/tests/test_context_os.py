@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from polaris.kernelone.context.context_os import (
     CodeContextDomainAdapter,
     EpisodeCard,

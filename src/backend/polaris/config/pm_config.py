@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+
 class PMConfig(BaseModel):
     """Project Manager configuration."""
 

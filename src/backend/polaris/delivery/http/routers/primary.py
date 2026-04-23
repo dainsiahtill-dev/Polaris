@@ -6,8 +6,8 @@ that are not part of the /v2 API namespace.
 
 from typing import Any
 
-from polaris.bootstrap.config import get_settings
 from fastapi import APIRouter, HTTPException, status
+from polaris.bootstrap.config import get_settings
 
 primary_router = APIRouter(tags=["primary"])
 

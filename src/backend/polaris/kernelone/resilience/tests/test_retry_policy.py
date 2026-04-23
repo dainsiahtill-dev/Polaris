@@ -6,7 +6,6 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from polaris.kernelone.errors import ErrorCategory, NetworkError, RateLimitError
 from polaris.kernelone.resilience.retry_policy import (
     RetryContext,

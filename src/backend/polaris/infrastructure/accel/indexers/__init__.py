@@ -24,8 +24,8 @@ from ...db.repositories.accel_state_db import (
     load_state,
     upsert_state,
 )
-from ..polaris_paths import default_accel_runtime_home
 from ..language_profiles import resolve_extension_language_map
+from ..polaris_paths import default_accel_runtime_home
 from ..storage.cache import ensure_project_dirs, project_paths, write_json
 from ..storage.index_cache import (
     append_delta_ops,

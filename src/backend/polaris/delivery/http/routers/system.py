@@ -3,9 +3,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from polaris.bootstrap.config import SettingsUpdate
 from fastapi import APIRouter, Depends, HTTPException, Request
 from polaris.application.health import get_lancedb_status
+from polaris.bootstrap.config import SettingsUpdate
 from polaris.cells.director.execution.public import rebind_director_service
 from polaris.cells.events.fact_stream.public.service import set_debug_tracing_enabled
 from polaris.cells.runtime.artifact_store.public.service import build_snapshot

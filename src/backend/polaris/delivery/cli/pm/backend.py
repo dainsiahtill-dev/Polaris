@@ -14,10 +14,6 @@ from polaris.cells.context.engine.public.service import get_anthropomorphic_cont
 from polaris.delivery.cli.pm.config import PmRoleState, load_pm_model_config
 from polaris.delivery.cli.pm.utils import _use_context_engine_v2, format_json_for_prompt
 from polaris.kernelone.events import emit_event, emit_llm_event
-from polaris.kernelone.tool_execution.io_tools import (
-    ensure_codex_available,
-    ensure_ollama_available,
-)
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.memory.integration import (
     get_anthropomorphic_context,
@@ -31,6 +27,10 @@ from polaris.kernelone.runtime.usage_metrics import (
     TokenUsage,
     UsageContext,
     track_usage,
+)
+from polaris.kernelone.tool_execution.io_tools import (
+    ensure_codex_available,
+    ensure_ollama_available,
 )
 
 logger = logging.getLogger(__name__)

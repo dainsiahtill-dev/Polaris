@@ -38,7 +38,6 @@ from .exploration_policy import (
 )
 from .strategy_contracts import (
     CacheStrategyPort,
-    ExpansionDecision as StrategyExpansionDecision,
     ExplorationStrategyPort,
     ReadEscalationDecision,
     ReadEscalationStrategyPort,
@@ -204,7 +203,7 @@ class ExplorationStrategy(ExplorationStrategyPort):
         self,
         ctx: ExplorationContext,
         budget: ContextBudget,
-    ) -> "ExpansionDecisionResult":
+    ) -> ExpansionDecisionResult:
         """Return expansion decision for the current exploration pass.
 
         Args:

@@ -27,7 +27,7 @@ import threading
 from typing import TYPE_CHECKING, Final, TypedDict
 
 if TYPE_CHECKING:
-    import asyncio
+    pass
 
 __all__ = [
     "ConcurrencyPoolConfig",
@@ -99,9 +99,9 @@ class UnifiedConcurrencyManager:
         "_shutdown",
     )
 
-    _instances: dict[int, "UnifiedConcurrencyManager"] = {}
+    _instances: dict[int, UnifiedConcurrencyManager] = {}
 
-    def __new__(cls) -> "UnifiedConcurrencyManager":
+    def __new__(cls) -> UnifiedConcurrencyManager:
         """Create or return the singleton for the current event loop."""
         try:
             import asyncio
@@ -342,11 +342,11 @@ class UnifiedConcurrencyManager:
 # -------------------------------------------------------------------------------
 
 _manager_atexit_registered: bool = False
-_manager_atexit_callback: list["UnifiedConcurrencyManager"] = []
+_manager_atexit_callback: list[UnifiedConcurrencyManager] = []
 _manager_init_lock: threading.Lock = threading.Lock()
 
 
-def _register_atexit_callback(manager: "UnifiedConcurrencyManager") -> None:
+def _register_atexit_callback(manager: UnifiedConcurrencyManager) -> None:
     """Register a manager for atexit cleanup."""
     global _manager_atexit_registered, _manager_atexit_callback
     if manager not in _manager_atexit_callback:
@@ -371,10 +371,10 @@ def _cleanup_managers() -> None:
 
 
 # Cached manager instance for sync contexts
-_sync_manager: "UnifiedConcurrencyManager | None" = None
+_sync_manager: UnifiedConcurrencyManager | None = None
 
 
-def get_concurrency_manager() -> "UnifiedConcurrencyManager":
+def get_concurrency_manager() -> UnifiedConcurrencyManager:
     """Get the concurrency manager for the current context.
 
     In async context (with running event loop), returns the per-loop singleton.

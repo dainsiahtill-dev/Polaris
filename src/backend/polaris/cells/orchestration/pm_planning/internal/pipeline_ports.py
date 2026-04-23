@@ -503,10 +503,10 @@ class CellPmInvokePort:
     ) -> str:
         import time
 
-        from polaris.kernelone.events import emit_llm_event
         from polaris.infrastructure.llm.provider_runtime_adapter import (
             AppLLMRuntimeAdapter,
         )
+        from polaris.kernelone.events import emit_llm_event
         from polaris.kernelone.fs.text_ops import write_text_atomic
         from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
         from polaris.kernelone.process.codex_adapter import invoke_codex

@@ -36,8 +36,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.delivery.cli.pm.utils import normalize_path_list
 from polaris.kernelone.fs.text_ops import write_json_atomic
-from polaris.kernelone.storage.io_paths import resolve_artifact_path
 from polaris.kernelone.runtime.shared_types import normalize_path
+from polaris.kernelone.storage.io_paths import resolve_artifact_path
 from polaris.kernelone.utils.time_utils import utc_now_str
 
 logger = logging.getLogger(__name__)
@@ -680,7 +680,7 @@ def _expand_scope_files(
             dirs[:] = [
                 d
                 for d in dirs
-                if d not in {".git", "node_modules", "__pycache__", ".venv", "venv", ".polaris", ".polaris"}
+                if d not in {".git", "node_modules", "__pycache__", ".venv", "venv", ".polaris"}
             ]
             for name in files:
                 ext = os.path.splitext(name)[1].lower()

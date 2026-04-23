@@ -14,8 +14,6 @@ _LEGACY_ENTRY_POINTS: Final[set[str]] = {
     "polaris-director",
     "polaris-pm",
     "polaris-cli",
-    "polaris-director",
-    "polaris-pm",
 }
 
 

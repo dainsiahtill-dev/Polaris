@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
 

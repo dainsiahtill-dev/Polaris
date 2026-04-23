@@ -178,7 +178,7 @@ def _handle_update_session_state(self: AgentAccelToolExecutor, **kwargs) -> dict
         # If session memory isn't available, we still return OK so the agent thinks it worked.
         # The orchestrator can intercept this tool call payload directly from the tool_calls list.
         return {"ok": True, "note": "Session state patch recorded locally"}
-        
+
     return {
         "ok": True,
         "note": "Session state updated successfully",
