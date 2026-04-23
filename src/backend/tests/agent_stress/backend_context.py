@@ -28,7 +28,7 @@ def resolve_polaris_root(
     if root_override:
         return _expand_path(root_override)
 
-    home_override = str(active_env.get("POLARIS_HOME") or "").strip()
+    home_override = str(active_env.get("KERNELONE_HOME") or "").strip()
     if home_override:
         expanded = _expand_path(home_override)
         trimmed = expanded.rstrip("\\/")

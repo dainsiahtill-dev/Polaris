@@ -139,14 +139,14 @@ class JSONLConfig(BaseModel):
     def from_env(cls) -> JSONLConfig:
         """Create JSONLConfig from environment variables."""
         return cls(
-            lock_stale_sec=os.environ.get("POLARIS_JSONL_LOCK_STALE_SEC", 120.0),
-            buffer_enabled=os.environ.get("POLARIS_JSONL_BUFFERED", "1"),
-            flush_interval_sec=os.environ.get("POLARIS_JSONL_FLUSH_INTERVAL", 1.0),
-            flush_batch=os.environ.get("POLARIS_JSONL_FLUSH_BATCH", 50),
-            max_buffer=os.environ.get("POLARIS_JSONL_MAX_BUFFER", 2000),
-            buffer_ttl_sec=os.environ.get("POLARIS_JSONL_BUFFER_TTL", 300.0),
-            max_paths=os.environ.get("POLARIS_JSONL_MAX_PATHS", 100),
-            cleanup_interval_sec=os.environ.get("POLARIS_JSONL_CLEANUP_INTERVAL", 60.0),
+            lock_stale_sec=os.environ.get("KERNELONE_JSONL_LOCK_STALE_SEC", 120.0),
+            buffer_enabled=os.environ.get("KERNELONE_JSONL_BUFFERED", "1"),
+            flush_interval_sec=os.environ.get("KERNELONE_JSONL_FLUSH_INTERVAL", 1.0),
+            flush_batch=os.environ.get("KERNELONE_JSONL_FLUSH_BATCH", 50),
+            max_buffer=os.environ.get("KERNELONE_JSONL_MAX_BUFFER", 2000),
+            buffer_ttl_sec=os.environ.get("KERNELONE_JSONL_BUFFER_TTL", 300.0),
+            max_paths=os.environ.get("KERNELONE_JSONL_MAX_PATHS", 100),
+            cleanup_interval_sec=os.environ.get("KERNELONE_JSONL_CLEANUP_INTERVAL", 60.0),
         )
 
 class RuntimeConfig(BaseModel):
@@ -924,7 +924,7 @@ class Settings(BaseModel):
         self_upgrade_mode = _parse_bool(os.environ.get(SELF_UPGRADE_MODE_ENV, "0"))
         kwargs["self_upgrade_mode"] = self_upgrade_mode
 
-        workspace = os.environ.get("POLARIS_WORKSPACE")
+        workspace = os.environ.get("KERNELONE_WORKSPACE")
         if workspace:
             kwargs["workspace"] = str(
                 ensure_workspace_target_allowed(
@@ -1034,14 +1034,14 @@ class Settings(BaseModel):
 
         runtime_config: dict[str, Any] = {}
         for key, env_key in (
-            ("root", "POLARIS_RUNTIME_ROOT"),
-            ("cache_root", "POLARIS_RUNTIME_CACHE_ROOT"),
-            ("ramdisk_root", "POLARIS_RAMDISK_ROOT"),
+            ("root", "KERNELONE_RUNTIME_ROOT"),
+            ("cache_root", "KERNELONE_RUNTIME_CACHE_ROOT"),
+            ("ramdisk_root", "KERNELONE_RAMDISK_ROOT"),
         ):
             raw = os.environ.get(env_key)
             if raw is not None:
                 runtime_config[key] = raw
-        state_to_ramdisk = os.environ.get("POLARIS_STATE_TO_RAMDISK")
+        state_to_ramdisk = os.environ.get("KERNELONE_STATE_TO_RAMDISK")
         if state_to_ramdisk is not None:
             runtime_config["use_ramdisk"] = _parse_bool(state_to_ramdisk)
         if runtime_config:

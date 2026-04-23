@@ -22,11 +22,11 @@ def test_resolve_artifact_path_workspace_prefix_maps_to_persistent_root(
     (workspace / "docs").mkdir(parents=True, exist_ok=True)
 
     polaris_home = tmp_path / "polaris_home"
-    monkeypatch.setenv("POLARIS_HOME", str(polaris_home))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.delenv("POLARIS_RUNTIME_ROOT", raising=False)
-    monkeypatch.delenv("POLARIS_RUNTIME_CACHE_ROOT", raising=False)
-    monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_HOME", str(polaris_home))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
 
     workspace_str = str(workspace)
     cache_root = io_utils.build_cache_root("", workspace_str)

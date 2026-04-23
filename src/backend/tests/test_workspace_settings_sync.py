@@ -32,13 +32,13 @@ def test_settings_route_updates_workspace_env_and_persists_workspace(
     assert response.status_code == 200
     payload = response.json()
     assert Path(payload["workspace"]).resolve() == workspace_b.resolve()
-    assert Path(os.environ["POLARIS_WORKSPACE"]).resolve() == workspace_b.resolve()
+    assert Path(os.environ["KERNELONE_WORKSPACE"]).resolve() == workspace_b.resolve()
     assert SELF_UPGRADE_MODE_ENV not in os.environ
 
     settings_path = Path(get_settings_path())
     persisted = json.loads(settings_path.read_text(encoding="utf-8"))
     assert Path(str(persisted["workspace"])).resolve() == workspace_b.resolve()
-    os.environ.pop("POLARIS_WORKSPACE", None)
+    os.environ.pop("KERNELONE_WORKSPACE", None)
 
 
 def test_load_persisted_settings_recovers_workspace_local_settings(
@@ -87,7 +87,7 @@ def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(
 
     assert response.status_code == 400
     assert "self_upgrade_mode" in str(response.json().get("detail") or "")
-    os.environ.pop("POLARIS_WORKSPACE", None)
+    os.environ.pop("KERNELONE_WORKSPACE", None)
     os.environ.pop(SELF_UPGRADE_MODE_ENV, None)
 
 
@@ -119,6 +119,6 @@ def test_settings_route_allows_meta_project_workspace_with_self_upgrade(
     assert payload["self_upgrade_mode"] is True
     assert Path(payload["workspace"]).resolve() == project_root.resolve()
     assert os.environ.get(SELF_UPGRADE_MODE_ENV) == "1"
-    os.environ.pop("POLARIS_WORKSPACE", None)
+    os.environ.pop("KERNELONE_WORKSPACE", None)
     os.environ.pop(SELF_UPGRADE_MODE_ENV, None)
 

@@ -4,9 +4,8 @@ This module provides the canonical runtime configuration for the KernelOne kerne
 It is product-agnostic: KernelOne itself knows nothing about Polaris branding.
 
 Design principles:
-1. Generic KERNELONE_* env vars are the canonical source.
-2. POLARIS_* env vars are accepted as backward-compatible fallbacks
-   (Polaris injects these; the bootstrap layer maps them).
+1. Generic KERNELONE_* env vars are the canonical and only source.
+2. POLARIS_* env vars are no longer supported (legacy fallback removed).
 3. Workspace metadata directory name is a logical prefix, not hardcoded,
    injected by the application layer.
 
@@ -24,201 +23,57 @@ import os
 _WORKSPACE_METADATA_DIR_NAME: str = ".polaris"
 
 # ─── Env var name mappings ───────────────────────────────────────────────────
-# Maps a logical kernel var name -> (KERNELONE_NAME, POLARIS_FALLBACK, DEFAULT)
+# Maps a logical kernel var name -> (KERNELONE_NAME, DEFAULT)
 # Used by _resolve_with_fallback().
-_ENV_MAPPINGS: dict[str, tuple[str, str, str]] = {
+_ENV_MAPPINGS: dict[str, tuple[str, str]] = {
     # Workspace / runtime roots
-    "workspace": (
-        "KERNELONE_WORKSPACE",
-        "POLARIS_WORKSPACE",
-        "",
-    ),
-    "runtime_root": (
-        "KERNELONE_RUNTIME_ROOT",
-        "POLARIS_RUNTIME_ROOT",
-        "",
-    ),
-    "runtime_base": (
-        "KERNELONE_RUNTIME_BASE",
-        "POLARIS_RUNTIME_BASE",
-        "runtime",
-    ),
-    "runtime_cache_root": (
-        "KERNELONE_RUNTIME_CACHE_ROOT",
-        "POLARIS_RUNTIME_CACHE_ROOT",
-        "",
-    ),
+    "workspace": ("KERNELONE_WORKSPACE", ""),
+    "runtime_root": ("KERNELONE_RUNTIME_ROOT", ""),
+    "runtime_base": ("KERNELONE_RUNTIME_BASE", "runtime"),
+    "runtime_cache_root": ("KERNELONE_RUNTIME_CACHE_ROOT", ""),
     # Storage
-    "home": (
-        "KERNELONE_HOME",
-        "POLARIS_HOME",
-        "",
-    ),
-    "ramdisk_root": (
-        "KERNELONE_RAMDISK_ROOT",
-        "POLARIS_RAMDISK_ROOT",
-        "",
-    ),
-    "state_to_ramdisk": (
-        "KERNELONE_STATE_TO_RAMDISK",
-        "POLARIS_STATE_TO_RAMDISK",
-        "1",
-    ),
+    "home": ("KERNELONE_HOME", ""),
+    "ramdisk_root": ("KERNELONE_RAMDISK_ROOT", ""),
+    "state_to_ramdisk": ("KERNELONE_STATE_TO_RAMDISK", "1"),
     # Events / dedup
-    "runtime_event_dedup_window_sec": (
-        "KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC",
-        "POLARIS_RUNTIME_EVENT_DEDUP_WINDOW_SEC",
-        "1.5",
-    ),
-    "llm_event_dedup_window_sec": (
-        "KERNELONE_LLM_EVENT_DEDUP_WINDOW_SEC",
-        "POLARIS_LLM_EVENT_DEDUP_WINDOW_SEC",
-        "1.5",
-    ),
+    "runtime_event_dedup_window_sec": ("KERNELONE_RUNTIME_EVENT_DEDUP_WINDOW_SEC", "1.5"),
+    "llm_event_dedup_window_sec": ("KERNELONE_LLM_EVENT_DEDUP_WINDOW_SEC", "1.5"),
     # JSONL / fsync
-    "jsonl_lock_stale_sec": (
-        "KERNELONE_JSONL_LOCK_STALE_SEC",
-        "POLARIS_JSONL_LOCK_STALE_SEC",
-        "120",
-    ),
-    "jsonl_buffered": (
-        "KERNELONE_JSONL_BUFFERED",
-        "POLARIS_JSONL_BUFFERED",
-        "1",
-    ),
-    "jsonl_flush_interval": (
-        "KERNELONE_JSONL_FLUSH_INTERVAL",
-        "POLARIS_JSONL_FLUSH_INTERVAL",
-        "1.0",
-    ),
-    "jsonl_flush_batch": (
-        "KERNELONE_JSONL_FLUSH_BATCH",
-        "POLARIS_JSONL_FLUSH_BATCH",
-        "50",
-    ),
-    "jsonl_max_buffer": (
-        "KERNELONE_JSONL_MAX_BUFFER",
-        "POLARIS_JSONL_MAX_BUFFER",
-        "2000",
-    ),
-    "jsonl_buffer_ttl": (
-        "KERNELONE_JSONL_BUFFER_TTL",
-        "POLARIS_JSONL_BUFFER_TTL",
-        "300",
-    ),
-    "jsonl_max_paths": (
-        "KERNELONE_JSONL_MAX_PATHS",
-        "POLARIS_JSONL_MAX_PATHS",
-        "100",
-    ),
-    "io_fsync_mode": (
-        "KERNELONE_IO_FSYNC_MODE",
-        "POLARIS_IO_FSYNC_MODE",
-        "strict",
-    ),
+    "jsonl_lock_stale_sec": ("KERNELONE_JSONL_LOCK_STALE_SEC", "120"),
+    "jsonl_buffered": ("KERNELONE_JSONL_BUFFERED", "1"),
+    "jsonl_flush_interval": ("KERNELONE_JSONL_FLUSH_INTERVAL", "1.0"),
+    "jsonl_flush_batch": ("KERNELONE_JSONL_FLUSH_BATCH", "50"),
+    "jsonl_max_buffer": ("KERNELONE_JSONL_MAX_BUFFER", "2000"),
+    "jsonl_buffer_ttl": ("KERNELONE_JSONL_BUFFER_TTL", "300"),
+    "jsonl_max_paths": ("KERNELONE_JSONL_MAX_PATHS", "100"),
+    "io_fsync_mode": ("KERNELONE_IO_FSYNC_MODE", "strict"),
     # Bus / messaging
-    "message_handler_timeout_sec": (
-        "KERNELONE_MESSAGE_HANDLER_TIMEOUT_SECONDS",
-        "POLARIS_MESSAGE_HANDLER_TIMEOUT_SECONDS",
-        "5.0",
-    ),
-    "nats_url": (
-        "KERNELONE_NATS_URL",
-        "POLARIS_NATS_URL",
-        "nats://localhost:4222",
-    ),
+    "message_handler_timeout_sec": ("KERNELONE_MESSAGE_HANDLER_TIMEOUT_SECONDS", "5.0"),
+    "nats_url": ("KERNELONE_NATS_URL", "nats://localhost:4222"),
     # Trace / context
-    "trace_id": (
-        "KERNELONE_TRACE_ID",
-        "POLARIS_TRACE_ID",
-        "",
-    ),
-    "run_id": (
-        "KERNELONE_RUN_ID",
-        "POLARIS_RUN_ID",
-        "",
-    ),
-    "request_id": (
-        "KERNELONE_REQUEST_ID",
-        "POLARIS_REQUEST_ID",
-        "",
-    ),
-    "workflow_id": (
-        "KERNELONE_WORKFLOW_ID",
-        "POLARIS_WORKFLOW_ID",
-        "",
-    ),
-    "task_id": (
-        "KERNELONE_TASK_ID",
-        "POLARIS_TASK_ID",
-        "",
-    ),
+    "trace_id": ("KERNELONE_TRACE_ID", ""),
+    "run_id": ("KERNELONE_RUN_ID", ""),
+    "request_id": ("KERNELONE_REQUEST_ID", ""),
+    "workflow_id": ("KERNELONE_WORKFLOW_ID", ""),
+    "task_id": ("KERNELONE_TASK_ID", ""),
     # LLM concurrency / timeout
-    "llm_max_concurrency": (
-        "KERNELONE_LLM_MAX_CONCURRENCY",
-        "POLARIS_LLM_MAX_CONCURRENCY",
-        "100",
-    ),
-    "llm_invoke_timeout_sec": (
-        "KERNELONE_LLM_INVOKE_TIMEOUT_SEC",
-        "POLARIS_LLM_INVOKE_TIMEOUT_SEC",
-        "30",
-    ),
-    "llm_stream_timeout_sec": (
-        "KERNELONE_LLM_STREAM_TIMEOUT_SEC",
-        "POLARIS_LLM_STREAM_TIMEOUT_SEC",
-        "300",
-    ),
+    "llm_max_concurrency": ("KERNELONE_LLM_MAX_CONCURRENCY", "100"),
+    "llm_invoke_timeout_sec": ("KERNELONE_LLM_INVOKE_TIMEOUT_SEC", "30"),
+    "llm_stream_timeout_sec": ("KERNELONE_LLM_STREAM_TIMEOUT_SEC", "300"),
     # Tool loop safety
-    "tool_loop_read_file_content_chars": (
-        "KERNELONE_TOOL_LOOP_READ_FILE_CONTENT_CHARS",
-        "POLARIS_TOOL_LOOP_READ_FILE_CONTENT_CHARS",
-        "16000",
-    ),
-    "tool_loop_read_file_headroom_ratio": (
-        "KERNELONE_TOOL_LOOP_READ_FILE_HEADROOM_RATIO",
-        "POLARIS_TOOL_LOOP_READ_FILE_HEADROOM_RATIO",
-        "0.35",
-    ),
+    "tool_loop_read_file_content_chars": ("KERNELONE_TOOL_LOOP_READ_FILE_CONTENT_CHARS", "16000"),
+    "tool_loop_read_file_headroom_ratio": ("KERNELONE_TOOL_LOOP_READ_FILE_HEADROOM_RATIO", "0.35"),
     # Context OS / Cognitive Runtime
-    "context_os_enabled": (
-        "KERNELONE_CONTEXT_OS_ENABLED",
-        "POLARIS_CONTEXT_OS_ENABLED",
-        "1",
-    ),
-    "cognitive_runtime_mode": (
-        "KERNELONE_COGNITIVE_RUNTIME_MODE",
-        "POLARIS_COGNITIVE_RUNTIME_MODE",
-        "shadow",
-    ),
+    "context_os_enabled": ("KERNELONE_CONTEXT_OS_ENABLED", "1"),
+    "cognitive_runtime_mode": ("KERNELONE_COGNITIVE_RUNTIME_MODE", "shadow"),
     # Embedding
-    "embedding_model": (
-        "KERNELONE_EMBEDDING_MODEL",
-        "POLARIS_EMBEDDING_MODEL",
-        "nomic-embed-text",
-    ),
+    "embedding_model": ("KERNELONE_EMBEDDING_MODEL", "nomic-embed-text"),
     # Audit
-    "audit_hmac_key": (
-        "KERNELONE_AUDIT_HMAC_KEY",
-        "POLARIS_AUDIT_HMAC_KEY",
-        "",
-    ),
-    "protocol_audit": (
-        "KERNELONE_PROTOCOL_AUDIT",
-        "POLARIS_PROTOCOL_AUDIT",
-        "true",
-    ),
-    "require_signed_tool_tags": (
-        "KERNELONE_REQUIRE_SIGNED_TOOL_TAGS",
-        "POLARIS_REQUIRE_SIGNED_TOOL_TAGS",
-        "",
-    ),
+    "audit_hmac_key": ("KERNELONE_AUDIT_HMAC_KEY", ""),
+    "protocol_audit": ("KERNELONE_PROTOCOL_AUDIT", "true"),
+    "require_signed_tool_tags": ("KERNELONE_REQUIRE_SIGNED_TOOL_TAGS", ""),
     # Version tracking
-    "version": (
-        "KERNELONE_VERSION",
-        "POLARIS_VERSION",
-        "",
-    ),
+    "version": ("KERNELONE_VERSION", ""),
 }
 
 # Env vars that need float parsing
@@ -253,13 +108,12 @@ _BOOL_VARS: set[str] = {
 
 
 def _resolve_with_fallback(name: str) -> str:
-    """Resolve an env var using KERNELONE_* priority, POLARIS_* fallback."""
+    """Resolve an env var using KERNELONE_* name only."""
     mapping = _ENV_MAPPINGS.get(name)
     if mapping is None:
         return ""
-    kern_name, hp_name, default = mapping
-    # Priority: KERNELONE_* first, then POLARIS_*, then default
-    value = os.environ.get(kern_name) or os.environ.get(hp_name) or default
+    kern_name, default = mapping
+    value = os.environ.get(kern_name) or default
     return str(value) if value is not None else ""
 
 

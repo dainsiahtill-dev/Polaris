@@ -60,7 +60,7 @@ class TestPolarisContext:
         env = ctx.to_env_vars()
         assert env["POLARIS_TRACE_ID"] == "test-trace"
         assert env["POLARIS_RUN_ID"] == "run-123"
-        assert env["POLARIS_WORKSPACE"] == "/tmp/test"
+        assert env["KERNELONE_WORKSPACE"] == "/tmp/test"
 
     def test_context_from_env_vars(self):
         """测试从环境变量恢复上下文"""

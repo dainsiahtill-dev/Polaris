@@ -228,6 +228,7 @@ class SuperModeRouter:
                 roles=("architect",),
                 reason="architecture_design",
                 fallback_role=fallback_role,
+                use_architect=True,
             )
 
         has_code_action = _contains_any(text, _CODE_ACTION_KEYWORDS)
@@ -239,18 +240,27 @@ class SuperModeRouter:
                 roles=("architect", "pm", "chief_engineer", "director"),
                 reason="architect_code_delivery",
                 fallback_role=fallback_role,
+                use_architect=True,
+                use_pm=True,
+                use_chief_engineer=True,
+                use_director=True,
             )
         if code_delivery:
             return SuperRouteDecision(
                 roles=("architect", "pm", "chief_engineer", "director"),
                 reason="code_delivery",
                 fallback_role=fallback_role,
+                use_architect=True,
+                use_pm=True,
+                use_chief_engineer=True,
+                use_director=True,
             )
         if _contains_any(text, _CHIEF_ENGINEER_KEYWORDS):
             return SuperRouteDecision(
                 roles=("chief_engineer",),
                 reason="technical_analysis",
                 fallback_role=fallback_role,
+                use_chief_engineer=True,
             )
         if _contains_any(text, _QA_KEYWORDS):
             return SuperRouteDecision(
@@ -263,6 +273,7 @@ class SuperModeRouter:
                 roles=("pm",),
                 reason="planning",
                 fallback_role=fallback_role,
+                use_pm=True,
             )
         return SuperRouteDecision(
             roles=(fallback_role,),
@@ -809,6 +820,7 @@ __all__ = [
     "SuperBlueprintItem",
     "SuperClaimedTask",
     "SuperModeRouter",
+    "SuperPipelineContext",
     "SuperRouteDecision",
     "SuperTaskItem",
     "build_chief_engineer_handoff_message",

@@ -45,7 +45,7 @@ def test_compat_write_text_atomic_accepts_explicit_utf8(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POLARIS_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
     roots = resolve_storage_roots(str(tmp_path))
     target = Path(roots.workspace_persistent_root) / "compat.txt"
     compat_write_text_atomic("workspace/compat.txt", "compat", encoding="utf-8")
@@ -56,7 +56,7 @@ def test_compat_write_text_atomic_rejects_non_utf8(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POLARIS_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
     with pytest.raises(ValueError, match="UTF-8"):
         compat_write_text_atomic("workspace/compat.txt", "compat", encoding="utf-16")
 

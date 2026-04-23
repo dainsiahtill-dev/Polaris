@@ -59,10 +59,10 @@ def test_runtime_base_priority_explicit_runtime_root(monkeypatch: pytest.MonkeyP
     workspace = tmp_path / "ws"
     workspace.mkdir(parents=True, exist_ok=True)
     explicit_runtime = tmp_path / "runtime-explicit"
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(explicit_runtime))
-    monkeypatch.delenv("POLARIS_RUNTIME_CACHE_ROOT", raising=False)
-    monkeypatch.delenv("POLARIS_RAMDISK_ROOT", raising=False)
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "1")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(explicit_runtime))
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "1")
 
     roots = resolve_storage_roots(str(workspace))
     assert Path(roots.runtime_base) == explicit_runtime.resolve()
@@ -76,9 +76,9 @@ def test_runtime_base_rejects_workspace_scoped_explicit_root(monkeypatch: pytest
     workspace = tmp_path / "ws"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(workspace))
-    monkeypatch.delenv("POLARIS_RUNTIME_CACHE_ROOT", raising=False)
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(workspace))
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     roots = resolve_storage_roots(str(workspace))
     assert roots.runtime_mode != "explicit_runtime_root"
@@ -93,10 +93,10 @@ def test_runtime_base_priority_ramdisk_then_cache_root(monkeypatch: pytest.Monke
     ramdisk_root.mkdir(parents=True, exist_ok=True)
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.delenv("POLARIS_RUNTIME_ROOT", raising=False)
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "1")
-    monkeypatch.setenv("POLARIS_RAMDISK_ROOT", str(ramdisk_root))
-    monkeypatch.setenv("POLARIS_RUNTIME_CACHE_ROOT", str(cache_root))
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "1")
+    monkeypatch.setenv("KERNELONE_RAMDISK_ROOT", str(ramdisk_root))
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(cache_root))
 
     # Use Cell layer API directly — this tests HP ramdisk behavior, not kernelone conditional delegation.
     roots = resolve_polaris_roots(str(workspace), ramdisk_root=str(ramdisk_root))
@@ -107,7 +107,7 @@ def test_runtime_base_priority_ramdisk_then_cache_root(monkeypatch: pytest.Monke
     assert runtime_root_posix.endswith("/runtime")
 
     # Disable ramdisk: should fall back to explicit runtime cache root.
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
     roots_cache = resolve_polaris_roots(str(workspace), ramdisk_root=None)
     assert Path(roots_cache.runtime_base) == cache_root.resolve()
     assert roots_cache.runtime_mode == "explicit_runtime_cache"
@@ -122,9 +122,9 @@ def test_runtime_base_rejects_workspace_scoped_cache_root(monkeypatch: pytest.Mo
     cache_root = workspace / "cache-local"
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.delenv("POLARIS_RUNTIME_ROOT", raising=False)
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.setenv("POLARIS_RUNTIME_CACHE_ROOT", str(cache_root))
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(cache_root))
 
     roots = resolve_storage_roots(str(workspace))
     assert roots.runtime_mode != "explicit_runtime_cache"
@@ -136,7 +136,7 @@ def test_runtime_resolver_rejects_dot_polaris_prefix(tmp_path: Path) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(ValueError) as exc_info:
-        resolve_runtime_path(str(workspace), "runtime/events/runtime.events.jsonl")
+        resolve_runtime_path(str(workspace), ".polaris/events/runtime.events.jsonl")
     assert UNSUPPORTED_PATH_PREFIX in str(exc_info.value)
 
 
@@ -162,17 +162,18 @@ def test_runtime_resolver_rejects_unknown_dot_polaris_prefix(tmp_path: Path) -> 
     assert UNSUPPORTED_PATH_PREFIX in str(exc_info.value)
 
 
-def test_legacy_artifact_aliases_resolve_to_storage_layout_roots(tmp_path: Path) -> None:
+def test_legacy_artifact_aliases_are_rejected(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    docs_plan = Path(resolve_workspace_persistent_path(str(workspace), "docs/plan.md"))
-    tasks_plan = Path(resolve_runtime_path(str(workspace), "tasks/plan.json"))
-    dispatch_log = Path(resolve_runtime_path(str(workspace), "dispatch/log.json"))
+    for rel in ("docs/plan.md", "tasks/plan.json", "dispatch/log.json"):
+        with pytest.raises(ValueError) as exc_info:
+            resolve_workspace_persistent_path(str(workspace), rel)
+        assert UNSUPPORTED_PATH_PREFIX in str(exc_info.value)
 
-    assert docs_plan.as_posix().endswith("/.polaris/docs/plan.md")
-    assert tasks_plan.as_posix().endswith("/runtime/tasks/plan.json")
-    assert dispatch_log.as_posix().endswith("/runtime/dispatch/log.json")
+        with pytest.raises(ValueError) as exc_info:
+            resolve_runtime_path(str(workspace), rel)
+        assert UNSUPPORTED_PATH_PREFIX in str(exc_info.value)
 
 
 def test_workspace_persistent_and_runtime_paths_are_outside_workspace(tmp_path: Path) -> None:

@@ -41,7 +41,7 @@ SUPPORTED_ROLES = ("architect", "pm", "chief_engineer", "director", "qa")
 DEFAULT_ROLE = "qa"
 DEFAULT_SCENARIO = "tool_habits"
 DEFAULT_STREAM_TIMEOUT_SECONDS = 180.0
-DEFAULT_WINDOWS_POLARIS_HOME = Path(r"C:\Users\dains\.polaris")
+DEFAULT_WINDOWS_KERNELONE_HOME = Path(r"C:\Users\dains\.polaris")
 DEFAULT_RUNTIME_NAME = "tests-agent-stress-runtime"
 _PROMPT_SEPARATOR_RE = re.compile(r"\r?\n---+\r?\n")
 _SHELL_OPERATOR_RE = re.compile(r"(\|\||&&|[|;])")
@@ -106,11 +106,11 @@ def _timestamp_token() -> str:
 
 
 def _default_polaris_home() -> Path:
-    configured = str(os.environ.get("POLARIS_HOME") or "").strip()
+    configured = str(os.environ.get("KERNELONE_HOME") or "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
     if os.name == "nt":
-        return DEFAULT_WINDOWS_POLARIS_HOME
+        return DEFAULT_WINDOWS_KERNELONE_HOME
     return (Path.home() / ".polaris").resolve()
 
 
@@ -693,8 +693,8 @@ async def run_single_role_tool_habit_probe(
     token: str = "",
     timeout_seconds: float = DEFAULT_STREAM_TIMEOUT_SECONDS,
 ) -> ToolHabitRunReport:
-    os.environ["POLARIS_HOME"] = str(polaris_home)
-    os.environ.setdefault("POLARIS_STATE_TO_RAMDISK", "1")
+    os.environ["KERNELONE_HOME"] = str(polaris_home)
+    os.environ.setdefault("KERNELONE_STATE_TO_RAMDISK", "1")
 
     seeded_files = seed_demo_workspace(workspace)
 

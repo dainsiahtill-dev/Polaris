@@ -552,24 +552,51 @@ def test_stream_turn_spinner_ignores_fingerprint_until_visible_event(monkeypatch
     assert spinner.stops == ["content_chunk"]
 
 
-def test_run_role_console_super_mode_routes_code_change_pm_to_director(monkeypatch) -> None:
+def test_run_role_console_super_mode_routes_code_change_full_pipeline(monkeypatch) -> None:
     import polaris.delivery.cli.director.console_host as console_host_module
 
     async def _stream_factory(**kwargs):
-        if kwargs["role"] == "pm":
+        if kwargs["role"] == "architect":
             assert "[mode:analyze]" in kwargs["message"]
             assert "[SUPER_MODE_READONLY_STAGE]" in kwargs["message"]
             assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
             yield {
                 "type": "complete",
                 "data": {
-                    "content": "1. inspect session_orchestrator\n2. patch the implementation\n3. run targeted tests",
+                    "content": "架构分析：session_orchestrator 需要改进 handoff contract。",
+                },
+            }
+            return
+        if kwargs["role"] == "pm":
+            assert "[SUPER_MODE_PM_HANDOFF]" in kwargs["message"]
+            assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
+            yield {
+                "type": "complete",
+                "data": {
+                    "content": (
+                        "1. inspect session_orchestrator\n"
+                        "2. patch the implementation\n"
+                        "3. run targeted tests\n\n"
+                        '```json\n{"tasks": [{"subject": "inspect session_orchestrator", '
+                        '"description": "patch the implementation", '
+                        '"target_files": ["session_orchestrator.py"], '
+                        '"estimated_hours": 0.5}]}\n```'
+                    ),
+                },
+            }
+            return
+        if kwargs["role"] == "chief_engineer":
+            assert "[SUPER_MODE_CE_HANDOFF]" in kwargs["message"]
+            assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
+            yield {
+                "type": "complete",
+                "data": {
+                    "content": '```json\n{"blueprints":[{"task_id":"1","blueprint_id":"bp-1","summary":"fix handoff","scope_paths":["session_orchestrator.py"]}]}\n```',
                 },
             }
             return
         assert kwargs["role"] == "director"
         assert "[mode:materialize]" in kwargs["message"]
-        assert "[SUPER_MODE_HANDOFF]" in kwargs["message"]
         assert "进一步完善 Session Orchestrator 相关代码" in kwargs["message"]
         assert "inspect session_orchestrator" in kwargs["message"]
         yield {"type": "complete", "data": {"content": "ALL_TASKS_COMPLETE"}}
@@ -591,7 +618,12 @@ def test_run_role_console_super_mode_routes_code_change_pm_to_director(monkeypat
 
     assert exit_code == 0
     host = _FakeRoleConsoleHost.instances[0]
-    assert [call["role"] for call in host.stream_calls] == ["pm", "director"]
+    assert [call["role"] for call in host.stream_calls] == [
+        "architect",
+        "pm",
+        "chief_engineer",
+        "director",
+    ]
 
 
 def test_run_role_console_super_mode_routes_architecture_to_architect_only(monkeypatch) -> None:

@@ -143,10 +143,10 @@ async def runtime_storage_layout(request: Request) -> dict[str, Any]:
             "history_runs": resolve_workspace_persistent_path(workspace, "workspace/history/runs"),
         },
         "env": {
-            "POLARIS_HOME": polaris_home(),
-            "POLARIS_RUNTIME_ROOT": resolve_env_str("runtime_root"),
-            "POLARIS_RUNTIME_CACHE_ROOT": resolve_env_str("runtime_cache_root"),
-            "POLARIS_STATE_TO_RAMDISK": resolve_env_str("state_to_ramdisk"),
+            "KERNELONE_HOME": polaris_home(),
+            "KERNELONE_RUNTIME_ROOT": resolve_env_str("runtime_root"),
+            "KERNELONE_RUNTIME_CACHE_ROOT": resolve_env_str("runtime_cache_root"),
+            "KERNELONE_STATE_TO_RAMDISK": resolve_env_str("state_to_ramdisk"),
         },
     }
 

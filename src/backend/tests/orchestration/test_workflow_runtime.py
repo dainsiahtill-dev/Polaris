@@ -158,8 +158,8 @@ def test_runtime_adapter_resolves_writable_db_path_from_context_root(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     monkeypatch.delenv("POLARIS_RUNTIME_DB", raising=False)
-    monkeypatch.delenv("POLARIS_RUNTIME_ROOT", raising=False)
-    monkeypatch.delenv("POLARIS_RUNTIME_CACHE_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     monkeypatch.setenv("POLARIS_CONTEXT_ROOT", str(workspace))
 
     db_path = RuntimeBackendAdapter._resolve_runtime_db_path()
@@ -323,7 +323,7 @@ def test_get_workflow_runtime_status_uses_workspace_runtime_db_env(
     def _fake_describe(workflow_id: str, config) -> dict[str, object]:
         observed["runtime_db"] = str(os.environ.get("POLARIS_RUNTIME_DB") or "")
         observed["cache_root"] = str(
-            os.environ.get("POLARIS_RUNTIME_CACHE_ROOT") or ""
+            os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") or ""
         )
         observed["context_root"] = str(os.environ.get("POLARIS_CONTEXT_ROOT") or "")
         return {"ok": False, "workflow_id": workflow_id, "error": "unreachable"}

@@ -30,7 +30,7 @@ def _ensure_polaris_storage_layout() -> None:
     from polaris.kernelone.storage import register_business_roots_resolver
 
     if os.name == "nt":
-        os.environ.setdefault("POLARIS_STATE_TO_RAMDISK", "1")
+        os.environ.setdefault("KERNELONE_STATE_TO_RAMDISK", "1")
     set_workspace_metadata_dir_name(".polaris")
     register_business_roots_resolver(resolve_polaris_roots)
 

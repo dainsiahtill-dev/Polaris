@@ -10,8 +10,6 @@ from .layout import (
     clear_storage_roots_cache,
     default_kernelone_cache_base,
     default_ramdisk_root,
-    # Backward-compat aliases
-    default_system_cache_base,
     kernelone_home,
     normalize_logical_rel_path,
     normalize_ramdisk_root,
@@ -54,8 +52,6 @@ __all__ = [
     "clear_storage_roots_cache",
     "default_kernelone_cache_base",
     "default_ramdisk_root",
-    # Backward-compat aliases
-    "default_system_cache_base",
     "get_artifact_policy_metadata",
     "get_category_for_path",
     "get_lifecycle_for_path",

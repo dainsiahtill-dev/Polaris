@@ -20,7 +20,7 @@ def _index_path(workspace: str) -> str:
 @pytest.fixture(autouse=True)
 def _isolate_polaris_root(tmp_path, monkeypatch):
     monkeypatch.setenv("POLARIS_ROOT", str(tmp_path))
-    monkeypatch.setenv("POLARIS_HOME", str(tmp_path / ".polaris"))
+    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / ".polaris"))
 
 
 def _make_ramdisk_settings(tmp_path) -> Settings:

@@ -35,7 +35,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 @pytest.fixture(autouse=True)
 def _configure_runtime_bridge(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     # Clear storage-roots cache to prevent cross-test pollution
-    # (test 1 may cache POLARIS_WORKSPACE roots that interfere with test 2's temp paths).
+    # (test 1 may cache KERNELONE_WORKSPACE roots that interfere with test 2's temp paths).
     import polaris.kernelone.storage.layout as _layout_mod
     _layout_mod._storage_roots_cache.clear()
 
@@ -57,9 +57,9 @@ def test_application_llm_events_publish_to_canonical_runtime_log(
     runtime_root = tmp_path / "runtime_root"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.setenv("POLARIS_WORKSPACE", str(workspace))
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(workspace))
 
     run_id = "RUN-APP-LLM-001"
     emit_application_llm_event(
@@ -124,9 +124,9 @@ def test_kernel_io_llm_events_publish_tool_activity_to_canonical_runtime_log(
     # Patching _layout_mod.resolve_storage_roots covers all consumers, including io_events.
     monkeypatch.setattr(_layout_mod, "resolve_storage_roots", _fake_resolve)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.setenv("POLARIS_WORKSPACE", workspace_str)
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_WORKSPACE", workspace_str)
 
     llm_events_path = (
         workspace

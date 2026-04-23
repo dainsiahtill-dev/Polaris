@@ -42,6 +42,7 @@ from polaris.delivery.cli.super_mode import (
     SuperBlueprintItem,
     SuperClaimedTask,
     SuperModeRouter,
+    SuperPipelineContext,
     SuperTaskItem,
     build_chief_engineer_handoff_message,
     build_director_handoff_message,
@@ -2025,14 +2026,18 @@ def _run_super_turn(
 ) -> _TurnExecutionResult:
     decision = SuperModeRouter().decide(message, fallback_role=fallback_role)
     logger.debug(
-        "super_mode decision: fallback_role=%s reason=%s roles=%s",
+        "super_mode decision: fallback_role=%s reason=%s roles=%s architect=%s pm=%s ce=%s director=%s",
         fallback_role,
         decision.reason,
         ",".join(decision.roles),
+        decision.use_architect,
+        decision.use_pm,
+        decision.use_chief_engineer,
+        decision.use_director,
     )
     last_result: _TurnExecutionResult | None = None
-    architect_output = ""
-    pm_output = ""
+    ctx = SuperPipelineContext(original_request=message)
+    # Mutable accumulators (will be folded back into ctx at end of each stage)
     pm_tasks: list[SuperTaskItem] = []
     published_task_ids: list[int] = []
     ce_claims: list[SuperClaimedTask] = []
@@ -2056,13 +2061,13 @@ def _run_super_turn(
         elif next_role == "pm":
             turn_message = build_pm_handoff_message(
                 original_request=message,
-                architect_output=architect_output,
+                architect_output=ctx.architect_output,
             )
         elif next_role == "chief_engineer":
-            if not pm_output.strip():
+            if not ctx.pm_output.strip():
                 logger.info("SUPER_MODE_CE_SKIP: missing_pm_output")
                 continue
-            pm_tasks = extract_task_list_from_pm_output(pm_output)
+            pm_tasks = extract_task_list_from_pm_output(ctx.pm_output)
             if pm_tasks and not published_task_ids:
                 logger.info(
                     "SUPER_MODE_TASK_EXTRACT: %d tasks from PM output",
@@ -2073,8 +2078,8 @@ def _run_super_turn(
                     tasks=pm_tasks,
                     original_request=message,
                     publish_stage="pending_design",
-                    architect_output=architect_output,
-                    pm_output=pm_output,
+                    architect_output=ctx.architect_output,
+                    pm_output=ctx.pm_output,
                 )
             ce_claims = _claim_super_tasks_from_market(
                 workspace=str(workspace_path),
@@ -2087,8 +2092,8 @@ def _run_super_turn(
                 continue
             turn_message = build_chief_engineer_handoff_message(
                 original_request=message,
-                architect_output=architect_output,
-                pm_output=pm_output,
+                architect_output=ctx.architect_output,
+                pm_output=ctx.pm_output,
                 claimed_tasks=ce_claims,
             )
         elif next_role == "director":
@@ -2139,8 +2144,8 @@ def _run_super_turn(
                 if director_claims:
                     turn_message = build_director_task_handoff_message(
                         original_request=message,
-                        architect_output=architect_output,
-                        pm_output=pm_output,
+                        architect_output=ctx.architect_output,
+                        pm_output=ctx.pm_output,
                         claimed_tasks=director_claims,
                         blueprint_items=blueprint_items,
                     )
@@ -2148,15 +2153,16 @@ def _run_super_turn(
                     logger.info("SUPER_MODE_DIRECTOR_FALLBACK: no_claimed_pending_exec_tasks")
                     turn_message = build_director_handoff_message(
                         original_request=message,
-                        pm_output=pm_output or "(ChiefEngineer stage produced no claimable pending_exec tasks)",
+                        pm_output=ctx.pm_output or "(ChiefEngineer stage produced no claimable pending_exec tasks)",
                         extracted_tasks=pm_tasks,
                     )
             else:
-                if not pm_output.strip():
+                if not ctx.pm_output.strip():
                     logger.info("SUPER_MODE_DIRECTOR_FALLBACK: missing_pm_output")
                 turn_message = build_director_handoff_message(
                     original_request=message,
-                    pm_output=pm_output or "(PM planning stage produced no output; proceeding with original request)",
+                    pm_output=ctx.pm_output
+                    or "(PM planning stage produced no output; proceeding with original request)",
                     extracted_tasks=pm_tasks,
                 )
         elif next_role == "qa":
@@ -2189,7 +2195,7 @@ def _run_super_turn(
                 host,
                 session_id=next_session_id,
                 original_request=message,
-                pm_output=pm_output or (last_result.final_content if last_result else ""),
+                pm_output=ctx.pm_output or (last_result.final_content if last_result else ""),
                 extracted_tasks=pm_tasks,
                 last_result=last_result,
                 json_render=json_render,
@@ -2220,9 +2226,17 @@ def _run_super_turn(
                 )
 
         if next_role == "architect" and last_result is not None and not last_result.saw_error:
-            architect_output = last_result.final_content
+            ctx = SuperPipelineContext(
+                original_request=ctx.original_request,
+                architect_output=last_result.final_content,
+                pm_output=ctx.pm_output,
+            )
         elif next_role == "pm" and last_result is not None and not last_result.saw_error:
-            pm_output = last_result.final_content
+            ctx = SuperPipelineContext(
+                original_request=ctx.original_request,
+                architect_output=ctx.architect_output,
+                pm_output=last_result.final_content,
+            )
     if last_result is None:
         active_session_id = role_sessions.get(fallback_role) or _resolve_role_session(
             host,
@@ -2262,6 +2276,16 @@ def _run_super_turn(
             output_format=output_format,
             enable_cognitive=enable_cognitive,
         )
+    logger.info(
+        "SUPER_MODE_PIPELINE_COMPLETE: final_role=%s saw_error=%s "
+        "architect=%s pm=%s ce=%s director=%s",
+        last_result.role,
+        last_result.saw_error,
+        decision.use_architect,
+        decision.use_pm,
+        decision.use_chief_engineer,
+        decision.use_director,
+    )
     return last_result
 
 
@@ -2914,5 +2938,76 @@ __all__ = [
     "PolarisLazyClaude",
     "PolarisRoleConsole",
     "run_director_console",
+    "run_role_console",
+]
+    "PolarisLazyClaude",
+    "PolarisRoleConsole",
+    "run_director_console",
+    "run_role_console",
+]
+    return run_role_console(
+        workspace=workspace,
+        role=role or "director",
+        backend=backend,
+        session_id=session_id,
+        session_title=session_title,
+        prompt_style=prompt_style,
+        omp_config=omp_config,
+        json_render=json_render,
+        debug=debug,
+        batch=batch,
+        model=model,
+        dry_run=dry_run,
+        enable_cognitive=enable_cognitive,
+        super_mode=super_mode,
+    )
+
+
+__all__ = [
+    "PolarisLazyClaude",
+    "PolarisRoleConsole",
+    "run_director_console",
+    "run_role_console",
+]
+    super_mode: bool = False,
+) -> int:
+    """Legacy alias retained for compatibility with Director entry points."""
+    return run_role_console(
+        workspace=workspace,
+        role=role or "director",
+        backend=backend,
+        session_id=session_id,
+        session_title=session_title,
+        prompt_style=prompt_style,
+        omp_config=omp_config,
+        json_render=json_render,
+        debug=debug,
+        batch=batch,
+        model=model,
+        dry_run=dry_run,
+        enable_cognitive=enable_cognitive,
+        super_mode=super_mode,
+    )
+
+
+__all__ = [
+    "PolarisLazyClaude",
+    "PolarisRoleConsole",
+    "run_director_console",
+    "run_role_console",
+]
+        model=model,
+        dry_run=dry_run,
+        enable_cognitive=enable_cognitive,
+        super_mode=super_mode,
+    )
+
+
+__all__ = [
+    "PolarisLazyClaude",
+    "PolarisRoleConsole",
+    "run_director_console",
+    "run_role_console",
+]
     "run_role_console",
 ]

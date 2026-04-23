@@ -180,11 +180,6 @@ _logger = logging.getLogger(__name__)
 
 UNSUPPORTED_PATH_PREFIX = "UNSUPPORTED_PATH_PREFIX"
 _ALLOWED_PREFIXES = ("runtime", "workspace", "config")
-_LEGACY_LOGICAL_PREFIX_ALIASES = {
-    "docs": "workspace/docs",
-    "tasks": "runtime/tasks",
-    "dispatch": "runtime/dispatch",
-}
 _STATE_TO_RAMDISK_KEY = "state_to_ramdisk"
 
 # ---------------------------------------------------------------------------
@@ -465,10 +460,6 @@ def default_kernelone_cache_base() -> str:
     return os.path.abspath(os.path.expanduser("~/.cache/kernelone"))
 
 
-# Backward-compat alias — prefer ``default_kernelone_cache_base()`` in new code.
-default_system_cache_base = default_kernelone_cache_base
-
-
 def sys_platform_is_macos() -> bool:
     """Check if running on macOS using sys.platform for reliability."""
 
@@ -691,11 +682,6 @@ def normalize_logical_rel_path(rel_path: str) -> str:
     if p.startswith("../") or p == "..":
         raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {raw}")
     prefix = p.split("/", 1)[0]
-    legacy_target = _LEGACY_LOGICAL_PREFIX_ALIASES.get(prefix.lower())
-    if legacy_target:
-        suffix = p[len(prefix) :].lstrip("/")
-        p = legacy_target if not suffix else f"{legacy_target}/{suffix}"
-        prefix = p.split("/", 1)[0]
     if prefix not in _ALLOWED_PREFIXES:
         raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {raw}")
     return p
@@ -867,7 +853,6 @@ __all__ = [
     "clear_storage_roots_cache",
     "default_kernelone_cache_base",
     "default_ramdisk_root",
-    "default_system_cache_base",
     "kernelone_home",
     "normalize_logical_rel_path",
     "normalize_ramdisk_root",

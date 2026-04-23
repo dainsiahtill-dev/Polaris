@@ -22,74 +22,30 @@ from polaris.kernelone.storage.layout import (
 
 _logger = logging.getLogger(__name__)
 
-# Legacy directory names for backward compatibility
-_LEGACY_METADATA_DIR = ".polaris"
-_CURRENT_METADATA_DIR = ".polaris"
-
-
 def _polaris_metadata_dir_name() -> str:
     """Return Polaris's physical workspace metadata directory name.
 
-    KernelOne's generic default is ``.polaris``. If for any reason the configured
-    name is the legacy ``.kernelone``, Polaris-specific business layout overrides
-    it to ``.polaris``. Legacy ``.polaris`` is also accepted without triggering
-    the override.
+    KernelOne's generic default is ``.polaris``. Polaris uses the same name.
     """
     configured = str(get_workspace_metadata_dir_name() or "").strip()
-    if not configured or configured == ".kernelone":
-        return _CURRENT_METADATA_DIR
-    return configured
-
-
-# Backward compatibility alias
-_polaris_metadata_dir_name = _polaris_metadata_dir_name
+    return configured or ".polaris"
 
 
 # ─── Polaris-specific environment-aware home / cache ────────────────────────
 
 
 def polaris_home() -> str:
-    """Return the Polaris home directory (the .polaris directory itself).
+    """Return the Polaris home directory.
 
-    This is distinct from ``kernelone_home()`` which returns the generic
-    KernelOne home (now also defaults to ~/.polaris). Polaris-specific callers should
-    use this to get the ``<home>/.polaris`` root for settings, config, etc.
-
-    Resolution order: POLARIS_HOME > KERNELONE_HOME/.polaris > KERNELONE_HOME/.polaris > ~/.polaris > ~/.polaris
-
-    Backward compatibility: Falls back to ~/.polaris if newer paths don't exist.
+    Resolution order: KERNELONE_HOME > ~/.polaris
     """
-    # POLARIS_HOME/POLARIS_HOME takes absolute priority (set it and forget it)
-    # Don't use resolve_env_str here as it includes POLARIS_HOME in 'home' fallback
-    hp_env = str(os.environ.get("POLARIS_HOME") or os.environ.get("POLARIS_HOME") or "").strip()
-    if hp_env:
-        return os.path.abspath(os.path.expanduser(os.path.expandvars(hp_env)))
-
-    # KERNELONE_HOME gets current metadata dir appended, then legacy fallback
     from polaris.kernelone._runtime_config import resolve_env_str
 
     kern_home = resolve_env_str("home")
     if kern_home:
-        kern = os.path.abspath(os.path.expanduser(os.path.expandvars(kern_home)))
-        polaris_path = os.path.join(kern, _CURRENT_METADATA_DIR)
-        if os.path.isdir(polaris_path):
-            return polaris_path
-        # Backward compat: check for legacy .polaris
-        legacy_path = os.path.join(kern, _LEGACY_METADATA_DIR)
-        if os.path.isdir(legacy_path):
-            _logger.warning("Legacy config detected at %s. Consider migrating to %s", legacy_path, polaris_path)
-            return legacy_path
-        return polaris_path
+        return os.path.abspath(os.path.expanduser(os.path.expandvars(kern_home)))
 
-    # Fallback: ~/.polaris with backward compat check
-    polaris_path = os.path.abspath(os.path.expanduser("~/.polaris"))
-    if os.path.isdir(polaris_path):
-        return polaris_path
-    legacy_path = os.path.abspath(os.path.expanduser("~/.polaris"))
-    if os.path.isdir(legacy_path):
-        _logger.warning("Legacy config detected at %s. Consider migrating to %s", legacy_path, polaris_path)
-        return legacy_path
-    return polaris_path
+    return os.path.abspath(os.path.expanduser("~/.polaris"))
 
 
 def default_polaris_cache_base() -> str:
@@ -108,11 +64,6 @@ def default_polaris_cache_base() -> str:
     if xdg:
         return os.path.abspath(os.path.join(os.path.expanduser(xdg), "polaris"))
     return os.path.abspath(os.path.expanduser("~/.cache/polaris"))
-
-
-# Backward compatibility aliases
-polaris_home = polaris_home
-default_polaris_cache_base = default_polaris_cache_base
 
 
 # ─── Polaris-config-root-aware StorageRoots ────────────────────────────────────────
@@ -251,9 +202,6 @@ class _PolarisStorageRootsImpl:
 # Type alias for the instance type (used by static type checkers and return types)
 PolarisStorageRoots = _PolarisStorageRootsImpl
 
-# Backward compatibility alias
-PolarisStorageRoots = PolarisStorageRoots
-
 
 # ─── PolarisStorageLayout ─────────────────────────────────────────────────
 
@@ -310,24 +258,12 @@ class PolarisStorageLayout(_BaseStorageLayout):
         """Return Polaris-specific roots resolved from this layout's workspace."""
         return resolve_polaris_roots(str(self._workspace), ramdisk_root=ramdisk_root)
 
-    # Backward compatibility alias — defined as a property to ensure proper binding
-    @property
-    def resolve_polaris_roots(self) -> callable:
-        return self.resolve_polaris_roots
-
-
-PolarisStorageLayout = PolarisStorageLayout
 
 
 __all__ = [
     "PolarisStorageLayout",
     "PolarisStorageRoots",
-    "PolarisStorageLayout",
-    "PolarisStorageRoots",
-    "default_polaris_cache_base",
     "default_polaris_cache_base",
     "polaris_home",
-    "polaris_home",
-    "resolve_polaris_roots",
     "resolve_polaris_roots",
 ]

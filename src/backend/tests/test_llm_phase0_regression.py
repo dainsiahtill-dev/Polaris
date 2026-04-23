@@ -27,9 +27,9 @@ def isolate_polaris_root(tmp_path, monkeypatch):
     app_root = tmp_path / "polaris_root"
     app_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("POLARIS_ROOT", str(app_root))
-    # llm_config uses POLARIS_HOME via storage_layout.resolve_global_path.
+    # llm_config uses KERNELONE_HOME via storage_layout.resolve_global_path.
     # Isolate it to avoid touching the real user config during tests.
-    monkeypatch.setenv("POLARIS_HOME", str(app_root))
+    monkeypatch.setenv("KERNELONE_HOME", str(app_root))
     return app_root
 
 
@@ -831,7 +831,7 @@ class TestPmBackendRuntimeResolution:
         settings.workspace = "/tmp/workspace"
         settings.ramdisk_root = ""
 
-        monkeypatch.setenv("POLARIS_HOME", str(tmp_path / "polaris-home"))
+        monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "polaris-home"))
         with patch("polaris.kernelone.storage.io_paths.build_cache_root", return_value=""):
             error = check_backend_available(settings)
 

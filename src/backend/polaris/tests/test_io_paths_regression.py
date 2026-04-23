@@ -226,8 +226,9 @@ class TestNormalizeArtifactRelPath:
         assert result == os.path.abspath(abs_path)
 
     def test_delegates_to_normalize_logical_rel_path(self) -> None:
-        # Legacy alias "tasks" should map to "runtime/tasks"
-        result = normalize_artifact_rel_path("tasks/my_task")
+        # normalize_artifact_rel_path delegates to normalize_logical_rel_path
+        # for relative paths (stripping leading/trailing whitespace first)
+        result = normalize_artifact_rel_path("  runtime/tasks/my_task  ")
         assert result == "runtime/tasks/my_task"
 
 
@@ -605,20 +606,20 @@ class TestUpdateLatestPointer:
 # ---------------------------------------------------------------------------
 
 
-class TestLegacyAliasRegression:
-    """Historical aliases ('docs', 'tasks', 'dispatch') should be remapped."""
+class TestLegacyAliasRemoved:
+    """Legacy aliases ('docs', 'tasks', 'dispatch') are no longer supported."""
 
-    def test_tasks_alias_maps_to_runtime_tasks(self) -> None:
-        result = normalize_artifact_rel_path("tasks/my_task.json")
-        assert result == "runtime/tasks/my_task.json"
+    def test_tasks_alias_raises_unsupported(self) -> None:
+        with pytest.raises(ValueError, match="UNSUPPORTED_PATH_PREFIX"):
+            normalize_artifact_rel_path("tasks/my_task.json")
 
-    def test_dispatch_alias_maps_to_runtime_dispatch(self) -> None:
-        result = normalize_artifact_rel_path("dispatch/cmd.json")
-        assert result == "runtime/dispatch/cmd.json"
+    def test_dispatch_alias_raises_unsupported(self) -> None:
+        with pytest.raises(ValueError, match="UNSUPPORTED_PATH_PREFIX"):
+            normalize_artifact_rel_path("dispatch/cmd.json")
 
-    def test_docs_alias_maps_to_workspace_docs(self) -> None:
-        result = normalize_artifact_rel_path("docs/README.md")
-        assert result == "workspace/docs/README.md"
+    def test_docs_alias_raises_unsupported(self) -> None:
+        with pytest.raises(ValueError, match="UNSUPPORTED_PATH_PREFIX"):
+            normalize_artifact_rel_path("docs/README.md")
 
 
 # ---------------------------------------------------------------------------

@@ -21,8 +21,8 @@ def test_log_writer_and_query_use_unified_runtime_root(tmp_path, monkeypatch):
     runtime_root = tmp_path / "runtime_root"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     writer = LogEventWriter(workspace=str(workspace), run_id="RUN-001")
     writer.write_event(message="pipeline-check", actor="PM")
@@ -47,8 +47,8 @@ def test_logs_router_user_action_writes_to_runtime_layout(tmp_path, monkeypatch)
     runtime_root = tmp_path / "runtime_root"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     payload = asyncio.run(
         log_user_action(
@@ -77,8 +77,8 @@ def test_log_writer_publishes_realtime_fanout(tmp_path, monkeypatch):
     runtime_root = tmp_path / "runtime_root"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     async def _run() -> None:
         writer = LogEventWriter(workspace=str(workspace), run_id="RUN-RT-001")
@@ -112,8 +112,8 @@ def test_log_writer_extracts_workspace_key_from_storage_roots(tmp_path, monkeypa
     runtime_root = tmp_path / "runtime_root"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     writer = LogEventWriter(workspace=str(workspace), run_id="RUN-KEY-001")
     expected_key = resolve_storage_roots(str(workspace)).workspace_key
@@ -128,8 +128,8 @@ def test_log_writer_enqueues_jetstream_publish_with_canonical_workspace_key(tmp_
     runtime_root = tmp_path / "runtime_root"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
     captured: list[dict[str, object]] = []
 

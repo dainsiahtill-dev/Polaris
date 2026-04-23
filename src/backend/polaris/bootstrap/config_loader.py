@@ -111,7 +111,7 @@ class ConfigLoader:
         "llm.provider": ("KERNELONE_LLM_PROVIDER", "POLARIS_LLM_PROVIDER", None),
         "llm.base_url": ("KERNELONE_LLM_BASE_URL", "POLARIS_LLM_BASE_URL", None),
         "llm.api_key": ("KERNELONE_LLM_API_KEY", "POLARIS_LLM_API_KEY", None),
-        "workspace": ("KERNELONE_WORKSPACE", "POLARIS_WORKSPACE", None),
+        "workspace": ("KERNELONE_WORKSPACE", None, None),
         "self_upgrade_mode": (
             "KERNELONE_SELF_UPGRADE_MODE",
             "POLARIS_SELF_UPGRADE_MODE",
@@ -238,7 +238,7 @@ class ConfigLoader:
     def _load_env(self, prefix: str = "KERNELONE_") -> dict[str, Any]:
         """Load configuration from environment variables.
 
-        Priority: KERNELONE_* > POLARIS_* (fallback for backward compatibility)
+        Only KERNELONE_* env vars are recognized.
 
         Args:
             prefix: Environment variable prefix (default: KERNELONE_)
@@ -267,8 +267,7 @@ class ConfigLoader:
             env_config["server.cors_origins"] = [o.strip() for o in cors_origins.split(",") if o.strip()]
 
         # Handle ramdisk root
-        # Priority: KERNELONE_RAMDISK_ROOT > POLARIS_RAMDISK_ROOT
-        ramdisk_root = os.environ.get("KERNELONE_RAMDISK_ROOT") or os.environ.get("POLARIS_RAMDISK_ROOT")
+        ramdisk_root = os.environ.get("KERNELONE_RAMDISK_ROOT")
         if ramdisk_root:
             env_config["runtime.ramdisk_root"] = ramdisk_root
 

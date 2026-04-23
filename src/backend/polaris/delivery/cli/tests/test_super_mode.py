@@ -8,6 +8,8 @@ from polaris.delivery.cli import router as cli_router
 from polaris.delivery.cli.super_mode import (
     SuperClaimedTask,
     SuperModeRouter,
+    SuperPipelineContext,
+    build_chief_engineer_handoff_message,
     build_director_handoff_message,
     build_director_task_handoff_message,
     build_pm_handoff_message,
@@ -170,3 +172,100 @@ def test_route_console_passes_super_flag(monkeypatch) -> None:
         exit_code = cli_router._route_console(args)
         assert exit_code == 0
         assert captured["super_mode"] is True
+
+
+def test_super_route_decision_pipeline_flags_for_full_pipeline() -> None:
+    decision = SuperModeRouter().decide(
+        "完善 session orchestrator 代码",
+        fallback_role="director",
+    )
+    assert decision.use_architect is True
+    assert decision.use_pm is True
+    assert decision.use_chief_engineer is True
+    assert decision.use_director is True
+
+
+def test_super_route_decision_pipeline_flags_for_architect_only() -> None:
+    decision = SuperModeRouter().decide(
+        "给我一个架构蓝图",
+        fallback_role="director",
+    )
+    assert decision.use_architect is True
+    assert decision.use_pm is False
+    assert decision.use_chief_engineer is False
+    assert decision.use_director is False
+
+
+def test_super_route_decision_pipeline_flags_for_chief_engineer_only() -> None:
+    decision = SuperModeRouter().decide(
+        "分析根因并审查代码",
+        fallback_role="director",
+    )
+    assert decision.use_architect is False
+    assert decision.use_pm is False
+    assert decision.use_chief_engineer is True
+    assert decision.use_director is False
+
+
+def test_super_pipeline_context_defaults() -> None:
+    ctx = SuperPipelineContext(original_request="fix bug")
+    assert ctx.original_request == "fix bug"
+    assert ctx.architect_output == ""
+    assert ctx.pm_output == ""
+    assert ctx.extracted_tasks == ()
+    assert ctx.published_task_ids == ()
+    assert ctx.ce_claims == ()
+    assert ctx.director_claims == ()
+    assert ctx.blueprint_items == ()
+
+
+def test_super_pipeline_context_immutability_via_replacement() -> None:
+    ctx = SuperPipelineContext(original_request="fix bug")
+    ctx2 = SuperPipelineContext(
+        original_request=ctx.original_request,
+        architect_output="arch result",
+        pm_output=ctx.pm_output,
+    )
+    assert ctx2.architect_output == "arch result"
+    assert ctx.architect_output == ""  # original unchanged
+
+
+def test_build_chief_engineer_handoff_message_contains_claimed_tasks() -> None:
+    claimed = [
+        SuperClaimedTask(
+            task_id="t-1",
+            stage="pending_design",
+            status="pending_design",
+            trace_id="trace-1",
+            run_id="run-1",
+            lease_token="lease-1",
+            payload={
+                "subject": "修复 ContextOS",
+                "target_files": ["polaris/delivery/cli/super_mode.py"],
+            },
+        )
+    ]
+    handoff = build_chief_engineer_handoff_message(
+        original_request="进一步完善 ContextOS",
+        architect_output="架构摘要",
+        pm_output="PM 任务摘要",
+        claimed_tasks=claimed,
+    )
+    assert "[SUPER_MODE_CE_HANDOFF]" in handoff
+    assert "pending_design" in handoff
+    assert "t-1" in handoff
+    assert "修复 ContextOS" in handoff
+    assert "super_mode.py" in handoff
+
+
+def test_super_mode_router_routes_contextos_request_to_full_pipeline_with_flags() -> None:
+    decision = SuperModeRouter().decide(
+        "进一步完善ContextOS以及相关代码",
+        fallback_role="director",
+    )
+    assert decision.roles == ("architect", "pm", "chief_engineer", "director")
+    assert decision.reason == "architect_code_delivery"
+    assert decision.use_architect is True
+    assert decision.use_pm is True
+    assert decision.use_chief_engineer is True
+    assert decision.use_director is True

@@ -19,7 +19,7 @@ def test_resolve_managed_nats_storage_root_uses_polaris_home(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("POLARIS_HOME", str((tmp_path / ".polaris").resolve()))
+    monkeypatch.setenv("KERNELONE_HOME", str((tmp_path / ".polaris").resolve()))
 
     resolved = server_runtime.resolve_managed_nats_storage_root()
 

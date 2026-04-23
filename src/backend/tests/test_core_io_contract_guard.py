@@ -34,9 +34,9 @@ def test_io_utils_exports_canonical_jsonl_facades(tmp_path: Path, monkeypatch) -
 
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("POLARIS_STATE_TO_RAMDISK", "0")
-    monkeypatch.setenv("POLARIS_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
 
     buffered_logical_path = "runtime/events/buffered.jsonl"
     atomic_logical_path = "runtime/events/atomic.jsonl"

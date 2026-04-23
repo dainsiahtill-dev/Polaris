@@ -59,7 +59,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("POLARIS_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
     set_default_adapter(_TestFileSystemAdapter())
     from polaris.kernelone.tool_execution.tool_spec_registry import migrate_from_contracts_specs
 

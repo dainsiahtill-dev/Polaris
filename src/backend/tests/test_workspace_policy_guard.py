@@ -45,7 +45,7 @@ def test_validate_workspace_allows_meta_project_when_self_upgrade_enabled() -> N
 
 
 def test_settings_from_env_rejects_meta_project_without_self_upgrade(monkeypatch) -> None:
-    monkeypatch.setenv("POLARIS_WORKSPACE", str(get_meta_project_root()))
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(get_meta_project_root()))
     monkeypatch.delenv(SELF_UPGRADE_MODE_ENV, raising=False)
 
     with pytest.raises(ValueError):
@@ -101,7 +101,7 @@ def test_sync_process_settings_environment_tracks_self_upgrade_mode(tmp_path: Pa
     settings.self_upgrade_mode = False
     sync_process_settings_environment(settings)
     assert SELF_UPGRADE_MODE_ENV not in os.environ
-    os.environ.pop("POLARIS_WORKSPACE", None)
+    os.environ.pop("KERNELONE_WORKSPACE", None)
 
 
 def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) -> None:
@@ -135,7 +135,7 @@ def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) 
     assert os.environ.get("POLARIS_NATS_STREAM_NAME") == "HP_RUNTIME"
 
     for name in (
-        "POLARIS_WORKSPACE",
+        "KERNELONE_WORKSPACE",
         "POLARIS_NATS_ENABLED",
         "POLARIS_NATS_REQUIRED",
         "POLARIS_NATS_URL",
