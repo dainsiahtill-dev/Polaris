@@ -104,7 +104,7 @@ async def get_default_manager() -> MemoryManager:
     global _default_manager
 
     if _default_manager is None:
-        workspace = os.environ.get("KERNELONE_WORKSPACE") or os.environ.get("KERNELONE_WORKSPACE") or "."
+        workspace = os.environ.get("KERNELONE_WORKSPACE") or "."
         _default_manager = await create_memory_manager(workspace)
 
     return _default_manager

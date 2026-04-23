@@ -435,7 +435,7 @@ def get_token_tracking_provider(provider_type: str, budget_limit: int | None = N
 
     # Check for budget in environment
     if budget_limit is None:
-        env_budget = os.environ.get("KERNELONE_TOKEN_BUDGET") or os.environ.get("KERNELONE_TOKEN_BUDGET")
+        env_budget = os.environ.get("KERNELONE_TOKEN_BUDGET")
         if env_budget:
             with contextlib.suppress(ValueError):
                 budget_limit = int(env_budget)

@@ -408,5 +408,5 @@ class BenchmarkDB:
         return {
             "python_version": os.environ.get("PYTHON_VERSION", ""),
             "platform": os.environ.get("PLATFORM", ""),
-            "polaris_version": (os.environ.get("KERNELONE_VERSION") or os.environ.get("KERNELONE_VERSION", "")),
+            "polaris_version": (os.environ.get("KERNELONE_VERSION", "")),
         }

@@ -105,7 +105,7 @@ def resolve_provider_api_key(
     provider_token = str(provider_type or "").strip().lower()
     provider_id_token = str(provider_id or "").strip().lower()
     if provider_token == "minimax" or "minimax" in provider_id_token:
-        candidates.extend(["KERNELONE_MINIMAX_API_KEY", "KERNELONE_MINIMAX_API_KEY", "MINIMAX_API_KEY"])
+        candidates.extend(["KERNELONE_MINIMAX_API_KEY", "MINIMAX_API_KEY"])
     if provider_token in {"openai_compat", "openai"} or "openai" in provider_id_token:
         candidates.append("OPENAI_API_KEY")
     if provider_token == "anthropic_compat" or "anthropic" in provider_id_token:

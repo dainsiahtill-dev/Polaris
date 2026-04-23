@@ -288,7 +288,7 @@ class TestStateFirstContextOSLifecycle:
 
     @pytest.mark.asyncio
     async def test_cleanup_releases_resources(self) -> None:
-        """Test async cleanup() releases DialogActClassifier."""
+        """Test async cleanup() releases DialogActClassifier and other resources."""
         policy = StateFirstContextOSPolicy(
             attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True)
         )
@@ -298,11 +298,25 @@ class TestStateFirstContextOSLifecycle:
         _ = context_os.dialog_act_classifier
         assert context_os._dialog_act_classifier is not None
 
+        # Trigger lazy initialization of pipeline runner and snapshot store
+        _ = context_os._get_pipeline_runner()
+        _ = context_os._get_snapshot_store()
+
+        # Add something to content store cache
+        context_os._content_store_cache.put("test_workspace", "test_store")
+
         # Call cleanup
         await context_os.cleanup()
 
         # Classifier should be released after cleanup
         assert context_os._dialog_act_classifier is None
+
+        # Pipeline runner and snapshot store should be released
+        assert context_os._pipeline_runner is None
+        assert context_os._snapshot_store is None
+
+        # Content store cache should be cleared
+        assert context_os._content_store_cache.current_entries == 0
 
     @pytest.mark.asyncio
     async def test_close_calls_cleanup(self) -> None:

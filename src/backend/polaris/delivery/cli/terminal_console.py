@@ -53,6 +53,7 @@ from polaris.delivery.cli.super_mode import (
     extract_task_list_from_pm_output,
 )
 from polaris.kernelone.fs.encoding import enforce_utf8
+from polaris.kernelone.traceability.session_source import SessionSource, SourceChain
 
 # Optional readline import for keyboard mode support
 try:
@@ -2036,7 +2037,10 @@ def _run_super_turn(
         decision.use_director,
     )
     last_result: _TurnExecutionResult | None = None
-    ctx = SuperPipelineContext(original_request=message)
+    ctx = SuperPipelineContext(
+        original_request=message,
+        source_chain=SourceChain.root(SessionSource.USER_DIRECT),
+    )
     # Mutable accumulators (will be folded back into ctx at end of each stage)
     pm_tasks: list[SuperTaskItem] = []
     published_task_ids: list[int] = []
@@ -2230,12 +2234,21 @@ def _run_super_turn(
                 original_request=ctx.original_request,
                 architect_output=last_result.final_content,
                 pm_output=ctx.pm_output,
+                source_chain=ctx.source_chain.append(SessionSource.ARCHITECT_DESIGNED),
             )
         elif next_role == "pm" and last_result is not None and not last_result.saw_error:
             ctx = SuperPipelineContext(
                 original_request=ctx.original_request,
                 architect_output=ctx.architect_output,
                 pm_output=last_result.final_content,
+                source_chain=ctx.source_chain.append(SessionSource.PM_DELEGATED),
+            )
+        elif next_role == "director" and last_result is not None and not last_result.saw_error:
+            ctx = SuperPipelineContext(
+                original_request=ctx.original_request,
+                architect_output=ctx.architect_output,
+                pm_output=ctx.pm_output,
+                source_chain=ctx.source_chain.append(SessionSource.DIRECTOR_EXECUTED),
             )
     if last_result is None:
         active_session_id = role_sessions.get(fallback_role) or _resolve_role_session(

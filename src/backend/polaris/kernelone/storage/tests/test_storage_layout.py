@@ -76,7 +76,7 @@ def test_prefix_guards_and_aliases(tmp_path: Path) -> None:
 
     current_meta = get_workspace_metadata_dir_name()
 
-    docs_path = Path(resolve_workspace_persistent_path(str(workspace), "docs/plan.md"))
+    docs_path = Path(resolve_workspace_persistent_path(str(workspace), "workspace/docs/plan.md"))
     # Polaris uses .polaris as metadata dir
     assert docs_path.as_posix().endswith(f"/{current_meta}/docs/plan.md")
 

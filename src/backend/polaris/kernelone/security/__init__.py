@@ -11,6 +11,13 @@ from polaris.kernelone.security.audit import (
     VulnerabilityCategory,
     VulnerabilitySeverity,
 )
+from polaris.kernelone.security.command_auditor import (
+    AuditConfig,
+    CommandAuditEvent,
+    CommandAuditResult,
+    CommandAuditor,
+    SeverityLevel,
+)
 from polaris.kernelone.security.dangerous_patterns import (
     is_dangerous,
     is_dangerous_command,
@@ -21,12 +28,17 @@ from polaris.kernelone.security.rate_limiter import RateLimiter
 from polaris.kernelone.security.sanitizer import InputSanitizer
 
 __all__ = [
+    "AuditConfig",
+    "CommandAuditEvent",
+    "CommandAuditResult",
+    "CommandAuditor",
     "GuardrailsChain",
     "InputSanitizer",
     "PIIReversibleMasker",
     "RateLimiter",
     "SecurityAuditResult",
     "SecurityAuditor",
+    "SeverityLevel",
     "Vulnerability",
     "VulnerabilityCategory",
     "VulnerabilitySeverity",

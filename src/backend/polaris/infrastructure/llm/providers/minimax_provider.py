@@ -80,7 +80,7 @@ def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:
 def _debug_enabled(config: dict[str, Any]) -> bool:
     local_flag = str(config.get("debug") or "").strip().lower()
     env_flag = (
-        str(os.environ.get("KERNELONE_MINIMAX_DEBUG") or os.environ.get("KERNELONE_MINIMAX_DEBUG") or "")
+        str(os.environ.get("KERNELONE_MINIMAX_DEBUG") or "")
         .strip()
         .lower()
     )

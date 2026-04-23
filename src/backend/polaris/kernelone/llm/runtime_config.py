@@ -90,7 +90,7 @@ class RuntimeConfigManager:
             path = str(self._config_path_resolver() or "").strip()
             if path:
                 return path
-        env_path = os.environ.get("KERNELONE_LLM_CONFIG") or os.environ.get("KERNELONE_LLM_CONFIG")
+        env_path = os.environ.get("KERNELONE_LLM_CONFIG")
         if env_path:
             return str(env_path)
         return resolve_global_path("config/llm/llm_config.json")

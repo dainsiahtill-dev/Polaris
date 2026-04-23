@@ -259,31 +259,31 @@ def invoke_codex(
     codex_path = ensure_codex_available()
     codex_model = (
         str(
-            os.environ.get("KERNELONE_CODEX_MODEL") or os.environ.get("KERNELONE_CODEX_MODEL") or "gpt-5.2-codex"
+            os.environ.get("KERNELONE_CODEX_MODEL") or "gpt-5.2-codex"
         ).strip()
         or "gpt-5.2-codex"
     )
     # fmt: off
-    codex_sandbox = str(os.environ.get("KERNELONE_CODEX_SANDBOX") or os.environ.get("KERNELONE_CODEX_SANDBOX") or "").strip() or "safe"
+    codex_sandbox = str(os.environ.get("KERNELONE_CODEX_SANDBOX") or "").strip() or "safe"
     # fmt: on
     codex_color = (
-        str(os.environ.get("KERNELONE_CODEX_COLOR") or os.environ.get("KERNELONE_CODEX_COLOR") or "never").strip()
+        str(os.environ.get("KERNELONE_CODEX_COLOR") or "never").strip()
         or "never"
     )
     codex_cd = (
-        str(os.environ.get("KERNELONE_CODEX_CD") or os.environ.get("KERNELONE_CODEX_CD") or "").strip() or workspace
+        str(os.environ.get("KERNELONE_CODEX_CD") or "").strip() or workspace
     )
     codex_approvals = str(
-        os.environ.get("KERNELONE_CODEX_APPROVALS") or os.environ.get("KERNELONE_CODEX_APPROVALS") or ""
+        os.environ.get("KERNELONE_CODEX_APPROVALS") or ""
     ).strip()
     codex_output_schema = str(
-        os.environ.get("KERNELONE_CODEX_OUTPUT_SCHEMA") or os.environ.get("KERNELONE_CODEX_OUTPUT_SCHEMA") or ""
+        os.environ.get("KERNELONE_CODEX_OUTPUT_SCHEMA") or ""
     ).strip()
     codex_add_dirs = str(
-        os.environ.get("KERNELONE_CODEX_ADD_DIRS") or os.environ.get("KERNELONE_CODEX_ADD_DIRS") or ""
+        os.environ.get("KERNELONE_CODEX_ADD_DIRS") or ""
     ).strip()
     codex_config_overrides = str(
-        os.environ.get("KERNELONE_CODEX_CONFIG") or os.environ.get("KERNELONE_CODEX_CONFIG") or ""
+        os.environ.get("KERNELONE_CODEX_CONFIG") or ""
     ).strip()
     codex_use_oss = _env_flag("KERNELONE_CODEX_OSS", os.environ.get("KERNELONE_CODEX_OSS", "0"))
     # fmt: off
@@ -342,7 +342,7 @@ def invoke_codex(
         True
         if "--json" in args
         else str(
-            os.environ.get("KERNELONE_CODEX_CAPTURE_STDOUT") or os.environ.get("KERNELONE_CODEX_CAPTURE_STDOUT", "0")
+            os.environ.get("KERNELONE_CODEX_CAPTURE_STDOUT", "0")
         )
         .strip()
         .lower()
@@ -403,7 +403,7 @@ def invoke_codex(
 
     try:
         use_guard = str(
-            os.environ.get("KERNELONE_CODEX_UTF8_GUARD") or os.environ.get("KERNELONE_CODEX_UTF8_GUARD", "1")
+            os.environ.get("KERNELONE_CODEX_UTF8_GUARD", "1")
         ).strip().lower() not in (
             "0",
             "false",

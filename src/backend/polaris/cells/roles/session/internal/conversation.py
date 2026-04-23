@@ -257,7 +257,7 @@ def _normalize_database_url(database_url: str | None) -> str:
 
 def _resolve_kernel_workspace() -> str:
     explicit_workspace = str(
-        os.environ.get("KERNELONE_CONTEXT_ROOT") or os.environ.get("KERNELONE_CONTEXT_ROOT") or ""
+        os.environ.get("KERNELONE_CONTEXT_ROOT") or ""
     ).strip()
     if explicit_workspace:
         return str(Path(explicit_workspace).resolve())

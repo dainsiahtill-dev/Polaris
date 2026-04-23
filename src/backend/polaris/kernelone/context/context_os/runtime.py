@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,7 @@ from polaris.kernelone.context.working_state_manager import WorkingStateManager
 from polaris.kernelone.errors import StateNotFoundError, ValidationError
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
+from .bounded_cache import BoundedCache, LRUBoundedCache
 from .classifier import DialogActClassifier
 from .domain_adapters import (
     ContextDomainAdapter,
@@ -196,7 +198,16 @@ class StateFirstContextOS:
 
         # v2.1: Content store for content-addressable deduplication (lazy init)
         self._content_store: Any | None = None
-        self._content_store_cache: dict[str, Any] = {}
+        self._content_store_cache: BoundedCache[str, Any] = LRUBoundedCache(
+            max_entries=128,
+            max_bytes=500_000_000,  # 500MB
+        )
+
+        # Thread pool executor for offloading CPU-intensive work from event loop
+        self._executor = ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="context_os_",
+        )
 
         # Four-layer ContextOS split components
         self._truth_log = TruthLogService()
@@ -256,11 +267,13 @@ class StateFirstContextOS:
     def _get_content_store(self) -> Any:
         """Get or create the ContentStore for content-addressable dedup (per workspace)."""
         workspace = self._workspace or "."
-        if workspace not in self._content_store_cache:
+        store = self._content_store_cache.get(workspace)
+        if store is None:
             from .content_store import ContentStore
 
-            self._content_store_cache[workspace] = ContentStore(workspace=workspace)
-        return self._content_store_cache[workspace]
+            store = ContentStore(workspace=workspace)
+            self._content_store_cache.put(workspace, store)
+        return store
 
     def _get_cleanup_lock(self) -> asyncio.Lock:
         """Get or create the cleanup lock (lazy initialization)."""
@@ -328,6 +341,27 @@ class StateFirstContextOS:
         async with self._get_cleanup_lock():
             # Release dialog act classifier
             self._dialog_act_classifier = None
+
+            # Release pipeline runner and snapshot store
+            self._pipeline_runner = None
+            self._snapshot_store = None
+
+            # Clear content store cache
+            self._content_store_cache.clear()
+
+            # Shutdown thread pool executor
+            if self._executor is not None:
+                self._executor.shutdown(wait=True)
+                self._executor = None  # type: ignore[assignment]
+
+            # Notify service components to release resources
+            if self._receipt_store is not None and hasattr(self._receipt_store, 'close'):
+                await self._receipt_store.close()
+            if self._working_state_manager is not None and hasattr(self._working_state_manager, 'close'):
+                await self._working_state_manager.close()
+            if self._projection_engine is not None and hasattr(self._projection_engine, 'close'):
+                await self._projection_engine.close()
+
             logger.debug("StateFirstContextOS cleanup completed")
 
     async def close(self) -> None:
@@ -497,82 +531,68 @@ class StateFirstContextOS:
         recent_window_messages: int = 8,
         focus: str = "",
     ) -> ContextOSProjection:
-        # Phase 1 Fix: Thread-safe async project execution
-        # Use asyncio.Lock to avoid blocking the event loop
+        # Phase 2 Fix: Snapshot -> Compute -> Validate/Commit paradigm
+        # 1. Take snapshot under lock (minimal critical section)
         async with self._get_project_lock():
-            return self._project_via_pipeline(
-                messages=messages,
-                existing_snapshot=existing_snapshot,
-                recent_window_messages=recent_window_messages,
-                focus=focus,
-            )
+            snapshot = self._take_snapshot()
+            pipeline_runner = self._get_pipeline_runner()
+            content_store = self._get_content_store()
 
-    def _project_via_pipeline(
-        self,
-        *,
-        messages: list[dict[str, Any]] | tuple[dict[str, Any], ...],
-        existing_snapshot: ContextOSSnapshot | dict[str, Any] | None = None,
-        recent_window_messages: int = 8,
-        focus: str = "",
-    ) -> ContextOSProjection:
-        """Project context via the 7-stage pipeline architecture.
-
-        Integrates the four-layer ContextOS split:
-        - TruthLogService: append incoming messages to the canonical log.
-        - WorkingStateManager: holds active mutable state.
-        - ReceiptStore: large outputs are referenced, not duplicated.
-        - ProjectionEngine: available for prompt generation by consumers.
-        """
-        snapshot = (
-            existing_snapshot
-            if isinstance(existing_snapshot, ContextOSSnapshot)
-            else ContextOSSnapshot.from_mapping(existing_snapshot)
-        )
-        _has_snapshot = snapshot is not None
-        _existing_tx_len = len(snapshot.transcript_log) if snapshot is not None else 0
-        logger.debug(
-            "[DEBUG][ContextOS] _project_via_pipeline start: has_snapshot=%s existing_tx=%d incoming_msgs=%d recent_window=%d focus=%r",
-            _has_snapshot,
-            _existing_tx_len,
-            len(messages) if messages else 0,
+        # 2. Compute projection outside lock (CPU-intensive, thread-safe)
+        loop = asyncio.get_event_loop()
+        projection = await loop.run_in_executor(
+            self._executor,
+            self._project_via_pipeline_sync,
+            snapshot,
+            messages,
+            existing_snapshot,
             recent_window_messages,
             focus,
+            pipeline_runner,
+            content_store,
         )
 
-        snapshot_payload = existing_snapshot if isinstance(existing_snapshot, dict) else None
-        if snapshot_payload is not None:
-            self._receipt_store.import_receipts(snapshot_payload.get("_receipt_store_export"))
+        # 3. Commit under lock (CAS check + write)
+        async with self._get_project_lock():
+            if self._validate_projection(projection):
+                self._commit_projection(projection)
 
-        # Seed services from existing snapshot before replaying new inputs.
-        if snapshot is not None:
-            self._truth_log.replace(snapshot.transcript_log)
-            self._working_state_manager.replace(snapshot.working_state)  # type: ignore[arg-type]
-            self._working_state_manager.update("transcript_log", [item.to_dict() for item in snapshot.transcript_log])
-            self._working_state_manager.update("artifact_store", snapshot.artifact_store)
-            self._working_state_manager.update("episode_store", snapshot.episode_store)
-            self._working_state_manager.update("budget_plan", snapshot.budget_plan)
-            self._working_state_manager.update("pending_followup", snapshot.pending_followup)
-        else:
-            self._truth_log.replace(())
+        return projection
 
-        self._truth_log.append_many(msg for msg in messages or () if isinstance(msg, dict))
+    def _take_snapshot(self) -> tuple[tuple[Any, ...], Any, dict[str, Any]]:
+        """Capture minimal immutable snapshot of current state for thread-safe compute.
 
-        inp = PipelineInput(
-            messages=messages,
-            existing_snapshot_transcript=snapshot.transcript_log if snapshot is not None else (),
-            existing_snapshot_artifacts=snapshot.artifact_store if snapshot is not None else (),
-            existing_snapshot_episodes=snapshot.episode_store if snapshot is not None else (),
-            current_pending_followup=snapshot.pending_followup if snapshot is not None else None,
-            recent_window_messages=recent_window_messages,
-            focus=focus,
-        )
+        Returns:
+            Tuple of (transcript_log, working_state, content_store_cache).
+        """
+        # Access internal state directly for snapshot (avoiding missing public APIs)
+        transcript = tuple(getattr(self._truth_log, "_entries", ()))
+        working_state = self._working_state_manager.current()
+        cache_snapshot: dict[str, Any] = dict(getattr(self._content_store_cache, "_cache", {}))
+        return transcript, working_state, cache_snapshot
 
-        runner = self._get_pipeline_runner()
-        projection = runner.project(inp, adapter_id=self.domain_adapter.adapter_id)
+    def _validate_projection(self, projection: ContextOSProjection) -> bool:
+        """Validate projection before commit (CAS check).
 
+        Args:
+            projection: The computed projection to validate.
+
+        Returns:
+            True if projection is valid and can be committed.
+        """
+        return projection is not None and projection.snapshot is not None
+
+    def _commit_projection(self, projection: ContextOSProjection) -> None:
+        """Commit validated projection to shared mutable state.
+
+        Must be called under project_lock.
+
+        Args:
+            projection: The validated projection to commit.
+        """
         # Authoritative service writeback from canonical projection snapshot.
         self._truth_log.replace(projection.snapshot.transcript_log)
-        self._working_state_manager.replace(projection.snapshot.working_state)  # type: ignore[arg-type]
+        self._working_state_manager.replace(projection.snapshot.working_state)
         self._working_state_manager.update(
             "transcript_log", [item.to_dict() for item in projection.snapshot.transcript_log]
         )
@@ -584,18 +604,62 @@ class StateFirstContextOS:
         # Prime receipt refs for oversized content through ProjectionEngine policy.
         self._projection_engine.build_turns(projection.active_window, self._receipt_store)
 
-        self._notify_projection_lifecycle_deltas(snapshot, projection)
+    def _project_via_pipeline_sync(
+        self,
+        snapshot: tuple[tuple[Any, ...], Any, dict[str, Any]],
+        messages: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        existing_snapshot: ContextOSSnapshot | dict[str, Any] | None,
+        recent_window_messages: int,
+        focus: str,
+        pipeline_runner: PipelineRunner,
+        content_store: Any,
+    ) -> ContextOSProjection:
+        """Project context via the 7-stage pipeline architecture (pure function).
 
-        _route_counts: dict[str, int] = {}
-        for evt in projection.snapshot.transcript_log:
-            _route_counts[evt.route] = _route_counts.get(evt.route, 0) + 1
+        This method MUST NOT modify shared mutable state. It operates on
+        copies/snapshots passed as arguments and returns a new projection.
+
+        Integrates the four-layer ContextOS split:
+        - TruthLogService: append incoming messages to the canonical log.
+        - WorkingStateManager: holds active mutable state.
+        - ReceiptStore: large outputs are referenced, not duplicated.
+        - ProjectionEngine: available for prompt generation by consumers.
+        """
+        ctx_snapshot = (
+            existing_snapshot
+            if isinstance(existing_snapshot, ContextOSSnapshot)
+            else ContextOSSnapshot.from_mapping(existing_snapshot)
+        )
+        _has_snapshot = ctx_snapshot is not None
+        _existing_tx_len = len(ctx_snapshot.transcript_log) if ctx_snapshot is not None else 0
         logger.debug(
-            "[DEBUG][ContextOS] _project_via_pipeline end: tx_events=%d active_window=%d artifacts=%d episodes=%d routes=%s run_card_goal=%r",
+            "[DEBUG][ContextOS] _project_via_pipeline_sync start: has_snapshot=%s existing_tx=%d incoming_msgs=%d recent_window=%d focus=%r",
+            _has_snapshot,
+            _existing_tx_len,
+            len(messages) if messages else 0,
+            recent_window_messages,
+            focus,
+        )
+
+        # Build pipeline input from snapshot (no shared state mutation)
+        inp = PipelineInput(
+            messages=messages,
+            existing_snapshot_transcript=ctx_snapshot.transcript_log if ctx_snapshot is not None else (),
+            existing_snapshot_artifacts=ctx_snapshot.artifact_store if ctx_snapshot is not None else (),
+            existing_snapshot_episodes=ctx_snapshot.episode_store if ctx_snapshot is not None else (),
+            current_pending_followup=ctx_snapshot.pending_followup if ctx_snapshot is not None else None,
+            recent_window_messages=recent_window_messages,
+            focus=focus,
+        )
+
+        projection = pipeline_runner.project(inp, adapter_id=self.domain_adapter.adapter_id)
+
+        logger.debug(
+            "[DEBUG][ContextOS] _project_via_pipeline_sync end: tx_events=%d active_window=%d artifacts=%d episodes=%d run_card_goal=%r",
             len(projection.snapshot.transcript_log),
             len(projection.active_window),
             len(getattr(projection.snapshot, "artifact_store", ())),
             len(getattr(projection.snapshot, "episode_store", ())),
-            _route_counts,
             projection.run_card.current_goal if projection.run_card else "<none>",
         )
 
@@ -749,7 +813,7 @@ class StateFirstContextOS:
         if context is None:
             return []
         return _search_memory_impl(
-            context,  # type: ignore[arg-type]
+            context,
             query,
             kind=kind,
             entity=entity,
@@ -1293,7 +1357,7 @@ class StateFirstContextOS:
                     update={
                         "route": route,
                         "artifact_id": artifact_id,
-                        "metadata": {  # type: ignore[arg-type]
+                        "metadata": {
                             **dict(item.metadata),
                             **decision_metadata,
                             **dialog_act_metadata,

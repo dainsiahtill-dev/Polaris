@@ -25,11 +25,11 @@ def get_polaris_root() -> str:
     def _expand(path: str) -> str:
         return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
 
-    root_override = str(os.environ.get("KERNELONE_ROOT") or os.environ.get("KERNELONE_ROOT") or "").strip()
+    root_override = str(os.environ.get("KERNELONE_ROOT") or "").strip()
     if root_override:
         return _expand(root_override)
 
-    home_override = str(os.environ.get("KERNELONE_HOME") or os.environ.get("KERNELONE_HOME") or "").strip()
+    home_override = str(os.environ.get("KERNELONE_HOME") or "").strip()
     if home_override:
         expanded = _expand(home_override)
         trimmed = expanded.rstrip("\\/")

@@ -23,6 +23,7 @@ from polaris.kernelone.context.context_os.helpers import (
     _utc_now_iso,
     get_metadata_value,
 )
+from polaris.kernelone.context.context_os.model_utils import validated_replace
 from polaris.kernelone.context.context_os.models_v2 import (
     ArtifactRecordV2 as ArtifactRecord,
     BudgetPlanV2 as BudgetPlan,
@@ -378,9 +379,7 @@ class Canonicalizer:
         if transcript and not hasattr(transcript[0], "model_copy"):
             import dataclasses
 
-            transcript = tuple(
-                TranscriptEvent.model_validate(dataclasses.asdict(e)) for e in transcript
-            )
+            transcript = tuple(TranscriptEvent.model_validate(dataclasses.asdict(e)) for e in transcript)
         existing_artifacts = inp.existing_snapshot_artifacts
         current_pending_followup = inp.current_pending_followup
 
@@ -775,14 +774,10 @@ class StatePatcher:
 
         # Convert dataclass StateEntry -> Pydantic StateEntryV2 for domain_adapter results
         def _se(entries: tuple[Any, ...]) -> tuple[StateEntry, ...]:
-            return tuple(
-                StateEntry.model_validate(e.to_dict()) if hasattr(e, "to_dict") else e for e in entries
-            )
+            return tuple(StateEntry.model_validate(e.to_dict()) if hasattr(e, "to_dict") else e for e in entries)
 
         def _de(entries: tuple[Any, ...]) -> tuple[DecisionEntry, ...]:
-            return tuple(
-                DecisionEntry.model_validate(e.to_dict()) if hasattr(e, "to_dict") else e for e in entries
-            )
+            return tuple(DecisionEntry.model_validate(e.to_dict()) if hasattr(e, "to_dict") else e for e in entries)
 
         working_state = WorkingState(
             user_profile=UserProfileState(
@@ -1086,12 +1081,10 @@ class WindowCollector:
                 if compressed_via_jit:
                     metadata_updates["jit_compressed"] = True
                     metadata_updates["compression_strategy"] = "tiered_slm"
-                pinned_item = item.model_copy(
-                    update={
-                        "content": item_content,
-                        "_metadata": {**dict(item.metadata), **metadata_updates},
-                    },
-                    deep=True,
+                pinned_item = validated_replace(
+                    item,
+                    content=item_content,
+                    metadata={**dict(item.metadata), **metadata_updates},
                 )
             else:
                 pinned_item = item

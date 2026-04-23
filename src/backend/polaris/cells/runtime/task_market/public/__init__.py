@@ -5,6 +5,8 @@ from __future__ import annotations
 from .contracts import (
     AcknowledgeTaskStageCommandV1,
     ChangeOrderResultV1,
+    ClaimStage1Result,
+    ClaimStage2Result,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
     HumanReviewResultV1,
@@ -25,6 +27,7 @@ from .contracts import (
     TaskMarketError,
     TaskMarketStatusResultV1,
     TaskWorkItemResultV1,
+    TaskWorkItemState,
 )
 from .dlq_api import (
     get_dlq_stats,
@@ -44,6 +47,8 @@ from .service import TaskMarketService, get_task_market_service, reset_task_mark
 __all__ = [
     "AcknowledgeTaskStageCommandV1",
     "ChangeOrderResultV1",
+    "ClaimStage1Result",
+    "ClaimStage2Result",
     "ClaimTaskWorkItemCommandV1",
     "FailTaskStageCommandV1",
     "HumanReviewResultV1",
@@ -65,6 +70,7 @@ __all__ = [
     "TaskMarketService",
     "TaskMarketStatusResultV1",
     "TaskWorkItemResultV1",
+    "TaskWorkItemState",
     "advance_council_role",
     "escalate_to_council",
     "get_dlq_stats",

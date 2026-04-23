@@ -24,29 +24,25 @@ logger = logging.getLogger(__name__)
 _DEFAULT_QUEUE_SIZE = max(
     256,
     int(
-        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_QUEUE_SIZE")
-        or os.environ.get("KERNELONE_JETSTREAM_PUBLISH_QUEUE_SIZE", "4096")
+        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_QUEUE_SIZE", "4096")
     ),
 )
 _DEFAULT_RETRY_ATTEMPTS = max(
     1,
     int(
-        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_MAX_ATTEMPTS")
-        or os.environ.get("KERNELONE_JETSTREAM_PUBLISH_MAX_ATTEMPTS", "6")
+        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_MAX_ATTEMPTS", "6")
     ),
 )
 _DEFAULT_RETRY_BASE_SEC = max(
     0.05,
     float(
-        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_BASE_SEC")
-        or os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_BASE_SEC", "0.25")
+        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_BASE_SEC", "0.25")
     ),
 )
 _DEFAULT_RETRY_MAX_SEC = max(
     _DEFAULT_RETRY_BASE_SEC,
     float(
-        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_MAX_SEC")
-        or os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_MAX_SEC", "5.0")
+        os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_MAX_SEC", "5.0")
     ),
 )
 _QUEUE_GET_TIMEOUT_SEC = 0.25

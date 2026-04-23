@@ -63,6 +63,9 @@ SKIP_DIRS: set[str] = {
     ".aider",
 }
 
+# Maximum number of tags to keep in memory
+MAX_TAGS = 100_000
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -219,6 +222,16 @@ class RepoIntelligenceFacade:
                 self._stats.files_with_tags += 1
 
             files_processed += 1
+
+        # Enforce tag cache size limit
+        if len(self._all_tags) > MAX_TAGS:
+            logger.warning(
+                "Tag cache exceeded limit (%d > %d), truncating to %d",
+                len(self._all_tags),
+                MAX_TAGS,
+                MAX_TAGS,
+            )
+            self._all_tags = self._all_tags[:MAX_TAGS]
 
         self._scanned = True
         self._stats.files_scanned = files_processed

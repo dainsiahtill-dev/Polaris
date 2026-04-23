@@ -68,7 +68,6 @@ def _get_persistence_service(workspace: str | None = None) -> SessionPersistence
         workspace = (
             workspace
             or os.environ.get("KERNELONE_CONTEXT_ROOT")
-            or os.environ.get("KERNELONE_CONTEXT_ROOT")
             or os.getcwd()
         )
         _persistence_service = SessionPersistenceService(workspace)
@@ -132,7 +131,7 @@ class RoleSessionService:
         """获取工作区路径"""
         if self._workspace is None:
             self._workspace = (
-                os.environ.get("KERNELONE_CONTEXT_ROOT") or os.environ.get("KERNELONE_CONTEXT_ROOT") or os.getcwd()
+                os.environ.get("KERNELONE_CONTEXT_ROOT") or os.getcwd()
             )
         return self._workspace
 

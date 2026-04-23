@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from polaris.kernelone.traceability.session_source import SessionSource, SourceChain
+
 logger = logging.getLogger(__name__)
 
 SUPER_ROLE = "super"
@@ -131,6 +133,7 @@ class SuperPipelineContext:
     ce_claims: tuple[SuperClaimedTask, ...] = ()
     director_claims: tuple[SuperClaimedTask, ...] = ()
     blueprint_items: tuple[SuperBlueprintItem, ...] = ()
+    source_chain: SourceChain = SourceChain.root(SessionSource.USER_DIRECT)
 
 
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:

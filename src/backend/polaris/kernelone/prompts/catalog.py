@@ -21,7 +21,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 
 def _use_context_engine_v2() -> bool:
     value = (
-        str(os.environ.get("KERNELONE_CONTEXT_ENGINE") or os.environ.get("KERNELONE_CONTEXT_ENGINE", ""))
+        str(os.environ.get("KERNELONE_CONTEXT_ENGINE", ""))
         .strip()
         .lower()
     )
@@ -30,7 +30,7 @@ def _use_context_engine_v2() -> bool:
 
 def _resolve_context_root() -> str:
     override = str(
-        os.environ.get("KERNELONE_CONTEXT_ROOT") or os.environ.get("KERNELONE_CONTEXT_ROOT", "") or ""
+        os.environ.get("KERNELONE_CONTEXT_ROOT", "") or ""
     ).strip()
     if override and os.path.isdir(override):
         return os.path.abspath(override)

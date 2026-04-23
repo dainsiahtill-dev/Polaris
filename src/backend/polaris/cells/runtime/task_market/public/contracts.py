@@ -598,6 +598,8 @@ TaskMarketErrorV1 = TaskMarketError
 __all__ = [
     "AcknowledgeTaskStageCommandV1",
     "ChangeOrderResultV1",
+    "ClaimStage1Result",
+    "ClaimStage2Result",
     "ClaimTaskWorkItemCommandV1",
     "FailTaskStageCommandV1",
     "HumanReviewResultV1",
@@ -623,4 +625,5 @@ __all__ = [
     "TaskStageAdvancedEventV1",
     "TaskWorkItemPublishedEventV1",
     "TaskWorkItemResultV1",
+    "TaskWorkItemState",
 ]

@@ -39,7 +39,7 @@ class ImmutableSnapshot:
     timestamp: str = ""
     input_hash: str = ""
     output_hash: str = ""
-    projection_summary: dict | None = None
+    projection_summary: dict[str, Any] | None = None
     content_hash: str = field(default="", compare=False)
     version_number: int = field(default=0, compare=False)
 
@@ -52,12 +52,12 @@ class ImmutableSnapshot:
         if not self.content_hash:
             self.content_hash = self._compute_content_hash()
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert snapshot to dictionary."""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> ImmutableSnapshot:
+    def from_dict(cls, data: dict[str, Any]) -> ImmutableSnapshot:
         """Create snapshot from dictionary."""
         return cls(**data)
 
@@ -165,6 +165,27 @@ class SnapshotStore:
 
         return filepath
 
+    def _resolve_filepath(self, snapshot: ImmutableSnapshot) -> Path:
+        """Resolve filepath for snapshot (idempotent naming)."""
+        timestamp = snapshot.timestamp.replace(":", "-").replace(".", "-")
+        filename = f"{timestamp}.json"
+        return self.base_path / filename
+
+    def _save_sync(self, snapshot: ImmutableSnapshot, filepath: Path) -> Path:
+        """Synchronous save implementation (thread-safe)."""
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(snapshot.to_dict(), f, indent=2, ensure_ascii=False)
+
+        checksum_path = filepath.with_suffix(".json.sha256")
+        content = filepath.read_bytes()
+        checksum = hashlib.sha256(content).hexdigest()
+        checksum_path.write_text(checksum, encoding="utf-8")
+
+        # Track content hash for idempotency
+        self._content_hashes.add(snapshot.content_hash)
+
+        return filepath
+
     async def save_async(self, snapshot: ImmutableSnapshot) -> Path:
         """Save snapshot to disk asynchronously with idempotency check.
 
@@ -189,9 +210,7 @@ class SnapshotStore:
                     "This is an idempotent write - content has already been saved."
                 )
 
-            timestamp = snapshot.timestamp.replace(":", "-").replace(".", "-")
-            filename = f"{timestamp}.json"
-            filepath = self.base_path / filename
+            filepath = self._resolve_filepath(snapshot)
 
             if filepath.exists():
                 raise FileExistsError(f"Snapshot already exists: {filepath}")
@@ -200,21 +219,17 @@ class SnapshotStore:
             self._version_counter += 1
             snapshot.version_number = self._version_counter
 
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(snapshot.to_dict(), f, indent=2, ensure_ascii=False)
+        # File I/O offloaded to thread pool (does not block event loop)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._save_sync, snapshot, filepath)
 
-            checksum_path = filepath.with_suffix(".json.sha256")
-            content = filepath.read_bytes()
-            checksum = hashlib.sha256(content).hexdigest()
-            checksum_path.write_text(checksum, encoding="utf-8")
+    def _load_sync(self, filepath: Path) -> ImmutableSnapshot:
+        """Synchronous load implementation (thread-safe)."""
+        with open(filepath, encoding="utf-8") as f:
+            return ImmutableSnapshot.from_dict(json.load(f))
 
-            # Track content hash for idempotency
-            self._content_hashes.add(snapshot.content_hash)
-
-            return filepath
-
-    def load(self, timestamp: str) -> ImmutableSnapshot:
-        """Load snapshot by timestamp.
+    async def load_async(self, timestamp: str) -> ImmutableSnapshot:
+        """Load snapshot by timestamp asynchronously.
 
         Args:
             timestamp: ISO format timestamp of the snapshot.
@@ -227,11 +242,40 @@ class SnapshotStore:
         """
         normalized_ts = timestamp.replace(":", "-").replace(".", "-")
         filepath = self.base_path / f"{normalized_ts}.json"
-        with open(filepath, encoding="utf-8") as f:
-            return ImmutableSnapshot.from_dict(json.load(f))
 
-    def verify(self, timestamp: str) -> bool:
-        """Verify snapshot integrity using SHA256 checksum.
+        # File I/O offloaded to thread pool (does not block event loop)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._load_sync, filepath)
+
+    def load(self, timestamp: str) -> ImmutableSnapshot:
+        """Load snapshot by timestamp (synchronous).
+
+        Args:
+            timestamp: ISO format timestamp of the snapshot.
+
+        Returns:
+            The loaded immutable snapshot.
+
+        Raises:
+            FileNotFoundError: If snapshot file does not exist.
+        """
+        normalized_ts = timestamp.replace(":", "-").replace(".", "-")
+        filepath = self.base_path / f"{normalized_ts}.json"
+        return self._load_sync(filepath)
+
+    def _verify_sync(self, filepath: Path, checksum_path: Path) -> bool:
+        """Synchronous verify implementation (thread-safe)."""
+        if not filepath.exists() or not checksum_path.exists():
+            return False
+
+        content = filepath.read_bytes()
+        checksum = hashlib.sha256(content).hexdigest()
+        expected = checksum_path.read_text(encoding="utf-8")
+
+        return checksum == expected
+
+    async def verify_async(self, timestamp: str) -> bool:
+        """Verify snapshot integrity using SHA256 checksum asynchronously.
 
         Args:
             timestamp: ISO format timestamp of the snapshot.
@@ -243,14 +287,23 @@ class SnapshotStore:
         filepath = self.base_path / f"{normalized_ts}.json"
         checksum_path = filepath.with_suffix(".json.sha256")
 
-        if not filepath.exists() or not checksum_path.exists():
-            return False
+        # File I/O offloaded to thread pool (does not block event loop)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._verify_sync, filepath, checksum_path)
 
-        content = filepath.read_bytes()
-        checksum = hashlib.sha256(content).hexdigest()
-        expected = checksum_path.read_text(encoding="utf-8")
+    def verify(self, timestamp: str) -> bool:
+        """Verify snapshot integrity using SHA256 checksum (synchronous).
 
-        return checksum == expected
+        Args:
+            timestamp: ISO format timestamp of the snapshot.
+
+        Returns:
+            True if snapshot exists and checksum matches, False otherwise.
+        """
+        normalized_ts = timestamp.replace(":", "-").replace(".", "-")
+        filepath = self.base_path / f"{normalized_ts}.json"
+        checksum_path = filepath.with_suffix(".json.sha256")
+        return self._verify_sync(filepath, checksum_path)
 
     def list_snapshots(self) -> list[str]:
         """List all available snapshot timestamps.
@@ -267,7 +320,7 @@ class SnapshotStore:
         return sorted(timestamps)
 
 
-def compute_hash(data: list[dict] | dict | str, prefix_len: int = 16) -> str:
+def compute_hash(data: list[dict[str, Any]] | dict[str, Any] | str, prefix_len: int = 16) -> str:
     """Compute SHA256 hash of data.
 
     Args:
@@ -283,7 +336,7 @@ def compute_hash(data: list[dict] | dict | str, prefix_len: int = 16) -> str:
 
 async def verify_context_projection_consistency(
     gateway: Any,
-    test_input: list[dict],
+    test_input: list[dict[str, Any]],
     num_runs: int = 10,
 ) -> tuple[bool, float]:
     """Verify Context projection consistency.

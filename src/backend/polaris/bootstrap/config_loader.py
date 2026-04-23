@@ -38,7 +38,7 @@ class ConfigLoader:
     Priority order (low to high):
         1. DEFAULT - Hardcoded defaults
         2. PERSISTED - Settings from workspace/<metadata_dir>/config.json
-        3. ENV - Environment variables (KERNELONE_* primary, KERNELONE_* fallback)
+        3. ENV - Environment variables (KERNELONE_* only)
         4. CLI - Command-line arguments (highest priority)
 
     Example:
@@ -81,40 +81,40 @@ class ConfigLoader:
 
     # Environment variable mappings
     # Maps config key to (primary_env_var, fallback_env_var, value_transform)
-    # Priority: KERNELONE_* > KERNELONE_* > default
+    # Priority: KERNELONE_* > default
     ENV_MAPPINGS: dict[str, tuple] = {
-        "server.host": ("KERNELONE_HOST", "KERNELONE_HOST", None),
-        "server.port": ("KERNELONE_BACKEND_PORT", "KERNELONE_BACKEND_PORT", int),
-        "logging.level": ("KERNELONE_LOG_LEVEL", "KERNELONE_LOG_LEVEL", None),
+        "server.host": ("KERNELONE_HOST", None, None),
+        "server.port": ("KERNELONE_BACKEND_PORT", None, int),
+        "logging.level": ("KERNELONE_LOG_LEVEL", None, None),
         "logging.enable_debug_tracing": (
             "KERNELONE_DEBUG_TRACING",
-            "KERNELONE_DEBUG_TRACING",
+            None,
             lambda v: v.lower() in ("1", "true", "yes"),
         ),
-        "pm.backend": ("KERNELONE_PM_BACKEND", "KERNELONE_PM_BACKEND", None),
-        "pm.model": ("KERNELONE_PM_MODEL", "KERNELONE_PM_MODEL", None),
+        "pm.backend": ("KERNELONE_PM_BACKEND", None, None),
+        "pm.model": ("KERNELONE_PM_MODEL", None, None),
         "pm.show_output": (
             "KERNELONE_PM_SHOW_OUTPUT",
-            "KERNELONE_PM_SHOW_OUTPUT",
+            None,
             lambda v: v.lower() in ("1", "true", "yes"),
         ),
         "pm.runs_director": (
             "KERNELONE_PM_RUNS_DIRECTOR",
-            "KERNELONE_PM_RUNS_DIRECTOR",
+            None,
             lambda v: v.lower() in ("1", "true", "yes"),
         ),
-        "pm.director_timeout": ("KERNELONE_PM_DIRECTOR_TIMEOUT", "KERNELONE_PM_DIRECTOR_TIMEOUT", int),
-        "pm.director_iterations": ("KERNELONE_PM_DIRECTOR_ITERATIONS", "KERNELONE_PM_DIRECTOR_ITERATIONS", int),
-        "director.model": ("KERNELONE_DIRECTOR_MODEL", "KERNELONE_DIRECTOR_MODEL", None),
-        "director.iterations": ("KERNELONE_DIRECTOR_ITERATIONS", "KERNELONE_DIRECTOR_ITERATIONS", int),
-        "llm.model": ("KERNELONE_MODEL", "KERNELONE_MODEL", None),
-        "llm.provider": ("KERNELONE_LLM_PROVIDER", "KERNELONE_LLM_PROVIDER", None),
-        "llm.base_url": ("KERNELONE_LLM_BASE_URL", "KERNELONE_LLM_BASE_URL", None),
-        "llm.api_key": ("KERNELONE_LLM_API_KEY", "KERNELONE_LLM_API_KEY", None),
+        "pm.director_timeout": ("KERNELONE_PM_DIRECTOR_TIMEOUT", None, int),
+        "pm.director_iterations": ("KERNELONE_PM_DIRECTOR_ITERATIONS", None, int),
+        "director.model": ("KERNELONE_DIRECTOR_MODEL", None, None),
+        "director.iterations": ("KERNELONE_DIRECTOR_ITERATIONS", None, int),
+        "llm.model": ("KERNELONE_MODEL", None, None),
+        "llm.provider": ("KERNELONE_LLM_PROVIDER", None, None),
+        "llm.base_url": ("KERNELONE_LLM_BASE_URL", None, None),
+        "llm.api_key": ("KERNELONE_LLM_API_KEY", None, None),
         "workspace": ("KERNELONE_WORKSPACE", None, None),
         "self_upgrade_mode": (
             "KERNELONE_SELF_UPGRADE_MODE",
-            "KERNELONE_SELF_UPGRADE_MODE",
+            None,
             lambda v: v.lower() in ("1", "true", "yes", "on"),
         ),
     }
@@ -249,8 +249,10 @@ class ConfigLoader:
         env_config: dict[str, Any] = {}
 
         for config_key, (primary_var, fallback_var, transform) in self.ENV_MAPPINGS.items():
-            # Priority: primary (KERNELONE_*) > fallback (KERNELONE_*)
-            value = os.environ.get(primary_var) or os.environ.get(fallback_var)
+            # Priority: primary (KERNELONE_*) > fallback (if any)
+            value = os.environ.get(primary_var)
+            if value is None and fallback_var is not None:
+                value = os.environ.get(fallback_var)
             if value is not None:
                 if transform:
                     try:
@@ -261,8 +263,7 @@ class ConfigLoader:
                 env_config[config_key] = value
 
         # Handle CORS origins specially (comma-separated list)
-        # Priority: KERNELONE_CORS_ORIGINS > KERNELONE_CORS_ORIGINS
-        cors_origins = os.environ.get("KERNELONE_CORS_ORIGINS") or os.environ.get("KERNELONE_CORS_ORIGINS")
+        cors_origins = os.environ.get("KERNELONE_CORS_ORIGINS")
         if cors_origins:
             env_config["server.cors_origins"] = [o.strip() for o in cors_origins.split(",") if o.strip()]
 

@@ -87,9 +87,7 @@ class RetryPolicy:
     base_delay_seconds: float = 1.0
     max_delay_seconds: float = 60.0
     jitter_ratio: float = 0.2
-    transient_categories: frozenset[ErrorCategory] = field(
-        default_factory=lambda: _DEFAULT_TRANSIENT_CATEGORIES
-    )
+    transient_categories: frozenset[ErrorCategory] = field(default_factory=lambda: _DEFAULT_TRANSIENT_CATEGORIES)
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:

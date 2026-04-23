@@ -272,7 +272,7 @@ def _default_allowlist() -> set[str]:
     from_env = [
         token.strip()
         for token in str(
-            os.environ.get("KERNELONE_ALLOWED_EXECUTABLES") or os.environ.get("KERNELONE_ALLOWED_EXECUTABLES") or ""
+            os.environ.get("KERNELONE_ALLOWED_EXECUTABLES") or ""
         ).split(",")
         if token.strip()
     ]

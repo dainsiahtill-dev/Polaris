@@ -53,7 +53,7 @@ def resolve_codex_path() -> str | None:
     if path:
         return path
     timeout_sec = normalize_timeout_seconds(
-        os.environ.get("KERNELONE_PATH_RESOLVE_TIMEOUT") or os.environ.get("KERNELONE_PATH_RESOLVE_TIMEOUT", "3"),
+        os.environ.get("KERNELONE_PATH_RESOLVE_TIMEOUT", "3"),
         default=3,
     )
     timeout_val = timeout_seconds_or_none(timeout_sec, default=3)
@@ -107,7 +107,7 @@ def resolve_ollama_path() -> str | None:
     if path:
         return path
     timeout_sec = normalize_timeout_seconds(
-        os.environ.get("KERNELONE_PATH_RESOLVE_TIMEOUT") or os.environ.get("KERNELONE_PATH_RESOLVE_TIMEOUT", "3"),
+        os.environ.get("KERNELONE_PATH_RESOLVE_TIMEOUT", "3"),
         default=3,
     )
     timeout_val = timeout_seconds_or_none(timeout_sec, default=3)

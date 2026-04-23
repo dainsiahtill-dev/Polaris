@@ -37,6 +37,10 @@ from polaris.kernelone.context.cache_policies import (
     SESSION_CONTINUITY_TTL_SECONDS,
     SYMBOL_INDEX_TTL_SECONDS,
 )
+from polaris.kernelone.context.context_os.bounded_cache import (
+    BoundedCache,
+    LRUBoundedCache,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -283,9 +287,13 @@ class TieredAssetCacheManager:
         self._projection_max = projection_max_entries
         self._stats = CacheStats()
 
-        # In-process tier stores (LRU OrderedDict for session tiers)
+        # In-process tier stores (LRU OrderedDict for hot slices)
         self._hot_slices: OrderedDict[str, CacheEntry] = OrderedDict()
-        self._session_continuity: OrderedDict[str, CacheEntry] = OrderedDict()
+        # Session continuity tier with bounded cache
+        self._session_continuity: BoundedCache[str, CacheEntry] = LRUBoundedCache(
+            max_entries=256,
+            max_bytes=100_000_000,  # 100MB
+        )
         self._compute_lock = asyncio.Lock()
 
         # Workspace-persistent cache root
@@ -461,10 +469,9 @@ class TieredAssetCacheManager:
             self._stats.misses_session_continuity += 1
             return None
         if entry.is_expired():
-            self._session_continuity.pop(key, None)
+            self._session_continuity.clear()
             self._stats.misses_session_continuity += 1
             return None
-        self._session_continuity.move_to_end(key)
         entry.touch()
         self._stats.hits_session_continuity += 1
         return entry.value
@@ -475,7 +482,7 @@ class TieredAssetCacheManager:
         value: Any,
         ttl: float | None = None,
     ) -> None:
-        """Store in session continuity tier (no size limit, TTL only)."""
+        """Store in session continuity tier (bounded by LRUBoundedCache)."""
         entry = CacheEntry(
             key=key,
             value=value,
@@ -485,8 +492,7 @@ class TieredAssetCacheManager:
             access_count=1,
             ttl_seconds=ttl if ttl is not None else self._session_continuity_ttl,
         )
-        self._session_continuity.pop(key, None)
-        self._session_continuity[key] = entry
+        self._session_continuity.put(key, entry)
 
     # -------------------------------------------------------------------------
     # Persistent tier helpers (REPO_MAP, SYMBOL_INDEX, PROJECTION)

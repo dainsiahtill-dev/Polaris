@@ -216,16 +216,15 @@ class TestPolarisHome:
         assert result.startswith(os.path.expanduser("~"))
         assert "hp-home" in result
 
-    def test_polaris_home_fallback_to_polaris_suffix(
+    def test_polaris_home_from_kernelone_home(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # When KERNELONE_HOME is set and no Polaris dir exists, polaris_home()
-        # appends .polaris (the current metadata dir)
+        # When KERNELONE_HOME is set, polaris_home() returns it directly
         kern_home = str(tmp_path / "kern-home")
         monkeypatch.delenv("KERNELONE_HOME", raising=False)
         monkeypatch.setenv("KERNELONE_HOME", kern_home)
         result = polaris_home()
-        expected = os.path.join(os.path.abspath(kern_home), ".polaris")
+        expected = os.path.abspath(kern_home)
         assert os.path.abspath(result) == expected
 
     def test_polaris_home_fallback_expanduser(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -68,7 +68,7 @@ class SourceChain:
     def __len__(self) -> int:
         return len(self._chain)
 
-    def __iter__(self):
+    def __iter__(self) -> Any:
         return iter(self._chain)
 
     def __repr__(self) -> str:
@@ -88,7 +88,7 @@ class SourceChain:
 
     def append(self, source: SessionSource) -> SourceChain:
         """Return a new chain with *source* appended to the end."""
-        return SourceChain(self._chain + (source,))
+        return SourceChain((*self._chain, source))
 
 
 class SourceChainEncoder(json.JSONEncoder):
