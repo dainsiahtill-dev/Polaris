@@ -385,17 +385,15 @@ class ContextBuilderPort(Protocol):
 __all__ = [
     "ArtifactRecord",
     "CompactSnapshot",
-    # Types
-    "ContextBudget",
-    "ContextBuilderPort",
-    "ContextBudgetAllocatorPort",
     "ContextAllocatorBudgetPort",  # Backward compat alias (unique name)
-    "ContextQuery",
-    "ContextSessionProtocol",
-    # Ports
+    "ContextBudget",
+    "ContextBudgetAllocatorPort",
+    "ContextBuilderPort",
     "ContextCompressorPort",
     "ContextPack",
+    "ContextQuery",
     "ContextRequest",
+    "ContextSessionProtocol",
     "ContextSource",
     "RoleContextIdentityPort",
     "TurnEngineContextRequest",

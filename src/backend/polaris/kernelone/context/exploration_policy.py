@@ -382,10 +382,7 @@ class SemanticRankSelectorPolicy:
             semantic_score = float(candidate.metadata.get("semantic_score", 0.5))
             # Normalize priority to 0-1 range (assuming max priority ~10)
             normalized_priority = min(candidate.priority / 10.0, 1.0)
-            return (
-                self.semantic_weight * semantic_score
-                + self.priority_weight * normalized_priority
-            )
+            return self.semantic_weight * semantic_score + self.priority_weight * normalized_priority
 
         eligible.sort(key=_score, reverse=True)
 

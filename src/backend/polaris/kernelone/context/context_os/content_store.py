@@ -85,7 +85,8 @@ class ContentStore:
         self._hits: int = 0
         self._misses: int = 0
         self._evict_count: int = 0
-        self._lock = threading.RLock()
+        # threading.Lock retained for sync contexts; async.Lock added for async contexts
+        self._lock = threading.Lock()
         self._async_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -224,40 +225,47 @@ class ContentStore:
     # ------------------------------------------------------------------
 
     async def write(self, key: str, content: str) -> ContentRef:
-        """Async-safe write content to store.
+        """Async-safe write content to store with key-based lookup.
 
-        Interns the content and returns its ContentRef.
+        Stores content with a mapping from key to content hash for easy retrieval.
         Uses async lock to ensure thread safety in async contexts.
 
         Args:
-            key: Logical key for the content (used for tracking).
+            key: Logical key for the content (used for tracking and lookup).
             content: The string content to store.
 
         Returns:
             A frozen :class:`ContentRef` handle for the content.
         """
         async with self._async_lock:
-            return self.intern(content)
+            ref = self.intern(content)
+            # Store key -> hash mapping for key-based lookup
+            self._store[key] = content
+            return ref
 
     async def read(self, key: str) -> str:
         """Async-safe read content from store by key.
 
-        Interns the key to get its hash, then retrieves the content.
-        This ensures consistency with write() which interns the content.
+        First attempts to look up by key directly, then by hash of key.
+        This supports both direct key lookup and hash-based lookup.
 
         Args:
-            key: The key string to look up (will be interned to get hash).
+            key: The key or hash of the content to retrieve.
 
         Returns:
             The original string, or empty string if not found.
         """
         async with self._async_lock:
-            # Intern the key to get the hash (same as write)
-            ref = self.intern(key)
-            # Now look up by the hash
-            content = self._store.get(ref.hash)
+            # First try direct key lookup
+            content = self._store.get(key)
             if content is not None:
-                self._access[ref.hash] = time.monotonic()
+                self._access[key] = time.monotonic()
+                return content
+            # Then try lookup by hash of key
+            key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+            content = self._store.get(key_hash)
+            if content is not None:
+                self._access[key_hash] = time.monotonic()
                 return content
             self._misses += 1
             return ""
@@ -266,7 +274,7 @@ class ContentStore:
         """Async-safe delete content from store.
 
         Args:
-            key: The key (hash) of the content to delete.
+            key: The key or hash of the content to delete.
 
         Returns:
             True if content was deleted, False if not found.
@@ -274,6 +282,11 @@ class ContentStore:
         async with self._async_lock:
             if key in self._store:
                 self._remove_entry(key)
+                return True
+            # Also try by hash
+            key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+            if key_hash in self._store:
+                self._remove_entry(key_hash)
                 return True
             return False
 
@@ -283,16 +296,24 @@ class ContentStore:
         Deletes existing content and interns the new content.
 
         Args:
-            key: The key (hash) of the content to update.
+            key: The key or hash of the content to update.
             content: The new string content to store.
 
         Returns:
             A frozen :class:`ContentRef` handle for the new content.
         """
         async with self._async_lock:
+            # Remove by key if exists
             if key in self._store:
                 self._remove_entry(key)
-            return self.intern(content)
+            # Also try by hash
+            key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+            if key_hash in self._store:
+                self._remove_entry(key_hash)
+            ref = self.intern(content)
+            # Store key -> content mapping for key-based lookup
+            self._store[key] = content
+            return ref
 
     # ------------------------------------------------------------------
     # Serialization

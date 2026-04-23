@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,10 +39,16 @@ from polaris.delivery.cli.context_status import (
 )
 from polaris.delivery.cli.super_mode import (
     SUPER_ROLE,
+    SuperBlueprintItem,
+    SuperClaimedTask,
     SuperModeRouter,
     SuperTaskItem,
+    build_chief_engineer_handoff_message,
     build_director_handoff_message,
+    build_director_task_handoff_message,
+    build_pm_handoff_message,
     build_super_readonly_message,
+    extract_blueprint_items_from_ce_output,
     extract_task_list_from_pm_output,
 )
 from polaris.kernelone.fs.encoding import enforce_utf8
@@ -1890,6 +1897,115 @@ def _run_director_execution_loop(
     return result
 
 
+def _claim_super_tasks_from_market(
+    *,
+    workspace: str,
+    stage: str,
+    worker_role: str,
+    task_ids: list[int] | list[str],
+    visibility_timeout_seconds: int = 900,
+) -> list[SuperClaimedTask]:
+    """Claim specific SUPER-mode tasks from task_market for a role stage."""
+    claims: list[SuperClaimedTask] = []
+    if not task_ids:
+        return claims
+
+    try:
+        from polaris.cells.runtime.task_market.public.contracts import ClaimTaskWorkItemCommandV1
+        from polaris.cells.runtime.task_market.public.service import get_task_market_service
+
+        service = get_task_market_service()
+        worker_id = f"super_{worker_role}_{uuid.uuid4().hex[:8]}"
+        for task_id in task_ids:
+            result = service.claim_work_item(
+                ClaimTaskWorkItemCommandV1(
+                    workspace=workspace,
+                    stage=stage,
+                    worker_id=worker_id,
+                    worker_role=worker_role,
+                    visibility_timeout_seconds=visibility_timeout_seconds,
+                    task_id=str(task_id),
+                )
+            )
+            if not result.ok:
+                logger.info(
+                    "SUPER_MODE_TASK_CLAIM_MISS: role=%s stage=%s task_id=%s reason=%s",
+                    worker_role,
+                    stage,
+                    task_id,
+                    getattr(result, "reason", ""),
+                )
+                continue
+            claims.append(
+                SuperClaimedTask(
+                    task_id=str(result.task_id or task_id).strip(),
+                    stage=str(result.stage or stage).strip(),
+                    status=str(result.status or stage).strip(),
+                    trace_id=str(result.trace_id or "").strip(),
+                    run_id=str(result.run_id or "").strip(),
+                    lease_token=str(result.lease_token or "").strip(),
+                    payload=dict(result.payload or {}),
+                )
+            )
+    except Exception as exc:
+        logger.exception(
+            "SUPER_MODE_TASK_CLAIM_FAILED: role=%s stage=%s task_ids=%s error=%s",
+            worker_role,
+            stage,
+            task_ids,
+            exc,
+        )
+    return claims
+
+
+def _acknowledge_super_claims(
+    *,
+    workspace: str,
+    claims: list[SuperClaimedTask],
+    next_stage: str,
+    summary: str,
+    metadata_by_task: dict[str, dict[str, Any]] | None = None,
+) -> int:
+    """Advance claimed SUPER-mode tasks to the next stage."""
+    if not claims:
+        return 0
+
+    acked = 0
+    try:
+        from polaris.cells.runtime.task_market.public.contracts import AcknowledgeTaskStageCommandV1
+        from polaris.cells.runtime.task_market.public.service import get_task_market_service
+
+        service = get_task_market_service()
+        for claim in claims:
+            if not claim.lease_token:
+                logger.info(
+                    "SUPER_MODE_TASK_ACK_SKIP: task_id=%s next_stage=%s reason=missing_lease",
+                    claim.task_id,
+                    next_stage,
+                )
+                continue
+            result = service.acknowledge_task_stage(
+                AcknowledgeTaskStageCommandV1(
+                    workspace=workspace,
+                    task_id=claim.task_id,
+                    lease_token=claim.lease_token,
+                    next_stage=next_stage,
+                    summary=summary,
+                    metadata=dict((metadata_by_task or {}).get(claim.task_id, {})),
+                )
+            )
+            if result.ok:
+                acked += 1
+    except Exception as exc:
+        logger.exception(
+            "SUPER_MODE_TASK_ACK_FAILED: next_stage=%s claims=%s error=%s",
+            next_stage,
+            [claim.task_id for claim in claims],
+            exc,
+        )
+    return acked
+
+
 def _run_super_turn(
     host: RoleConsoleHost,
     *,
@@ -1914,10 +2030,15 @@ def _run_super_turn(
         decision.reason,
         ",".join(decision.roles),
     )
-    handoff_message = message
     last_result: _TurnExecutionResult | None = None
+    architect_output = ""
+    pm_output = ""
     pm_tasks: list[SuperTaskItem] = []
-    for index, next_role in enumerate(decision.roles):
+    published_task_ids: list[int] = []
+    ce_claims: list[SuperClaimedTask] = []
+    director_claims: list[SuperClaimedTask] = []
+    blueprint_items: list[SuperBlueprintItem] = []
+    for next_role in decision.roles:
         next_session_id = role_sessions.get(next_role) or _resolve_role_session(
             host,
             role=next_role,
@@ -1925,25 +2046,52 @@ def _run_super_turn(
             host_kind=host_kind,
             session_title=session_title,
         )
-        if index > 0 and next_role == "director":
-            assert last_result is not None
-            guard_reason = ""
-            if last_result.saw_error:
-                guard_reason = f"pm_saw_error (role={last_result.role})"
-            elif not last_result.final_content.strip():
-                guard_reason = f"pm_final_content_empty (role={last_result.role}, len={len(last_result.final_content)})"
-            if guard_reason:
+        turn_message = message
+
+        if next_role == "architect":
+            turn_message = build_super_readonly_message(
+                role="architect",
+                original_request=message,
+            )
+        elif next_role == "pm":
+            turn_message = build_pm_handoff_message(
+                original_request=message,
+                architect_output=architect_output,
+            )
+        elif next_role == "chief_engineer":
+            if not pm_output.strip():
+                logger.info("SUPER_MODE_CE_SKIP: missing_pm_output")
+                continue
+            pm_tasks = extract_task_list_from_pm_output(pm_output)
+            if pm_tasks and not published_task_ids:
                 logger.info(
-                    "SUPER_MODE_HANDOFF_BLOCKED: reason=%s pm_role=%s pm_session=%s",
-                    guard_reason,
-                    last_result.role,
-                    last_result.session_id,
+                    "SUPER_MODE_TASK_EXTRACT: %d tasks from PM output",
+                    len(pm_tasks),
                 )
-                break
-            # FIX-20250422-v5: Force a fresh Director session on SUPER_MODE handoff
-            # so that [mode:materialize] in the handoff message takes effect.
-            # Reusing an existing Director session would keep its old delivery_mode
-            # (likely analyze_only from a previous vague request).
+                published_task_ids = _persist_super_tasks_to_board(
+                    workspace=str(workspace_path),
+                    tasks=pm_tasks,
+                    original_request=message,
+                    publish_stage="pending_design",
+                    architect_output=architect_output,
+                    pm_output=pm_output,
+                )
+            ce_claims = _claim_super_tasks_from_market(
+                workspace=str(workspace_path),
+                stage="pending_design",
+                worker_role="chief_engineer",
+                task_ids=published_task_ids,
+            )
+            if not ce_claims:
+                logger.info("SUPER_MODE_CE_SKIP: no_claimed_pending_design_tasks")
+                continue
+            turn_message = build_chief_engineer_handoff_message(
+                original_request=message,
+                architect_output=architect_output,
+                pm_output=pm_output,
+                claimed_tasks=ce_claims,
+            )
+        elif next_role == "director":
             if "director" in role_sessions:
                 del role_sessions["director"]
                 logger.debug("SUPER_MODE_FRESH_DIRECTOR_SESSION: cleared cached director session")
@@ -1954,38 +2102,69 @@ def _run_super_turn(
                 host_kind=host_kind,
                 session_title=session_title,
             )
-            logger.info(
-                "SUPER_MODE_HANDOFF: pm_output_len=%d pm_session=%s director_session=%s",
-                len(last_result.final_content),
-                last_result.session_id,
-                next_session_id,
-            )
-            # FIX-20250422-v4: Extract structured tasks from PM output and
-            # persist to TaskBoard + TaskMarket for durable execution.
-            pm_tasks = extract_task_list_from_pm_output(last_result.final_content)
-            if pm_tasks:
-                logger.info(
-                    "SUPER_MODE_TASK_EXTRACT: %d tasks from PM output",
-                    len(pm_tasks),
+            if (
+                ce_claims
+                and last_result is not None
+                and last_result.role == "chief_engineer"
+                and not last_result.saw_error
+            ):
+                blueprint_items = extract_blueprint_items_from_ce_output(
+                    last_result.final_content,
+                    claimed_tasks=ce_claims,
                 )
-                _persist_super_tasks_to_board(
+                metadata_by_task = {
+                    item.task_id: {
+                        "blueprint_id": item.blueprint_id,
+                        "blueprint_summary": item.summary,
+                        "scope_paths": list(item.scope_paths),
+                        "guardrails": list(item.guardrails),
+                        "no_touch_zones": list(item.no_touch_zones),
+                    }
+                    for item in blueprint_items
+                }
+                _acknowledge_super_claims(
                     workspace=str(workspace_path),
-                    tasks=pm_tasks,
-                    original_request=message,
+                    claims=ce_claims,
+                    next_stage="pending_exec",
+                    summary="ChiefEngineer blueprint ready for Director",
+                    metadata_by_task=metadata_by_task,
                 )
+                director_claims = _claim_super_tasks_from_market(
+                    workspace=str(workspace_path),
+                    stage="pending_exec",
+                    worker_role="director",
+                    task_ids=[claim.task_id for claim in ce_claims],
+                    visibility_timeout_seconds=1800,
+                )
+                if director_claims:
+                    turn_message = build_director_task_handoff_message(
+                        original_request=message,
+                        architect_output=architect_output,
+                        pm_output=pm_output,
+                        claimed_tasks=director_claims,
+                        blueprint_items=blueprint_items,
+                    )
+                else:
+                    logger.info("SUPER_MODE_DIRECTOR_FALLBACK: no_claimed_pending_exec_tasks")
+                    turn_message = build_director_handoff_message(
+                        original_request=message,
+                        pm_output=pm_output or "(ChiefEngineer stage produced no claimable pending_exec tasks)",
+                        extracted_tasks=pm_tasks,
+                    )
             else:
-                logger.info("SUPER_MODE_NO_TASKS: no structured tasks found, falling back to text handoff")
-            handoff_message = build_director_handoff_message(
-                original_request=message,
-                pm_output=last_result.final_content,
-                extracted_tasks=pm_tasks,
-            )
-        turn_message = handoff_message
-        if next_role in {"pm", "architect", "chief_engineer", "qa"}:
+                if not pm_output.strip():
+                    logger.info("SUPER_MODE_DIRECTOR_FALLBACK: missing_pm_output")
+                turn_message = build_director_handoff_message(
+                    original_request=message,
+                    pm_output=pm_output or "(PM planning stage produced no output; proceeding with original request)",
+                    extracted_tasks=pm_tasks,
+                )
+        elif next_role == "qa":
             turn_message = build_super_readonly_message(
-                role=next_role,
-                original_request=handoff_message,
+                role="qa",
+                original_request=message,
             )
+
         last_result = _run_streaming_turn(
             host,
             role=next_role,
@@ -2010,7 +2189,7 @@ def _run_super_turn(
                 host,
                 session_id=next_session_id,
                 original_request=message,
-                pm_output=last_result.final_content if last_result else "",
+                pm_output=pm_output or (last_result.final_content if last_result else ""),
                 extracted_tasks=pm_tasks,
                 last_result=last_result,
                 json_render=json_render,
@@ -2021,6 +2200,29 @@ def _run_super_turn(
                 output_format=output_format,
                 enable_cognitive=enable_cognitive,
             )
+            if (
+                director_claims
+                and not last_result.saw_error
+                and not _director_output_suggests_more_work(last_result.final_content)
+            ):
+                director_metadata = {
+                    claim.task_id: {
+                        "director_summary": last_result.final_content[:500],
+                    }
+                    for claim in director_claims
+                }
+                _acknowledge_super_claims(
+                    workspace=str(workspace_path),
+                    claims=director_claims,
+                    next_stage="pending_qa",
+                    summary="Director execution complete",
+                    metadata_by_task=director_metadata,
+                )
+
+        if next_role == "architect" and last_result is not None and not last_result.saw_error:
+            architect_output = last_result.final_content
+        elif next_role == "pm" and last_result is not None and not last_result.saw_error:
+            pm_output = last_result.final_content
     if last_result is None:
         active_session_id = role_sessions.get(fallback_role) or _resolve_role_session(
             host,
@@ -2067,34 +2269,35 @@ def _persist_super_tasks_to_board(
     workspace: str,
     tasks: list[SuperTaskItem],
     original_request: str,
+    *,
+    publish_stage: str = "pending_exec",
+    architect_output: str = "",
+    pm_output: str = "",
 ) -> list[int]:
     """Persist extracted SUPER-mode tasks to TaskBoard and TaskMarket.
 
     Returns list of created task IDs.
     """
-    import uuid
-
     task_ids: list[int] = []
     run_id = str(uuid.uuid4())
     logger.info(
-        "SUPER_MODE_PERSIST_START: workspace=%s tasks=%d run_id=%s",
+        "SUPER_MODE_PERSIST_START: workspace=%s tasks=%d run_id=%s publish_stage=%s",
         workspace,
         len(tasks),
         run_id,
+        publish_stage,
     )
     try:
-        from polaris.cells.runtime.task_market.internal.service import (
-            TaskMarketService,
-        )
         from polaris.cells.runtime.task_market.public.contracts import (
             PublishTaskWorkItemCommandV1,
         )
+        from polaris.cells.runtime.task_market.public.service import get_task_market_service
         from polaris.cells.runtime.task_runtime.internal.task_board import (
             TaskBoard,
         )
 
         board = TaskBoard(workspace=workspace)
-        market = TaskMarketService()
+        market = get_task_market_service()
         logger.info("SUPER_MODE_PERSIST_INIT: TaskBoard and TaskMarket initialized")
 
         for idx, task in enumerate(tasks, 1):
@@ -2113,6 +2316,8 @@ def _persist_super_tasks_to_board(
                     "source": "super_mode_cli",
                     "original_request": original_request,
                     "target_files": list(task.target_files),
+                    "architect_output_excerpt": architect_output[:500],
+                    "pm_output_excerpt": pm_output[:500],
                 },
             )
             task_ids.append(created.id)
@@ -2129,20 +2334,32 @@ def _persist_super_tasks_to_board(
                 trace_id=trace_id,
                 run_id=run_id,
                 task_id=str(created.id),
-                stage="pending_exec",
+                stage=publish_stage,
                 priority="high",
                 payload={
                     "subject": created.subject,
+                    "title": created.subject,
+                    "goal": created.description or task.description or original_request,
                     "description": created.description,
                     "target_files": list(task.target_files),
+                    "scope_paths": list(task.target_files),
+                    "workspace": workspace,
+                    "run_id": run_id,
+                    "original_request": original_request,
                 },
                 source_role="pm",
                 max_attempts=3,
+                metadata={
+                    "source": "super_mode_cli",
+                    "architect_output_excerpt": architect_output[:500],
+                    "pm_output_excerpt": pm_output[:500],
+                },
             )
             market.publish_work_item(cmd)
             logger.info(
-                "SUPER_MODE_TASK_PUBLISHED: id=%d stage=pending_exec trace=%s",
+                "SUPER_MODE_TASK_PUBLISHED: id=%d stage=%s trace=%s",
                 created.id,
+                publish_stage,
                 trace_id,
             )
 

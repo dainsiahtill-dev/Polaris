@@ -60,18 +60,18 @@ class CompressionResult:
 class CompressionStrategy(Protocol):
     """Protocol for compression strategies.
 
-    All compression strategies must implement this interface
-to be registered and used by the CompressionRegistry.
+        All compression strategies must implement this interface
+    to be registered and used by the CompressionRegistry.
 
-    Example:
-        ```python
-        class MyStrategy:
-            async def compress(self, content: str, budget: ContextBudget) -> CompressionResult:
-                return CompressionResult(content=content[:100])
+        Example:
+            ```python
+            class MyStrategy:
+                async def compress(self, content: str, budget: ContextBudget) -> CompressionResult:
+                    return CompressionResult(content=content[:100])
 
-            def estimate_cost(self, content: str) -> CompressionCost:
-                return CompressionCost(tokens=len(content) // 4)
-        ```
+                def estimate_cost(self, content: str) -> CompressionCost:
+                    return CompressionCost(tokens=len(content) // 4)
+            ```
     """
 
     async def compress(self, content: str, budget: ContextBudget) -> CompressionResult:
@@ -140,6 +140,7 @@ class CompressionRegistry:
 
     def _register_default_selectors(self) -> None:
         """Register default strategy selection logic."""
+
         # Content-type based selector
         def content_type_selector(content_type: str, budget: ContextBudget) -> str | None:
             """Select strategy based on content type."""
@@ -182,10 +183,7 @@ class CompressionRegistry:
             raise ValueError("Strategy name cannot be empty")
 
         if not isinstance(strategy, CompressionStrategy):
-            raise ValueError(
-                f"Strategy must implement CompressionStrategy protocol, "
-                f"got {type(strategy).__name__}"
-            )
+            raise ValueError(f"Strategy must implement CompressionStrategy protocol, got {type(strategy).__name__}")
 
         if name in self._strategies:
             logger.warning("Overwriting existing strategy: %s", name)

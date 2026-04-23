@@ -627,7 +627,44 @@ def test_run_role_console_super_mode_routes_architecture_to_architect_only(monke
 def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monkeypatch) -> None:
     import polaris.delivery.cli.director.console_host as console_host_module
 
+    claim_batches = iter(
+        [
+            [
+                terminal_console.SuperClaimedTask(
+                    task_id="1",
+                    stage="pending_design",
+                    status="pending_design",
+                    trace_id="trace-design",
+                    run_id="run-1",
+                    lease_token="lease-design",
+                    payload={"subject": "inspect", "target_files": ["x.py"]},
+                )
+            ],
+            [
+                terminal_console.SuperClaimedTask(
+                    task_id="1",
+                    stage="pending_exec",
+                    status="pending_exec",
+                    trace_id="trace-exec",
+                    run_id="run-1",
+                    lease_token="lease-exec",
+                    payload={
+                        "subject": "inspect",
+                        "target_files": ["x.py"],
+                        "blueprint_id": "bp-1",
+                    },
+                )
+            ],
+        ]
+    )
+
     async def _stream_factory(**kwargs):
+        if kwargs["role"] == "architect":
+            yield {
+                "type": "complete",
+                "data": {"content": "架构建议：先拆任务，再由 CE 生成 blueprint。"},
+            }
+            return
         if kwargs["role"] == "pm":
             yield {
                 "type": "complete",
@@ -638,12 +675,26 @@ def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monk
                 "data": {"content": "this second completion must not be consumed"},
             }
             return
+        if kwargs["role"] == "chief_engineer":
+            yield {
+                "type": "complete",
+                "data": {
+                    "content": (
+                        '```json\n{"blueprints":[{"task_id":"1","blueprint_id":"bp-1","summary":"ready",'
+                        '"scope_paths":["x.py"]}]}\n```'
+                    )
+                },
+            }
+            return
         assert kwargs["role"] == "director"
         yield {"type": "complete", "data": {"content": "ALL_TASKS_COMPLETE"}}
 
     _FakeRoleConsoleHost.instances.clear()
     _FakeRoleConsoleHost.stream_factory = _stream_factory
     monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", lambda **_kwargs: [1])
+    monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", lambda **_kwargs: next(claim_batches))
+    monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", lambda **_kwargs: 1)
     scripted_inputs = iter(["进一步完善 session_orchestrator.py", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
@@ -658,11 +709,47 @@ def test_run_role_console_super_mode_planning_stage_stops_on_first_complete(monk
 
     assert exit_code == 0
     host = _FakeRoleConsoleHost.instances[0]
-    assert [call["role"] for call in host.stream_calls] == ["pm", "director"]
+    assert [call["role"] for call in host.stream_calls] == ["architect", "pm", "chief_engineer", "director"]
 
 
 def test_run_role_console_super_mode_architect_delivery_loops_director_until_complete(monkeypatch) -> None:
     import polaris.delivery.cli.director.console_host as console_host_module
+
+    claim_batches = iter(
+        [
+            [
+                terminal_console.SuperClaimedTask(
+                    task_id="ctx-1",
+                    stage="pending_design",
+                    status="pending_design",
+                    trace_id="trace-design",
+                    run_id="run-ctx",
+                    lease_token="lease-design",
+                    payload={
+                        "subject": "contextos",
+                        "description": "完善 ContextOS",
+                        "target_files": ["polaris/kernelone/context/context_os/runtime.py"],
+                    },
+                )
+            ],
+            [
+                terminal_console.SuperClaimedTask(
+                    task_id="ctx-1",
+                    stage="pending_exec",
+                    status="pending_exec",
+                    trace_id="trace-exec",
+                    run_id="run-ctx",
+                    lease_token="lease-exec",
+                    payload={
+                        "subject": "contextos",
+                        "description": "完善 ContextOS",
+                        "target_files": ["polaris/kernelone/context/context_os/runtime.py"],
+                        "blueprint_id": "bp-ctx-1",
+                    },
+                )
+            ],
+        ]
+    )
 
     async def _stream_factory(**kwargs):
         if kwargs["role"] == "architect":
@@ -670,7 +757,26 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
             yield {
                 "type": "complete",
                 "data": {
+                    "content": "Architect: ContextOS 需要先收敛 blueprint 再执行。",
+                },
+            }
+            return
+        if kwargs["role"] == "pm":
+            yield {
+                "type": "complete",
+                "data": {
                     "content": '{"tasks":[{"subject":"contextos","target_files":["polaris/kernelone/context/context_os/runtime.py"]}]}',
+                },
+            }
+            return
+        if kwargs["role"] == "chief_engineer":
+            yield {
+                "type": "complete",
+                "data": {
+                    "content": (
+                        '```json\n{"blueprints":[{"task_id":"ctx-1","blueprint_id":"bp-ctx-1","summary":"ContextOS blueprint ready",'
+                        '"scope_paths":["polaris/kernelone/context/context_os/runtime.py"]}]}\n```'
+                    ),
                 },
             }
             return
@@ -678,7 +784,7 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
         if "[SUPER_MODE_DIRECTOR_CONTINUE]" in kwargs["message"]:
             yield {"type": "complete", "data": {"content": "ALL_TASKS_COMPLETE"}}
             return
-        assert "[SUPER_MODE_HANDOFF]" in kwargs["message"]
+        assert "[SUPER_MODE_DIRECTOR_TASK_HANDOFF]" in kwargs["message"]
         yield {
             "type": "complete",
             "data": {
@@ -695,6 +801,9 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
     _FakeRoleConsoleHost.instances.clear()
     _FakeRoleConsoleHost.stream_factory = _stream_factory
     monkeypatch.setattr(console_host_module, "RoleConsoleHost", _FakeRoleConsoleHost)
+    monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", lambda **_kwargs: [1])
+    monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", lambda **_kwargs: next(claim_batches))
+    monkeypatch.setattr(terminal_console, "_acknowledge_super_claims", lambda **_kwargs: 1)
     scripted_inputs = iter(["进一步完善ContextOS以及相关代码", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(scripted_inputs))
 
@@ -709,7 +818,58 @@ def test_run_role_console_super_mode_architect_delivery_loops_director_until_com
 
     assert exit_code == 0
     host = _FakeRoleConsoleHost.instances[0]
-    assert [call["role"] for call in host.stream_calls] == ["architect", "director", "director"]
+    assert [call["role"] for call in host.stream_calls] == ["architect", "pm", "chief_engineer", "director", "director"]
+
+
+def test_persist_super_tasks_to_board_publishes_pending_design(monkeypatch) -> None:
+    published: list[Any] = []
+
+    class _FakeBoard:
+        def __init__(self, *, workspace: str) -> None:
+            self.workspace = workspace
+            self._next_id = 1
+
+        def create(self, **kwargs: Any) -> Any:
+            created = SimpleNamespace(
+                id=self._next_id,
+                subject=kwargs["subject"],
+                description=kwargs["description"],
+            )
+            self._next_id += 1
+            return created
+
+    class _FakeMarket:
+        def publish_work_item(self, command: Any) -> Any:
+            published.append(command)
+            return SimpleNamespace(ok=True)
+
+    monkeypatch.setattr("polaris.cells.runtime.task_runtime.internal.task_board.TaskBoard", _FakeBoard)
+    monkeypatch.setattr(
+        "polaris.cells.runtime.task_market.public.service.get_task_market_service",
+        lambda: _FakeMarket(),
+    )
+
+    task_ids = terminal_console._persist_super_tasks_to_board(
+        workspace=".",
+        tasks=[
+            terminal_console.SuperTaskItem(
+                subject="ContextOS",
+                description="完善 ContextOS pipeline",
+                target_files=("polaris/delivery/cli/terminal_console.py",),
+                estimated_hours=1.5,
+            )
+        ],
+        original_request="进一步完善 ContextOS",
+        publish_stage="pending_design",
+        architect_output="架构摘要",
+        pm_output="PM 摘要",
+    )
+
+    assert task_ids == [1]
+    assert len(published) == 1
+    assert published[0].stage == "pending_design"
+    assert published[0].payload["scope_paths"] == ["polaris/delivery/cli/terminal_console.py"]
+    assert published[0].payload["workspace"] == "."
 
 
 def test_run_role_console_super_mode_session_command_reports_super_role(monkeypatch, capsys) -> None:

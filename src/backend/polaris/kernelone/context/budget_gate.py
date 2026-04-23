@@ -108,13 +108,15 @@ class ContextBudgetGate:
     safety_margin: float = field(default=DEFAULT_SAFETY_MARGIN)
     _current_tokens: int = field(default=0, repr=False)
     _estimator_locator: ServiceLocator | None = field(default=None, repr=False)
-    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    # Sync-context lock: budget gate is used from sync code paths.
+    # Use threading.Lock (not RLock) since no reentrancy is needed.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _section_allocations: dict[str, int] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
-        # Ensure lock is always an RLock instance
-        if not hasattr(self, "_lock") or not isinstance(self._lock, threading.RLock):
-            object.__setattr__(self, "_lock", threading.RLock())
+        # Ensure lock is always a Lock instance
+        if not hasattr(self, "_lock") or not isinstance(self._lock, threading.Lock):
+            object.__setattr__(self, "_lock", threading.Lock())
 
     def __init__(
         self,
@@ -132,7 +134,7 @@ class ContextBudgetGate:
         object.__setattr__(self, "safety_margin", safety_margin)
         object.__setattr__(self, "_current_tokens", initial_tokens)
         object.__setattr__(self, "_estimator_locator", estimator_locator)
-        object.__setattr__(self, "_lock", threading.RLock())
+        object.__setattr__(self, "_lock", threading.Lock())
         object.__setattr__(self, "_section_allocations", {})
 
     # ------------------------------------------------------------------

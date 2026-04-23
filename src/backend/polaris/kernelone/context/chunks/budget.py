@@ -89,12 +89,14 @@ class ChunkBudgetTracker:
     _evicted_count: int = field(default=0, repr=False)
     _eviction_log: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _admission_log: list[dict[str, Any]] = field(default_factory=list, repr=False)
-    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    # Sync-context lock: chunk budget is managed from sync code paths.
+    # Use threading.Lock (not RLock) since no reentrancy is needed.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
-        # Ensure lock is always an RLock instance (dataclass might reset it)
-        if not hasattr(self, "_lock") or not isinstance(self._lock, threading.RLock):
-            object.__setattr__(self, "_lock", threading.RLock())
+        # Ensure lock is always a Lock instance (dataclass might reset it)
+        if not hasattr(self, "_lock") or not isinstance(self._lock, threading.Lock):
+            object.__setattr__(self, "_lock", threading.Lock())
 
     def __init__(
         self,
@@ -114,7 +116,7 @@ class ChunkBudgetTracker:
         object.__setattr__(self, "_evicted_count", 0)
         object.__setattr__(self, "_eviction_log", [])
         object.__setattr__(self, "_admission_log", [])
-        object.__setattr__(self, "_lock", threading.RLock())
+        object.__setattr__(self, "_lock", threading.Lock())
 
     def get_current_budget(self) -> ChunkBudget:
         """Return immutable snapshot of current budget state.
