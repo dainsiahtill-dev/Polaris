@@ -213,7 +213,7 @@ class DeterministicVerification:
                     verifications.append(json.loads(line))
         
         # 检查验证记录的完整性
-        audit_result = {
+        audit_result: Dict[str, Any] = {
             "audit_possible": True,
             "total_verifications": len(verifications),
             "verification_types": {},

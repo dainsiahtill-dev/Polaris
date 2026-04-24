@@ -73,7 +73,7 @@ from polaris.delivery.cli.pm.orchestration_core import (
     load_state_and_context,
     update_consecutive_counters,
 )
-from polaris.delivery.cli.pm.polaris_engine import EngineRuntimeConfig, PolarisEngine
+from polaris.delivery.cli.pm.engine.core import EngineRuntimeConfig, PolarisEngine
 from polaris.delivery.cli.pm.report_utils import (
     append_pm_report,
     format_chief_engineer_for_report,

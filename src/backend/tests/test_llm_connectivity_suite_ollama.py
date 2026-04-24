@@ -74,7 +74,7 @@ def test_connectivity_suite_ollama_runs_real_invoke(monkeypatch):
         "get_provider_instance": staticmethod(lambda _type: provider)
     })())
 
-    model = "glm-4.7-flash:latest
+    model = "glm-4.7-flash:latest"
     provider_cfg = {
         "type": "ollama",
         "base_url": "http://120.24.117.59:11434",

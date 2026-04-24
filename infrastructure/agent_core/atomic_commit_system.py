@@ -49,7 +49,7 @@ class AtomicCommitSystem:
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         snapshot_id = f"pre_{blueprint_id}_{timestamp}"
         
-        snapshot = {
+        snapshot: Dict[str, Any] = {
             "snapshot_id": snapshot_id,
             "type": "pre_implementation",
             "blueprint_id": blueprint_id,

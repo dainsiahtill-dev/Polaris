@@ -121,10 +121,10 @@ _SYMBOL_MAP = {
     "run_chief_engineer_analysis": ("pm.chief_engineer", None),
     "run_chief_engineer_task": ("pm.chief_engineer", None),
     # Engine exports
-    "SchedulerProtocol": ("pm.polaris_engine", None),
-    "SingleWorkerScheduler": ("pm.polaris_engine", None),
-    "EngineRuntimeConfig": ("pm.polaris_engine", None),
-    "PolarisEngine": ("pm.polaris_engine", None),
+    "SchedulerProtocol": ("pm.engine.core", None),
+    "SingleWorkerScheduler": ("pm.engine.core", None),
+    "EngineRuntimeConfig": ("pm.engine.core", None),
+    "PolarisEngine": ("pm.engine.core", None),
     # Results exports
     "wait_for_director_result": ("pm.results", None),
     "match_director_result": ("pm.results", None),

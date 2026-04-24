@@ -335,8 +335,8 @@ class ProcessLauncher:
             ProcessLaunchRequest configured for PM
         """
         # Get PM script path
-        backend_root = Path(__file__).parents[2]
-        pm_script = backend_root / "scripts" / "pm" / "cli.py"
+        backend_root = Path(__file__).parents[5]
+        pm_script = backend_root / "polaris" / "delivery" / "cli" / "pm" / "cli.py"
 
         command = [sys.executable, str(pm_script), "--workspace", str(workspace)]
 
@@ -379,8 +379,8 @@ class ProcessLauncher:
             ProcessLaunchRequest configured for Director
         """
         # Get Director script path
-        backend_root = Path(__file__).parents[2]
-        director_script = backend_root / "scripts" / "loop-director.py"
+        backend_root = Path(__file__).parents[5]
+        director_script = backend_root / "polaris" / "delivery" / "cli" / "loop-director.py"
 
         command = [
             sys.executable,

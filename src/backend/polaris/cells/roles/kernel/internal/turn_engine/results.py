@@ -143,7 +143,7 @@ def build_stream_complete_result(
         thinking=thinking,
         tool_calls=list(all_tool_calls),
         tool_results=list(all_tool_results),
-        profile_version=profile.version,
+        profile_version=profile.version if profile else "",
         prompt_fingerprint=fingerprint,
         tool_policy_id=getattr(profile, "tool_policy_id", "") or getattr(profile.tool_policy, "policy_id", "")
         if profile

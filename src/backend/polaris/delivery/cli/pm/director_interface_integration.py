@@ -34,7 +34,7 @@ def _bootstrap_backend_import_path() -> None:
 _bootstrap_backend_import_path()
 
 try:
-    from director_interface import (
+    from polaris.delivery.cli.pm.director_interface_core import (
         DirectorInterface,
         DirectorTask,
         create_director,

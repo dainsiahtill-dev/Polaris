@@ -414,19 +414,24 @@ def _validate_snapshot_gate(snapshot: dict[str, Any]) -> bool:
 
 
 def _validate_pm_contract(pm_contract: dict[str, Any]) -> dict[str, Any]:
-    quality_gate = pm_contract.get("quality_gate") if isinstance(pm_contract.get("quality_gate"), dict) else {}
-    tasks = pm_contract.get("tasks") if isinstance(pm_contract.get("tasks"), list) else []
+    quality_gate_raw = pm_contract.get("quality_gate")
+    quality_gate: dict[str, Any] = quality_gate_raw if isinstance(quality_gate_raw, dict) else {}
+    tasks_raw = pm_contract.get("tasks")
+    tasks: list[Any] = tasks_raw if isinstance(tasks_raw, list) else []
     invalid_tasks = 0
     for task in tasks:
         if not isinstance(task, dict):
             invalid_tasks += 1
             continue
-        has_goal = bool(str(task.get("goal") or "").strip())
-        has_scope = isinstance(task.get("scope_paths"), list) and len(task.get("scope_paths") or []) > 0
-        has_steps = isinstance(task.get("execution_checklist"), list) and len(task.get("execution_checklist") or []) > 0
-        acceptance = task.get("acceptance_criteria")
+        task_dict: dict[str, Any] = task
+        has_goal = bool(str(task_dict.get("goal") or "").strip())
+        scope_paths = task_dict.get("scope_paths")
+        has_scope = isinstance(scope_paths, list) and len(scope_paths) > 0
+        execution_checklist = task_dict.get("execution_checklist")
+        has_steps = isinstance(execution_checklist, list) and len(execution_checklist) > 0
+        acceptance = task_dict.get("acceptance_criteria")
         if not isinstance(acceptance, list):
-            acceptance = task.get("acceptance")
+            acceptance = task_dict.get("acceptance")
         has_acceptance = isinstance(acceptance, list) and len(acceptance) > 0
         if not (has_goal and has_scope and has_steps and has_acceptance):
             invalid_tasks += 1

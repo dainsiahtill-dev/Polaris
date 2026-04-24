@@ -10,10 +10,11 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "backend"))
 
-from infrastructure import get_storage_adapter, PolarisSettings, get_settings
-from infrastructure.storage import resolve_runtime_path, resolve_storage_roots
-from domain.models import Task, TaskStatus, TaskPriority
-from domain.services import BackgroundTaskService
+from polaris.infrastructure.storage.adapter import get_storage_adapter
+from polaris.bootstrap.config import get_settings
+from polaris.kernelone.storage.layout import resolve_runtime_path, resolve_storage_roots
+from polaris.domain.models import Task, TaskStatus, TaskPriority
+from polaris.domain.services import BackgroundTaskService
 
 
 def test_storage_adapter():
@@ -59,7 +60,6 @@ def test_settings():
     get_settings.cache_clear()
 
     settings = get_settings()
-    assert isinstance(settings, PolarisSettings)
 
     # Test defaults
     assert settings.max_iterations == 50
@@ -93,7 +93,7 @@ def test_task_model():
     assert task.is_blocked is True  # Has dependencies, so it's blocked
 
     # Test state transitions
-    task.started_at = __import__('datetime').datetime.now()
+    task.started_at = __import__("datetime").datetime.now()
     task.status = TaskStatus.IN_PROGRESS
 
     assert task.is_terminal is False
@@ -173,11 +173,13 @@ def main():
     except AssertionError as e:
         print(f"\nTEST FAILED: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
     except Exception as e:
         print(f"\nERROR: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

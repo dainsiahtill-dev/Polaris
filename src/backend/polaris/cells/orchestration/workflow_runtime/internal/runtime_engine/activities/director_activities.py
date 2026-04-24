@@ -129,7 +129,7 @@ def _run_director_execution(
     director_config: dict[str, Any],
     runtime_metadata: dict[str, Any],
 ) -> tuple[bool, str, list[str], dict[str, Any]]:
-    from director_interface import DirectorTask, create_director
+    from polaris.delivery.cli.pm.director_interface_core import DirectorTask, create_director
 
     project_root = Path(__file__).resolve().parents[5]
     cache_root = str(runtime_metadata.get("cache_root_full") or "").strip()

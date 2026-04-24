@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-
 from polaris.bootstrap.ports.backend_bootstrap import BackendBootstrapPort, BootstrapPort
 
 

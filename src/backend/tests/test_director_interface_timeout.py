@@ -8,7 +8,7 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from director_interface import DirectorTask, ScriptDirectorAdapter  # noqa: E402
+from polaris.delivery.cli.pm.director_interface_core import DirectorTask, ScriptDirectorAdapter  # noqa: E402
 
 
 def _make_adapter(
@@ -17,9 +17,7 @@ def _make_adapter(
     timeout: int | None,
     task_timeout: int | None = None,
 ):
-    script_path = (
-        tmp_path / "src" / "backend" / "polaris" / "delivery" / "cli" / "loop-director.py"
-    )
+    script_path = tmp_path / "src" / "backend" / "polaris" / "delivery" / "cli" / "loop-director.py"
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
 
@@ -68,7 +66,7 @@ def test_script_director_passes_task_timeout_with_process_margin(tmp_path, monke
     class _Process:
         returncode = 0
 
-        def __init__(self, cmd, cwd=None, stdout=None, stderr=None):
+        def __init__(self, cmd, cwd=None, stdout=None, stderr=None) -> None:
             captured["cmd"] = list(cmd)
             captured["cwd"] = cwd
 
@@ -96,7 +94,7 @@ def test_script_director_respects_explicit_task_timeout_override(tmp_path, monke
     class _Process:
         returncode = 0
 
-        def __init__(self, cmd, cwd=None, stdout=None, stderr=None):
+        def __init__(self, cmd, cwd=None, stdout=None, stderr=None) -> None:
             captured["cmd"] = list(cmd)
 
         def communicate(self, timeout=None):
@@ -124,7 +122,7 @@ def test_script_director_uses_default_task_timeout_when_process_timeout_disabled
     class _Process:
         returncode = 0
 
-        def __init__(self, cmd, cwd=None, stdout=None, stderr=None):
+        def __init__(self, cmd, cwd=None, stdout=None, stderr=None) -> None:
             captured["cmd"] = list(cmd)
 
         def communicate(self, timeout=None):

@@ -207,7 +207,7 @@ class ImprovementChecker:
 
     async def _check_state_bridge(self) -> dict[str, Any]:
         """Check state bridge implementation."""
-        result = {"name": "State Bridge", "score": 0.0, "details": {}}
+        result: dict[str, Any] = {"name": "State Bridge", "score": 0.0, "details": {}}
 
         try:
             sys.path.insert(0, str(BACKEND_ROOT))
@@ -245,7 +245,7 @@ class ImprovementChecker:
 
     async def _check_error_classifier(self) -> dict[str, Any]:
         """Check error classifier implementation."""
-        result = {"name": "Error Classifier", "score": 0.0, "details": {}}
+        result: dict[str, Any] = {"name": "Error Classifier", "score": 0.0, "details": {}}
 
         try:
             from app.orchestration.error_classifier import (
@@ -293,7 +293,7 @@ class ImprovementChecker:
 
     async def _check_task_board(self) -> dict[str, Any]:
         """Check TaskBoard state bridge integration."""
-        result = {"name": "Task Board", "score": 0.0, "details": {}}
+        result: dict[str, Any] = {"name": "Task Board", "score": 0.0, "details": {}}
 
         try:
             from app.services.task_board import TaskBoard
@@ -338,7 +338,7 @@ class ImprovementChecker:
 
     async def _check_workflow_runtime(self) -> dict[str, Any]:
         """Check Workflow Runtime availability."""
-        result = {"name": "Workflow Runtime", "score": 0.0, "details": {}}
+        result: dict[str, Any] = {"name": "Workflow Runtime", "score": 0.0, "details": {}}
 
         try:
             from app.orchestration.runtime.embedded.store_sqlite import (

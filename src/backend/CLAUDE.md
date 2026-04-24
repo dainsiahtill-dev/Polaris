@@ -36,8 +36,13 @@
 
 ### 2.3 归属与旧根冻结
 
-规范根目录统一落在 `polaris/` 下。  
-`app/ core/ scripts/ api/` 视为冻结旧根，不得承载新主实现。
+规范根目录统一落在 `polaris/` 下。
+
+旧根迁移状态（2026-04-24，Squad V 完成）：
+- `app/`、`core/`、`api/`：已不存在于本仓库。
+- `director_interface.py`：已迁移至 `polaris/delivery/cli/pm/director_interface_core.py`，旧根保留 shim 兼容层。
+- `server.py`：已迁移至 `polaris/delivery/server.py`，旧根保留 shim 兼容层。
+- `scripts/`：仍保留（56 个文件），仅作为历史工具/诊断脚本；新功能必须写入 `polaris/delivery/cli/` 或对应 Cell 目录。
 
 ## 3. 默认工作入口
 
@@ -168,7 +173,7 @@
 
 ### 6.7 CLI 入口点（已更新）
 
-- 后端服务：`python src/backend/server.py --host 127.0.0.1 --port 49977`
+- 后端服务：`python -m polaris.delivery.server --host 127.0.0.1 --port 49977`（兼容：`python src/backend/server.py`）
 - PM CLI：`python -m polaris.delivery.cli.pm.cli`
 - Director CLI：`python -m polaris.delivery.cli.director.cli_thin`
 - Architect CLI：`python -m polaris.cells.architect.design.internal.architect_cli`

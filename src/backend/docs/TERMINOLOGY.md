@@ -45,6 +45,32 @@
 
 ---
 
+## 2.1 ContextOS 四层架构（新增，Squad D/J 清理）
+
+| 组件 | 工程术语 | 说明 |
+|------|---------|------|
+| TruthLog | TurnTruthLogRecorder / truthlog_recorder.py | 单次 Turn 的追加-only 审计日志 |
+| WorkingState | ConversationState / context_gateway | 运行时可变状态，绝不直接喂给 LLM |
+| ReceiptStore | ReceiptStore / receipt_store.py | 大文件只存引用，不重复 |
+| ProjectionEngine | ProjectionEngine / projection_engine.py | 严格只读投影生成 |
+| ContextGateway | ContextGateway / context_gateway/ | ContextOS 四层统一入口 |
+
+---
+
+## 2.2 TransactionKernel 组件（新增，Squad D/J 清理）
+
+| 组件 | 工程术语 | 说明 |
+|------|---------|------|
+| 事务内核 | TransactionKernel / transaction_kernel.py | 唯一 turn 事务执行内核 |
+| 工具批次执行器 | ToolBatchExecutor / tool_batch_executor.py | 单次工具批次执行 |
+| 流式编排器 | StreamOrchestrator / stream_orchestrator.py | 工具调用流式编排 |
+| 探索工作流 | ExplorationWorkflow / exploration_workflow.py | 探索模式工作流 |
+| 调试策略引擎 | DebugStrategyEngine / debug_strategy/ | 故障调试策略 |
+| 推测执行器 | SpeculativeExecutor / speculative_executor.py | 跨 Turn 推测执行 |
+| 质量检查器 | QualityChecker / quality_checker.py | Turn 输出质量检查 |
+
+---
+
 ## 3. 英文新造词/品牌词（保留，但限制使用场景）
 
 | 术语 | 使用场景 | 说明 |
@@ -99,3 +125,15 @@
   - `ruff format` — 通过
   - `mypy` — 通过
   - `pytest` — 54 tests passed (test_truthlog_recorder: 3, test_transaction_controller: 29, test_mutation_guard_soft_mode: 22)
+- Squad D/J 新增验证（2026-04-24）：
+  - `test_circuit_breaker.py` — 已通过
+  - `test_read_strategy.py` — 已通过
+  - `test_thinking_validation.py` — 已通过
+  - `test_policy.py` — 已通过
+  - `test_speculation.py` — 已通过
+  - `test_mutation_triggers.py` — 已通过
+  - `test_stream_orchestrator.py` — 已通过
+  - `test_hypothesis_generator.py` — 已通过
+  - `test_llm_caller.py` — 已通过
+  - `test_turn_engine.py` — 已通过
+  - `test_action_first_integration.py` — 已通过

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from polaris.kernelone.traceability.session_source import (
     SessionSource,
     SourceChain,
