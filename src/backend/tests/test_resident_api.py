@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
 from polaris.cells.resident.autonomy.internal.resident_runtime_service import reset_resident_services
 from polaris.delivery.http.app_factory import create_app

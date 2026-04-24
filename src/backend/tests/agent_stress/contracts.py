@@ -295,9 +295,7 @@ def event_identity(event: Mapping[str, Any]) -> str:
         "stage": normalize_text(event.get("stage")),
         "payload": event_payload(event),
     }
-    digest = hashlib.sha1(
-        json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
+    digest = hashlib.sha1(json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     return f"evt:{digest}"
 
 

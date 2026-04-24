@@ -120,9 +120,9 @@ class InMemoryAgentBusPort:
         Uses blocking `time.sleep()` which cannot be cancelled by asyncio.
         For async contexts, use `poll_async()` instead.
         """
-        envelope = self._pop_inbox(receiver)
+        envelope = self._pop_and_mark_inflight(receiver)
         if envelope is not None:
-            return self._mark_inflight(envelope)
+            return envelope
 
         if not block:
             return None
@@ -132,9 +132,9 @@ class InMemoryAgentBusPort:
         interval = min(0.1, max(0.01, float(timeout) / 10))
         while time.monotonic() < deadline:
             time.sleep(interval)
-            envelope = self._pop_inbox(receiver)
+            envelope = self._pop_and_mark_inflight(receiver)
             if envelope is not None:
-                return self._mark_inflight(envelope)
+                return envelope
         return None
 
     async def poll_async(
@@ -179,9 +179,9 @@ class InMemoryAgentBusPort:
 
         # Fast path: non-blocking or zero timeout
         if not block or safe_timeout <= 0.0:
-            envelope = self._pop_inbox(receiver)
+            envelope = self._pop_and_mark_inflight(receiver)
             if envelope is not None:
-                return self._mark_inflight(envelope)
+                return envelope
             return None
 
         deadline = time.monotonic() + safe_timeout
@@ -209,9 +209,9 @@ class InMemoryAgentBusPort:
                 raise
 
             # Check for message after sleeping
-            envelope = self._pop_inbox(receiver)
+            envelope = self._pop_and_mark_inflight(receiver)
             if envelope is not None:
-                return self._mark_inflight(envelope)
+                return envelope
 
             # Loop will continue with updated remaining time calculation
 
@@ -235,33 +235,32 @@ class InMemoryAgentBusPort:
         """Nack message — requeue or dead-letter."""
         with self._lock:
             env = self._inflight.pop(str(message_id or ""), None)
-        if env is None:
-            return False
+            if env is None:
+                return False
 
-        env.last_error = str(reason or "").strip()
-        env.attempt += 1
+            env.last_error = str(reason or "").strip()
+            env.attempt += 1
 
-        if requeue and env.attempt < env.max_attempts:
-            logger.warning(
-                "bus_port.nack: requeuing message_id=%s attempt=%d/%d reason=%r",
-                message_id,
-                env.attempt,
-                env.max_attempts,
-                env.last_error,
-            )
-            # Re-insert at front of inbox so delivery order is preserved
-            with self._lock:
+            if requeue and env.attempt < env.max_attempts:
+                logger.warning(
+                    "bus_port.nack: requeuing message_id=%s attempt=%d/%d reason=%r",
+                    message_id,
+                    env.attempt,
+                    env.max_attempts,
+                    env.last_error,
+                )
+                # Re-insert at front of inbox so delivery order is preserved
                 inbox = self._inbox.setdefault(env.receiver, [])
                 inbox.insert(0, env)
-        else:
-            reason_str = reason or "max_attempts_exceeded"
-            logger.warning(
-                "bus_port.nack: dead-letter message_id=%s receiver=%s reason=%r",
-                message_id,
-                env.receiver,
-                reason_str,
-            )
-            self._add_dead_letter(env, reason_str)
+            else:
+                reason_str = reason or "max_attempts_exceeded"
+                logger.warning(
+                    "bus_port.nack: dead-letter message_id=%s receiver=%s reason=%r",
+                    message_id,
+                    env.receiver,
+                    reason_str,
+                )
+                self._add_dead_letter(env, reason_str)
 
         return True
 
@@ -315,7 +314,23 @@ class InMemoryAgentBusPort:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _pop_and_mark_inflight(self, receiver: str) -> AgentEnvelope | None:
+        """Atomically pop from inbox and mark as inflight.
+
+        Thread-safe: single lock protects both operations to prevent
+        race conditions between concurrent poll() calls.
+        """
+        with self._lock:
+            inbox = self._inbox.get(str(receiver or ""), [])
+            if not inbox:
+                return None
+            envelope = inbox.pop(0)
+            envelope.attempt += 1
+            self._inflight[envelope.message_id] = envelope
+            return envelope
+
     def _pop_inbox(self, receiver: str) -> AgentEnvelope | None:
+        """Pop from inbox without marking inflight (legacy helper)."""
         with self._lock:
             inbox = self._inbox.get(str(receiver or ""), [])
             if not inbox:
@@ -323,7 +338,10 @@ class InMemoryAgentBusPort:
             return inbox.pop(0)
 
     def _mark_inflight(self, envelope: AgentEnvelope) -> AgentEnvelope:
-        envelope.attempt += 1
+        """Mark envelope as inflight (assumes already popped from inbox).
+
+        Note: For new code, prefer _pop_and_mark_inflight() for atomicity.
+        """
         with self._lock:
             self._inflight[envelope.message_id] = envelope
         return envelope

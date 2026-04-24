@@ -393,13 +393,9 @@ def publish_exec_task(
     )
 
 
-def get_task_status(
-    svc: TaskMarketService, workspace: Path, task_id: str
-) -> dict[str, Any]:
+def get_task_status(svc: TaskMarketService, workspace: Path, task_id: str) -> dict[str, Any]:
     """Query task market status for a specific task."""
-    result = svc.query_status(
-        QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True)
-    )
+    result = svc.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
     for item in result.items:
         if item.get("task_id") == task_id:
             return item

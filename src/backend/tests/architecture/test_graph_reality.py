@@ -30,9 +30,7 @@ EXPECTED_MODULES = {
     "runtime.projection": "polaris.cells.runtime.projection.public.contracts",
     "audit.evidence": "polaris.cells.audit.evidence.public.contracts",
     "archive.run_archive": "polaris.cells.archive.run_archive.public.contracts",
-    "archive.task_snapshot_archive": (
-        "polaris.cells.archive.task_snapshot_archive.public.contracts"
-    ),
+    "archive.task_snapshot_archive": ("polaris.cells.archive.task_snapshot_archive.public.contracts"),
     "archive.factory_archive": "polaris.cells.archive.factory_archive.public.contracts",
     "context.engine": "polaris.cells.context.engine.public.contracts",
 }
@@ -72,17 +70,12 @@ def _cell_root(cell_id: str) -> Path:
 def test_catalog_matches_current_phase1_public_cells() -> None:
     payload = _load_yaml(CATALOG_PATH)
 
-    assert (
-        payload["migration_status"]
-        == "phase1_public_phase2_composite_phase3_business_cells_declared"
-    )
+    assert payload["migration_status"] == "phase1_public_phase2_composite_phase3_business_cells_declared"
 
     cells = payload.get("cells")
     assert isinstance(cells, list)
 
-    catalog_cells = {
-        str(item.get("id")): item for item in cells if isinstance(item, dict) and item.get("id")
-    }
+    catalog_cells = {str(item.get("id")): item for item in cells if isinstance(item, dict) and item.get("id")}
     assert EXPECTED_PUBLIC_CELLS.issubset(set(catalog_cells))
 
     declared_subgraphs = set()
@@ -105,9 +98,7 @@ def test_catalog_matches_current_phase1_public_cells() -> None:
         assert catalog_item["public_contracts"]["modules"] == [EXPECTED_MODULES[cell_id]]
         assert manifest.get("generated_artifacts") == ["generated/context.pack.json"]
 
-        declared_subgraphs.update(
-            str(value) for value in catalog_item.get("subgraphs", [])
-        )
+        declared_subgraphs.update(str(value) for value in catalog_item.get("subgraphs", []))
 
     assert "storage_archive_pipeline" in declared_subgraphs
 

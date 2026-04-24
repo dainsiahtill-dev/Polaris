@@ -26,18 +26,19 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
 
         # Initialize git repo (required for EvidenceBundle)
         os.chdir(self.workspace)
-        os.system('git init -q')
+        os.system("git init -q")
         os.system('git config user.email "test@test.com"')
         os.system('git config user.name "Test"')
 
         # Create a test file and commit
         test_file = Path(self.workspace) / "test.py"
         test_file.write_text("print('hello')")
-        os.system('git add .')
+        os.system("git add .")
         os.system('git commit -q -m "initial"')
 
         # Reset service cache to get fresh instance
         from polaris.cells.resident.autonomy.internal.resident_runtime_service import reset_resident_services
+
         reset_resident_services()
 
         # Get service instance
@@ -46,11 +47,13 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
     def tearDown(self):
         """Clean up temporary workspace."""
         import shutil
+
         # Return to original directory
         os.chdir("C:\\Users\\dains\\Documents\\GitLab\\polaris")
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         # Reset service cache
         from polaris.cells.resident.autonomy.internal.resident_runtime_service import reset_resident_services
+
         reset_resident_services()
 
     def test_record_decision_auto_creates_evidence_bundle(self):
@@ -60,12 +63,14 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
         test_file.write_text("print('hello world')\n# new line")
 
         # Record a decision
-        decision = self.service.record_decision({
-            "actor": "director",
-            "stage": "test_stage",
-            "summary": "Test decision",
-            "verdict": "success",
-        })
+        decision = self.service.record_decision(
+            {
+                "actor": "director",
+                "stage": "test_stage",
+                "summary": "Test decision",
+                "verdict": "success",
+            }
+        )
 
         # Verify EvidenceBundle was created
         self.assertIsNotNone(decision.evidence_bundle_id)
@@ -86,12 +91,14 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
         test_file.write_text("def main():\n    pass")
 
         # Record decision
-        decision = self.service.record_decision({
-            "actor": "director",
-            "stage": "coding",
-            "summary": "Add main function",
-            "verdict": "success",
-        })
+        decision = self.service.record_decision(
+            {
+                "actor": "director",
+                "stage": "coding",
+                "summary": "Add main function",
+                "verdict": "success",
+            }
+        )
 
         # Retrieve evidence bundle
         result = self.service.get_decision_evidence_bundle(decision.decision_id)
@@ -113,12 +120,14 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
         """Test that clean working tree doesn't break decision recording."""
         # No changes in working tree
 
-        decision = self.service.record_decision({
-            "actor": "resident",
-            "stage": "planning",
-            "summary": "Planning decision",
-            "verdict": "success",
-        })
+        decision = self.service.record_decision(
+            {
+                "actor": "resident",
+                "stage": "planning",
+                "summary": "Planning decision",
+                "verdict": "success",
+            }
+        )
 
         # Decision should still be recorded
         self.assertIsNotNone(decision.decision_id)
@@ -132,12 +141,14 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
         test_file = Path(self.workspace) / "test.py"
         test_file.write_text("# modified")
 
-        decision = self.service.record_decision({
-            "actor": "director",
-            "stage": "implementation",
-            "summary": "Implementation",
-            "verdict": "success",
-        })
+        decision = self.service.record_decision(
+            {
+                "actor": "director",
+                "stage": "implementation",
+                "summary": "Implementation",
+                "verdict": "success",
+            }
+        )
 
         # Check runtime state
         status = self.service.get_status(include_details=False)
@@ -150,4 +161,3 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

@@ -164,7 +164,7 @@ class TestDIContainer:
         container = await get_container()
 
         assert container is not None
-        assert hasattr(container, 'has_registration')
+        assert hasattr(container, "has_registration")
 
     @pytest.mark.asyncio
     async def test_container_provides_settings(self):

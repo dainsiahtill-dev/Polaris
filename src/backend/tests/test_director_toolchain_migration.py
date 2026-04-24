@@ -90,13 +90,7 @@ class TestCallerImports:
 
     def test_director_adapter_imports_public_tools(self) -> None:
         director_adapter_path = (
-            _BACKEND_ROOT
-            / "polaris"
-            / "cells"
-            / "roles"
-            / "adapters"
-            / "internal"
-            / "director_adapter.py"
+            _BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "internal" / "director_adapter.py"
         )
         source = director_adapter_path.read_text(encoding="utf-8")
 
@@ -104,13 +98,7 @@ class TestCallerImports:
         assert "polaris.kernelone.tools.director" not in source
 
     def test_runtime_executor_imports_public_tools(self) -> None:
-        runtime_executor_path = (
-            _BACKEND_ROOT
-            / "polaris"
-            / "kernelone"
-            / "tools"
-            / "runtime_executor.py"
-        )
+        runtime_executor_path = _BACKEND_ROOT / "polaris" / "kernelone" / "tools" / "runtime_executor.py"
         source = runtime_executor_path.read_text(encoding="utf-8")
 
         assert "from polaris.cells.director.execution.public.tools import" in source
@@ -120,13 +108,7 @@ class TestGraphOwnership:
     """Verify graph catalog reflects the canonical ownership."""
 
     def test_cells_yaml_has_canonical_ownership_path(self) -> None:
-        cells_yaml_path = (
-            _BACKEND_ROOT
-            / "docs"
-            / "graph"
-            / "catalog"
-            / "cells.yaml"
-        )
+        cells_yaml_path = _BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
         content = cells_yaml_path.read_text(encoding="utf-8")
 
         assert "polaris/cells/director/execution/internal/tools/**" in content

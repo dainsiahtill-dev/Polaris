@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.ws.endpoints.protocol_utils import (
     resolve_runtime_v2_workspace_key as _resolve_runtime_v2_workspace_key,
@@ -44,17 +44,23 @@ def test_runtime_ws_endpoint_available(tmp_path, monkeypatch) -> None:
 def test_legacy_ws_endpoint_removed(tmp_path, monkeypatch) -> None:
     app, token = _create_test_app(tmp_path, monkeypatch)
 
-    with TestClient(app) as client, pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(f"/ws?token={token}") as ws:
-            ws.receive_text()
+    with (
+        TestClient(app) as client,
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect(f"/ws?token={token}") as ws,
+    ):
+        ws.receive_text()
 
 
 def test_legacy_v2_director_ws_endpoint_removed(tmp_path, monkeypatch) -> None:
     app, token = _create_test_app(tmp_path, monkeypatch)
 
-    with TestClient(app) as client, pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(f"/v2/ws/director?token={token}") as ws:
-            ws.receive_text()
+    with (
+        TestClient(app) as client,
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect(f"/v2/ws/director?token={token}") as ws,
+    ):
+        ws.receive_text()
 
 
 def test_runtime_ws_journal_snapshot_routes_each_line_once(tmp_path, monkeypatch) -> None:

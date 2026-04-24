@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -53,6 +52,7 @@ class TestArchiveHookTaskTracking:
     @pytest.mark.asyncio
     async def test_task_auto_cleanup_on_completion(self, hook) -> None:
         """Verify that completed tasks are automatically removed from tracking."""
+
         async def fast_archive(*args, **kwargs):
             await asyncio.sleep(0.05)
 
@@ -137,6 +137,7 @@ class TestArchiveHookTaskTracking:
     @pytest.mark.asyncio
     async def test_shutdown_returns_cancelled_keys(self, hook) -> None:
         """Verify shutdown() returns the correct list of cancelled task keys."""
+
         async def slow_task(*args, **kwargs):
             await asyncio.sleep(10)
 
@@ -152,6 +153,7 @@ class TestArchiveHookTaskTracking:
     @pytest.mark.asyncio
     async def test_concurrent_trigger_and_shutdown(self, hook) -> None:
         """Verify concurrent triggering and shutdown is safe."""
+
         async def slow_task(*args, **kwargs):
             await asyncio.sleep(1.0)
 
@@ -301,7 +303,7 @@ class TestArchiveHookInternalMethods:
             task_started.set()
             await asyncio.sleep(0.1)
 
-        task = hook._create_task_with_tracking(tracked_coro(), "test:task-001")
+        hook._create_task_with_tracking(tracked_coro(), "test:task-001")
 
         await task_started.wait()
         assert hook.get_pending_task_count() == 1

@@ -140,7 +140,7 @@ class _FakeDirectorService:
     async def get_status(self) -> dict:
         return self._status
 
-    async def list_tasks(self, status=None):  # noqa: ANN001
+    async def list_tasks(self, status=None):
         del status
         self.list_calls += 1
         return self._local_tasks

@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from polaris.cells.roles.adapters.internal.architect_adapter import ArchitectAdapter
 from polaris.kernelone.storage import resolve_workspace_persistent_path
 
@@ -175,7 +174,7 @@ async def test_execute_blocks_empty_docs_and_avoids_overwrite(tmp_path, monkeypa
     adapter = ArchitectAdapter(workspace=str(tmp_path))
 
     mock_response = {
-        "response": "[TOOL_CALL]{\"tool\":\"list_directory\",\"path\":\".\"}[/TOOL_CALL]",
+        "response": '[TOOL_CALL]{"tool":"list_directory","path":"."}[/TOOL_CALL]',
         "success": False,
         "error": "role_tool_rounds_exhausted:3",
     }
@@ -215,7 +214,7 @@ async def test_execute_force_finalize_when_tool_rounds_exhausted(tmp_path, monke
         call_count["count"] += 1
         if call_count["count"] == 1:
             return {
-                "response": "[TOOL_CALL]{\"tool\":\"list_directory\",\"path\":\".\"}[/TOOL_CALL]",
+                "response": '[TOOL_CALL]{"tool":"list_directory","path":"."}[/TOOL_CALL]',
                 "success": False,
                 "error": "role_tool_rounds_exhausted:3",
             }
@@ -257,11 +256,7 @@ async def test_execute_blocks_truncated_json_docs_and_avoids_overwrite(tmp_path,
         del workspace, settings, role, message, context, validate_output, max_retries
         return {
             "response": (
-                "```json\n"
-                "{\n"
-                '  "plan_markdown": "## 背景与目标\\nP",\n'
-                '  "architecture_markdown": "## 背景与目标\\nA"\n'
-                "}"
+                '```json\n{\n  "plan_markdown": "## 背景与目标\\nP",\n  "architecture_markdown": "## 背景与目标\\nA"\n}'
             ),
             "success": True,
             "error": None,
@@ -305,10 +300,7 @@ async def test_execute_repairs_truncated_json_docs_when_compact_retry_succeeds(t
         # First call returns truncated JSON (missing closing brace)
         return {
             "response": (
-                "```json\n"
-                "{\n"
-                '  "plan_markdown": "## 背景与目标\\nP",\n'
-                '  "architecture_markdown": "## 背景与目标\\nA"\n'
+                '```json\n{\n  "plan_markdown": "## 背景与目标\\nP",\n  "architecture_markdown": "## 背景与目标\\nA"\n'
             ),
             "success": True,
             "error": None,

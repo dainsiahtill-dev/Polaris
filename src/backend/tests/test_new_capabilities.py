@@ -202,10 +202,7 @@ class TestTranscriptService:
             service = TranscriptService(tmpdir)
 
             # Start session
-            session = service.start_session(
-                session_id="test-123",
-                metadata={"task": "test task"}
-            )
+            session = service.start_session(session_id="test-123", metadata={"task": "test task"})
             assert session.session_id == "test-123"
 
             # Record messages
@@ -229,11 +226,7 @@ class TestTranscriptService:
             service = TranscriptService(tmpdir)
             service.start_session()
 
-            service.record_tool_call(
-                tool_name="read_file",
-                arguments={"path": "test.txt"},
-                result="file content"
-            )
+            service.record_tool_call(tool_name="read_file", arguments={"path": "test.txt"}, result="file content")
 
             session = service.get_current_session()
             assert len(session.messages) == 1
@@ -389,23 +382,17 @@ class TestToolTimeoutService:
         service = ToolTimeoutService()
 
         # Valid timeout
-        is_valid, clamped, reason = service.validate_timeout(
-            ToolTier.FOREGROUND, 60
-        )
+        is_valid, clamped, _ = service.validate_timeout(ToolTier.FOREGROUND, 60)
         assert is_valid
         assert clamped == 60
 
         # Too high - should clamp
-        is_valid, clamped, reason = service.validate_timeout(
-            ToolTier.FOREGROUND, 1000
-        )
+        is_valid, clamped, _ = service.validate_timeout(ToolTier.FOREGROUND, 1000)
         assert not is_valid
         assert clamped == 600  # Max for foreground
 
         # Too low - should clamp
-        is_valid, clamped, reason = service.validate_timeout(
-            ToolTier.BACKGROUND, 5
-        )
+        is_valid, clamped, _ = service.validate_timeout(ToolTier.BACKGROUND, 5)
         assert not is_valid
         assert clamped == 10  # Min for background
 

@@ -27,15 +27,9 @@ class TestPermissionsRouter:
         """GET /v2/permissions/effective returns 200 with permissions."""
         app = _build_app()
         mock_service = MagicMock()
-        mock_service.get_effective_permissions = AsyncMock(
-            return_value=["read", "write"]
-        )
-        app.dependency_overrides[permissions_router._get_permission_service] = (
-            lambda: mock_service
-        )
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        mock_service.get_effective_permissions = AsyncMock(return_value=["read", "write"])
+        app.dependency_overrides[permissions_router._get_permission_service] = lambda: mock_service
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/v2/permissions/effective",
                 params={"subject_type": "role", "subject_id": "pm"},
@@ -63,12 +57,8 @@ class TestPermissionsRouter:
                 }
             ]
         )
-        app.dependency_overrides[permissions_router._get_permission_service] = (
-            lambda: mock_service
-        )
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        app.dependency_overrides[permissions_router._get_permission_service] = lambda: mock_service
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v2/permissions/roles")
 
         assert response.status_code == 200
@@ -88,12 +78,8 @@ class TestPermissionsRouter:
                 "role_id": "pm",
             }
         )
-        app.dependency_overrides[permissions_router._get_permission_service] = (
-            lambda: mock_service
-        )
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        app.dependency_overrides[permissions_router._get_permission_service] = lambda: mock_service
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/v2/permissions/assign",
                 json={
@@ -126,12 +112,8 @@ class TestPermissionsRouter:
                 }
             ]
         )
-        app.dependency_overrides[permissions_router._get_permission_service] = (
-            lambda: mock_service
-        )
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        app.dependency_overrides[permissions_router._get_permission_service] = lambda: mock_service
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v2/permissions/policies")
 
         assert response.status_code == 200
@@ -143,9 +125,7 @@ class TestPermissionsRouter:
     async def test_nonexistent_endpoint_returns_404(self) -> None:
         """GET /v2/permissions/nonexistent returns 404."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v2/permissions/nonexistent")
 
         assert response.status_code == 404

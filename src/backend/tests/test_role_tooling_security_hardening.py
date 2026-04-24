@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import importlib
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from polaris.cells.roles.runtime.public.service import (
@@ -19,9 +19,7 @@ for _path in (str(_BACKEND_ROOT), str(_LOOP_ROOT)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-_tooling_security_module = importlib.import_module(
-    "polaris.cells.director.execution.public.tools"
-)
+_tooling_security_module = importlib.import_module("polaris.cells.director.execution.public.tools")
 
 is_command_allowed_core = _tooling_security_module.is_command_allowed
 is_command_allowed_director_tooling = _tooling_security_module.is_command_allowed
@@ -31,7 +29,6 @@ def _ensure_pm_profile():
     if not registry.has_role("pm"):
         load_core_roles()
     return registry.get_profile_or_raise("pm")
-
 
 
 async def test_context_gateway_filters_prompt_injection_override(tmp_path: Path) -> None:
@@ -114,6 +111,3 @@ def test_command_whitelist_rejects_shell_operator_injection() -> None:
     assert is_command_allowed_director_tooling(safe_command) is True
     assert is_command_allowed_director_tooling(injected_command) is False
     assert is_command_allowed_director_tooling(pipe_command) is False
-
-
-

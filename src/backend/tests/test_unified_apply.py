@@ -37,13 +37,7 @@ def test_apply_full_file_and_delete(tmp_path: Path) -> None:
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("x = 1\n", encoding="utf-8")
 
-    payload = (
-        "FILE: src/new_module.py\n"
-        "def ping() -> str:\n"
-        "    return \"ok\"\n"
-        "END FILE\n"
-        "DELETE_FILE: src/stale.py\n"
-    )
+    payload = 'FILE: src/new_module.py\ndef ping() -> str:\n    return "ok"\nEND FILE\nDELETE_FILE: src/stale.py\n'
     result = apply_all_operations(payload, str(tmp_path))
     assert result.success is True
     assert (tmp_path / "src" / "new_module.py").is_file()
@@ -72,12 +66,7 @@ def test_search_miss_fails_in_strict_mode(tmp_path: Path) -> None:
 
 
 def test_patch_file_direct_content_falls_back_to_full_file(tmp_path: Path) -> None:
-    payload = (
-        "PATCH_FILE: src/app.py\n"
-        "def app() -> str:\n"
-        "    return 'ok'\n"
-        "END PATCH_FILE\n"
-    )
+    payload = "PATCH_FILE: src/app.py\ndef app() -> str:\n    return 'ok'\nEND PATCH_FILE\n"
     result = apply_all_operations(payload, str(tmp_path))
     assert result.success is True
     target = tmp_path / "src" / "app.py"

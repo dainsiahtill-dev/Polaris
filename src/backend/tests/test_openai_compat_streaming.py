@@ -1,52 +1,53 @@
 from __future__ import annotations
 
+from typing import Self
 from unittest.mock import patch
 
-import pytest
 import polaris.infrastructure.llm.providers.openai_compat_provider as openai_provider_module
-from polaris.kernelone.llm.providers import THINKING_PREFIX
+import pytest
 from polaris.infrastructure.llm.providers.openai_compat_provider import OpenAICompatProvider
+from polaris.kernelone.llm.providers import THINKING_PREFIX
 
 
 class _AsyncByteStream:
-    def __init__(self, chunks):
+    def __init__(self, chunks) -> None:
         self._iter = iter(chunks)
 
-    def __aiter__(self):
+    def __aiter__(self) -> Self:
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> str:
         try:
             return next(self._iter)
         except StopIteration:
-            raise StopAsyncIteration
+            raise StopAsyncIteration from None
 
 
 class _FakeStreamResponse:
-    def __init__(self, chunks, status: int = 200, body: str = ""):
+    def __init__(self, chunks, status: int = 200, body: str = "") -> None:
         self.status = status
         self.content = _AsyncByteStream(chunks)
         self._body = body
 
-    async def text(self):
+    async def text(self) -> str:
         return self._body
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: type, exc: BaseException, tb: object) -> None:
         return None
 
 
 class _FakeSession:
-    def __init__(self, *, response=None, error=None):
+    def __init__(self, *, response=None, error=None) -> None:
         self._response = response
         self._error = error
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: type, exc: BaseException, tb: object) -> None:
         return None
 
     def post(self, *args, **kwargs):
@@ -77,8 +78,8 @@ async def test_openai_compat_stream_handles_split_sse_chunks(provider, valid_con
         b'data: {"choices":[{"delta":{"reason',
         b'ing_content":"step-1"}}]}\n\n',
         b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
-        b'data: [DO',
-        b'NE]\n\n',
+        b"data: [DO",
+        b"NE]\n\n",
     ]
     fake_session = _FakeSession(response=_FakeStreamResponse(chunks))
 
@@ -140,7 +141,7 @@ async def test_openai_compat_stream_handles_multiline_sse_event(provider, valid_
 @pytest.mark.asyncio
 async def test_openai_compat_stream_preserves_utf8_when_bytes_split(provider, valid_config, monkeypatch):
     prefix = b'data: {"choices":[{"delta":{"content":"'
-    han = "汉".encode("utf-8")
+    han = "汉".encode()
     suffix = b'"}}]}\n\n'
     chunks = [
         prefix + han[:1],

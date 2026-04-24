@@ -89,7 +89,11 @@ def ensure_required_roles_ready(
     default_roles: list[str] | None = None,
     force_first: str | None = None,
 ) -> None:
-    """Raise 409 if any of the required roles fail the LLM-readiness check."""
+    """Raise 409 if any of the required roles fail the LLM-readiness check.
+
+    Returns a structured error response via JSONResponse to properly format
+    the error details (instead of using HTTPException.detail which expects a string).
+    """
     roles = required_ready_roles(state, default_roles=default_roles, force_first=force_first)
     missing_roles: list[str] = []
     for role in roles:
@@ -98,10 +102,13 @@ def ensure_required_roles_ready(
         except HTTPException:
             missing_roles.append(role)
     if missing_roles:
-        raise HTTPException(
+        # Use structured_error_response for proper JSON formatting
+        # HTTPException.detail expects a string, so we use JSONResponse instead
+        raise StructuredHTTPException(
             status_code=409,
-            detail={
-                "error": "runtime roles not ready",
+            code="RUNTIME_ROLES_NOT_READY",
+            message="One or more required runtime roles are not ready",
+            details={
                 "required_roles": roles,
                 "missing_roles": missing_roles,
             },

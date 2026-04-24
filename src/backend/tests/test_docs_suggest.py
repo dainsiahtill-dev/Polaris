@@ -8,7 +8,7 @@ from polaris.kernelone.llm.engine.contracts import AIResponse, AIStreamEvent
 class _SequenceAIExecutor:
     responses: list[AIResponse] = []
 
-    def __init__(self, workspace: str | None = None):
+    def __init__(self, workspace: str | None = None) -> None:
         self.workspace = workspace
 
     async def invoke(self, request):
@@ -17,7 +17,7 @@ class _SequenceAIExecutor:
 
 
 class _PreviewStreamExecutor:
-    def __init__(self, workspace: str | None = None):
+    def __init__(self, workspace: str | None = None) -> None:
         self.workspace = workspace
 
     async def invoke_stream(self, request):

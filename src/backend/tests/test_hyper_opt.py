@@ -17,6 +17,7 @@ def test_arrow_fallback():
         result = service.to_arrow_ipc(data)
         assert result is None
 
+
 def test_code_parser_fallback():
     parser = get_code_parser()
 
@@ -32,10 +33,12 @@ def test_code_parser_fallback():
         assert result["parsed"] is False
         assert result["reason"] == "unsupported_or_missing_lib"
 
+
 def test_parser_unsupported_ext():
     parser = get_code_parser()
     result = parser.parse_file("some txt", ".txt")
     assert result["parsed"] is False
+
 
 def test_quality_service():
     svc = get_quality_service()
@@ -47,6 +50,7 @@ def test_quality_service():
         assert "success" in res
     else:
         assert res["success"] is False
+
 
 def test_search_service():
     """Catalog-backed search: graph-derived descriptors, not Tantivy."""

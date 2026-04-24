@@ -132,7 +132,7 @@ class ObserverState:
             return text
         if max_chars <= 3:
             return text[:max_chars]
-        return f"{text[:max_chars - 3]}..."
+        return f"{text[: max_chars - 3]}..."
 
     @staticmethod
     def _safe_non_negative_int(value: Any) -> int:
@@ -183,8 +183,7 @@ class ObserverState:
 
         lines = raw_patch.split("\n")
         has_unified_markers = any(
-            line.startswith("@@") or line.startswith("+++ ") or line.startswith("--- ")
-            for line in lines
+            line.startswith("@@") or line.startswith("+++ ") or line.startswith("--- ") for line in lines
         )
 
         if not has_unified_markers:
@@ -195,10 +194,7 @@ class ObserverState:
             lines = lines[:max_lines]
             lines.append("... [diff truncated]")
 
-        return [
-            self._truncate_line_for_viewport(line, max_chars=PROJECTION_EVENT_LINE_MAX_CHARS)
-            for line in lines
-        ]
+        return [self._truncate_line_for_viewport(line, max_chars=PROJECTION_EVENT_LINE_MAX_CHARS) for line in lines]
 
     @staticmethod
     def _diff_line_style(line: str) -> str:
@@ -522,11 +518,7 @@ class ObserverState:
         spinner = spinner_frames[frame_idx]
 
         role = self.llm_request_role or "unknown"
-        elapsed = (
-            time.monotonic() - self.llm_request_timestamp
-            if self.llm_request_timestamp > 0.0
-            else 0.0
-        )
+        elapsed = time.monotonic() - self.llm_request_timestamp if self.llm_request_timestamp > 0.0 else 0.0
         if elapsed < 1:
             time_str = f"{int(elapsed * 1000)}ms"
         elif elapsed < 60:
@@ -623,7 +615,7 @@ class ObserverState:
                     continue
                 tool_name = str(row.get("tool_name") or "").strip()
                 has_result = False
-                for newer in recent_rows[len(recent_rows) - idx - 1:]:
+                for newer in recent_rows[len(recent_rows) - idx - 1 :]:
                     newer_event = str(newer.get("event_type") or "").strip().lower()
                     if newer_event != "tool_result":
                         continue
@@ -654,7 +646,9 @@ class ObserverState:
     def _render_reasoning(self) -> Panel:
         """渲染推理面板 - 结构化展示工具调用和结果。"""
         if not self.projection_enabled:
-            return Panel(Text("Projection disabled", style="dim"), title="[bold]Reasoning[/bold]", border_style="grey50")
+            return Panel(
+                Text("Projection disabled", style="dim"), title="[bold]Reasoning[/bold]", border_style="grey50"
+            )
 
         sections: list[Any] = []
         sections.append(Text("═" * 72, style="cyan dim"))
@@ -813,7 +807,7 @@ class ObserverState:
                         item_str = str(item)
                         if len(item_str) > 60:
                             item_str = item_str[:57] + "..."
-                        sections.append(Text(f"        {idx+1}. {item_str}", style="dim"))
+                        sections.append(Text(f"        {idx + 1}. {item_str}", style="dim"))
                     if len(value) > 3:
                         sections.append(Text(f"        ... 等 {len(value) - 3} 项", style="dim italic"))
                 elif isinstance(value, dict):
@@ -830,7 +824,7 @@ class ObserverState:
                 item_str = str(item)
                 if len(item_str) > 60:
                     item_str = item_str[:57] + "..."
-                sections.append(Text(f"        {idx+1}. {item_str}", style="dim"))
+                sections.append(Text(f"        {idx + 1}. {item_str}", style="dim"))
             if len(result) > 3:
                 sections.append(Text(f"        ... 等 {len(result) - 3} 项", style="dim italic"))
 
@@ -951,12 +945,8 @@ class ObserverState:
                 str(nested.get("phase") or "").strip().lower(),
             ]
             joined_state = " ".join(token for token in state_candidates if token)
-            is_running = bool(role_status.get("running")) or any(
-                token in joined_state for token in running_tokens
-            )
-            has_error = bool(role_status.get("error")) or any(
-                token in joined_state for token in error_tokens
-            )
+            is_running = bool(role_status.get("running")) or any(token in joined_state for token in running_tokens)
+            has_error = bool(role_status.get("error")) or any(token in joined_state for token in error_tokens)
 
             if has_error:
                 new_status = "error"
@@ -1049,7 +1039,9 @@ class ObserverState:
     def _render_projection(self) -> Panel:
         """渲染投影面板 - 各章节限定高度防止溢出。"""
         if not self.projection_enabled:
-            return Panel(Text("Projection disabled", style="dim"), title="[bold]Projection[/bold]", border_style="grey50")
+            return Panel(
+                Text("Projection disabled", style="dim"), title="[bold]Projection[/bold]", border_style="grey50"
+            )
 
         sections: list[Any] = []
 
@@ -1113,7 +1105,9 @@ class ObserverState:
                     taskboard_lines.append(Text(f"  └─{line}", style="blue"))
         else:
             taskboard_lines.append(Text("  ⏳ 等待任务看板数据...", style="dim"))
-            taskboard_lines.append(Text("  提示: Architect 阶段通常仅产出方案，待 PM/Director 阶段后会出现 Todos。", style="dim"))
+            taskboard_lines.append(
+                Text("  提示: Architect 阶段通常仅产出方案，待 PM/Director 阶段后会出现 Todos。", style="dim")
+            )
         sections.extend(self._limit_section_lines(taskboard_lines, max_lines=8))
 
         sections.append(Text(""))
@@ -1181,7 +1175,9 @@ class ObserverState:
                 kind = str(item.get("kind") or "event")
                 detail = str(item.get("detail") or "")
                 icon, label, style = _runtime_event_visual(kind)
-                rendered = self._truncate_line_for_viewport(f"[{timestamp}] {icon} {label}: {detail}", max_chars=PROJECTION_EVENT_LINE_MAX_CHARS)
+                rendered = self._truncate_line_for_viewport(
+                    f"[{timestamp}] {icon} {label}: {detail}", max_chars=PROJECTION_EVENT_LINE_MAX_CHARS
+                )
                 runtime_lines.append(Text(f"  {rendered}", style=style))
         else:
             runtime_lines.append(Text("  ⏳ 暂无运行时事件...", style="dim"))
@@ -1240,7 +1236,9 @@ class ObserverState:
         else:
             self.last_status = f"failed with exit code {exit_code}"
 
-    def update_projection(self, *, connected: bool, transport_used: str, error: str, panels: dict[str, list[dict[str, Any]]]) -> None:
+    def update_projection(
+        self, *, connected: bool, transport_used: str, error: str, panels: dict[str, list[dict[str, Any]]]
+    ) -> None:
         """更新投影数据。"""
         self.projection_connected = bool(connected)
         self.projection_transport_used = str(transport_used or "none")
@@ -1403,7 +1401,9 @@ class ObserverState:
         for line in list(self.projection_dialogue)[-4:]:
             self.projection_events.append(
                 {
-                    "timestamp": self._normalize_timestamp(str(line[1:9] if len(line) > 9 and line.startswith("[") else "")),
+                    "timestamp": self._normalize_timestamp(
+                        str(line[1:9] if len(line) > 9 and line.startswith("[") else "")
+                    ),
                     "kind": "dialogue",
                     "detail": line,
                 }
@@ -1411,7 +1411,9 @@ class ObserverState:
         for line in list(self.projection_tools)[-4:]:
             self.projection_events.append(
                 {
-                    "timestamp": self._normalize_timestamp(str(line[1:9] if len(line) > 9 and line.startswith("[") else "")),
+                    "timestamp": self._normalize_timestamp(
+                        str(line[1:9] if len(line) > 9 and line.startswith("[") else "")
+                    ),
                     "kind": "tool_activity",
                     "detail": line,
                 }

@@ -144,35 +144,53 @@ class CodexSDKProvider(BaseProvider):
         warnings: list[str] = []
         normalized = dict(config)
 
-        base_url = str(config.get("base_url") or "").strip()
-        if base_url:
-            normalized["base_url"] = base_url
-        else:
-            warnings.append("base_url is empty; default SDK endpoint will be used")
+        if config is None:
+            errors.append("config cannot be None")
+            return ValidationResult(
+                valid=False,
+                errors=errors,
+                warnings=warnings,
+                normalized_config=normalized,
+            )
 
-        timeout = _normalize_timeout(config.get("timeout"), 60)
-        if timeout != config.get("timeout"):
-            warnings.append("Invalid timeout, using default 60")
-        normalized["timeout"] = timeout
+        try:
+            base_url = str(config.get("base_url") or "").strip()
+            if base_url:
+                normalized["base_url"] = base_url
+            else:
+                warnings.append("base_url is empty; default SDK endpoint will be used")
 
-        max_retries = _normalize_retries(config.get("max_retries"), DEFAULT_MAX_RETRIES)
-        if max_retries != config.get("max_retries"):
-            warnings.append(f"Invalid max_retries, using default {DEFAULT_MAX_RETRIES}")
-        normalized["max_retries"] = max_retries
+            timeout = _normalize_timeout(config.get("timeout"), 60)
+            if timeout != config.get("timeout"):
+                warnings.append("Invalid timeout, using default 60")
+            normalized["timeout"] = timeout
 
-        headers = _normalize_headers(config.get("headers"))
-        if headers is None and config.get("headers") is not None:
-            warnings.append("Headers should be a dictionary")
-        if headers is not None:
-            normalized["headers"] = headers
+            max_retries = _normalize_retries(config.get("max_retries"), DEFAULT_MAX_RETRIES)
+            if max_retries != config.get("max_retries"):
+                warnings.append(f"Invalid max_retries, using default {DEFAULT_MAX_RETRIES}")
+            normalized["max_retries"] = max_retries
 
-        if not config.get("api_key") and not config.get("api_key_ref"):
-            warnings.append("api_key is empty; provider will require a key at runtime")
+            headers = _normalize_headers(config.get("headers"))
+            if headers is None and config.get("headers") is not None:
+                warnings.append("Headers should be a dictionary")
+            if headers is not None:
+                normalized["headers"] = headers
 
-        sdk_params = config.get("sdk_params")
-        if sdk_params is not None and not isinstance(sdk_params, dict):
-            warnings.append("sdk_params should be a dictionary")
-            normalized["sdk_params"] = {}
+            if not config.get("api_key") and not config.get("api_key_ref"):
+                warnings.append("api_key is empty; provider will require a key at runtime")
+
+            sdk_params = config.get("sdk_params")
+            if sdk_params is not None and not isinstance(sdk_params, dict):
+                warnings.append("sdk_params should be a dictionary")
+                normalized["sdk_params"] = {}
+
+            # Test SDK configuration validity
+            try:
+                _build_sdk_config(config)
+            except (ValueError, TypeError) as e:
+                errors.append(f"Invalid SDK configuration: {e}")
+        except (ValueError, TypeError, AttributeError) as e:
+            errors.append(f"Configuration validation failed: {e}")
 
         return ValidationResult(
             valid=len(errors) == 0,

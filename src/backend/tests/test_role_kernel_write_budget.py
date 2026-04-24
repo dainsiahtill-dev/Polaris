@@ -19,7 +19,7 @@ def test_director_default_write_budget_splits_excess_calls(tmp_path) -> None:
         _call("edit_file", file="e.py", search="x", replace="z"),
     ]
 
-    executable, deferred, limit = kernel._split_tool_calls_by_write_budget("director", calls)  # noqa: SLF001
+    executable, deferred, limit = kernel._split_tool_calls_by_write_budget("director", calls)
 
     assert limit == 3
     assert [c.tool for c in executable] == [
@@ -40,7 +40,7 @@ def test_role_write_budget_env_override(monkeypatch, tmp_path) -> None:
         _call("write_file", file="c.py", content="c"),
     ]
 
-    executable, deferred, limit = kernel._split_tool_calls_by_write_budget("director", calls)  # noqa: SLF001
+    executable, deferred, limit = kernel._split_tool_calls_by_write_budget("director", calls)
 
     assert limit == 1
     assert [c.tool for c in executable] == ["write_file"]
@@ -54,7 +54,7 @@ def test_non_director_has_no_write_budget_by_default(tmp_path) -> None:
         _call("write_file", file="b.py", content="b"),
     ]
 
-    executable, deferred, limit = kernel._split_tool_calls_by_write_budget("pm", calls)  # noqa: SLF001
+    executable, deferred, limit = kernel._split_tool_calls_by_write_budget("pm", calls)
 
     assert limit == 0
     assert len(executable) == 2

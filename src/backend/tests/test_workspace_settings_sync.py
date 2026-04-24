@@ -4,16 +4,14 @@ import json
 import os
 from pathlib import Path
 
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.cells.policy.workspace_guard.service import SELF_UPGRADE_MODE_ENV, get_meta_project_root
 from polaris.cells.storage.layout.internal.settings_utils import get_settings_path, load_persisted_settings
 from polaris.delivery.http.app_factory import create_app
 
 
-def test_settings_route_updates_workspace_env_and_persists_workspace(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_settings_route_updates_workspace_env_and_persists_workspace(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-settings-token"
     workspace_a = tmp_path / "workspace-a"
     workspace_b = tmp_path / "workspace-b"
@@ -41,9 +39,7 @@ def test_settings_route_updates_workspace_env_and_persists_workspace(
     os.environ.pop("KERNELONE_WORKSPACE", None)
 
 
-def test_load_persisted_settings_recovers_workspace_local_settings(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_load_persisted_settings_recovers_workspace_local_settings(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     workspace_settings_path = workspace / ".polaris" / "settings.json"
@@ -66,9 +62,7 @@ def test_load_persisted_settings_recovers_workspace_local_settings(
     assert Path(str(persisted["workspace"])).resolve() == workspace.resolve()
 
 
-def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-settings-token"
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -91,9 +85,7 @@ def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(
     os.environ.pop(SELF_UPGRADE_MODE_ENV, None)
 
 
-def test_settings_route_allows_meta_project_workspace_with_self_upgrade(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_settings_route_allows_meta_project_workspace_with_self_upgrade(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-settings-token"
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -121,4 +113,3 @@ def test_settings_route_allows_meta_project_workspace_with_self_upgrade(
     assert os.environ.get(SELF_UPGRADE_MODE_ENV) == "1"
     os.environ.pop("KERNELONE_WORKSPACE", None)
     os.environ.pop(SELF_UPGRADE_MODE_ENV, None)
-

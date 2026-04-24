@@ -102,25 +102,26 @@ class BackendLaunchRequest:
                 ConfigValidationResult as ValidationResult,
             )
         except ImportError:
-            # Simple fallback
-            class SimpleValidationResult:  # type: ignore
+            # Simple fallback when polaris.domain.models is unavailable
+            # (e.g., standalone usage or circular import during testing)
+            class SimpleValidationResult:  # type: ignore[misc,assignment]
                 def __init__(self) -> None:
                     self.is_valid: bool = True
                     self.errors: list[str] = []
                     self.warnings: list[str] = []
 
-                def add_error(self, msg: str) -> SimpleValidationResult:
+                def add_error(self, msg: str) -> "SimpleValidationResult":
                     self.is_valid = False
                     self.errors.append(msg)
                     return self
 
-                def add_warning(self, msg: str) -> SimpleValidationResult:
+                def add_warning(self, msg: str) -> "SimpleValidationResult":
                     self.warnings.append(msg)
                     return self
 
-            validation_result = SimpleValidationResult  # type: ignore[misc,assignment]
+            ValidationResult = SimpleValidationResult  # type: ignore[misc,assignment]
 
-        result = validation_result()
+        result = ValidationResult()
 
         # Check port range
         if self.port < 0 or self.port > 65535:

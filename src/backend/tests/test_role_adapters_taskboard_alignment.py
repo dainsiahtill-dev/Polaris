@@ -91,10 +91,11 @@ async def test_director_adapter_disables_internal_tool_rounds_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
+
     adapter = DirectorAdapter(workspace=str(tmp_path))
     captured_context: dict[str, Any] = {}
 
-    async def _fake_generate_role_response(*, context=None, **kwargs):  # noqa: ANN001
+    async def _fake_generate_role_response(*, context=None, **kwargs):
         del kwargs
         captured_context.clear()
         if isinstance(context, dict):
@@ -116,10 +117,11 @@ async def test_director_adapter_can_enable_internal_tool_rounds_via_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
+
     adapter = DirectorAdapter(workspace=str(tmp_path))
     captured_context: dict[str, Any] = {}
 
-    async def _fake_generate_role_response(*, context=None, **kwargs):  # noqa: ANN001
+    async def _fake_generate_role_response(*, context=None, **kwargs):
         del kwargs
         captured_context.clear()
         if isinstance(context, dict):
@@ -211,11 +213,7 @@ def test_director_taskboard_snapshot_surfaces_running_task_without_duplicate_rea
 
     assert int(counts.get("in_progress") or 0) == 1
     in_progress_samples = samples.get("in_progress", [])
-    in_progress_ids = {
-        str(item.get("id") or "")
-        for item in in_progress_samples
-        if isinstance(item, dict)
-    }
+    in_progress_ids = {str(item.get("id") or "") for item in in_progress_samples if isinstance(item, dict)}
     assert str(running_task.id) in in_progress_ids
 
     all_sample_ids = [
@@ -266,7 +264,7 @@ def test_pm_adapter_preserves_execution_backend_metadata_on_board_tasks(tmp_path
 async def test_pm_adapter_pm_stage_creates_tasks_with_current_taskboard_api(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {
             "content": "- 建立记账模型: 定义交易实体与校验\n- 增加统计接口: 汇总月度支出\n",
@@ -287,17 +285,13 @@ async def test_pm_adapter_pm_stage_creates_tasks_with_current_taskboard_api(tmp_
     artifacts = result.get("artifacts")
     assert isinstance(artifacts, list)
     assert any(
-        str(item).replace("\\", "/").endswith("runtime/signals/pm_planning.pm.signals.json")
-        for item in artifacts
+        str(item).replace("\\", "/").endswith("runtime/signals/pm_planning.pm.signals.json") for item in artifacts
     )
     pm_signal_file = Path(resolve_runtime_path(str(tmp_path), "runtime/signals/pm_planning.pm.signals.json"))
     payload = json.loads(pm_signal_file.read_text(encoding="utf-8"))
     rows = payload.get("signals") if isinstance(payload, dict) else []
     assert isinstance(rows, list)
-    assert any(
-        isinstance(item, dict) and str(item.get("code") or "") == "pm.execution.summary"
-        for item in rows
-    )
+    assert any(isinstance(item, dict) and str(item.get("code") or "") == "pm.execution.summary" for item in rows)
     board_tasks = adapter.task_board.list_all()
     assert len(board_tasks) >= 2
     assert all(task.subject for task in board_tasks)
@@ -307,9 +301,9 @@ async def test_pm_adapter_pm_stage_creates_tasks_with_current_taskboard_api(tmp_
 async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contracts(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
-        return {"content": "[TOOL_CALL]{\"tool_name\":\"noop\"}[/TOOL_CALL]"}
+        return {"content": '[TOOL_CALL]{"tool_name":"noop"}[/TOOL_CALL]'}
 
     adapter._call_role_llm = _fake_call_role_llm  # type: ignore[method-assign]
 
@@ -343,7 +337,7 @@ async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contrac
 async def test_pm_adapter_runtime_exception_is_fail_closed(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
 
-    async def _boom_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _boom_call_role_llm(message: str, context=None):
         del message, context
         raise RuntimeError("llm kernel offline")
 
@@ -364,9 +358,9 @@ def test_pm_adapter_extracts_embedded_json_contracts(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
     response = (
         "下面是任务合同，请执行：\n"
-        "{\"tasks\":[{\"id\":\"TASK-1\",\"title\":\"实现 expense 存储\",\"goal\":\"完成持久化\","
-        "\"description\":\"实现仓储\",\"scope\":\"src/expense\",\"steps\":[\"设计\",\"实现\"],"
-        "\"acceptance\":[\"测试通过\",\"可持久化\"],\"depends_on\":[],\"assigned_to\":\"Director\"}]}\n"
+        '{"tasks":[{"id":"TASK-1","title":"实现 expense 存储","goal":"完成持久化",'
+        '"description":"实现仓储","scope":"src/expense","steps":["设计","实现"],'
+        '"acceptance":["测试通过","可持久化"],"depends_on":[],"assigned_to":"Director"}]}\n'
         "以上。"
     )
 
@@ -473,9 +467,9 @@ def test_pm_adapter_synthesized_contracts_are_execution_ready(tmp_path: Path) ->
 async def test_pm_adapter_recovers_with_synthesized_contracts_when_unparseable(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
-        return {"content": "[TOOL_CALL]{\"tool_name\":\"list_directory\",\"path\":\".\"}[/TOOL_CALL]"}
+        return {"content": '[TOOL_CALL]{"tool_name":"list_directory","path":"."}[/TOOL_CALL]'}
 
     adapter._call_role_llm = _fake_call_role_llm  # type: ignore[method-assign]
 
@@ -489,8 +483,7 @@ async def test_pm_adapter_recovers_with_synthesized_contracts_when_unparseable(t
     assert int(result.get("tasks_created") or 0) >= 3
     signals = (result.get("quality_gate") or {}).get("signals") or []
     assert any(
-        isinstance(item, dict) and str(item.get("code") or "") == "pm.contracts.synthetic_recovery"
-        for item in signals
+        isinstance(item, dict) and str(item.get("code") or "") == "pm.contracts.synthetic_recovery" for item in signals
     )
 
 
@@ -585,16 +578,16 @@ async def test_director_adapter_handles_orchestration_task_without_taskboard_row
     emitted_events: list[dict[str, object]] = []
     llm_call_count = {"value": 0}
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         llm_call_count["value"] += 1
         return {"content": "无需工具调用，已完成分析。", "success": True}
 
-    async def _fake_execute_tools(response: str, task_id: str):  # noqa: ANN001
+    async def _fake_execute_tools(response: str, task_id: str):
         del response, task_id
         return []
 
-    async def _capture_trace_event(**kwargs):  # noqa: ANN003
+    async def _capture_trace_event(**kwargs):
         emitted_events.append(kwargs)
 
     adapter._call_role_llm = _fake_call_role_llm  # type: ignore[method-assign]
@@ -613,11 +606,7 @@ async def test_director_adapter_handles_orchestration_task_without_taskboard_row
     assert bool(result.get("qa_required_for_final_verdict")) is True
     decision_signals = result.get("decision_signals")
     assert isinstance(decision_signals, list)
-    signal_codes = {
-        str(item.get("code") or "")
-        for item in decision_signals
-        if isinstance(item, dict)
-    }
+    signal_codes = {str(item.get("code") or "") for item in decision_signals if isinstance(item, dict)}
     assert "director.no_writable_output_after_retry" in signal_codes
     assert "director.no_code_modifications" in signal_codes
     artifacts = result.get("artifacts")
@@ -643,15 +632,15 @@ async def test_director_adapter_updates_selected_taskboard_row_when_fallback_sel
     )
     emitted_events: list[dict[str, object]] = []
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {"content": "无需工具调用，已完成分析。", "success": True}
 
-    async def _fake_execute_tools(response: str, task_id: str):  # noqa: ANN001
+    async def _fake_execute_tools(response: str, task_id: str):
         del response, task_id
         return []
 
-    async def _capture_trace_event(**kwargs):  # noqa: ANN003
+    async def _capture_trace_event(**kwargs):
         emitted_events.append(kwargs)
 
     adapter._call_role_llm = _fake_call_role_llm  # type: ignore[method-assign]
@@ -690,13 +679,13 @@ async def test_director_adapter_projection_backend_is_explicit_and_optional(
     adapter = DirectorAdapter(workspace=str(tmp_path))
     emitted_events: list[dict[str, object]] = []
 
-    async def _capture_trace_event(**kwargs):  # noqa: ANN003
+    async def _capture_trace_event(**kwargs):
         emitted_events.append(kwargs)
 
-    async def _unexpected_call_role_llm(*args, **kwargs):  # noqa: ANN001, ANN003
+    async def _unexpected_call_role_llm(*args, **kwargs):
         raise AssertionError("code-edit LLM path should not run for projection backend")
 
-    def _fake_projection_execute(self, request):  # noqa: ANN001
+    def _fake_projection_execute(self, request):
         assert request.execution_backend == "projection_generate"
         assert request.scenario_id == "scenario_alpha"
         return {
@@ -758,13 +747,13 @@ async def test_director_adapter_projection_refresh_fails_closed_without_experime
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
 
-    async def _capture_trace_event(**kwargs):  # noqa: ANN003
+    async def _capture_trace_event(**kwargs):
         return None
 
-    async def _unexpected_call_role_llm(*args, **kwargs):  # noqa: ANN001, ANN003
+    async def _unexpected_call_role_llm(*args, **kwargs):
         raise AssertionError("code-edit LLM path should not run for projection backend")
 
-    def _raise_missing_experiment_id(self, request):  # noqa: ANN001
+    def _raise_missing_experiment_id(self, request):
         del request
         raise ValueError("projection_refresh_mapping requires experiment_id")
 
@@ -789,6 +778,7 @@ async def test_director_adapter_projection_refresh_fails_closed_without_experime
     assert result.get("error_code") == "director.execution_backend.failed"
     assert "experiment_id" in str(result.get("error") or "")
 
+
 @pytest.mark.asyncio
 async def test_director_execute_tools_handles_non_mapping_arguments(
     monkeypatch: pytest.MonkeyPatch,
@@ -803,7 +793,7 @@ async def test_director_execute_tools_handles_non_mapping_arguments(
             self.name = "write_file"
             self.arguments = ["invalid"]
 
-    def _fake_parse_tool_calls(*args, **kwargs):  # noqa: ANN002, ANN003
+    def _fake_parse_tool_calls(*args, **kwargs):
         del args, kwargs
         return [_DummyToolCall()]
 
@@ -821,12 +811,12 @@ async def test_director_adapter_retries_when_first_turn_has_no_tool_calls(tmp_pa
     adapter = DirectorAdapter(workspace=str(tmp_path))
     call_count = {"value": 0}
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         call_count["value"] += 1
         return {"content": "已完成分析，请继续。", "success": True}
 
-    async def _fake_execute_tools(response: str, task_id: str):  # noqa: ANN001
+    async def _fake_execute_tools(response: str, task_id: str):
         del response, task_id
         return []
 
@@ -843,11 +833,7 @@ async def test_director_adapter_retries_when_first_turn_has_no_tool_calls(tmp_pa
     assert call_count["value"] == 2
     decision_signals = result.get("decision_signals")
     assert isinstance(decision_signals, list)
-    details = [
-        str(item.get("detail") or "")
-        for item in decision_signals
-        if isinstance(item, dict)
-    ]
+    details = [str(item.get("detail") or "") for item in decision_signals if isinstance(item, dict)]
     assert any("fast_fail=consecutive_no_tool_calls" in detail for detail in details)
 
 
@@ -856,7 +842,7 @@ async def test_director_adapter_force_retry_can_recover_with_write_output(tmp_pa
     adapter = DirectorAdapter(workspace=str(tmp_path))
     call_count = {"value": 0}
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del context
         call_count["value"] += 1
         if "最后机会" in message:
@@ -865,11 +851,11 @@ async def test_director_adapter_force_retry_can_recover_with_write_output(tmp_pa
                 "success": True,
             }
         return {
-            "content": "[TOOL_CALL] {\"name\": \"list_directory\", \"arguments\": {\"path\": \".\"}} [/TOOL_CALL]",
+            "content": '[TOOL_CALL] {"name": "list_directory", "arguments": {"path": "."}} [/TOOL_CALL]',
             "success": True,
         }
 
-    async def _fake_execute_tools(response: str, task_id: str):  # noqa: ANN001
+    async def _fake_execute_tools(response: str, task_id: str):
         del task_id
         if "PATCH_FILE:" in response:
             target = tmp_path / "src" / "expense" / "core.py"
@@ -913,7 +899,7 @@ async def test_director_adapter_falls_back_when_kernel_tool_results_are_unsucces
         metadata={"scope": "src/expense, tests/", "steps": ["实现模型", "添加测试"]},
     )
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {
             "content": "PATCH_FILE: src/expense/model.py\nEND PATCH_FILE",
@@ -932,7 +918,7 @@ async def test_director_adapter_falls_back_when_kernel_tool_results_are_unsucces
 
     fallback_calls = {"value": 0}
 
-    async def _fake_execute_tools(response: str, task_id: str):  # noqa: ANN001
+    async def _fake_execute_tools(response: str, task_id: str):
         del response, task_id
         fallback_calls["value"] += 1
         target = tmp_path / "src" / "expense" / "model.py"
@@ -980,7 +966,7 @@ async def test_director_call_role_llm_uses_default_kernel_retry_budget(
 
     captured = {"max_retries": None}
 
-    async def _fake_generate_role_response(**kwargs):  # noqa: ANN003
+    async def _fake_generate_role_response(**kwargs):
         captured["max_retries"] = kwargs.get("max_retries")
         return {"response": "ok"}
 
@@ -1004,7 +990,7 @@ async def test_director_call_role_llm_honors_retry_budget_env(
 
     captured = {"max_retries": None}
 
-    async def _fake_generate_role_response(**kwargs):  # noqa: ANN003
+    async def _fake_generate_role_response(**kwargs):
         captured["max_retries"] = kwargs.get("max_retries")
         return {"response": "ok"}
 
@@ -1027,7 +1013,7 @@ async def test_director_call_role_llm_marks_error_response_as_failed(
     config_module = bootstrap_config_module
     from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
 
-    async def _fake_generate_role_response(**kwargs):  # noqa: ANN003
+    async def _fake_generate_role_response(**kwargs):
         del kwargs
         return {"response": "[ROLE_EXECUTION_ERROR] 验证失败", "error": "验证失败"}
 
@@ -1047,7 +1033,7 @@ async def test_director_call_role_llm_with_timeout_returns_recoverable_error(
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
 
-    async def _slow_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _slow_call_role_llm(message: str, context=None):
         del message, context
         await asyncio.sleep(0.25)
         return {"content": "never_reached", "success": True}
@@ -1074,7 +1060,7 @@ async def test_director_call_role_llm_with_timeout_normalizes_non_mapping_payloa
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
 
-    async def _invalid_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _invalid_call_role_llm(message: str, context=None):
         del message, context
         return ["invalid_payload"]
 
@@ -1115,6 +1101,7 @@ async def test_director_adapter_emits_trace_on_first_call_format_failure(
 
     def _make_fake_execute_sequential(adapter_obj):
         """Factory that captures adapter in a closure so self is not needed."""
+
         async def _fake_execute_sequential(
             task,
             task_id,
@@ -1151,9 +1138,10 @@ async def test_director_adapter_emits_trace_on_first_call_format_failure(
                 "error": "验证失败，已重试1次: 未找到有效的JSON或补丁",
                 "mode": "sequential",
             }
+
         return _fake_execute_sequential
 
-    async def _capture_trace_event(**kwargs):  # noqa: ANN003
+    async def _capture_trace_event(**kwargs):
         emitted_events.append(kwargs)
 
     adapter._execute_sequential = _make_fake_execute_sequential(adapter)  # type: ignore[method-assign]
@@ -1181,7 +1169,7 @@ async def test_director_adapter_allows_retry_after_first_call_format_failure(
 ) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
 
-    async def _fake_call_role_llm_with_timeout(  # noqa: ANN001
+    async def _fake_call_role_llm_with_timeout(
         message: str,
         *,
         context=None,
@@ -1212,7 +1200,7 @@ async def test_director_adapter_allows_retry_after_first_call_format_failure(
             "raw_response": {"error": f"unexpected_stage:{stage_label}"},
         }
 
-    async def _fake_execute_tools(response: str, task_id: str):  # noqa: ANN001
+    async def _fake_execute_tools(response: str, task_id: str):
         del task_id
         if response != "RETRY_PATCH_PAYLOAD":
             return []
@@ -1259,11 +1247,7 @@ async def test_director_adapter_allows_retry_after_first_call_format_failure(
     assert result["success"] is True
     decision_signals = result.get("decision_signals")
     assert isinstance(decision_signals, list)
-    signal_codes = {
-        str(item.get("code") or "")
-        for item in decision_signals
-        if isinstance(item, dict)
-    }
+    signal_codes = {str(item.get("code") or "") for item in decision_signals if isinstance(item, dict)}
     assert "director.first_call.format_validation_failed" in signal_codes
     assert "director.runtime.exception" not in signal_codes
     assert (tmp_path / "src" / "expense" / "role_agent_service.py").exists()
@@ -1277,7 +1261,7 @@ async def test_director_adapter_defers_sparse_heuristic_to_qa_without_retry_bloc
     adapter = DirectorAdapter(workspace=str(tmp_path))
     emitted_events: list[dict[str, object]] = []
 
-    async def _fake_call_role_llm_with_timeout(  # noqa: ANN001
+    async def _fake_call_role_llm_with_timeout(
         message: str,
         *,
         context=None,
@@ -1308,7 +1292,7 @@ async def test_director_adapter_defers_sparse_heuristic_to_qa_without_retry_bloc
             "raw_response": {"error": f"unexpected_stage:{stage_label}"},
         }
 
-    async def _fake_execute_tools(response: str, task_id: str):  # noqa: ANN001
+    async def _fake_execute_tools(response: str, task_id: str):
         del task_id
         if response == "FIRST_PATCH_PAYLOAD":
             target = tmp_path / "src" / "expense" / "single_file.py"
@@ -1327,7 +1311,7 @@ async def test_director_adapter_defers_sparse_heuristic_to_qa_without_retry_bloc
             ]
         return []
 
-    async def _capture_trace_event(**kwargs):  # noqa: ANN003
+    async def _capture_trace_event(**kwargs):
         emitted_events.append(kwargs)
 
     adapter._call_role_llm_with_timeout = _fake_call_role_llm_with_timeout  # type: ignore[method-assign]
@@ -1356,7 +1340,7 @@ async def test_director_adapter_defers_sparse_heuristic_to_qa_without_retry_bloc
 async def test_qa_adapter_quality_gate_fails_when_critical_issues_present(tmp_path: Path) -> None:
     adapter = QAAdapter(workspace=str(tmp_path))
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {
             "content": (
@@ -1389,7 +1373,7 @@ async def test_qa_adapter_reopens_completed_director_task_on_fail(tmp_path: Path
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": None}},
     )
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {
             "content": (
@@ -1441,7 +1425,7 @@ async def test_qa_adapter_marks_failed_when_rework_retry_exhausted(
         },
     )
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {
             "content": (
@@ -1493,14 +1477,10 @@ def test_director_taskboard_snapshot_includes_rework_and_exhausted_states(tmp_pa
     pending_samples = snapshot.get("samples", {}).get("pending", [])
     failed_samples = snapshot.get("samples", {}).get("failed", [])
     pending_states = {
-        str(item.get("id") or ""): str(item.get("qa_state") or "")
-        for item in pending_samples
-        if isinstance(item, dict)
+        str(item.get("id") or ""): str(item.get("qa_state") or "") for item in pending_samples if isinstance(item, dict)
     }
     failed_states = {
-        str(item.get("id") or ""): str(item.get("qa_state") or "")
-        for item in failed_samples
-        if isinstance(item, dict)
+        str(item.get("id") or ""): str(item.get("qa_state") or "") for item in failed_samples if isinstance(item, dict)
     }
 
     assert pending_states.get(str(pending_rework.id)) == "rework"
@@ -1538,7 +1518,7 @@ def test_qa_adapter_filters_stale_stage_signals_by_run_id(tmp_path: Path) -> Non
 async def test_qa_adapter_warns_when_llm_output_is_not_json(tmp_path: Path) -> None:
     adapter = QAAdapter(workspace=str(tmp_path))
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {
             "content": "结论：看起来还可以，但我不返回 JSON。",
@@ -1565,34 +1545,34 @@ async def test_qa_adapter_warns_when_llm_output_is_not_json(tmp_path: Path) -> N
 async def test_qa_adapter_recovers_fail_verdict_from_commented_json_findings(tmp_path: Path) -> None:
     adapter = QAAdapter(workspace=str(tmp_path))
 
-    async def _fake_call_role_llm(message: str, context=None):  # noqa: ANN001
+    async def _fake_call_role_llm(message: str, context=None):
         del message, context
         return {
             "content": (
-                '<output>\n```json\n{\n'
+                "<output>\n```json\n{\n"
                 '  "review_id": "REV-002-20260323",\n'
                 '  "verdict": "FAIL",\n'
                 '  "score": 41,\n'
                 '  "summary": "验收不通过 - 缺少测试与关键实现",\n'
                 '  "findings": [\n'
-                '    {\n'
+                "    {\n"
                 '      "severity": "critical",\n'
                 '      "description": "缺少任何测试文件",\n'
                 '      "evidence": "test_file_count=0",\n'
                 '      "recommendation": "补齐单元测试"\n'
-                '    },\n'
-                '    {\n'
+                "    },\n"
+                "    {\n"
                 '      "severity": "high",\n'
                 '      "description": "缺少本地持久化关键验证",\n'
                 '      "evidence": "persistence verification missing",\n'
                 '      "recommendation": "补充持久化验证"\n'
-                '    }\n'
-                '  ],\n'
+                "    }\n"
+                "  ],\n"
                 '  "checklist_results": {\n'
                 '    "code_style_compliant": true, // trailing comment from model\n'
                 '    "documentation_complete": false\n'
-                '  }\n'
-                '}\n```\n'
+                "  }\n"
+                "}\n```\n"
             ),
             "success": True,
         }

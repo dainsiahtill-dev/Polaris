@@ -17,9 +17,7 @@ def _write_pm_contract(
     run_id: str,
     task_id: str,
 ) -> None:
-    contract_path = Path(
-        resolve_artifact_path(str(workspace), cache_root, DEFAULT_PM_OUT)
-    )
+    contract_path = Path(resolve_artifact_path(str(workspace), cache_root, DEFAULT_PM_OUT))
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     contract_path.write_text(
         json.dumps(
@@ -86,5 +84,3 @@ def test_status_payload_snapshot_uses_ws_workspace_context(tmp_path: Path) -> No
     tasks = snapshot.get("tasks")
     assert isinstance(tasks, list) and tasks
     assert str(tasks[0].get("id") or "").strip() == "task-target"
-
-

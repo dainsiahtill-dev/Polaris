@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 
 import pytest
-from polaris.bootstrap.config import Settings, SettingsUpdate
 from fastapi import HTTPException
+from polaris.bootstrap.config import Settings, SettingsUpdate
 from polaris.cells.policy.workspace_guard.service import (
     SELF_UPGRADE_MODE_ENV,
     get_meta_project_root,
@@ -147,4 +147,3 @@ def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) 
         "KERNELONE_NATS_STREAM_NAME",
     ):
         os.environ.pop(name, None)
-

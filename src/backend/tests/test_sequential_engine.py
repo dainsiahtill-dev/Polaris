@@ -85,7 +85,7 @@ class TestSequentialStateProxy:
         # phase is not in RESERVED_KEYS but workflow_state is
         # Let's check that reserved key is blocked - the state should remain unchanged
         # Since SeqState doesn't have 'phase' attribute, it won't be written
-        assert not hasattr(state, 'phase') or state.phase is None
+        assert not hasattr(state, "phase") or state.phase is None
 
 
 class TestSeqProgressDetector:
@@ -132,27 +132,25 @@ class TestTerminationMapping:
         engine._state = SeqState()
         engine._state.termination_reason = TerminationReason.SEQ_COMPLETED.value
 
-        failure_class, retry_hint = engine._map_termination_to_action(
-            TerminationReason.SEQ_COMPLETED.value
-        )
+        failure_class, retry_hint = engine._map_termination_to_action(TerminationReason.SEQ_COMPLETED.value)
 
         assert failure_class == FailureClass.SUCCESS
         assert retry_hint == RetryHint.HANDOFF
 
     def test_no_progress_mapping(self):
         """Test SEQ_NO_PROGRESS maps to STAGNATION."""
-        failure_class, retry_hint = SequentialEngine(
-            workspace="/test"
-        )._map_termination_to_action(TerminationReason.SEQ_NO_PROGRESS.value)
+        failure_class, retry_hint = SequentialEngine(workspace="/test")._map_termination_to_action(
+            TerminationReason.SEQ_NO_PROGRESS.value
+        )
 
         assert failure_class == FailureClass.RETRYABLE
         assert retry_hint == RetryHint.STAGNATION
 
     def test_budget_exhausted_mapping(self):
         """Test SEQ_BUDGET_EXHAUSTED maps to ESCALATE."""
-        failure_class, retry_hint = SequentialEngine(
-            workspace="/test"
-        )._map_termination_to_action(TerminationReason.SEQ_BUDGET_EXHAUSTED.value)
+        failure_class, retry_hint = SequentialEngine(workspace="/test")._map_termination_to_action(
+            TerminationReason.SEQ_BUDGET_EXHAUSTED.value
+        )
 
         assert failure_class == FailureClass.RETRYABLE
         assert retry_hint == RetryHint.ESCALATE
@@ -368,7 +366,7 @@ class TestProgressDetectionEdgeCases:
             expected_progress_signal=["dependency_found"],
         )
 
-        progress, signals = detector.detect_progress(tool_result, decision, SeqState())
+        progress, _ = detector.detect_progress(tool_result, decision, SeqState())
 
         # Should not detect progress when Type-D is disabled
         assert progress is False
@@ -393,21 +391,22 @@ class TestProgressDetectionEdgeCases:
 class TestTerminationMappingComplete:
     """Test all termination reason mappings."""
 
-    @pytest.mark.parametrize("reason,expected_class,expected_hint", [
-        ("seq_completed", "success", "handoff"),
-        ("seq_no_progress", "retryable", "stagnation"),
-        ("seq_budget_exhausted", "retryable", "escalate"),
-        ("seq_tool_fail_recoverable_exhausted", "retryable", "cooldown_retry"),
-        ("seq_output_invalid_exhausted", "validation_fail", "manual_review"),
-        ("seq_reserved_key_violation", "internal_bug", "alert"),
-        ("seq_crash_orphan", "unknown", "audit_recover"),
-        ("seq_error", "unknown", "escalate"),
-    ])
+    @pytest.mark.parametrize(
+        "reason,expected_class,expected_hint",
+        [
+            ("seq_completed", "success", "handoff"),
+            ("seq_no_progress", "retryable", "stagnation"),
+            ("seq_budget_exhausted", "retryable", "escalate"),
+            ("seq_tool_fail_recoverable_exhausted", "retryable", "cooldown_retry"),
+            ("seq_output_invalid_exhausted", "validation_fail", "manual_review"),
+            ("seq_reserved_key_violation", "internal_bug", "alert"),
+            ("seq_crash_orphan", "unknown", "audit_recover"),
+            ("seq_error", "unknown", "escalate"),
+        ],
+    )
     def test_all_termination_mappings(self, reason, expected_class, expected_hint):
         """Test all termination reason mappings."""
-        failure_class, retry_hint = SequentialEngine(
-            workspace="/test"
-        )._map_termination_to_action(reason)
+        failure_class, retry_hint = SequentialEngine(workspace="/test")._map_termination_to_action(reason)
 
         assert failure_class.value == expected_class
         assert retry_hint.value == expected_hint

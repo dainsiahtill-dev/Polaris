@@ -151,9 +151,12 @@ class TestEstimateEta(unittest.TestCase):
         now = datetime.utcnow()
         tasks = [
             TaskProgressItem(
-                "t1", "任务1", "completed", 1.0,
+                "t1",
+                "任务1",
+                "completed",
+                1.0,
                 started_at=(now - timedelta(minutes=5)).isoformat(),
-                completed_at=now.isoformat()
+                completed_at=now.isoformat(),
             ),
         ]
         self.assertEqual(estimate_eta(tasks), 0)
@@ -174,14 +177,20 @@ class TestEstimateEta(unittest.TestCase):
         now = datetime.utcnow()
         tasks = [
             TaskProgressItem(
-                "t1", "任务1", "completed", 1.0,
+                "t1",
+                "任务1",
+                "completed",
+                1.0,
                 started_at=(now - timedelta(minutes=10)).isoformat(),
-                completed_at=now.isoformat()
+                completed_at=now.isoformat(),
             ),
             TaskProgressItem(
-                "t2", "任务2", "completed", 1.0,
+                "t2",
+                "任务2",
+                "completed",
+                1.0,
                 started_at=(now - timedelta(minutes=10)).isoformat(),
-                completed_at=now.isoformat()
+                completed_at=now.isoformat(),
             ),
             TaskProgressItem("t3", "任务3", "pending"),
         ]
@@ -194,12 +203,18 @@ class TestEstimateEta(unittest.TestCase):
         now = datetime.utcnow()
         tasks = [
             TaskProgressItem(
-                "t1", "任务1", "completed", 1.0,
+                "t1",
+                "任务1",
+                "completed",
+                1.0,
                 started_at=(now - timedelta(minutes=10)).isoformat(),
-                completed_at=now.isoformat()
+                completed_at=now.isoformat(),
             ),
             TaskProgressItem(
-                "t2", "任务2", "in_progress", 0.5,  # 已完成 50%
+                "t2",
+                "任务2",
+                "in_progress",
+                0.5,  # 已完成 50%
                 started_at=(now - timedelta(minutes=5)).isoformat(),
             ),
         ]

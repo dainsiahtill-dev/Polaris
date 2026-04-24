@@ -51,6 +51,7 @@ def test_gather_docs_context_reads_runtime_contract_plan(tmp_path: Path) -> None
     """
     # Clear storage roots cache
     from polaris.kernelone.storage.layout import clear_storage_roots_cache
+
     clear_storage_roots_cache()
 
     # Create workspace structure with docs sentinel
@@ -59,7 +60,7 @@ def test_gather_docs_context_reads_runtime_contract_plan(tmp_path: Path) -> None
     (workspace / "docs").mkdir(exist_ok=True)
 
     # Create runtime contracts directory at the expected KFS location
-    from polaris.kernelone.storage.layout import resolve_storage_roots, _resolve_storage_roots_impl
+    from polaris.kernelone.storage.layout import _resolve_storage_roots_impl
 
     # Create a custom resolver that uses the test workspace's local runtime instead of ramdisk
     def mock_storage_roots(workspace_path: str, ramdisk_root: str | None = None):
@@ -86,7 +87,6 @@ def test_gather_docs_context_reads_runtime_contract_plan(tmp_path: Path) -> None
 
     # Patch the internal resolver
     import polaris.kernelone.storage.layout as layout_module
-    original_impl = layout_module._resolve_storage_roots_impl
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(layout_module, "_resolve_storage_roots_impl", mock_storage_roots)

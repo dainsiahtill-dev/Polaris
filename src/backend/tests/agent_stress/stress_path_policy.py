@@ -121,19 +121,13 @@ def runtime_layout_policy_violations(layout: Mapping[str, Any]) -> list[str]:
     if not runtime_root.is_absolute():
         return [f"runtime_root_not_absolute:{runtime_root_raw}"]
 
-    workspace_raw = str(
-        layout.get("workspace_abs")
-        or layout.get("workspace")
-        or ""
-    ).strip()
+    workspace_raw = str(layout.get("workspace_abs") or layout.get("workspace") or "").strip()
     if not workspace_raw:
         return []
 
     ramdisk_root_raw = str(layout.get("ramdisk_root") or "").strip() or None
     try:
-        expected = Path(
-            resolve_storage_roots(workspace_raw, ramdisk_root_raw).runtime_root
-        ).resolve()
+        expected = Path(resolve_storage_roots(workspace_raw, ramdisk_root_raw).runtime_root).resolve()
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return [f"storage_roots_resolution_failed:{exc}"]
 

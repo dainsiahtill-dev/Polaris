@@ -28,13 +28,15 @@ def test_runner_loads_provider_cfg_when_context_missing_type(tmp_path, monkeypat
     monkeypatch.setattr(
         runner,
         "_load_provider_cfg",
-        lambda provider_id: {
-            "type": "anthropic_compat",
-            "base_url": "https://kimi.moonshot.cn",
-            "timeout": 30,
-        }
-        if provider_id == "anthropic_compat"
-        else {},
+        lambda provider_id: (
+            {
+                "type": "anthropic_compat",
+                "base_url": "https://kimi.moonshot.cn",
+                "timeout": 30,
+            }
+            if provider_id == "anthropic_compat"
+            else {}
+        ),
     )
     monkeypatch.setitem(runner.SUITE_RUNNERS, "connectivity", fake_connectivity)
 
@@ -69,13 +71,15 @@ def test_runner_merges_loaded_provider_cfg_with_context_overrides(tmp_path, monk
     monkeypatch.setattr(
         runner,
         "_load_provider_cfg",
-        lambda provider_id: {
-            "type": "openai_compat",
-            "base_url": "https://from-config.example",
-            "timeout": 30,
-        }
-        if provider_id == "openai_compat"
-        else {},
+        lambda provider_id: (
+            {
+                "type": "openai_compat",
+                "base_url": "https://from-config.example",
+                "timeout": 30,
+            }
+            if provider_id == "openai_compat"
+            else {}
+        ),
     )
     monkeypatch.setitem(runner.SUITE_RUNNERS, "connectivity", fake_connectivity)
 
@@ -142,4 +146,3 @@ def test_runner_keeps_direct_provider_cfg_without_loading(tmp_path, monkeypatch)
         "base_url": "https://direct.example",
         "api_path": "/v1/chat/completions",
     }
-

@@ -11,6 +11,7 @@ Tests cover:
 import os
 import sys
 from types import SimpleNamespace
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -254,13 +255,7 @@ class TestLLMCallerCall:
             mock_response = MagicMock()
             mock_response.output = ""
             mock_response.raw = {
-                "choices": [
-                    {
-                        "message": {
-                            "content": [{"type": "text", "text": "Recovered from raw payload"}]
-                        }
-                    }
-                ]
+                "choices": [{"message": {"content": [{"type": "text", "text": "Recovered from raw payload"}]}}]
             }
             mock_response.model = "gpt-4"
             mock_response.provider_id = "openai"
@@ -298,7 +293,7 @@ class TestLLMCallerCall:
                                     "type": "function",
                                     "function": {
                                         "name": "glob",
-                                        "arguments": "{\"pattern\":\"**/*\",\"path\":\".\"}",
+                                        "arguments": '{"pattern":"**/*","path":"."}',
                                     },
                                 }
                             ]
@@ -755,9 +750,10 @@ class TestLLMTimingAudit:
         mock_chunk.metadata = {}
 
         class AsyncIterator:
-            def __aiter__(self):
+            def __aiter__(self) -> Self:
                 return self
-            async def __anext__(self):
+
+            async def __anext__(self) -> str:
                 raise StopAsyncIteration
 
         async def mock_stream(*args, **kwargs):
@@ -790,6 +786,7 @@ class TestLLMTimingAudit:
 
     async def test_stream_call_emits_error_event(self, caller, mock_executor_instance, mock_profile, mock_context):
         """Should emit error event when stream executor raises exception."""
+
         async def mock_stream_error(*args, **kwargs):
             raise RuntimeError("Stream executor failed")
 
@@ -810,4 +807,3 @@ class TestLLMTimingAudit:
         assert events[0].event_type == LLMEventType.CALL_START
         assert events[1].event_type == LLMEventType.CALL_ERROR
         assert events[1].metadata.get("stream")
-

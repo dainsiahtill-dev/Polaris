@@ -95,7 +95,7 @@ async def test_status_message_populates_taskboard_panel(tmp_path: Path) -> None:
         workspace=str(tmp_path / "workspace"),
     )
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "status",
             "timestamp": "2026-03-12T03:30:00+00:00",
@@ -139,7 +139,7 @@ async def test_taskboard_keeps_last_non_empty_snapshot_when_empty_status_arrives
         workspace=str(tmp_path / "workspace"),
     )
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "status",
             "timestamp": "2026-03-12T03:31:00+00:00",
@@ -159,7 +159,7 @@ async def test_taskboard_keeps_last_non_empty_snapshot_when_empty_status_arrives
     first_panels = projection.get_panels()
     assert len(first_panels.get("taskboard_status") or []) == 1
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "status",
             "timestamp": "2026-03-12T03:31:02+00:00",
@@ -189,7 +189,7 @@ async def test_file_edit_message_populates_code_diff_panel(tmp_path: Path) -> No
         workspace=str(tmp_path / "workspace"),
     )
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "file_edit",
             "timestamp": "2026-03-12T04:00:00+00:00",
@@ -296,7 +296,7 @@ def test_taskboard_render_highlights_running_director_task() -> None:
         },
     )
 
-    projection_panel = state._render_projection()  # noqa: SLF001
+    projection_panel = state._render_projection()
     rendered_lines = []
     renderable = projection_panel.renderable
     for item in getattr(renderable, "renderables", []):
@@ -338,7 +338,7 @@ def test_taskboard_render_shows_running_fallback_when_details_missing() -> None:
         },
     )
 
-    projection_panel = state._render_projection()  # noqa: SLF001
+    projection_panel = state._render_projection()
     rendered_lines = []
     renderable = projection_panel.renderable
     for item in getattr(renderable, "renderables", []):
@@ -406,7 +406,7 @@ def test_llm_completed_is_not_reopened_by_content_preview() -> None:
         projection_enabled=True,
     )
 
-    state._update_llm_request_state(  # noqa: SLF001
+    state._update_llm_request_state(
         [
             {"event_type": "llm_waiting", "role": "architect"},
             {"event_type": "llm_completed", "role": "architect"},
@@ -474,7 +474,7 @@ def test_taskboard_render_shows_execution_backend_label() -> None:
         },
     )
 
-    projection_panel = state._render_projection()  # noqa: SLF001
+    projection_panel = state._render_projection()
     rendered_lines = []
     renderable = projection_panel.renderable
     for item in getattr(renderable, "renderables", []):
@@ -493,7 +493,7 @@ def test_observer_state_builds_create_diff_preview_from_raw_content() -> None:
         projection_enabled=True,
     )
 
-    preview = state._build_patch_preview_lines(  # noqa: SLF001
+    preview = state._build_patch_preview_lines(
         patch="line_a\nline_b",
         operation="create",
         max_lines=6,
@@ -585,7 +585,7 @@ async def test_status_message_infers_qa_state_from_metadata(tmp_path: Path) -> N
         workspace=str(tmp_path / "workspace"),
     )
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "status",
             "timestamp": "2026-03-12T03:40:00+00:00",
@@ -636,7 +636,7 @@ async def test_task_trace_refs_taskboard_populates_taskboard_panel(tmp_path: Pat
         workspace=str(tmp_path / "workspace"),
     )
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "task_trace",
             "timestamp": "2026-03-12T03:42:00+00:00",

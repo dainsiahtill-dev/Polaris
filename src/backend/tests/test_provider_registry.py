@@ -7,8 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
-from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo, ValidationResult
 from polaris.infrastructure.llm.providers.provider_registry import ProviderManager
+from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo, ValidationResult
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 
 
@@ -95,4 +95,3 @@ async def test_get_provider_instance_async_thread_safe() -> None:
     assert first is not None
     assert all(instance is first for instance in instances)
     assert _CountingProvider.init_count == 1
-

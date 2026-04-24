@@ -4,6 +4,7 @@ Tests cover normalize_priority, normalize_path_list, normalize_engine_config,
 _looks_like_tool_call_output, and dispatch task utilities.
 These are synchronous, pure functions with no I/O — ideal unit test targets.
 """
+
 from __future__ import annotations
 
 from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (

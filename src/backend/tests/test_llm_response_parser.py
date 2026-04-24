@@ -11,7 +11,7 @@ def test_parser_handles_openai_style_payload():
         "choices": [
             {
                 "message": {
-                    "content": "{\"reply\":\"ok\",\"questions\":[],\"tiaochen\":[],\"fields\":{}}",
+                    "content": '{"reply":"ok","questions":[],"tiaochen":[],"fields":{}}',
                     "reasoning_content": "hidden-thinking",
                 },
                 "finish_reason": "length",
@@ -19,7 +19,7 @@ def test_parser_handles_openai_style_payload():
         ]
     }
 
-    assert LLMResponseParser.extract_text(payload).startswith("{\"reply\"")
+    assert LLMResponseParser.extract_text(payload).startswith('{"reply"')
     assert LLMResponseParser.extract_reasoning(payload) == "hidden-thinking"
     assert LLMResponseParser.extract_finish_reason(payload) == "length"
     assert LLMResponseParser.is_length_finish_reason("length") is True
@@ -27,18 +27,16 @@ def test_parser_handles_openai_style_payload():
 
 def test_parser_handles_anthropic_style_payload():
     payload = {
-        "content": [
-            {"type": "text", "text": "{\"reply\":\"ok\",\"questions\":[],\"tiaochen\":[],\"fields\":{}}"}
-        ],
+        "content": [{"type": "text", "text": '{"reply":"ok","questions":[],"tiaochen":[],"fields":{}}'}],
         "stop_reason": "end_turn",
     }
     parsed = LLMResponseParser.extract_text(payload)
-    assert parsed.startswith("{\"reply\"")
+    assert parsed.startswith('{"reply"')
     assert LLMResponseParser.extract_finish_reason(payload) == "end_turn"
 
 
 def test_parser_extracts_json_from_wrapped_text():
-    text = "before```json\n{\"a\":1,\"b\":[2,3]}\n```after"
+    text = 'before```json\n{"a":1,"b":[2,3]}\n```after'
     parsed = LLMResponseParser.extract_json_object(text)
     assert parsed == {"a": 1, "b": [2, 3]}
 

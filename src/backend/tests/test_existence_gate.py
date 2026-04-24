@@ -27,6 +27,7 @@ from polaris.cells.director.execution.internal.existence_gate import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_workspace(existing_rels: list[str]) -> str:
     """Return a temp dir that has *existing_rels* as empty files."""
     tmp = tempfile.mkdtemp()
@@ -41,6 +42,7 @@ def _make_workspace(existing_rels: list[str]) -> str:
 # ---------------------------------------------------------------------------
 # Pure-create scenarios
 # ---------------------------------------------------------------------------
+
 
 class TestCreateMode:
     def test_all_missing_returns_create(self):
@@ -67,6 +69,7 @@ class TestCreateMode:
 # Pure-modify scenarios
 # ---------------------------------------------------------------------------
 
+
 class TestModifyMode:
     def test_all_existing_returns_modify(self):
         ws = _make_workspace(["src/index.ts", "src/utils.ts"])
@@ -86,6 +89,7 @@ class TestModifyMode:
 # Mixed scenarios
 # ---------------------------------------------------------------------------
 
+
 class TestMixedMode:
     def test_some_missing_returns_mixed(self):
         ws = _make_workspace(["src/existing.ts"])
@@ -100,6 +104,7 @@ class TestMixedMode:
 # ---------------------------------------------------------------------------
 # Hint override
 # ---------------------------------------------------------------------------
+
 
 class TestHintOverride:
     def test_create_hint_overrides_existing_files(self):
@@ -124,6 +129,7 @@ class TestHintOverride:
 # ---------------------------------------------------------------------------
 # as_dict / repr
 # ---------------------------------------------------------------------------
+
 
 class TestGateResult:
     def test_as_dict_has_all_keys(self):

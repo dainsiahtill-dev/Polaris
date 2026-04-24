@@ -10,22 +10,21 @@ Run these tests directly with:
 from __future__ import annotations
 
 import json
-import sys
-from typing import Any
 
 # Add backend path for imports
 import os as _os
+import sys
 
 _backend_path = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 if _backend_path not in sys.path:
     sys.path.insert(0, _backend_path)
 
 from polaris.cells.llm.evaluation.internal.deterministic_judge import (
-    _safe_json_loads,
-    _ExcessiveNestingError,
-    _extract_json_dict,
     _DEFAULT_JSON_MAX_DEPTH,
     _count_json_depth,
+    _ExcessiveNestingError,
+    _extract_json_dict,
+    _safe_json_loads,
 )
 
 
@@ -190,7 +189,7 @@ def test_simple_object() -> None:
 
 def test_simple_array() -> None:
     """Simple JSON array should parse correctly."""
-    result = _safe_json_loads('[1, 2, 3]')
+    result = _safe_json_loads("[1, 2, 3]")
     assert result == [1, 2, 3]
 
 
@@ -229,7 +228,7 @@ def test_returns_dict_for_object_json() -> None:
 
 def test_returns_list_for_array_json() -> None:
     """Array JSON should return a list."""
-    result = _safe_json_loads('[1, 2, 3]')
+    result = _safe_json_loads("[1, 2, 3]")
     assert isinstance(result, list)
 
 
@@ -304,7 +303,7 @@ def test_re_raises_excessive_nesting_error() -> None:
 def test_excessive_nesting_in_code_block_rejected() -> None:
     """Deeply nested JSON in code block should be rejected."""
     json_inner = '{"a": ' * 150 + '"x"' + "}" * 150
-    text = f'```json\n{json_inner}\n```'
+    text = f"```json\n{json_inner}\n```"
     try:
         _extract_json_dict(text)
         assert False, "Should have raised _ExcessiveNestingError"
@@ -314,7 +313,7 @@ def test_excessive_nesting_in_code_block_rejected() -> None:
 
 def test_multiple_code_blocks_returns_first_valid() -> None:
     """Should return first valid JSON when multiple code blocks exist."""
-    text = '''
+    text = """
         First block:
         ```json
         {"first": "valid"}
@@ -323,7 +322,7 @@ def test_multiple_code_blocks_returns_first_valid() -> None:
         ```json
         {"second": "valid"}
         ```
-        '''
+        """
     result = _extract_json_dict(text)
     assert result == {"first": "valid"}
 
@@ -344,14 +343,14 @@ def test_max_depth_one_allows_only_primitives() -> None:
 
 def test_max_depth_one_allows_array_of_primitives() -> None:
     """max_depth=1 should allow arrays of primitives."""
-    result = _safe_json_loads('[1, 2, 3]', max_depth=1)
+    result = _safe_json_loads("[1, 2, 3]", max_depth=1)
     assert result == [1, 2, 3]
 
 
 def test_max_depth_one_rejects_nested_arrays() -> None:
     """max_depth=1 should reject nested arrays."""
     try:
-        _safe_json_loads('[[1, 2]]', max_depth=1)
+        _safe_json_loads("[[1, 2]]", max_depth=1)
         assert False, "Should have raised _ExcessiveNestingError"
     except _ExcessiveNestingError:
         pass  # Expected
@@ -414,7 +413,7 @@ def test_attack_vector_deeply_nested_array_rejected() -> None:
 
 def test_attack_vector_alternating_nesting_rejected() -> None:
     """Malicious alternating array/object nesting should be blocked."""
-    parts = ['{"a":'] * 500 + ['['] * 500 + ['1'] + [']'] * 500 + ["}"] * 500
+    parts = ['{"a":'] * 500 + ["["] * 500 + ["1"] + ["]"] * 500 + ["}"] * 500
     attack = "".join(parts)
     try:
         _safe_json_loads(attack)
@@ -454,11 +453,11 @@ def test_dos_prevention_does_not_affect_normal_usage() -> None:
 def test_existing_json_functionality_preserved() -> None:
     """Basic JSON parsing functionality should remain unchanged."""
     test_cases = [
-        '{}',
+        "{}",
         '{"key": "value"}',
         '{"nested": {"inner": "value"}}',
-        '[]',
-        '[1, 2, 3]',
+        "[]",
+        "[1, 2, 3]",
         '{"array": [1, 2, 3]}',
         '{"mixed": [1, "two", {"three": 3}]}',
     ]
@@ -502,8 +501,8 @@ def test_count_json_depth_basic() -> None:
 
 def test_count_json_depth_with_arrays() -> None:
     """_count_json_depth should correctly count depth with arrays."""
-    assert _count_json_depth('[1, 2, 3]') == 1
-    assert _count_json_depth('[[1, 2]]') == 2
+    assert _count_json_depth("[1, 2, 3]") == 1
+    assert _count_json_depth("[[1, 2]]") == 2
     assert _count_json_depth('{"a": [1, 2]}') == 2
     assert _count_json_depth('{"a": [{"b": 1}]}') == 3
 

@@ -12,8 +12,7 @@ def test_check_python_imports_accepts_local_workspace_packages(tmp_path: Path) -
     package_dir.mkdir(parents=True, exist_ok=True)
     (package_dir / "__init__.py").write_text("", encoding="utf-8")
     (package_dir / "role_agent_service.py").write_text(
-        "def build_health_report() -> dict[str, str]:\n"
-        "    return {'status': 'ok'}\n",
+        "def build_health_report() -> dict[str, str]:\n    return {'status': 'ok'}\n",
         encoding="utf-8",
     )
 

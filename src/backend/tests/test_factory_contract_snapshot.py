@@ -8,8 +8,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryConfig, FactoryRunService, StageResult
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.http.routers import factory as factory_router_module
@@ -89,7 +89,9 @@ def test_factory_stream_event_contract_is_stable(client: TestClient, service: Fa
     asyncio.run(service.complete_run(run.id, success=True))
 
     frames: list[str] = []
-    with client.stream("GET", f"/v2/factory/runs/{run.id}/stream", headers={"Authorization": f"Bearer {_TEST_TOKEN}"}) as response:
+    with client.stream(
+        "GET", f"/v2/factory/runs/{run.id}/stream", headers={"Authorization": f"Bearer {_TEST_TOKEN}"}
+    ) as response:
         assert response.status_code == 200
         for line in response.iter_lines():
             frames.append(line)

@@ -60,10 +60,12 @@ class TestEvidenceStoreWithDictPayload:
     def test_load_latest_evidence(self, tmp_path):
         store = EvidenceStore(runtime_root=str(tmp_path))
         for i in range(3):
-            store.save_evidence({
-                "task_id": "task-latest",
-                "iteration": i,
-            })
+            store.save_evidence(
+                {
+                    "task_id": "task-latest",
+                    "iteration": i,
+                }
+            )
 
         loaded = store.load_latest_evidence("task-latest")
         assert loaded["iteration"] == 2
@@ -84,9 +86,7 @@ class TestEvidenceStoreWithDictPayload:
 
     def test_append_to_evidence_log(self, tmp_path):
         store = EvidenceStore(runtime_root=str(tmp_path))
-        log_path = store.append_to_evidence_log(
-            "task-log", {"event": "test", "value": 42}
-        )
+        store.append_to_evidence_log("task-log", {"event": "test", "value": 42})
 
         entries = store.read_evidence_log("task-log")
         assert len(entries) == 1
@@ -95,15 +95,17 @@ class TestEvidenceStoreWithDictPayload:
 
     def test_export_for_role_agent(self, tmp_path):
         store = EvidenceStore(runtime_root=str(tmp_path))
-        store.save_evidence({
-            "task_id": "task-export",
-            "iteration": 0,
-            "file_changes": [{"path": "a.py"}],
-            "verification_results": [{"passed": True}],
-            "policy_violations": [],
-            "summary": "ok",
-            "acceptance": True,
-        })
+        store.save_evidence(
+            {
+                "task_id": "task-export",
+                "iteration": 0,
+                "file_changes": [{"path": "a.py"}],
+                "verification_results": [{"passed": True}],
+                "policy_violations": [],
+                "summary": "ok",
+                "acceptance": True,
+            }
+        )
 
         export_path = store.export_for_role_agent("task-export", "qa")
         with open(export_path, encoding="utf-8") as f:
@@ -169,18 +171,20 @@ class TestStateStoreWithDictPayload:
     def test_list_tasks(self, tmp_path):
         store = StateStore(runtime_root=str(tmp_path))
         for i in range(2):
-            store.save_state({
-                "task_id": f"state-task-list-{i}",
-                "current_phase": "COMPLETED",
-                "context": {
-                    "workspace": str(tmp_path),
-                    "build_round": 0,
-                    "stall_count": 0,
-                    "changed_files": [],
-                },
-                "is_terminal": True,
-                "trajectory": [],
-            })
+            store.save_state(
+                {
+                    "task_id": f"state-task-list-{i}",
+                    "current_phase": "COMPLETED",
+                    "context": {
+                        "workspace": str(tmp_path),
+                        "build_round": 0,
+                        "stall_count": 0,
+                        "changed_files": [],
+                    },
+                    "is_terminal": True,
+                    "trajectory": [],
+                }
+            )
 
         results = store.list_tasks()
         task_ids = [r["task_id"] for r in results]
@@ -214,21 +218,23 @@ class TestStateStoreWithDictPayload:
 
     def test_load_trajectory(self, tmp_path):
         store = StateStore(runtime_root=str(tmp_path))
-        store.save_state({
-            "task_id": "state-task-traj",
-            "current_phase": "EXECUTION",
-            "context": {
-                "workspace": str(tmp_path),
-                "build_round": 0,
-                "stall_count": 0,
-                "changed_files": [],
-            },
-            "is_terminal": False,
-            "trajectory": [
-                {"phase": "PLANNING", "action": "plan"},
-                {"phase": "EXECUTION", "action": "exec"},
-            ],
-        })
+        store.save_state(
+            {
+                "task_id": "state-task-traj",
+                "current_phase": "EXECUTION",
+                "context": {
+                    "workspace": str(tmp_path),
+                    "build_round": 0,
+                    "stall_count": 0,
+                    "changed_files": [],
+                },
+                "is_terminal": False,
+                "trajectory": [
+                    {"phase": "PLANNING", "action": "plan"},
+                    {"phase": "EXECUTION", "action": "exec"},
+                ],
+            }
+        )
 
         trajectory = store.load_trajectory("state-task-traj")
         assert len(trajectory) == 2
@@ -237,18 +243,22 @@ class TestStateStoreWithDictPayload:
     def test_get_latest_by_run(self, tmp_path):
         store = StateStore(runtime_root=str(tmp_path))
         for i in range(3):
-            store.save_state({
-                "task_id": f"state-task-run-{i}",
-                "current_phase": "COMPLETED",
-                "context": {
-                    "workspace": str(tmp_path),
-                    "build_round": 0,
-                    "stall_count": 0,
-                    "changed_files": [],
+            store.save_state(
+                {
+                    "task_id": f"state-task-run-{i}",
+                    "current_phase": "COMPLETED",
+                    "context": {
+                        "workspace": str(tmp_path),
+                        "build_round": 0,
+                        "stall_count": 0,
+                        "changed_files": [],
+                    },
+                    "is_terminal": True,
+                    "trajectory": [],
                 },
-                "is_terminal": True,
-                "trajectory": [],
-            }, run_id="run-latest", phase="completed")
+                run_id="run-latest",
+                phase="completed",
+            )
 
         latest = store.get_latest_by_run("run-latest")
         assert latest is not None

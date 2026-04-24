@@ -10,13 +10,7 @@ import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 KERNELONE_ROOT = BACKEND_ROOT / "polaris"
-BASELINE_PATH = (
-    BACKEND_ROOT
-    / "tests"
-    / "architecture"
-    / "allowlists"
-    / "kfs_direct_write_baseline.txt"
-)
+BASELINE_PATH = BACKEND_ROOT / "tests" / "architecture" / "allowlists" / "kfs_direct_write_baseline.txt"
 LLM_FILE_IO_SURFACES = (
     BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "executor.py",
     BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "protocol_kernel.py",
@@ -52,9 +46,7 @@ def _find_direct_file_io_calls(path: Path) -> list[str]:
             violations.append(f"{path.relative_to(BACKEND_ROOT).as_posix()}:{node.lineno} builtins.open")
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr in DISALLOWED_ATTRIBUTE_CALLS:
-            violations.append(
-                f"{path.relative_to(BACKEND_ROOT).as_posix()}:{node.lineno} .{node.func.attr}(...)"
-            )
+            violations.append(f"{path.relative_to(BACKEND_ROOT).as_posix()}:{node.lineno} .{node.func.attr}(...)")
     return violations
 
 
@@ -137,8 +129,7 @@ def test_llm_file_io_surfaces_use_kernel_filesystem_only() -> None:
 
     if violations:
         pytest.fail(
-            "LLM file I/O guard failed: direct file API detected outside KernelFileSystem.\n"
-            + "\n".join(violations)
+            "LLM file I/O guard failed: direct file API detected outside KernelFileSystem.\n" + "\n".join(violations)
         )
 
 
@@ -161,12 +152,9 @@ def test_business_runtime_direct_write_is_baselined_and_non_regressive() -> None
             regressions.append(f"NEW_DIRECT_WRITE_FILE {path} observed={count} baseline=0")
             continue
         if count > allowed_count:
-            regressions.append(
-                f"DIRECT_WRITE_COUNT_INCREASE {path} observed={count} baseline={allowed_count}"
-            )
+            regressions.append(f"DIRECT_WRITE_COUNT_INCREASE {path} observed={count} baseline={allowed_count}")
 
     if regressions:
         pytest.fail(
-            "KFS direct-write guard failed. Business/runtime direct disk writes regressed.\n"
-            + "\n".join(regressions)
+            "KFS direct-write guard failed. Business/runtime direct disk writes regressed.\n" + "\n".join(regressions)
         )

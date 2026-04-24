@@ -26,4 +26,3 @@ def test_removed_semantic_tool_is_rejected() -> None:
 
     assert result["ok"] is False
     assert "Unknown tool" in str(result.get("error") or "")
-

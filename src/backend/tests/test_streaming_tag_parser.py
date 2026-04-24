@@ -29,9 +29,7 @@ def test_parser_switches_from_thinking_to_answer_across_chunks():
     assert "answer_end" in second_types
 
     answer_chunks = [
-        str(event.data.get("content", ""))
-        for event in first_events + second_events
-        if event.type == "answer_chunk"
+        str(event.data.get("content", "")) for event in first_events + second_events if event.type == "answer_chunk"
     ]
     assert "".join(answer_chunks) == "def"
     assert "<answer>" not in "".join(answer_chunks)
@@ -45,11 +43,7 @@ def test_parser_keeps_partial_close_tag_in_buffer():
     end_events = parser.process_chunk("wer>")
 
     combined = first_events + mid_events + end_events
-    answer_chunks = [
-        str(event.data.get("content", ""))
-        for event in combined
-        if event.type == "answer_chunk"
-    ]
+    answer_chunks = [str(event.data.get("content", "")) for event in combined if event.type == "answer_chunk"]
     answer_text = "".join(answer_chunks)
     assert answer_text == "hello world"
     assert "</ans" not in answer_text

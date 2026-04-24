@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.context.context_os.helpers import _utc_now_iso
 from polaris.kernelone.context.context_os.models_v2 import (
@@ -107,7 +108,7 @@ class PipelineRunner:
             context_slice_plan=selector_out.context_slice_plan,
         )
 
-    def _run_stage(self, stage_name: str, stage_fn, *args):
+    def _run_stage(self, stage_name: str, stage_fn: Callable[..., Any], *args: Any) -> Any:
         """Run a pipeline stage.
 
         TODO(P2): Add per-stage fallback factories so that failures return

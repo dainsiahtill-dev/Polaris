@@ -43,5 +43,3 @@ def test_normalize_tasks_limit_zero_disables_truncation(monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_PM_MAX_TASKS", "0")
     normalized = pm_tasks.normalize_tasks(_sample_raw_tasks(7), iteration=1)
     assert len(normalized) == 7
-
-

@@ -12,6 +12,9 @@ Core Principles:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import hashlib
 import json
 import logging
@@ -29,10 +32,10 @@ logger = logging.getLogger(__name__)
 TOOL_SIGNATURE_NORMALIZERS = {}
 
 
-def register_normalizer(tool_names: set[str]):
+def register_normalizer(tool_names: set[str]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to register a signature normalizer for specific tools."""
 
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         for name in tool_names:
             TOOL_SIGNATURE_NORMALIZERS[name] = func
         return func

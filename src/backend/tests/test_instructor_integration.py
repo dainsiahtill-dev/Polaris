@@ -317,6 +317,7 @@ class TestInstructorClientFallback:
         """Test that the module works even without instructor installed."""
         # This tests the try/except import pattern
         from polaris.infrastructure.llm import instructor_client
+
         assert hasattr(instructor_client, "StructuredLLMClient")
         assert hasattr(instructor_client, "INSTRUCTOR_AVAILABLE")
 

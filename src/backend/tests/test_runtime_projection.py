@@ -62,9 +62,7 @@ class TestMergeDirectorStatus:
                 "tasks": {
                     "total": 1,
                     "by_status": {"IN_PROGRESS": 1},
-                    "task_rows": [
-                        {"id": "local-1", "status": "RUNNING", "title": "live task"}
-                    ],
+                    "task_rows": [{"id": "local-1", "status": "RUNNING", "title": "live task"}],
                 },
             },
         }
@@ -168,9 +166,7 @@ class TestSelectTaskRows:
                     "state": "COMPLETED",
                     "tasks": {
                         "active": 0,
-                        "task_rows": [
-                            {"id": "director-1", "status": "COMPLETED", "metadata": {"pm_task_id": "PM-1"}}
-                        ],
+                        "task_rows": [{"id": "director-1", "status": "COMPLETED", "metadata": {"pm_task_id": "PM-1"}}],
                     },
                 },
             },
@@ -504,7 +500,10 @@ class TestRuntimeProjectionService:
                 engine_fallback=None,
             )
 
-        with patch("polaris.cells.runtime.projection.internal.runtime_projection_service.build_runtime_projection", new=_fake_projection):
+        with patch(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service.build_runtime_projection",
+            new=_fake_projection,
+        ):
             started = time.perf_counter()
             projection = rp.build_runtime_projection_sync(state, "/tmp/ws", "/tmp/cache")
             elapsed = time.perf_counter() - started
@@ -539,14 +538,17 @@ class TestRuntimeWsStatusCanonical:
             },
         }
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.status_snapshot_builder.get_director_local_status",
-            new_callable=AsyncMock,
-            return_value=local,
-        ), patch(
-            "polaris.cells.runtime.projection.internal.status_snapshot_builder.get_workflow_director_status",
-            new_callable=AsyncMock,
-            return_value=workflow,
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.status_snapshot_builder.get_director_local_status",
+                new_callable=AsyncMock,
+                return_value=local,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.status_snapshot_builder.get_workflow_director_status",
+                new_callable=AsyncMock,
+                return_value=workflow,
+            ),
         ):
             result = await build_director_status(
                 MagicMock(),

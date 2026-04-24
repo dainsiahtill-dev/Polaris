@@ -12,10 +12,10 @@ for candidate in (BACKEND_ROOT, SCRIPTS_ROOT, CORE_ROOT):
         sys.path.insert(0, candidate)
 
 from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight import (
-    run_pre_dispatch_chief_engineer,  # noqa: E402
+    run_pre_dispatch_chief_engineer,
 )
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
-    run_chief_engineer_preflight,  # noqa: E402
+    run_chief_engineer_preflight,
 )
 from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path  # noqa: E402
 
@@ -70,11 +70,11 @@ def test_run_pre_dispatch_chief_engineer_uses_direct_analysis_runner(tmp_path) -
     assert captured["tasks"][0]["id"] == "TASK-A"
     assert result["hard_failure"] is False
     assert result["task_update_count"] == 1
-    assert str(result["blueprint_path"]).replace("\\", "/").endswith(
-        "contracts/chief_engineer.blueprint.json"
-    )
-    assert str(result["runtime_blueprint_path"]).replace("\\", "/").endswith(
-        "runtime/contracts/chief_engineer.blueprint.json"
+    assert str(result["blueprint_path"]).replace("\\", "/").endswith("contracts/chief_engineer.blueprint.json")
+    assert (
+        str(result["runtime_blueprint_path"])
+        .replace("\\", "/")
+        .endswith("runtime/contracts/chief_engineer.blueprint.json")
     )
 
 
@@ -116,4 +116,3 @@ def test_dispatch_pipeline_run_chief_engineer_preflight_delegates_to_canonical_e
     assert result == {"ran": True, "hard_failure": False, "summary": "ok"}
     assert captured["pm_iteration"] == 8
     assert captured["tasks"][0]["id"] == "TASK-B"
-

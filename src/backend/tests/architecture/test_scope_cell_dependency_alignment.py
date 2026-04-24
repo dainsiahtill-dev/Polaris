@@ -10,11 +10,7 @@ CATALOG_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 
 SCOPES = {
     "director.execution": BACKEND_ROOT / "polaris" / "cells" / "director" / "execution",
-    "orchestration.workflow_runtime": BACKEND_ROOT
-    / "polaris"
-    / "cells"
-    / "orchestration"
-    / "workflow_runtime",
+    "orchestration.workflow_runtime": BACKEND_ROOT / "polaris" / "cells" / "orchestration" / "workflow_runtime",
     "runtime.projection": BACKEND_ROOT / "polaris" / "cells" / "runtime" / "projection",
 }
 
@@ -65,11 +61,7 @@ def _collect_imported_cells(scope_dir: Path, *, known_cells: set[str], cell_id: 
 def _read_declared_depends_on(scope_dir: Path) -> set[str]:
     payload = yaml.safe_load((scope_dir / "cell.yaml").read_text(encoding="utf-8")) or {}
     depends_on = payload.get("depends_on") if isinstance(payload, dict) else []
-    return {
-        str(item).strip()
-        for item in depends_on
-        if str(item).strip()
-    }
+    return {str(item).strip() for item in depends_on if str(item).strip()}
 
 
 def test_scope_cells_cell_yaml_covers_current_code_imports() -> None:

@@ -5,6 +5,7 @@ Run with: python -m pytest tests/test_kimi_streaming.py -v
 """
 
 import asyncio
+from typing import Self
 from unittest.mock import patch
 
 import pytest
@@ -12,43 +13,43 @@ from polaris.infrastructure.llm.providers.kimi_provider import KimiProvider
 
 
 class _AsyncByteStream:
-    def __init__(self, chunks):
+    def __init__(self, chunks) -> None:
         self._iter = iter(chunks)
 
-    def __aiter__(self):
+    def __aiter__(self) -> Self:
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> str:
         try:
             return next(self._iter)
         except StopIteration:
-            raise StopAsyncIteration
+            raise StopAsyncIteration from None
 
 
 class _FakeStreamResponse:
-    def __init__(self, chunks):
+    def __init__(self, chunks) -> None:
         self.content = _AsyncByteStream(chunks)
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         return None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: type, exc: BaseException, tb: object) -> None:
         return None
 
 
 class _FakeSession:
-    def __init__(self, *, response=None, error=None):
+    def __init__(self, *, response=None, error=None) -> None:
         self._response = response
         self._error = error
         self.timeout_arg = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: type, exc: BaseException, tb: object) -> None:
         return None
 
     def post(self, *args, **kwargs):
@@ -94,7 +95,7 @@ class TestKimiInvokeStream:
         sse_data = [
             b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
             b'data: {"choices":[{"delta":{"content":" world"}}]}\n\n',
-            b'data: [DONE]\n\n',
+            b"data: [DONE]\n\n",
         ]
 
         fake_session = _FakeSession(response=_FakeStreamResponse(sse_data))
@@ -161,7 +162,7 @@ class TestKimiInvokeStream:
             b'data: {"choices":[{"delta":{"reasoning_content":"Let me think..."}}]}\n\n',
             b'data: {"choices":[{"delta":{"reasoning_content":"The answer is 42."}}]}\n\n',
             b'data: {"choices":[{"delta":{"content":"{\\"reply\\":\\"42\\"}"}}]}\n\n',
-            b'data: [DONE]\n\n',
+            b"data: [DONE]\n\n",
         ]
 
         fake_session = _FakeSession(response=_FakeStreamResponse(sse_data))
@@ -187,8 +188,8 @@ class TestKimiInvokeStream:
             b'data: {"choices":[{"delta":{"reason',
             b'ing_content":"step-1"}}]}\n\n',
             b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
-            b'data: [DO',
-            b'NE]\n\n',
+            b"data: [DO",
+            b"NE]\n\n",
         ]
         fake_session = _FakeSession(response=_FakeStreamResponse(sse_data))
 

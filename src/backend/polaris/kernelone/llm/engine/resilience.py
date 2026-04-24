@@ -320,6 +320,9 @@ class CircuitBreaker:
             logger.info("Circuit breaker '%s' call cancelled", self.name)
             raise
         except BaseException:
+            # Intentionally broad: circuit breaker must count ANY failure
+            # (including KeyboardInterrupt, SystemExit) to properly track
+            # health. We immediately re-raise after recording.
             await self._on_failure()
             raise
 

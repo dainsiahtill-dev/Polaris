@@ -19,6 +19,7 @@ This test file covers two categories of checks:
    out of scope for this task. These are captured in an allowlist so that
    new violations are caught while old ones are tracked without blocking.
 """
+
 from __future__ import annotations
 
 import re
@@ -86,10 +87,7 @@ def _load_cell_yaml(cell_id: str) -> dict[str, Any] | None:
 
 def _is_infra_path(path: str) -> bool:
     """Return True if *path* targets kernelone/** or infrastructure/**."""
-    return bool(
-        re.match(r"polaris/kernelone/", path)
-        or re.match(r"polaris/infrastructure/", path)
-    )
+    return bool(re.match(r"polaris/kernelone/", path) or re.match(r"polaris/infrastructure/", path))
 
 
 def _write_effects(effects: list[str]) -> list[str]:
@@ -140,15 +138,12 @@ class TestStateOwnerUniqueness:
             cell_id: str = cell.get("id", "<unknown>")
             for path in cell.get("state_owners") or []:
                 if path in seen:
-                    duplicates.append(
-                        f"'{path}' claimed by both '{seen[path]}' and '{cell_id}'"
-                    )
+                    duplicates.append(f"'{path}' claimed by both '{seen[path]}' and '{cell_id}'")
                 else:
                     seen[path] = cell_id
 
-        assert not duplicates, (
-            "state_owner conflict(s) detected in cells.yaml:\n"
-            + "\n".join(f"  - {d}" for d in duplicates)
+        assert not duplicates, "state_owner conflict(s) detected in cells.yaml:\n" + "\n".join(
+            f"  - {d}" for d in duplicates
         )
 
     def test_llm_control_plane_does_not_own_test_index(self) -> None:
@@ -195,8 +190,7 @@ class TestLlmControlPlaneOwnedPaths:
         bad = [p for p in (cp.get("owned_paths") or []) if _is_infra_path(p)]
         assert not bad, (
             "llm.control_plane must not own kernelone/infrastructure paths "
-            "(ACGA 2.0 §2.3, P0-10); found: "
-            + ", ".join(bad)
+            "(ACGA 2.0 §2.3, P0-10); found: " + ", ".join(bad)
         )
 
 
@@ -210,16 +204,12 @@ class TestCellYamlCatalogConsistency:
         """catalog and cell.yaml must agree on state_owners/effects_allowed/owned_paths."""
         data = _load_catalog()
         cells = _catalog_cells(data)
-        catalog_entry = next(
-            (c for c in cells if c.get("id") == cell_id), None
-        )
+        catalog_entry = next((c for c in cells if c.get("id") == cell_id), None)
         assert catalog_entry is not None, f"{cell_id} not found in catalog"
 
         cell_yaml = _load_cell_yaml(cell_id)
         if cell_yaml is None:
-            pytest.skip(
-                f"cell.yaml not present for {cell_id} — skipping consistency check"
-            )
+            pytest.skip(f"cell.yaml not present for {cell_id} — skipping consistency check")
 
         for field in self._KEY_FIELDS:
             catalog_val = sorted(catalog_entry.get(field) or [])
@@ -268,16 +258,11 @@ class TestCatalogWideInvariantsAllowlisted:
         for cell in cells:
             cell_id: str = cell.get("id", "<unknown>")
             # audit.evidence is allowlisted by design; known violators are frozen
-            if (
-                cell_id == "audit.evidence"
-                or cell_id in self._EXISTING_INFRA_PATH_VIOLATORS
-            ):
+            if cell_id == "audit.evidence" or cell_id in self._EXISTING_INFRA_PATH_VIOLATORS:
                 continue
             for path in cell.get("owned_paths") or []:
                 if _is_infra_path(path):
-                    new_violations.append(
-                        f"Cell '{cell_id}' owns infra/kernelone path: '{path}'"
-                    )
+                    new_violations.append(f"Cell '{cell_id}' owns infra/kernelone path: '{path}'")
 
         assert not new_violations, (
             "NEW cells are claiming kernelone/infrastructure owned_paths "

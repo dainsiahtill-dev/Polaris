@@ -58,10 +58,7 @@ def test_use_runtime_size():
     limit = MAX_TSX_LINES["useRuntime.ts"]
 
     if lines > limit:
-        pytest.xfail(
-            f"useRuntime.ts has {lines} lines (limit: {limit}). "
-            f"Split into useRuntimeSocket.ts and selectors."
-        )
+        pytest.xfail(f"useRuntime.ts has {lines} lines (limit: {limit}). Split into useRuntimeSocket.ts and selectors.")
 
     assert lines <= limit, f"useRuntime.ts has {lines} lines (limit: {limit})"
 

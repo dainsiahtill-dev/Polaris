@@ -10,7 +10,7 @@ for candidate in (BACKEND_ROOT,):
 
 from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
     detect_integration_verify_command,
-)  # noqa: E402
+)
 
 
 def test_detect_integration_verify_command_prefers_compileall_for_python_without_tests(
@@ -46,4 +46,3 @@ def test_detect_integration_verify_command_uses_pytest_when_python_tests_exist(
     command = detect_integration_verify_command(str(tmp_path))
 
     assert command == "python -m pytest --collect-only -q"
-

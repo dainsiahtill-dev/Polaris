@@ -31,16 +31,18 @@ from typing import Any
 
 class ProjectCategory(Enum):
     """项目类别"""
-    CRUD = "crud"                           # CRUD / 表单 / 数据管理
-    REALTIME = "realtime"                   # 实时通信 / 同步
-    EDITOR = "editor"                       # 编辑器 / 内容处理
-    TOOL = "tool"                           # 工具型应用 / 自动化
-    SECURITY = "security"                   # 安全 / 加密 / 文件处理
-    INTERACTIVE = "interactive"             # 互动 / 游戏 / 计时类 UI
+
+    CRUD = "crud"  # CRUD / 表单 / 数据管理
+    REALTIME = "realtime"  # 实时通信 / 同步
+    EDITOR = "editor"  # 编辑器 / 内容处理
+    TOOL = "tool"  # 工具型应用 / 自动化
+    SECURITY = "security"  # 安全 / 加密 / 文件处理
+    INTERACTIVE = "interactive"  # 互动 / 游戏 / 计时类 UI
 
 
 class Enhancement(Enum):
     """增强特性"""
+
     PERSISTENCE = "本地持久化"
     IMPORT_EXPORT = "导入导出"
     WEBSOCKET = "WebSocket / SSE"
@@ -58,16 +60,17 @@ class Enhancement(Enum):
 @dataclass
 class ProjectDefinition:
     """项目定义"""
-    id: str                                 # 项目唯一标识
-    name: str                               # 项目名称
-    category: ProjectCategory               # 所属类别
-    description: str                        # 核心能力描述
-    enhancements: list[Enhancement]         # 增强特性
-    stress_focus: list[str]                 # 压测重点
-    complexity_level: int = 1               # 复杂度 1-5
-    requires_backend: bool = False          # 是否需要后端
-    requires_websocket: bool = False        # 是否需要 WebSocket
-    requires_encryption: bool = False       # 是否需要加密
+
+    id: str  # 项目唯一标识
+    name: str  # 项目名称
+    category: ProjectCategory  # 所属类别
+    description: str  # 核心能力描述
+    enhancements: list[Enhancement]  # 增强特性
+    stress_focus: list[str]  # 压测重点
+    complexity_level: int = 1  # 复杂度 1-5
+    requires_backend: bool = False  # 是否需要后端
+    requires_websocket: bool = False  # 是否需要 WebSocket
+    requires_encryption: bool = False  # 是否需要加密
 
     def to_directive(self) -> str:
         """转换为 Polaris directive"""
@@ -81,24 +84,28 @@ class ProjectDefinition:
         ]
         for enh in self.enhancements:
             lines.append(f"- {enh.value}")
-        lines.extend([
-            "",
-            "## 技术要求",
-            f"- 复杂度等级: {self.complexity_level}/5",
-        ])
+        lines.extend(
+            [
+                "",
+                "## 技术要求",
+                f"- 复杂度等级: {self.complexity_level}/5",
+            ]
+        )
         if self.requires_backend:
             lines.append("- 需要后端 API 支持")
         if self.requires_websocket:
             lines.append("- 需要 WebSocket 实时通信")
         if self.requires_encryption:
             lines.append("- 需要加密/安全处理")
-        lines.extend([
-            "",
-            "## 验收标准",
-            "1. 核心功能完整可用",
-            "2. 增强特性正常工作",
-            "3. 代码通过基础质量检查",
-        ])
+        lines.extend(
+            [
+                "",
+                "## 验收标准",
+                "1. 核心功能完整可用",
+                "2. 增强特性正常工作",
+                "3. 代码通过基础质量检查",
+            ]
+        )
         return "\n".join(lines)
 
 
@@ -436,9 +443,7 @@ def build_rotation_order(
     if not candidates:
         return []
 
-    by_category: dict[ProjectCategory, list[ProjectDefinition]] = {
-        category: [] for category in get_all_categories()
-    }
+    by_category: dict[ProjectCategory, list[ProjectDefinition]] = {category: [] for category in get_all_categories()}
     for project in candidates:
         by_category.setdefault(project.category, []).append(project)
 
@@ -486,6 +491,7 @@ def select_stress_rounds(
 
     elif strategy == "random":
         import random
+
         return [random.choice(candidates) for _ in range(total_rounds)]
 
     elif strategy == "complexity_asc":
@@ -518,21 +524,25 @@ def validate_round_sequence(rounds: list[ProjectDefinition]) -> list[dict[str, A
             and current.complexity_level <= 2
             and next_round.complexity_level <= 2
         ):
-            violations.append({
-                "rule": "no_consecutive_simple_crud",
-                "round": i + 1,
-                "message": f"轮次 {i+1} 和 {i+2} 都是简单 CRUD 项目",
-            })
+            violations.append(
+                {
+                    "rule": "no_consecutive_simple_crud",
+                    "round": i + 1,
+                    "message": f"轮次 {i + 1} 和 {i + 2} 都是简单 CRUD 项目",
+                }
+            )
 
     # 规则2: 检查复杂度门槛
     for i, project in enumerate(rounds):
         enhancements_count = len(project.enhancements)
         if enhancements_count < 2:
-            violations.append({
-                "rule": "min_enhancements",
-                "round": i + 1,
-                "message": f"{project.name} 只有 {enhancements_count} 个增强特性，需要至少 2 个",
-            })
+            violations.append(
+                {
+                    "rule": "min_enhancements",
+                    "round": i + 1,
+                    "message": f"{project.name} 只有 {enhancements_count} 个增强特性，需要至少 2 个",
+                }
+            )
 
     return violations
 

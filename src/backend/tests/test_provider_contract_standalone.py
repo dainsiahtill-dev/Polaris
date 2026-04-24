@@ -3,6 +3,7 @@
 This file tests the new provider contract implementation in isolation.
 Run with: python -c "exec(open('tests/test_provider_contract_standalone.py').read())"
 """
+
 from typing import Any, TypedDict
 
 
@@ -54,19 +55,17 @@ def test_provider_contract():
     contract = AdapterProviderContract()
 
     # Test 1: Extract adapter-built messages
-    result = contract.extract_messages({
-        'config': {'messages': [{'role': 'user', 'content': 'test'}]}
-    })
-    assert result == [{'role': 'user', 'content': 'test'}], f"Test 1 failed: {result}"
+    result = contract.extract_messages({"config": {"messages": [{"role": "user", "content": "test"}]}})
+    assert result == [{"role": "user", "content": "test"}], f"Test 1 failed: {result}"
     print("Test 1 passed: Extract adapter-built messages")
 
     # Test 2: Legacy fallback
-    result = contract.extract_messages({'prompt': 'Hello', 'config': {}})
-    assert result == [{'role': 'user', 'content': [{'type': 'text', 'text': 'Hello'}]}], f"Test 2 failed: {result}"
+    result = contract.extract_messages({"prompt": "Hello", "config": {}})
+    assert result == [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}], f"Test 2 failed: {result}"
     print("Test 2 passed: Legacy fallback")
 
     # Test 3: Validate request with messages
-    is_valid, errors = contract.validate_request({'config': {'messages': []}})
+    is_valid, errors = contract.validate_request({"config": {"messages": []}})
     assert is_valid, f"Test 3 failed: {errors}"
     print("Test 3 passed: Validate request with messages")
 
@@ -77,13 +76,13 @@ def test_provider_contract():
     print("Test 4 passed: Validate request without config")
 
     # Test 5: Validate request with invalid messages
-    is_valid, errors = contract.validate_request({'config': {'messages': 'not a list'}})
+    is_valid, errors = contract.validate_request({"config": {"messages": "not a list"}})
     assert not is_valid, "Test 5 should have failed"
     assert "request['config']['messages'] must be a list" in errors
     print("Test 5 passed: Validate request with invalid messages")
 
     # Test 6: Request with empty messages list is valid
-    is_valid, errors = contract.validate_request({'config': {'messages': []}})
+    is_valid, errors = contract.validate_request({"config": {"messages": []}})
     assert is_valid, f"Test 6 failed: {errors}"
     print("Test 6 passed: Request with empty messages list is valid")
 

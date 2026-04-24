@@ -15,11 +15,11 @@
 
 | Status | Count |
 |--------|-------|
-| draft | 14 |
-| enforced | 15 |
-| enforced_non_regressive | 9 |
+| draft | 8 |
+| enforced | 16 |
+| enforced_non_regressive | 35 |
 | partially_enforced | 1 |
-| seeded | 22 |
+| seeded | 1 |
 | **Total** | **61** |
 
 ## Goal Tracking
@@ -29,7 +29,7 @@
 | Coverage | N/A (quick mode) | 50% | -50.0% | Month 2 |
 | Ruff errors | N/A (quick mode) | 0 | +0 | Month 3 |
 | MyPy errors | N/A (quick mode) | 0 | +0 | Month 2 |
-| Fitness enforced | 15 | 30 | -15 | Month 3 |
+| Fitness enforced | 16 | 30 | -14 | Month 3 |
 
 ## Coverage Goal Tracking
 

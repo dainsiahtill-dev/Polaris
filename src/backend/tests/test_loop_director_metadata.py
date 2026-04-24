@@ -30,11 +30,7 @@ def test_extract_pm_tasks_includes_chief_engineer_plan_and_constraints() -> None
                 "phase": "implementation",
                 "constraints": ["Follow ChiefEngineer construction plan."],
                 "metadata": {"detected_language": "rust"},
-                "construction_plan": {
-                    "file_plans": [
-                        {"path": "src/service.rs", "method_names": ["fetch_feed"]}
-                    ]
-                },
+                "construction_plan": {"file_plans": [{"path": "src/service.rs", "method_names": ["fetch_feed"]}]},
             }
         ]
     }

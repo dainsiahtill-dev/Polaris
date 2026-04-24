@@ -128,7 +128,7 @@ def test_evaluate_pm_task_quality_accepts_specific_actionable_tasks() -> None:
                     "Write evidence path mapping for downstream QA validation",
                 ],
                 "acceptance_criteria": [
-                    "Run `rg -n \"gateway|session|error\" docs/product/interface_contract.md` and verify required sections exist",
+                    'Run `rg -n "gateway|session|error" docs/product/interface_contract.md` and verify required sections exist',
                     "Contract table includes request, response, error model, idempotency, and evidence artifact path",
                 ],
             },
@@ -238,16 +238,21 @@ def test_pm_quality_retry_keeps_previous_non_empty_candidate() -> None:
         "notes": "PM JSON parse failed.",
     }
 
-    assert should_promote_pm_quality_candidate(
-        best_payload,
-        {"ok": False, "score": 78},
-        {},
-        {},
-    ) is True
-    assert should_promote_pm_quality_candidate(
-        parse_failed_payload,
-        {"ok": False, "score": 0},
-        best_payload,
-        {"ok": False, "score": 78},
-    ) is False
-
+    assert (
+        should_promote_pm_quality_candidate(
+            best_payload,
+            {"ok": False, "score": 78},
+            {},
+            {},
+        )
+        is True
+    )
+    assert (
+        should_promote_pm_quality_candidate(
+            parse_failed_payload,
+            {"ok": False, "score": 0},
+            best_payload,
+            {"ok": False, "score": 78},
+        )
+        is False
+    )

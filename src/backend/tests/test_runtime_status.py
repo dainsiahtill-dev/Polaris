@@ -12,9 +12,7 @@ def test_build_director_runtime_status_uses_service_when_running(monkeypatch):
         "_read_director_service_status_sync",
         lambda: {"state": "RUNNING", "started_at": 123.0},
     )
-    payload = director_runtime_status.build_director_runtime_status(
-        state, state.settings.workspace, ""
-    )
+    payload = director_runtime_status.build_director_runtime_status(state, state.settings.workspace, "")
     assert payload["running"] is True
     assert payload["pid"] is None
     assert payload["source"] == "v2_service"
@@ -30,9 +28,7 @@ def test_build_director_runtime_status_marks_idle_when_service_not_running(monke
         "_read_director_service_status_sync",
         lambda: {"state": "IDLE", "started_at": 456.0},
     )
-    payload = director_runtime_status.build_director_runtime_status(
-        state, state.settings.workspace, ""
-    )
+    payload = director_runtime_status.build_director_runtime_status(state, state.settings.workspace, "")
     assert payload["running"] is False
     assert payload["pid"] is None
     assert payload["source"] == "v2_service"
@@ -48,9 +44,7 @@ def test_build_director_runtime_status_returns_none_source_when_service_unavaila
         "_read_director_service_status_sync",
         lambda: None,
     )
-    payload = director_runtime_status.build_director_runtime_status(
-        state, state.settings.workspace, ""
-    )
+    payload = director_runtime_status.build_director_runtime_status(state, state.settings.workspace, "")
     assert payload["running"] is False
     assert payload["pid"] is None
     assert payload["source"] == "none"

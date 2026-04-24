@@ -17,6 +17,7 @@ from polaris.cells.roles.engine.internal.tot import ToTEngine
 # Minimal stubs so tests run without a real BaseEngine/LLM runtime
 # ---------------------------------------------------------------------------
 
+
 def _make_engine() -> ToTEngine:
     engine = ToTEngine(workspace="", max_branches=2, max_depth=2)
     return engine
@@ -26,14 +27,17 @@ def _make_engine() -> ToTEngine:
 # _parse_thoughts_response: balanced-extraction path raises → debug logged
 # ---------------------------------------------------------------------------
 
+
 class TestParseThoughtsResponseObservability:
     def test_logs_debug_when_balanced_extraction_raises(self, caplog):
         engine = _make_engine()
 
         # Force _extract_balanced_json to raise a ValueError
-        with patch.object(engine, "_extract_balanced_json", side_effect=ValueError("corrupt")):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_thoughts_response("not json at all {{")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=ValueError("corrupt")),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_thoughts_response("not json at all {{")
 
         # Must not raise; must return a degraded but non-empty list
         assert isinstance(result, list)
@@ -48,9 +52,11 @@ class TestParseThoughtsResponseObservability:
     def test_no_exception_propagated_on_parse_failure(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_thoughts_response("{broken: json")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_thoughts_response("{broken: json")
 
         assert isinstance(result, list), "Must always return a list, never raise"
 
@@ -72,13 +78,16 @@ class TestParseThoughtsResponseObservability:
 # _parse_evaluation_response: balanced-extraction path raises → debug logged
 # ---------------------------------------------------------------------------
 
+
 class TestParseEvaluationResponseObservability:
     def test_logs_debug_when_balanced_extraction_raises(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=ValueError("bad bracket")):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_evaluation_response("not valid json {{{")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=ValueError("bad bracket")),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_evaluation_response("not valid json {{{")
 
         assert isinstance(result, dict)
         # Must fall through to default {"score": 0.5, "reasoning": ""}
@@ -92,9 +101,11 @@ class TestParseEvaluationResponseObservability:
     def test_no_exception_propagated_on_parse_failure(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_evaluation_response("garbage input")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_evaluation_response("garbage input")
 
         assert isinstance(result, dict), "Must always return a dict, never raise"
 
@@ -108,9 +119,11 @@ class TestParseEvaluationResponseObservability:
         """When all parse strategies fail, default dict with score=0.5 is returned."""
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=ValueError("x")):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_evaluation_response("completely unparseable @@@ %%% ###")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=ValueError("x")),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_evaluation_response("completely unparseable @@@ %%% ###")
 
         assert result.get("score") == 0.5
 
@@ -119,13 +132,16 @@ class TestParseEvaluationResponseObservability:
 # _parse_finish_response: balanced-extraction path raises → debug logged
 # ---------------------------------------------------------------------------
 
+
 class TestParseFinishResponseObservability:
     def test_logs_debug_when_balanced_extraction_raises(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=ValueError("oops")):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_finish_response("invalid json input @@@")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=ValueError("oops")),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_finish_response("invalid json input @@@")
 
         assert isinstance(result, dict)
 
@@ -137,9 +153,11 @@ class TestParseFinishResponseObservability:
     def test_no_exception_propagated_on_parse_failure(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_finish_response("bad input")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_finish_response("bad input")
 
         assert isinstance(result, dict), "Must always return a dict, never raise"
 
@@ -154,9 +172,11 @@ class TestParseFinishResponseObservability:
         engine = _make_engine()
         raw = "x" * 300  # longer than 200 chars, not valid JSON
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=ValueError("x")):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_finish_response(raw)
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=ValueError("x")),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_finish_response(raw)
 
         assert "answer" in result
         assert len(result["answer"]) <= 200

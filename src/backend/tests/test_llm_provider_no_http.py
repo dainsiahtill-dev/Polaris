@@ -6,6 +6,7 @@ that:
   - domain exceptions are raised rather than fastapi.HTTPException
   - no fastapi symbols appear in the internal source files
 """
+
 from __future__ import annotations
 
 import importlib
@@ -50,6 +51,7 @@ def test_no_fastapi_import_in_internal(module_name: str) -> None:
 # provider_runtime: run_provider_action raises domain exception for unknown type
 # ---------------------------------------------------------------------------
 
+
 def test_run_provider_action_raises_domain_exception_for_unknown_provider() -> None:
     """run_provider_action must raise UnsupportedProviderTypeError, not HTTPException."""
     from polaris.cells.llm.provider_runtime.internal.provider_actions import run_provider_action
@@ -87,15 +89,14 @@ def test_run_provider_action_does_not_raise_http_exception() -> None:
             provider_cfg={},
             api_key=None,
         )
-    assert not isinstance(exc_info.value, HTTPException), (
-        "run_provider_action must not raise HTTPException"
-    )
+    assert not isinstance(exc_info.value, HTTPException), "run_provider_action must not raise HTTPException"
 
 
 # ---------------------------------------------------------------------------
 # provider_runtime: execute_provider_action returns ProviderInvocationResultV1
 # on domain exception (does NOT propagate)
 # ---------------------------------------------------------------------------
+
 
 def test_execute_provider_action_absorbs_domain_exception() -> None:
     """execute_provider_action wraps UnsupportedProviderTypeError into a result."""
@@ -116,6 +117,7 @@ def test_execute_provider_action_absorbs_domain_exception() -> None:
 # provider_config: resolve_provider_request_context raises ProviderNotFoundError
 # ---------------------------------------------------------------------------
 
+
 def test_resolve_provider_request_context_raises_domain_exception_when_not_found() -> None:
     """resolve_provider_request_context raises ProviderNotFoundError for unknown provider_id."""
     from polaris.cells.llm.provider_config.internal.provider_context import (
@@ -126,10 +128,13 @@ def test_resolve_provider_request_context_raises_domain_exception_when_not_found
         ProviderNotFoundError,
     )
 
-    with patch(
-        "polaris.cells.llm.provider_config.internal.provider_context.load_llm_config_port",
-        return_value={"providers": {}},
-    ), pytest.raises(ProviderNotFoundError) as exc_info:
+    with (
+        patch(
+            "polaris.cells.llm.provider_config.internal.provider_context.load_llm_config_port",
+            return_value={"providers": {}},
+        ),
+        pytest.raises(ProviderNotFoundError) as exc_info,
+    ):
         resolve_provider_request_context("/tmp/fake_ws", "", "nonexistent_provider", None, None)
 
     exc = exc_info.value
@@ -149,10 +154,13 @@ def test_resolve_provider_request_context_does_not_raise_http_exception() -> Non
         resolve_provider_request_context,
     )
 
-    with patch(
-        "polaris.cells.llm.provider_config.internal.provider_context.load_llm_config_port",
-        return_value={"providers": {}},
-    ), pytest.raises(Exception) as exc_info:
+    with (
+        patch(
+            "polaris.cells.llm.provider_config.internal.provider_context.load_llm_config_port",
+            return_value={"providers": {}},
+        ),
+        pytest.raises(Exception) as exc_info,
+    ):
         resolve_provider_request_context("/tmp/fake_ws", "", "missing", None, None)
 
     assert not isinstance(exc_info.value, HTTPException), (
@@ -163,6 +171,7 @@ def test_resolve_provider_request_context_does_not_raise_http_exception() -> Non
 # ---------------------------------------------------------------------------
 # provider_config: resolve_llm_test_execution_context raises domain exceptions
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_llm_test_context_raises_validation_error_when_model_missing() -> None:
     """Direct config path with base_url but no model raises ProviderConfigValidationError."""
@@ -187,10 +196,13 @@ def test_resolve_llm_test_context_raises_role_not_configured() -> None:
     )
     from polaris.cells.llm.provider_config.public.contracts import RoleNotConfiguredError
 
-    with patch(
-        "polaris.cells.llm.provider_config.internal.test_context.load_llm_config_port",
-        return_value={"roles": {}, "providers": {}},
-    ), pytest.raises(RoleNotConfiguredError) as exc_info:
+    with (
+        patch(
+            "polaris.cells.llm.provider_config.internal.test_context.load_llm_config_port",
+            return_value={"roles": {}, "providers": {}},
+        ),
+        pytest.raises(RoleNotConfiguredError) as exc_info,
+    ):
         resolve_llm_test_execution_context(
             "/tmp/fake_ws",
             "",
@@ -211,10 +223,13 @@ def test_resolve_llm_test_context_does_not_raise_http_exception() -> None:
         resolve_llm_test_execution_context,
     )
 
-    with patch(
-        "polaris.cells.llm.provider_config.internal.test_context.load_llm_config_port",
-        return_value={"roles": {}, "providers": {}},
-    ), pytest.raises(Exception) as exc_info:
+    with (
+        patch(
+            "polaris.cells.llm.provider_config.internal.test_context.load_llm_config_port",
+            return_value={"roles": {}, "providers": {}},
+        ),
+        pytest.raises(Exception) as exc_info,
+    ):
         resolve_llm_test_execution_context("/tmp/fake_ws", "", {"role": "bad_role"})
 
     assert not isinstance(exc_info.value, HTTPException), (
@@ -225,6 +240,7 @@ def test_resolve_llm_test_context_does_not_raise_http_exception() -> None:
 # ---------------------------------------------------------------------------
 # provider_config: resolve_provider_context_contract absorbs domain exception
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_provider_context_contract_absorbs_domain_exception() -> None:
     """Public service method returns a failed ProviderConfigResultV1, not raises."""

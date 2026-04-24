@@ -63,9 +63,7 @@ async def test_runtime_projection_includes_resident_state() -> None:
                                             "polaris.cells.runtime.projection.internal.runtime_projection_service.map_engine_to_court_state",
                                             return_value={},
                                         ):
-                                            projection = await build_runtime_projection(
-                                                state, "/tmp/ws", "/tmp/cache"
-                                            )
+                                            projection = await build_runtime_projection(state, "/tmp/ws", "/tmp/cache")
 
     assert projection.resident == resident_payload
     assert projection.snapshot["resident"] == resident_payload

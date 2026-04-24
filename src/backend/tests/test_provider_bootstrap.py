@@ -10,15 +10,14 @@ from polaris.infrastructure.llm.provider_bootstrap import (
     ProviderAdapter,
     inject_kernelone_provider_runtime,
 )
+from polaris.infrastructure.llm.providers.provider_registry import (
+    ProviderManager as InfrastructureProviderManager,
+)
 from polaris.kernelone.llm.providers import (
     BaseProvider,
     ProviderInfo,
     ValidationResult,
 )
-from polaris.infrastructure.llm.providers.provider_registry import (
-    ProviderManager as InfrastructureProviderManager,
-)
-from polaris.kernelone.llm.providers import get_provider_manager
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 
@@ -111,7 +110,7 @@ def test_inject_kernelone_provider_runtime_syncs_registry_and_service_locator() 
 
 def test_assemble_core_services_injects_provider_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     assembly_module = _import_assembly_module()
-    _, _, DIContainer = _import_backend_bootstrapper()
+    _, _, di_container = _import_backend_bootstrapper()
     injected: list[str] = []
 
     def _record_injection() -> None:
@@ -120,7 +119,7 @@ def test_assemble_core_services_injects_provider_runtime(monkeypatch: pytest.Mon
     monkeypatch.setattr(assembly_module, "inject_kernelone_provider_runtime", _record_injection)
     monkeypatch.setattr(assembly_module, "_inject_embedding_port", lambda settings: None)
 
-    container = DIContainer()
+    container = di_container()
     settings = Settings()
 
     assembly_module.assemble_core_services(container, settings=settings)
@@ -132,14 +131,14 @@ def test_assemble_core_services_registers_business_storage_resolver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assembly_module = _import_assembly_module()
-    _, _, DIContainer = _import_backend_bootstrapper()
+    _, _, di_container = _import_backend_bootstrapper()
     registered: list[object] = []
 
     monkeypatch.setattr(assembly_module, "inject_kernelone_provider_runtime", lambda: None)
     monkeypatch.setattr(assembly_module, "_inject_embedding_port", lambda settings: None)
     monkeypatch.setattr(assembly_module, "register_business_roots_resolver", registered.append)
 
-    container = DIContainer()
+    container = di_container()
     settings = Settings()
 
     assembly_module.assemble_core_services(container, settings=settings)
@@ -151,18 +150,17 @@ def test_assemble_core_services_initializes_typed_event_bridge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assembly_module = _import_assembly_module()
-    _, _, DIContainer = _import_backend_bootstrapper()
+    _, _, di_container = _import_backend_bootstrapper()
 
     from polaris.kernelone.events import typed as typed_events
-    from polaris.kernelone.events.typed import bus_adapter as typed_bus_adapter
-    from polaris.kernelone.events.typed import registry as typed_registry
+    from polaris.kernelone.events.typed import bus_adapter as typed_bus_adapter, registry as typed_registry
 
     monkeypatch.setattr(assembly_module, "inject_kernelone_provider_runtime", lambda: None)
     monkeypatch.setattr(assembly_module, "_inject_embedding_port", lambda settings: None)
     monkeypatch.setattr(typed_bus_adapter, "_default_adapter", None)
     monkeypatch.setattr(typed_registry, "_default_registry", None)
 
-    container = DIContainer()
+    container = di_container()
     settings = Settings()
     assembly_module.assemble_core_services(container, settings=settings)
 
@@ -176,7 +174,7 @@ async def test_backend_bootstrap_create_application_injects_provider_runtime(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    BackendBootstrapper, ConfigSnapshot, _ = _import_backend_bootstrapper()
+    backend_bootstrapper, config_snapshot, _ = _import_backend_bootstrapper()
     injected: list[str] = []
 
     def _record_injection() -> None:

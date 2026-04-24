@@ -95,7 +95,7 @@ class AgentStressRunner:
         chain_profile: str = "court_strict",
         round_batch_limit: int = 3,
         post_batch_audit: bool = True,
-    ):
+    ) -> None:
         backend_context = resolve_backend_context(backend_url=backend_url, token=token)
         self.workspace = Path(workspace).resolve()
         self.rounds = rounds
@@ -997,7 +997,7 @@ class AgentStressRunner:
                         for item in project_attempt_results
                     ]
                 # project_serial 的统计按“项目收敛结果”计，不把中间 attempt 计入最终轮次。
-                self.results = self.results[:project_result_start_index] + [representative]
+                self.results = [*self.results[:project_result_start_index], representative]
                 await self._save_intermediate_results()
 
             if not project_passed:
@@ -1809,7 +1809,7 @@ class AgentStressRunner:
             "missing_required_core_artifacts": missing_required_core,
             "stage_artifacts": {
                 "checked": int(checked_stage_artifacts),
-                "missing": int(len(missing_stage_artifacts)),
+                "missing": len(missing_stage_artifacts),
                 "missing_items": missing_stage_artifacts,
             },
         }
@@ -1841,7 +1841,7 @@ class AgentStressRunner:
         }
         passed = sum(1 for value in checks.values() if bool(value))
         total = len(checks)
-        score = int(round((passed / total) * 100)) if total > 0 else 0
+        score = round((passed / total) * 100) if total > 0 else 0
         issues = [name for name, ok in checks.items() if not ok]
         return {
             "run_state": run_state,
@@ -2181,7 +2181,7 @@ class AgentStressRunner:
                 for r in self.results
             ],
             "coverage_summary": {
-                "categories_covered": sorted(list(categories_covered)),
+                "categories_covered": sorted(categories_covered),
                 "categories_count": len(categories_covered),
                 "total_categories": len(ProjectCategory),
                 "projects_completed": projects_completed,

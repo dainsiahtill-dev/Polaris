@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from polaris.kernelone.role.hotswap import (
     FallbackChain,
     HotSwapContext,
@@ -113,12 +111,8 @@ class TestHotSwapContext:
         """Test adding and getting modifiers."""
         context = HotSwapContext(active_profession="test")
 
-        context.add_modifier(
-            PromptModifier(modifier_type="format", content="low", priority=1)
-        )
-        context.add_modifier(
-            PromptModifier(modifier_type="format", content="high", priority=10)
-        )
+        context.add_modifier(PromptModifier(modifier_type="format", content="low", priority=1))
+        context.add_modifier(PromptModifier(modifier_type="format", content="high", priority=10))
 
         modifiers = context.get_modifiers()
         assert len(modifiers) == 2
@@ -129,9 +123,7 @@ class TestHotSwapContext:
         """Test clearing modifiers."""
         context = HotSwapContext(active_profession="test")
 
-        context.add_modifier(
-            PromptModifier(modifier_type="format", content="a", priority=0)
-        )
+        context.add_modifier(PromptModifier(modifier_type="format", content="a", priority=0))
         context.clear_modifiers()
 
         assert len(context.get_modifiers()) == 0

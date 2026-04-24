@@ -139,10 +139,7 @@ from polaris.cells.runtime.projection.internal.runtime_v2 import RuntimeEnvelope
     report = guard.run()
 
     assert report.exit_code == 1
-    assert any(
-        issue.check_id == "import_fence.forbidden_internal_cell_import"
-        for issue in report.issues
-    )
+    assert any(issue.check_id == "import_fence.forbidden_internal_cell_import" for issue in report.issues)
 
 
 @pytest.mark.skipif(guard_module.yaml is None, reason="PyYAML unavailable")
@@ -187,4 +184,3 @@ from polaris.infrastructure.storage import LocalFileSystemAdapter
     new_violation_report = new_violation_guard.run()
     assert new_violation_report.exit_code == 1
     assert new_violation_report.new_issue_count > 0
-

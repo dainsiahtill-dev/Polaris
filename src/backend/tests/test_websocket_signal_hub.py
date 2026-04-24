@@ -68,7 +68,7 @@ async def test_signal_hub_wakes_waiters_on_director_bus_event(monkeypatch) -> No
         await service._bus.subscribe(MessageType.TASK_TRACE, fanout._trace_handler)
 
         # Register a connection to receive events
-        sink = await fanout.register_connection(
+        await fanout.register_connection(
             connection_id="test-conn",
             workspace="/test",
             cache_root="/cache",

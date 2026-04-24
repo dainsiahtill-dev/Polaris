@@ -79,12 +79,15 @@ def test_local_shangshuling_registry_round_trip(
     ready = port.get_shangshuling_ready_tasks(str(workspace))
     assert [item["id"] for item in ready] == ["T-1"]
 
-    assert port.record_shangshuling_task_completion(
-        str(workspace),
-        "T-1",
-        True,
-        {"note": "completed"},
-    ) is True
+    assert (
+        port.record_shangshuling_task_completion(
+            str(workspace),
+            "T-1",
+            True,
+            {"note": "completed"},
+        )
+        is True
+    )
 
     updated = _read_json(registry_path)
     task_1 = next(item for item in updated["tasks"] if item["id"] == "T-1")

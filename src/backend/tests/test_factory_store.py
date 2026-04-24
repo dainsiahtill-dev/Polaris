@@ -7,6 +7,7 @@ Covers:
     (not silently swallowed), and unlink failure during atomic-replace cleanup
     is logged via logger.warning
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,12 +26,10 @@ import pytest
 # SyntaxError on Python 3.14.  We bypass that by loading the .py file
 # directly so only factory_store's own direct imports are resolved.
 
+
 def _load_factory_store_module():
     """Load factory_store.py without triggering the full package __init__ chain."""
-    module_path = (
-        Path(__file__).parent.parent
-        / "polaris/cells/factory/pipeline/internal/factory_store.py"
-    )
+    module_path = Path(__file__).parent.parent / "polaris/cells/factory/pipeline/internal/factory_store.py"
     spec = importlib.util.spec_from_file_location(
         "polaris.cells.factory.pipeline.internal.factory_store",
         module_path,
@@ -52,6 +51,7 @@ _MAX = _fs_mod._MAX_LOCK_ENTRIES
 # Shared fixture
 # ---------------------------------------------------------------------------
 
+
 def _reset_lock_table() -> None:
     """Clear the module-level lock table between tests."""
     with _fs_mod._RUN_FILE_LOCKS_GUARD:
@@ -61,6 +61,7 @@ def _reset_lock_table() -> None:
 # ---------------------------------------------------------------------------
 # TestLockTableBounded
 # ---------------------------------------------------------------------------
+
 
 class TestLockTableBounded:
     """_RUN_FILE_LOCKS must never exceed _MAX_LOCK_ENTRIES entries."""
@@ -81,9 +82,7 @@ class TestLockTableBounded:
         with _fs_mod._RUN_FILE_LOCKS_GUARD:
             size = len(_fs_mod._RUN_FILE_LOCKS)
 
-        assert size <= _MAX, (
-            f"Lock table grew to {size}, expected at most {_MAX}"
-        )
+        assert size <= _MAX, f"Lock table grew to {size}, expected at most {_MAX}"
 
     def test_table_is_exactly_at_cap_after_overflow(self) -> None:
         """After overflow the table must sit exactly at _MAX (not shrink below)."""
@@ -95,9 +94,7 @@ class TestLockTableBounded:
         with _fs_mod._RUN_FILE_LOCKS_GUARD:
             size = len(_fs_mod._RUN_FILE_LOCKS)
 
-        assert size == _MAX, (
-            f"Lock table size {size} != cap {_MAX} after settling"
-        )
+        assert size == _MAX, f"Lock table size {size} != cap {_MAX} after settling"
 
     def test_existing_entry_does_not_grow_table(self) -> None:
         """Accessing the same path twice must not duplicate entries."""
@@ -115,6 +112,7 @@ class TestLockTableBounded:
 # ---------------------------------------------------------------------------
 # TestLockLruRefresh
 # ---------------------------------------------------------------------------
+
 
 class TestLockLruRefresh:
     """Frequently-accessed entries must be promoted to the tail and survive eviction."""
@@ -153,6 +151,7 @@ class TestLockLruRefresh:
 # TestAppendEventFailureObservable
 # ---------------------------------------------------------------------------
 
+
 class TestAppendEventFailureObservable:
     """OSError from file I/O must propagate, never be silently swallowed."""
 
@@ -171,11 +170,14 @@ class TestAppendEventFailureObservable:
         """
         store = _fs_mod.FactoryStore(base_dir=tmp_path)
 
-        with patch.object(
-            store,
-            "_append_file_sync",
-            side_effect=OSError("disk full"),
-        ), pytest.raises(OSError, match="disk full"):
+        with (
+            patch.object(
+                store,
+                "_append_file_sync",
+                side_effect=OSError("disk full"),
+            ),
+            pytest.raises(OSError, match="disk full"),
+        ):
             asyncio.run(
                 store.append_event(
                     run_id="test-run-001",
@@ -183,9 +185,7 @@ class TestAppendEventFailureObservable:
                 )
             )
 
-    def test_append_event_sync_called_exactly_once_on_failure(
-        self, tmp_path: Path
-    ) -> None:
+    def test_append_event_sync_called_exactly_once_on_failure(self, tmp_path: Path) -> None:
         """_append_file_sync is called once; no retry or swallow loop exists."""
         store = _fs_mod.FactoryStore(base_dir=tmp_path)
         call_count: dict[str, int] = {"n": 0}
@@ -204,9 +204,7 @@ class TestAppendEventFailureObservable:
 
         assert call_count["n"] == 1, "_append_file_sync should be called exactly once"
 
-    def test_unlink_failure_is_logged_not_swallowed(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_unlink_failure_is_logged_not_swallowed(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """When temp-file unlink fails inside _replace_with_retry a WARNING is emitted.
 
         The production code path (lines 123-133) does:
@@ -233,24 +231,23 @@ class TestAppendEventFailureObservable:
                 raise OSError("cannot delete")
             except OSError as exc:
                 _fs_mod.logger.warning(
-                    "factory_store: failed to clean up temp file %s after "
-                    "atomic-replace exhausted retries: %s",
+                    "factory_store: failed to clean up temp file %s after atomic-replace exhausted retries: %s",
                     temp_file,
                     exc,
                 )
             raise permission_err
 
-        with patch.object(
-            store, "_replace_with_retry", side_effect=fake_replace_with_retry
-        ), caplog.at_level(logging.WARNING, logger=_fs_mod.logger.name), pytest.raises(PermissionError):
+        with (
+            patch.object(store, "_replace_with_retry", side_effect=fake_replace_with_retry),
+            caplog.at_level(logging.WARNING, logger=_fs_mod.logger.name),
+            pytest.raises(PermissionError),
+        ):
             asyncio.run(store.save_run(fake_run))
 
         warning_records = [
             r
             for r in caplog.records
-            if r.levelno >= logging.WARNING
-            and "factory_store" in r.getMessage()
-            and "atomic-replace" in r.getMessage()
+            if r.levelno >= logging.WARNING and "factory_store" in r.getMessage() and "atomic-replace" in r.getMessage()
         ]
         assert warning_records, (
             "Expected a WARNING log about failed temp-file cleanup, got none. "
@@ -261,6 +258,7 @@ class TestAppendEventFailureObservable:
 # ---------------------------------------------------------------------------
 # TestFileLockTimeout
 # ---------------------------------------------------------------------------
+
 
 class TestFileLockTimeout:
     """File lock must implement timeout protection to prevent indefinite waiting."""
@@ -344,8 +342,6 @@ class TestFileLockTimeout:
         file_path = tmp_path / "run.json"
         lock = _fs_mod._get_run_file_lock(file_path)
 
-        import threading
-
         lock.acquire()
         try:
             with pytest.raises(_fs_mod.FileLockTimeoutError) as exc_info:
@@ -372,6 +368,7 @@ class TestFileLockTimeout:
 # TestDeadlockPrevention
 # ---------------------------------------------------------------------------
 
+
 class TestDeadlockPrevention:
     """Timeout mechanism must prevent deadlock scenarios."""
 
@@ -382,14 +379,10 @@ class TestDeadlockPrevention:
         _reset_lock_table()
 
     @pytest.mark.asyncio
-    async def test_multiple_waiters_timeout_instead_of_deadlock(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_multiple_waiters_timeout_instead_of_deadlock(self, tmp_path: Path) -> None:
         """Multiple concurrent waiters must not cause deadlock; all should timeout."""
         file_path = tmp_path / "run.json"
         lock = _fs_mod._get_run_file_lock(file_path)
-
-        import threading
 
         # Hold the lock for a long time
         lock.acquire()
@@ -409,16 +402,12 @@ class TestDeadlockPrevention:
         )
 
         # All should timeout, none should hang forever
-        assert all(r is False for r in results), (
-            f"Expected all waiters to timeout, got {results}"
-        )
+        assert all(r is False for r in results), f"Expected all waiters to timeout, got {results}"
 
         lock.release()
 
     @pytest.mark.asyncio
-    async def test_lock_release_allows_immediate_reacquisition(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_lock_release_allows_immediate_reacquisition(self, tmp_path: Path) -> None:
         """After lock holder releases, next waiter should acquire immediately."""
         file_path = tmp_path / "run.json"
         lock = _fs_mod._get_run_file_lock(file_path)
@@ -443,9 +432,7 @@ class TestDeadlockPrevention:
             # Should complete well under 1 second if lock was released
             assert elapsed < 0.5, f"Acquisition took {elapsed}s, unexpected delay"
 
-    def test_lock_table_preserves_timeout_behavior_after_lru_eviction(
-        self, tmp_path: Path
-    ) -> None:
+    def test_lock_table_preserves_timeout_behavior_after_lru_eviction(self, tmp_path: Path) -> None:
         """LRU eviction must not affect timeout mechanism on surviving locks."""
         # Fill the lock table to capacity
         for i in range(_MAX):

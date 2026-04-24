@@ -452,25 +452,19 @@ class TestValidator:
         assert result.error_code == ErrorCode.INVALID_PATH
 
     def test_validate_traversal(self):
-        op = FileOperation(
-            path="../etc/passwd", edit_type=EditType.FULL_FILE, replace="evil"
-        )
+        op = FileOperation(path="../etc/passwd", edit_type=EditType.FULL_FILE, replace="evil")
         result = OperationValidator.validate(op, "/tmp/workspace")
         assert result.valid is False
         assert result.error_code == ErrorCode.PATH_TRAVERSAL
 
     def test_validate_outside_workspace(self):
-        op = FileOperation(
-            path="/absolute/path.py", edit_type=EditType.FULL_FILE, replace="content"
-        )
+        op = FileOperation(path="/absolute/path.py", edit_type=EditType.FULL_FILE, replace="content")
         result = OperationValidator.validate(op, "/tmp/workspace")
         assert result.valid is False
         assert result.error_code == ErrorCode.PATH_OUTSIDE_WORKSPACE
 
     def test_validate_missing_replace(self):
-        op = FileOperation(
-            path="test.py", edit_type=EditType.SEARCH_REPLACE, search="old"
-        )
+        op = FileOperation(path="test.py", edit_type=EditType.SEARCH_REPLACE, search="old")
         result = OperationValidator.validate(op, "/tmp")
         assert result.valid is False
         assert result.error_code == ErrorCode.EMPTY_OPERATION

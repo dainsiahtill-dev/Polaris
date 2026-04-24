@@ -87,7 +87,13 @@ class _CaptureRoleAdapter(RoleOrchestrationAdapter):
 
 def test_core_runtime_files_do_not_import_app_directly():
     targets = [
-        BACKEND_ROOT / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal" / "unified_orchestration_service.py",
+        BACKEND_ROOT
+        / "polaris"
+        / "cells"
+        / "orchestration"
+        / "workflow_runtime"
+        / "internal"
+        / "unified_orchestration_service.py",
         BACKEND_ROOT / "polaris" / "bootstrap" / "backend_bootstrap.py",
         BACKEND_ROOT / "polaris" / "cells" / "llm" / "control_plane" / "internal" / "tui_llm_client.py",
     ]
@@ -153,9 +159,7 @@ def test_retry_policy_requires_seconds_suffix():
     assert policy.initial_interval_seconds == 0.2
     assert policy.max_interval_seconds == 5.0
 
-    canonical = RetryPolicy.from_mapping(
-        {"initial_interval_seconds": 3, "max_interval_seconds": 7}
-    )
+    canonical = RetryPolicy.from_mapping({"initial_interval_seconds": 3, "max_interval_seconds": 7})
     assert canonical.initial_interval_seconds == 3.0
     assert canonical.max_interval_seconds == 7.0
 
@@ -220,7 +224,7 @@ async def test_unified_orchestration_service_passes_role_entry_metadata_to_adapt
     )
 
     await service.submit_run(request)
-    task = service._active_runs.get("run-meta-1")  # noqa: SLF001
+    task = service._active_runs.get("run-meta-1")
     assert task is not None
     await asyncio.wait_for(task, timeout=5)
 

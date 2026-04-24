@@ -1,7 +1,7 @@
 import json
 
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.artifact_store.internal import artifacts as artifacts_service
 from polaris.cells.runtime.projection.internal import status_snapshot_builder as runtime_ws_status_service
 from polaris.delivery.http.app_factory import create_app

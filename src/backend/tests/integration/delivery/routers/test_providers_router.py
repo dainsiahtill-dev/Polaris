@@ -201,14 +201,14 @@ class TestProvidersRouter:
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_info.return_value = _FakeProviderInfo()
-        with patch(
-            "polaris.delivery.http.routers.providers._provider_manager",
-            mock_manager,
-        ), patch(
-            "polaris.delivery.http.routers.providers.resolve_provider_request_context"
-        ) as mock_resolve, patch(
-            "polaris.delivery.http.routers.providers.run_provider_action"
-        ) as mock_run:
+        with (
+            patch(
+                "polaris.delivery.http.routers.providers._provider_manager",
+                mock_manager,
+            ),
+            patch("polaris.delivery.http.routers.providers.resolve_provider_request_context") as mock_resolve,
+            patch("polaris.delivery.http.routers.providers.run_provider_action") as mock_run,
+        ):
             mock_resolve.return_value = SimpleNamespace(
                 provider_cfg={"base_url": "https://api.test.com"},
                 provider_type="test",
@@ -230,14 +230,14 @@ class TestProvidersRouter:
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_info.return_value = _FakeProviderInfo()
-        with patch(
-            "polaris.delivery.http.routers.providers._provider_manager",
-            mock_manager,
-        ), patch(
-            "polaris.delivery.http.routers.providers.resolve_provider_request_context"
-        ) as mock_resolve, patch(
-            "polaris.delivery.http.routers.providers.run_provider_action"
-        ) as mock_run:
+        with (
+            patch(
+                "polaris.delivery.http.routers.providers._provider_manager",
+                mock_manager,
+            ),
+            patch("polaris.delivery.http.routers.providers.resolve_provider_request_context") as mock_resolve,
+            patch("polaris.delivery.http.routers.providers.run_provider_action") as mock_run,
+        ):
             mock_resolve.return_value = SimpleNamespace(
                 provider_cfg={"base_url": "https://api.test.com"},
                 provider_type="test",

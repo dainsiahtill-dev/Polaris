@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +43,14 @@ class InvariantPriority:
     LOW = "low"  # Can be disabled for testing
 
 
+# Thread-local storage for risk level context
+# This ensures thread-safe access to risk level per thread/coroutine
+_thread_local = threading.local()
+
+# Valid risk levels for validation
+_VALID_RISK_LEVELS = frozenset({"normal", "low", "high", "critical"})
+
+
 class KernelGuard:
     """Runtime assertions for the single-decision / single-tool-batch contract.
 
@@ -49,6 +58,7 @@ class KernelGuard:
     - Speculative execution path protection
     - Time constraints per state
     - Invariant priority system
+    - Thread-safe risk level context
     """
 
     # Phase 3.4: Time constraints per state (milliseconds)
@@ -71,21 +81,65 @@ class KernelGuard:
         "state_time_limit": InvariantPriority.HIGH,
     }
 
-    # Phase 3.4: Current risk context
-    _current_risk_level: str = "normal"
+    # Phase 3.4: Class-level constants (immutable)
+    _DEFAULT_RISK_LEVEL: str = "normal"
+
+    @classmethod
+    def _get_risk_level(cls) -> str:
+        """Get current risk level for this thread.
+
+        Returns:
+            Current risk level, defaults to "normal" if not set.
+        """
+        return getattr(_thread_local, "risk_level", cls._DEFAULT_RISK_LEVEL)
+
+    @classmethod
+    def _set_risk_level(cls, level: str) -> None:
+        """Set risk level for this thread.
+
+        Args:
+            level: Risk level to set
+        """
+        _thread_local.risk_level = level
 
     @classmethod
     def set_risk_level(cls, level: str) -> None:
         """Phase 3.4: Set current risk level for invariant relaxation.
 
+        This method is thread-safe - each thread maintains its own risk level.
+
         Args:
             level: Risk level (normal/low/high/critical)
         """
-        cls._current_risk_level = level
+        if level not in _VALID_RISK_LEVELS:
+            raise ValueError(
+                f"Invalid risk level: {level}. "
+                f"Must be one of: {_VALID_RISK_LEVELS}"
+            )
+        cls._set_risk_level(level)
+
+    @classmethod
+    def get_risk_level(cls) -> str:
+        """Get current risk level for this thread.
+
+        Returns:
+            Current risk level
+        """
+        return cls._get_risk_level()
+
+    @classmethod
+    def reset_risk_level(cls) -> None:
+        """Reset risk level to default for this thread.
+
+        Useful for cleanup in tests or worker threads.
+        """
+        cls._set_risk_level(cls._DEFAULT_RISK_LEVEL)
 
     @classmethod
     def can_relax_invariant(cls, invariant: str) -> bool:
         """Phase 3.4: Check if an invariant can be relaxed in current risk context.
+
+        This method is thread-safe - each thread has its own risk level context.
 
         Args:
             invariant: Invariant name
@@ -94,14 +148,15 @@ class KernelGuard:
             True if invariant can be relaxed
         """
         priority = cls._INVARIANT_PRIORITIES.get(invariant, InvariantPriority.HIGH)
+        current_level = cls._get_risk_level()
 
-        if cls._current_risk_level == "critical":
-            return priority in {InvariantPriority.HIGH, InvariantPriority.MEDIUM, InvariantPriority.LOW}
-        elif cls._current_risk_level == "high":
-            return priority in {InvariantPriority.MEDIUM, InvariantPriority.LOW}
-        elif cls._current_risk_level == "low":
-            return priority == InvariantPriority.LOW
-        return False
+        # Map risk levels to their allowed priorities
+        relax_map: dict[str, frozenset[str]] = {
+            "critical": frozenset({InvariantPriority.HIGH, InvariantPriority.MEDIUM, InvariantPriority.LOW}),
+            "high": frozenset({InvariantPriority.MEDIUM, InvariantPriority.LOW}),
+            "low": frozenset({InvariantPriority.LOW}),
+        }
+        return priority in relax_map.get(current_level, frozenset())
 
     @staticmethod
     def assert_single_decision(turn_id: str, decision_count: int, tool_batch_count: int | None = None) -> None:

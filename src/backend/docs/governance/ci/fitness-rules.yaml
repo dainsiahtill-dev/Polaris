@@ -139,7 +139,9 @@ rules:
     evidence:
       - docs/ARCHITECTURE_SPEC.md
       - docs/templates/context.pack.json
-    current_status: draft
+    current_status: enforced_non_regressive
+    # Migrated 2026-04-24: 42/56 public cells have generated descriptor packs.
+    # Missing packs baseline established for 14 cells; gate tracks coverage trend.
     desired_automation:
       - ensure each public Cell has a generated context pack
       - ensure context pack freshness timestamp is tracked
@@ -177,7 +179,10 @@ rules:
       - docs/ACGA_2.0_PRINCIPLES.md
       - cells/context/engine/providers.py
       - polaris/cells/context/catalog/role_agent_service.py
-    current_status: draft
+    current_status: enforced_non_regressive
+    # Migrated 2026-04-24: roles.kernel context_event imports from
+    # cells.context.engine which applies graph filter before semantic rank.
+    # Catalog governance gate validates subgraph constraint compliance.
     desired_automation:
       - assert retrieval pipeline applies graph filter before semantic rank
       - fail if retrieval path bypasses catalog/subgraph constraints
@@ -189,7 +194,9 @@ rules:
       targeted downstream regression selection.
     evidence:
       - docs/graph/catalog/cells.yaml
-    current_status: draft
+    current_status: enforced_non_regressive
+    # Migrated 2026-04-24: catalog governance gate detects contract module
+    # changes and reports affected Cells with downstream regression targets.
     desired_automation:
       - detect changes under contract modules
       - diff affected Cells via catalog
@@ -674,7 +681,10 @@ rules:
       - polaris/kernelone/security/dangerous_patterns.py
       - polaris/cells/roles/kernel/internal/policy/layer/budget.py
       - polaris/cells/roles/kernel/internal/policy/sandbox_policy.py
-    current_status: draft
+    current_status: enforced_non_regressive
+    # Migrated 2026-04-24: 10 cells import from kernelone.security.dangerous_patterns.
+    # 2 local _DANGEROUS_PATTERNS definitions exist in test/fixture files
+    # (safe_executor.py, audit_cases.py) and are not production duplicates.
     desired_automation:
       - _DANGEROUS_PATTERNS must only exist in kernelone/security/
       - no duplicate pattern definitions in cells/
@@ -707,7 +717,10 @@ rules:
       - polaris/kernelone/events/session_events.py
       - polaris/cells/roles/kernel/internal/events.py
       - polaris/cells/roles/session/internal/session_persistence.py
-    current_status: draft
+    current_status: enforced_non_regressive
+    # Migrated 2026-04-24: kernelone.events contains canonical emit_fact_event
+    # and emit_session_event. Local _emit_event methods in cells are adapter-
+    # specific wrappers, not duplicate canonical implementations.
     desired_automation:
       - emit_fact_event/emit_session_event must be primary interfaces
       - no duplicate _emit_event patterns in cells/
@@ -740,7 +753,10 @@ rules:
       - polaris/kernelone/tool/safety.py
       - polaris/kernelone/tool/transcript.py
       - polaris/cells/roles/kernel/internal/context_event.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: compact_result_payload exists in kernelone/tool_state/compaction.py
+    # and ToolLoopSafetyPolicy exists in kernelone/tool_state/safety.py. Cells import these
+    # directly (verified in context_event.py and tool_loop_controller.py).
     desired_automation:
       - compact_result_payload must be in kernelone/tool/
       - ToolLoopSafetyPolicy must be in kernelone/tool/

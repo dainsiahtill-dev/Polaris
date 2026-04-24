@@ -42,25 +42,19 @@ _PREEXISTING_IMPORT_ERROR_FRAGMENTS: tuple[str, ...] = (
 _CIRCULAR_IMPORT_INDICATOR = "circular import"
 
 # Fully-qualified paths for the two modules under test.
-_DISPATCH_PIPELINE_PATH = (
-    "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline"
-)
+_DISPATCH_PIPELINE_PATH = "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline"
 _DIRECTOR_WORKFLOW_PATH = (
-    "polaris.cells.orchestration.workflow_runtime.internal"
-    ".runtime_engine.workflows.director_workflow"
+    "polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.workflows.director_workflow"
 )
 _SHARED_TYPES_PATH = "polaris.cells.orchestration.shared_types"
-_PM_DISPATCH_PUBLIC_SERVICE = (
-    "polaris.cells.orchestration.pm_dispatch.public.service"
-)
-_PM_DISPATCH_INTERNAL_EC = (
-    "polaris.cells.orchestration.pm_dispatch.internal.error_classifier"
-)
+_PM_DISPATCH_PUBLIC_SERVICE = "polaris.cells.orchestration.pm_dispatch.public.service"
+_PM_DISPATCH_INTERNAL_EC = "polaris.cells.orchestration.pm_dispatch.internal.error_classifier"
 
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _fresh_import(module_path: str) -> types.ModuleType:
     """Import a module, raising ImportError verbatim if it fails."""
@@ -76,15 +70,13 @@ def _is_preexisting_error(exc: ImportError) -> bool:
 def _is_circular_import_error(exc: ImportError) -> bool:
     """Return True if the ImportError is a circular import detection."""
     msg = str(exc).lower()
-    return (
-        _CIRCULAR_IMPORT_INDICATOR in msg
-        or ("partially initialized module" in msg and "circular import" in msg)
-    )
+    return _CIRCULAR_IMPORT_INDICATOR in msg or ("partially initialized module" in msg and "circular import" in msg)
 
 
 # ---------------------------------------------------------------------------
 # 1. shared_types standalone import
 # ---------------------------------------------------------------------------
+
 
 class TestSharedTypesStandalone:
     """shared_types must import without pulling in pm_dispatch or workflow_runtime."""
@@ -128,6 +120,7 @@ class TestSharedTypesStandalone:
 # ---------------------------------------------------------------------------
 # 2. pm_dispatch.internal.dispatch_pipeline — no circular import
 # ---------------------------------------------------------------------------
+
 
 class TestPmDispatchImport:
     """dispatch_pipeline must not raise a CIRCULAR ImportError.
@@ -177,6 +170,7 @@ class TestPmDispatchImport:
 # 3. workflow_runtime director_workflow independent import
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowRuntimeImport:
     """director_workflow must import without circular errors."""
 
@@ -204,6 +198,7 @@ class TestWorkflowRuntimeImport:
 # ---------------------------------------------------------------------------
 # 4. Identity check: shared_types objects are used by both cells
 # ---------------------------------------------------------------------------
+
 
 class TestSharedTypesIdentity:
     """ErrorCategory from shared_types and director_workflow must be the same object."""
@@ -250,6 +245,7 @@ class TestSharedTypesIdentity:
 # 5. Backward-compat: pm_dispatch.public.service still exports both names
 # ---------------------------------------------------------------------------
 
+
 class TestBackwardCompatExports:
     """Ensure nothing broke for existing consumers of pm_dispatch.public.service."""
 
@@ -269,15 +265,11 @@ class TestBackwardCompatExports:
 
     def test_circuit_breaker_still_in_internal_error_classifier(self) -> None:
         mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert hasattr(mod, "CircuitBreaker"), (
-            "CircuitBreaker was accidentally removed from error_classifier shim."
-        )
+        assert hasattr(mod, "CircuitBreaker"), "CircuitBreaker was accidentally removed from error_classifier shim."
 
     def test_retry_executor_still_in_internal_error_classifier(self) -> None:
         mod = _fresh_import(_PM_DISPATCH_INTERNAL_EC)
-        assert hasattr(mod, "RetryExecutor"), (
-            "RetryExecutor was accidentally removed from error_classifier shim."
-        )
+        assert hasattr(mod, "RetryExecutor"), "RetryExecutor was accidentally removed from error_classifier shim."
 
     def test_error_category_exported_from_pm_dispatch_public(self) -> None:
         try:
@@ -301,6 +293,7 @@ class TestBackwardCompatExports:
 # ---------------------------------------------------------------------------
 # 6. Cross-verification: simultaneous import of both cells does not deadlock
 # ---------------------------------------------------------------------------
+
 
 class TestSimultaneousImport:
     """Both cell modules can be imported in the same process without error."""

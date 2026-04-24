@@ -11,14 +11,7 @@ from uuid import uuid4
 import yaml
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-GATE_SCRIPT = (
-    BACKEND_ROOT
-    / "docs"
-    / "governance"
-    / "ci"
-    / "scripts"
-    / "run_tool_calling_canonical_gate.py"
-)
+GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_tool_calling_canonical_gate.py"
 FITNESS_RULES_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 PIPELINE_TEMPLATE_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "pipeline.template.yaml"
 
@@ -140,11 +133,7 @@ def test_tool_calling_canonical_gate_fails_on_alias_mapping_drift() -> None:
     )
     payload = json.loads(completed.stdout or "{}")
     assert int(payload.get("issue_count") or 0) > 0
-    categories = {
-        str(item.get("category") or "")
-        for item in (payload.get("issues") or [])
-        if isinstance(item, dict)
-    }
+    categories = {str(item.get("category") or "") for item in (payload.get("issues") or []) if isinstance(item, dict)}
     assert "alias_tool_name_used" in categories or "raw_observed_name_drift" in categories
 
 
@@ -154,20 +143,12 @@ def test_tool_calling_canonical_rule_and_stage_declared() -> None:
 
     rules = rules_payload.get("rules")
     assert isinstance(rules, list), "fitness-rules.yaml must define a rules list"
-    rule_ids = {
-        str(item.get("id") or "").strip()
-        for item in rules
-        if isinstance(item, dict)
-    }
+    rule_ids = {str(item.get("id") or "").strip() for item in rules if isinstance(item, dict)}
     assert "tool_calling_canonical_identity_non_regressive" in rule_ids
 
     stages = pipeline_payload.get("stages")
     assert isinstance(stages, list), "pipeline.template.yaml must define stages"
-    stage_ids = {
-        str(item.get("id") or "").strip()
-        for item in stages
-        if isinstance(item, dict)
-    }
+    stage_ids = {str(item.get("id") or "").strip() for item in stages if isinstance(item, dict)}
     assert "tool_calling_canonical_gate" in stage_ids
 
 
@@ -192,16 +173,8 @@ def _multi_tool_payload(
                         }
                     },
                 },
-                "stream_observed": {
-                    "tool_calls": [
-                        {"tool": tool, "args": {}}
-                        for tool in observed_tools
-                    ]
-                },
-                "raw_events": [
-                    {"type": "tool_call", "tool": tool, "args": {}}
-                    for tool in raw_tools
-                ],
+                "stream_observed": {"tool_calls": [{"tool": tool, "args": {}} for tool in observed_tools]},
+                "raw_events": [{"type": "tool_call", "tool": tool, "args": {}} for tool in raw_tools],
             }
         ],
     }
@@ -235,11 +208,7 @@ def test_tool_calling_canonical_gate_fails_on_missing_required_raw_tool() -> Non
         f"stderr:\n{completed.stderr}"
     )
     payload = json.loads(completed.stdout or "{}")
-    categories = {
-        str(item.get("category") or "")
-        for item in (payload.get("issues") or [])
-        if isinstance(item, dict)
-    }
+    categories = {str(item.get("category") or "") for item in (payload.get("issues") or []) if isinstance(item, dict)}
     assert "missing_required_raw_tool" in categories
 
 
@@ -267,11 +236,7 @@ def test_tool_calling_canonical_gate_fails_on_count_mismatch() -> None:
         f"stderr:\n{completed.stderr}"
     )
     payload = json.loads(completed.stdout or "{}")
-    categories = {
-        str(item.get("category") or "")
-        for item in (payload.get("issues") or [])
-        if isinstance(item, dict)
-    }
+    categories = {str(item.get("category") or "") for item in (payload.get("issues") or []) if isinstance(item, dict)}
     assert "raw_observed_count_mismatch" in categories
 
 
@@ -322,11 +287,7 @@ def test_tool_calling_canonical_gate_fails_on_name_drift() -> None:
         f"stderr:\n{completed.stderr}"
     )
     payload = json.loads(completed.stdout or "{}")
-    categories = {
-        str(item.get("category") or "")
-        for item in (payload.get("issues") or [])
-        if isinstance(item, dict)
-    }
+    categories = {str(item.get("category") or "") for item in (payload.get("issues") or []) if isinstance(item, dict)}
     assert "raw_observed_name_drift" in categories
 
 
@@ -345,9 +306,7 @@ def test_tool_calling_canonical_gate_audit_mode_never_fails() -> None:
 
     completed = _run_gate(report_path, mode="audit-only")
     assert completed.returncode == 0, (
-        "audit-only mode should never fail.\n"
-        f"stdout:\n{completed.stdout}\n"
-        f"stderr:\n{completed.stderr}"
+        f"audit-only mode should never fail.\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     payload = json.loads(completed.stdout or "{}")
     assert payload.get("mode") == "audit-only"

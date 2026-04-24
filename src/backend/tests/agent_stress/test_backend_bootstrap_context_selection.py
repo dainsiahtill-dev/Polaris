@@ -22,7 +22,7 @@ async def test_desktop_context_defaults_to_auto_bootstrap(monkeypatch: pytest.Mo
     )
     captured: dict[str, object] = {}
 
-    async def _fake_auto_bootstrap_backend(**_kwargs):  # noqa: ANN003
+    async def _fake_auto_bootstrap_backend(**_kwargs):
         captured.update(_kwargs)
         return ManagedBackendSession(
             context=BackendContext(
@@ -34,7 +34,9 @@ async def test_desktop_context_defaults_to_auto_bootstrap(monkeypatch: pytest.Mo
             desktop_info_path=str(tmp_path / "desktop-backend.json"),
         )
 
-    monkeypatch.setattr("tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context)
+    monkeypatch.setattr(
+        "tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context
+    )
     monkeypatch.setattr("tests.agent_stress.backend_bootstrap._auto_bootstrap_backend", _fake_auto_bootstrap_backend)
 
     session = await ensure_backend_session(auto_bootstrap=True)
@@ -59,7 +61,7 @@ async def test_explicit_startup_workspace_is_forwarded_to_auto_bootstrap(
     expected_workspace = tmp_path / "fresh-stress-workspace"
     captured: dict[str, object] = {}
 
-    async def _fake_auto_bootstrap_backend(**_kwargs):  # noqa: ANN003
+    async def _fake_auto_bootstrap_backend(**_kwargs):
         captured.update(_kwargs)
         return ManagedBackendSession(
             context=BackendContext(
@@ -71,7 +73,9 @@ async def test_explicit_startup_workspace_is_forwarded_to_auto_bootstrap(
             desktop_info_path=str(tmp_path / "desktop-backend.json"),
         )
 
-    monkeypatch.setattr("tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context)
+    monkeypatch.setattr(
+        "tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context
+    )
     monkeypatch.setattr("tests.agent_stress.backend_bootstrap._auto_bootstrap_backend", _fake_auto_bootstrap_backend)
 
     session = await ensure_backend_session(auto_bootstrap=True, startup_workspace=expected_workspace)
@@ -81,7 +85,9 @@ async def test_explicit_startup_workspace_is_forwarded_to_auto_bootstrap(
 
 
 @pytest.mark.asyncio
-async def test_allow_desktop_context_env_preserves_healthy_desktop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_allow_desktop_context_env_preserves_healthy_desktop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     desktop_context = BackendContext(
         backend_url="http://127.0.0.1:49977",
         token="desktop-token",
@@ -89,11 +95,13 @@ async def test_allow_desktop_context_env_preserves_healthy_desktop(monkeypatch: 
         desktop_info_path=str(tmp_path / "desktop-backend.json"),
     )
 
-    async def _fake_probe_preflight_status(_context):  # noqa: ANN001
+    async def _fake_probe_preflight_status(_context):
         return BackendPreflightStatus.HEALTHY
 
     monkeypatch.setenv("KERNELONE_STRESS_ALLOW_DESKTOP_CONTEXT", "1")
-    monkeypatch.setattr("tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context)
+    monkeypatch.setattr(
+        "tests.agent_stress.backend_bootstrap.resolve_backend_context", lambda **_kwargs: desktop_context
+    )
     monkeypatch.setattr("tests.agent_stress.backend_bootstrap._probe_preflight_status", _fake_probe_preflight_status)
 
     session = await ensure_backend_session(auto_bootstrap=True)

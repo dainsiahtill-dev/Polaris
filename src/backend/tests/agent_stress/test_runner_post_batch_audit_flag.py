@@ -119,7 +119,7 @@ async def test_runner_forwards_fresh_workspace_to_backend_bootstrap(
     )
     captured: dict[str, object] = {}
 
-    async def _fake_ensure_backend_session(**kwargs):  # noqa: ANN003
+    async def _fake_ensure_backend_session(**kwargs):
         captured.update(kwargs)
         return ManagedBackendSession(
             context=BackendContext(

@@ -47,10 +47,7 @@ def _has_live_py_files(directory: Path) -> bool:
     itself has no .py files but has legitimate child Cells is not incorrectly
     flagged (the child directories are handled by their own loop iteration).
     """
-    for entry in directory.iterdir():
-        if entry.is_file() and entry.suffix == ".py":
-            return True
-    return False
+    return any(entry.is_file() and entry.suffix == ".py" for entry in directory.iterdir())
 
 
 def _has_cell_yaml(directory: Path) -> bool:
@@ -85,11 +82,7 @@ def _collect_ghost_candidates(cells_root: Path) -> list[Path]:
         if current == cells_root:
             continue  # Don't evaluate the root itself.
 
-        if (
-            _has_pycache(current)
-            and not _has_live_py_files(current)
-            and not _has_cell_yaml(current)
-        ):
+        if _has_pycache(current) and not _has_live_py_files(current) and not _has_cell_yaml(current):
             ghosts.append(current)
 
     return ghosts
@@ -116,9 +109,7 @@ def test_no_ghost_cells_in_polaris_cells() -> None:
     ghosts = _collect_ghost_candidates(CELLS_ROOT)
 
     if ghosts:
-        relative_paths = sorted(
-            str(g.relative_to(BACKEND_DIR)) for g in ghosts
-        )
+        relative_paths = sorted(str(g.relative_to(BACKEND_DIR)) for g in ghosts)
         formatted = "\n  ".join(relative_paths)
         pytest.fail(
             f"Ghost cell(s) detected under polaris/cells/ — directories that "

@@ -9,7 +9,7 @@ from polaris.domain.entities import TaskResult
 
 
 class _BlockingExecutor:
-    def __init__(self, workspace: str, message_bus=None, worker_id: str = ""):
+    def __init__(self, workspace: str, message_bus=None, worker_id: str = "") -> None:
         self.workspace = workspace
         self._bus = message_bus
         self._worker_id = worker_id

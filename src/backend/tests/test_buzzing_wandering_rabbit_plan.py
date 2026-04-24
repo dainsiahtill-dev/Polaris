@@ -38,4 +38,3 @@ async def test_container_provides_director_and_background_services() -> None:
 
     assert isinstance(director, DirectorService)
     assert isinstance(background, BackgroundTaskService)
-

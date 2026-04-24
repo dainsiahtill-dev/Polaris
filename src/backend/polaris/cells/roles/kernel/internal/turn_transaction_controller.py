@@ -1705,7 +1705,7 @@ class TurnTransactionController:
 
         try:
             get_metrics_collector().record_transaction_metrics(metrics)
-        except Exception:
+        except (ConnectionError, RuntimeError, TypeError, ValueError):
             logger.exception("Failed to record transaction metrics")
 
         result: dict = {

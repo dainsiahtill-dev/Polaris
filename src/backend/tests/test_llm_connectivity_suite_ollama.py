@@ -70,9 +70,11 @@ def test_connectivity_suite_ollama_runs_real_invoke(monkeypatch):
     from polaris.cells.llm.evaluation.internal import suites
 
     provider = _OllamaSuccessProvider()
-    monkeypatch.setattr(suites, "get_provider_manager", lambda: type("_Manager", (), {
-        "get_provider_instance": staticmethod(lambda _type: provider)
-    })())
+    monkeypatch.setattr(
+        suites,
+        "get_provider_manager",
+        lambda: type("_Manager", (), {"get_provider_instance": staticmethod(lambda _type: provider)})(),
+    )
 
     model = "glm-4.7-flash:latest"
     provider_cfg = {
@@ -107,9 +109,11 @@ def test_connectivity_suite_ollama_fails_when_model_not_installed(monkeypatch):
     from polaris.cells.llm.evaluation.internal import suites
 
     provider = _OllamaMissingModelProvider()
-    monkeypatch.setattr(suites, "get_provider_manager", lambda: type("_Manager", (), {
-        "get_provider_instance": staticmethod(lambda _type: provider)
-    })())
+    monkeypatch.setattr(
+        suites,
+        "get_provider_manager",
+        lambda: type("_Manager", (), {"get_provider_instance": staticmethod(lambda _type: provider)})(),
+    )
 
     result = asyncio.run(
         run_connectivity_suite(
@@ -128,9 +132,11 @@ def test_connectivity_suite_non_ollama_keeps_health_only(monkeypatch):
     from polaris.cells.llm.evaluation.internal import suites
 
     provider = _HealthOnlyProvider()
-    monkeypatch.setattr(suites, "get_provider_manager", lambda: type("_Manager", (), {
-        "get_provider_instance": staticmethod(lambda _type: provider)
-    })())
+    monkeypatch.setattr(
+        suites,
+        "get_provider_manager",
+        lambda: type("_Manager", (), {"get_provider_instance": staticmethod(lambda _type: provider)})(),
+    )
 
     result = asyncio.run(
         run_connectivity_suite(
@@ -146,4 +152,3 @@ def test_connectivity_suite_non_ollama_keeps_health_only(monkeypatch):
     assert "invoke_smoke" not in result["details"]
     assert provider.list_called is False
     assert provider.invoke_called is False
-

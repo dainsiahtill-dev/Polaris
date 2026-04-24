@@ -12,7 +12,6 @@ This router provides streaming endpoints that:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from typing import Any
@@ -38,6 +37,9 @@ from ._shared import get_state, require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Cancellation timeout - how long to wait for task to respond to cancellation
+_CANCEL_TIMEOUT: float = 2.0
 
 
 # =============================================================================
@@ -95,6 +97,46 @@ def format_sse_event(event: AIStreamEvent) -> bytes:
     return "\n".join(lines).encode("utf-8")
 
 
+async def _cancel_task_with_timeout(task: asyncio.Task[Any] | None) -> None:
+    """Cancel a task and wait for it to complete with timeout.
+
+    This ensures proper cleanup of background tasks during stream termination.
+
+    Args:
+        task: The task to cancel, or None.
+    """
+    if task is None:
+        return
+
+    if task.done():
+        return
+
+    # Request cancellation
+    task.cancel()
+
+    # Wait for task to respond to cancellation with timeout
+    try:
+        await asyncio.wait_for(task, timeout=_CANCEL_TIMEOUT)
+    except asyncio.CancelledError:
+        pass  # Expected - task acknowledged cancellation
+    except asyncio.TimeoutError:
+        # Task didn't respond to cancellation in time
+        logger.warning(
+            "[stream-router] Task %r did not complete after %.1fs cancellation timeout",
+            task.get_name() if hasattr(task, "get_name") else "unknown",
+            _CANCEL_TIMEOUT,
+        )
+    except BaseException as exc:  # noqa: BLE001
+        # Log unexpected exceptions from cancelled task (but not CancelledError)
+        # We catch BaseException to also catch potential GeneratorExit etc.
+        if not isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+            logger.debug(
+                "[stream-router] Task %r raised unexpected exception during cancellation: %s",
+                task.get_name() if hasattr(task, "get_name") else "unknown",
+                exc,
+            )
+
+
 async def sse_stream_generator(
     streamer: EventStreamer,
     timeout: float = 180.0,
@@ -117,8 +159,9 @@ async def sse_stream_generator(
         # Normal completion
         yield b"event: done\ndata: {}\n\n"
     except asyncio.CancelledError:
-        raise
+        raise  # noqa: RUF100
     except (RuntimeError, ValueError) as exc:
+        # Catch common streaming exceptions
         logger.warning("[stream-router] SSE generator error: %s", exc)
         error_data = json.dumps({"error": str(exc)}, ensure_ascii=False)
         yield f"event: error\ndata: {error_data}\n\n".encode()
@@ -186,7 +229,8 @@ async def stream_chat(
             )
         except asyncio.CancelledError:
             logger.debug("[stream-chat] stream cancelled")
-        except (RuntimeError, ValueError) as exc:
+        except (RuntimeError, ValueError, OSError) as exc:
+            # Catch common streaming exceptions
             logger.exception("[stream-chat] stream error: %s", exc)
             await streamer.publish(AIStreamEvent.error_event(str(exc)))
         finally:
@@ -194,19 +238,22 @@ async def stream_chat(
 
     # Start the broadcast task
     stream_task = asyncio.create_task(run_stream())
+    stream_task.set_name("stream-chat-broadcast-task")
 
     # Create SSE generator that consumes from the streamer
     async def sse_generator() -> Any:
+        stream_task_ref: asyncio.Task[Any] | None = stream_task
         try:
             async for event in streamer.subscribe():
                 yield format_sse_event(event)
                 await asyncio.sleep(0)  # Force flush
         except asyncio.CancelledError:
             logger.debug("[stream-chat] SSE generator cancelled")
+            raise
         finally:
-            stream_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await stream_task
+            # Cancel and wait for stream task with timeout
+            if stream_task_ref is not None:
+                await _cancel_task_with_timeout(stream_task_ref)
 
     return StreamingResponse(
         sse_generator(),
@@ -265,23 +312,26 @@ async def stream_chat_with_backpressure(
                 event_json = json.dumps(event.to_dict(), ensure_ascii=False)
                 await buffer.feed(event_json)
         except asyncio.CancelledError:
-            pass
-        except (RuntimeError, ValueError) as exc:
+            pass  # Expected cancellation
+        except (RuntimeError, ValueError, OSError) as exc:
+            # Catch common streaming exceptions
             logger.exception("[stream-chat/backpressure] error: %s", exc)
         finally:
             await buffer.clear()
 
     # Start stream task
     stream_task = asyncio.create_task(run_stream_with_buffer())
+    stream_task.set_name("stream-chat-backpressure-task")
 
     async def sse_generator() -> Any:
         """Generate SSE from backpressure buffer."""
+        stream_task_ref: asyncio.Task[Any] | None = stream_task
         try:
             while True:
                 chunks = await asyncio.wait_for(buffer.drain(), timeout=30.0)
                 if not chunks:
                     # Check if stream is done
-                    if stream_task.done():
+                    if stream_task_ref is not None and stream_task_ref.done():
                         break
                     continue
 
@@ -292,19 +342,21 @@ async def stream_chat_with_backpressure(
                     await asyncio.sleep(0)
 
                 # Check completion
-                if stream_task.done():
+                if stream_task_ref is not None and stream_task_ref.done():
                     break
         except asyncio.CancelledError:
-            pass
+            logger.debug("[stream-chat/backpressure] SSE generator cancelled")
+            raise
         except asyncio.TimeoutError:
             # Keep-alive ping
             yield b"event: ping\ndata: {}\n\n"
-        except (RuntimeError, ValueError) as exc:
+        except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            # Catch common generator exceptions
             logger.warning("[stream-chat/backpressure] generator error: %s", exc)
         finally:
-            stream_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await stream_task
+            # Cancel and wait for stream task with timeout
+            if stream_task_ref is not None:
+                await _cancel_task_with_timeout(stream_task_ref)
 
     return StreamingResponse(
         sse_generator(),

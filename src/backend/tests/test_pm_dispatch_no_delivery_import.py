@@ -28,6 +28,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _DeliveryBlocker(types.ModuleType):
     """Fake package that raises ImportError for any non-dunder sub-attribute access.
 
@@ -41,14 +42,11 @@ class _DeliveryBlocker(types.ModuleType):
     trigger our guard.
     """
 
-    def __getattr__(self, name: str):  # type: ignore[override]
+    def __getattr__(self, name: str) -> None:  # type: ignore[override]
         if name.startswith("__") and name.endswith("__"):
             # Allow import-machinery dunder access to pass through
             raise AttributeError(name)
-        raise ImportError(
-            f"[isolation-test] polaris.delivery accessed from Cell layer: "
-            f"polaris.delivery.{name}"
-        )
+        raise ImportError(f"[isolation-test] polaris.delivery accessed from Cell layer: polaris.delivery.{name}")
 
 
 def _make_delivery_guard() -> dict:
@@ -100,9 +98,7 @@ def _make_stub_package(full_name: str) -> types.ModuleType:
 # ---------------------------------------------------------------------------
 
 #: Modules/packages to evict so they can be reimported fresh.
-_CELL_PREFIXES = (
-    "polaris.cells.orchestration.pm_dispatch",
-)
+_CELL_PREFIXES = ("polaris.cells.orchestration.pm_dispatch",)
 
 #: The three specific target modules we care about.
 TARGET_MODULES = [
@@ -168,6 +164,7 @@ def delivery_blocked() -> Generator[None, None, None]:
 # Helper: import a module given its dotted name, bypassing its package __init__
 # ---------------------------------------------------------------------------
 
+
 def _import_internal_module(module_name: str) -> types.ModuleType:
     """Import a module directly from its .py file, bypassing package __init__."""
     # Convert dotted name to file path relative to the backend root.
@@ -188,6 +185,7 @@ def _import_internal_module(module_name: str) -> types.ModuleType:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("module_name", TARGET_MODULES)
 def test_cell_module_importable_without_delivery(
     delivery_blocked: None,
@@ -200,17 +198,13 @@ def test_cell_module_importable_without_delivery(
     try:
         mod = _import_internal_module(module_name)
     except ImportError as exc:
-        pytest.fail(
-            f"Module '{module_name}' triggered a delivery import at load time: {exc}"
-        )
+        pytest.fail(f"Module '{module_name}' triggered a delivery import at load time: {exc}")
     assert mod is not None, f"_import_internal_module returned None for {module_name}"
 
 
 def test_pm_task_utils_no_delivery_symbol(delivery_blocked: None) -> None:
     """pm_task_utils must expose its public API without any delivery reference."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     for symbol in (
         "PM_SPIN_GUARD_STATUS",
         "normalize_task_status",
@@ -221,30 +215,22 @@ def test_pm_task_utils_no_delivery_symbol(delivery_blocked: None) -> None:
         "ShangshulingPort",
         "NoopShangshulingPort",
     ):
-        assert hasattr(mod, symbol), (
-            f"pm_task_utils is missing expected symbol '{symbol}'"
-        )
+        assert hasattr(mod, symbol), f"pm_task_utils is missing expected symbol '{symbol}'"
 
 
 def test_shangshuling_registry_port_no_delivery_symbol(delivery_blocked: None) -> None:
     """shangshuling_registry must expose its port without any delivery reference."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry")
     for symbol in (
         "LocalShangshulingPort",
         "get_shangshuling_port",
     ):
-        assert hasattr(mod, symbol), (
-            f"shangshuling_registry is missing expected symbol '{symbol}'"
-        )
+        assert hasattr(mod, symbol), f"shangshuling_registry is missing expected symbol '{symbol}'"
 
 
 def test_normalize_task_status_values(delivery_blocked: None) -> None:
     """normalize_task_status must return canonical tokens for common inputs."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     fn = mod.normalize_task_status
     assert fn("done") == "done"
     assert fn("success") == "done"
@@ -260,9 +246,7 @@ def test_normalize_task_status_values(delivery_blocked: None) -> None:
 
 def test_get_task_signature_uses_id(delivery_blocked: None) -> None:
     """get_task_signature must return the first task's id when present."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     fn = mod.get_task_signature
     tasks = [{"id": "T-001", "title": "foo"}, {"id": "T-002", "title": "bar"}]
     assert fn(tasks) == "T-001"
@@ -270,9 +254,7 @@ def test_get_task_signature_uses_id(delivery_blocked: None) -> None:
 
 def test_get_task_signature_falls_back_to_fingerprint(delivery_blocked: None) -> None:
     """get_task_signature falls back to 'fingerprint' when 'id' is absent."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     fn = mod.get_task_signature
     tasks = [{"fingerprint": "fp-abc", "title": "foo"}]
     assert fn(tasks) == "fp-abc"
@@ -280,9 +262,7 @@ def test_get_task_signature_falls_back_to_fingerprint(delivery_blocked: None) ->
 
 def test_get_task_signature_empty(delivery_blocked: None) -> None:
     """get_task_signature returns empty string for empty/invalid input."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     fn = mod.get_task_signature
     assert fn([]) == ""
     assert fn(None) == ""  # type: ignore[arg-type]
@@ -291,9 +271,7 @@ def test_get_task_signature_empty(delivery_blocked: None) -> None:
 
 def test_to_bool_conversion(delivery_blocked: None) -> None:
     """to_bool must correctly handle all known string and bool values."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     fn = mod.to_bool
     assert fn(True) is True
     assert fn(False) is False
@@ -313,9 +291,7 @@ def test_to_bool_conversion(delivery_blocked: None) -> None:
 
 def test_get_director_task_status_summary(delivery_blocked: None) -> None:
     """get_director_task_status_summary counts Director tasks correctly."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     fn = mod.get_director_task_status_summary
     tasks = [
         {"assigned_to": "director", "status": "done"},
@@ -332,9 +308,7 @@ def test_get_director_task_status_summary(delivery_blocked: None) -> None:
 
 def test_noop_shangshuling_port_safe(delivery_blocked: None) -> None:
     """NoopShangshulingPort must return safe zero/empty values and never raise."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     port = mod.NoopShangshulingPort()
     assert port.sync_tasks_to_shangshuling("/ws", []) == 0
     assert port.get_shangshuling_ready_tasks("/ws") == []
@@ -346,9 +320,7 @@ def test_noop_shangshuling_port_safe(delivery_blocked: None) -> None:
 
 def test_dispatch_pipeline_no_delivery_at_module_level(delivery_blocked: None) -> None:
     """dispatch_pipeline must not have imported any delivery module at load time."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline")
     # Verify none of the expected public callables are missing
     for symbol in (
         "resolve_director_dispatch_tasks",
@@ -358,16 +330,12 @@ def test_dispatch_pipeline_no_delivery_at_module_level(delivery_blocked: None) -
         "run_integration_qa",
         "run_post_dispatch_integration_qa",
     ):
-        assert hasattr(mod, symbol), (
-            f"dispatch_pipeline is missing expected public callable '{symbol}'"
-        )
+        assert hasattr(mod, symbol), f"dispatch_pipeline is missing expected public callable '{symbol}'"
 
 
 def test_iteration_state_no_delivery_at_module_level(delivery_blocked: None) -> None:
     """iteration_state must not have imported any delivery module at load time."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.iteration_state"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.iteration_state")
     for symbol in (
         "finalize_iteration",
         "handle_invoke_error",
@@ -375,14 +343,10 @@ def test_iteration_state_no_delivery_at_module_level(delivery_blocked: None) -> 
         "record_stop",
         "clear_manual_intervention",
     ):
-        assert hasattr(mod, symbol), (
-            f"iteration_state is missing expected public callable '{symbol}'"
-        )
+        assert hasattr(mod, symbol), f"iteration_state is missing expected public callable '{symbol}'"
 
 
 def test_pm_spin_guard_status_value(delivery_blocked: None) -> None:
     """PM_SPIN_GUARD_STATUS must be the canonical string, not the old fallback."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils")
     assert mod.PM_SPIN_GUARD_STATUS == "PM_SPIN_GUARD_ACTIVE"

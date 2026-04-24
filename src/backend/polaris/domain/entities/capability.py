@@ -377,6 +377,14 @@ ROLE_HOST_CAPABILITIES: dict[tuple, set[Capability]] = {
 }
 
 
+def _get_role_enum(role: str) -> Role | None:
+    """Safely convert a string to a Role enum."""
+    try:
+        return Role(role.lower())
+    except ValueError:
+        return None
+
+
 def get_role_capabilities(
     role: str,
     host_kind: str | None = None,
@@ -392,25 +400,27 @@ def get_role_capabilities(
     """
     result: dict[str, list[str]] = {}
 
-    # 如果指定了 host_kind，只返回该宿主的能力
+    # 如果指定了 host_kind ，只返回该宿主的能力
     if host_kind:
         key = (role, host_kind)
         if key in ROLE_HOST_CAPABILITIES:
             result[host_kind] = [cap.value for cap in ROLE_HOST_CAPABILITIES[key]]
         else:
             # 回退到默认能力
-            default_caps = DEFAULT_ROLE_CAPABILITIES.get(Role(role.upper()), set())
+            role_enum = _get_role_enum(role)
+            default_caps = DEFAULT_ROLE_CAPABILITIES.get(role_enum, set()) if role_enum else set()
             result[host_kind] = [cap.value for cap in default_caps]
         return result
 
-    # 如果没有指定 host_kind，返回所有宿主的能力
+    # 如果没有指定 host_kind ，返回所有宿主的能力
     for (r, h), caps in ROLE_HOST_CAPABILITIES.items():
         if r == role:
             result[h] = [cap.value for cap in caps]
 
     # 如果没有特定配置，回退到默认
     if not result:
-        default_caps = DEFAULT_ROLE_CAPABILITIES.get(Role(role.upper()), set())
+        role_enum = _get_role_enum(role)
+        default_caps = DEFAULT_ROLE_CAPABILITIES.get(role_enum, set()) if role_enum else set()
         result["default"] = [cap.value for cap in default_caps]
 
     return result

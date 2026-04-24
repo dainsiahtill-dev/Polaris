@@ -28,6 +28,7 @@ from polaris.kernelone.memory.memory_store import (
     _detect_query_type,
     _expand_with_synonyms,
 )
+import contextlib
 
 
 class TestBM25(unittest.TestCase):
@@ -223,7 +224,7 @@ class TestMemoryStore(unittest.TestCase):
 
     def setUp(self):
         # Create temp file for testing
-        self.temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.jsonl', encoding='utf-8')
+        self.temp_file = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".jsonl", encoding="utf-8")
         self.temp_file.close()
         self.memory_file = self.temp_file.name
 
@@ -245,7 +246,7 @@ class TestMemoryStore(unittest.TestCase):
                 "importance": 7,
                 "keywords": ["任务", "延期", "进度"],
                 "hash": "hash_001",
-                "context": {"run_id": "test_run"}
+                "context": {"run_id": "test_run"},
             },
             {
                 "id": "mem_002",
@@ -259,7 +260,7 @@ class TestMemoryStore(unittest.TestCase):
                 "importance": 8,
                 "keywords": ["测试", "失败", "单元测试"],
                 "hash": "hash_002",
-                "context": {"run_id": "test_run"}
+                "context": {"run_id": "test_run"},
             },
             {
                 "id": "mem_003",
@@ -273,7 +274,7 @@ class TestMemoryStore(unittest.TestCase):
                 "importance": 6,
                 "keywords": ["审查", "通过", "代码"],
                 "hash": "hash_003",
-                "context": {"run_id": "test_run"}
+                "context": {"run_id": "test_run"},
             },
             {
                 "id": "mem_004",
@@ -287,7 +288,7 @@ class TestMemoryStore(unittest.TestCase):
                 "importance": 5,
                 "keywords": ["数据库", "schema", "设计"],
                 "hash": "hash_004",
-                "context": {"run_id": "test_run"}
+                "context": {"run_id": "test_run"},
             },
             {
                 "id": "mem_005",
@@ -301,21 +302,19 @@ class TestMemoryStore(unittest.TestCase):
                 "importance": 9,
                 "keywords": ["API", "错误", "500"],
                 "hash": "hash_005",
-                "context": {"run_id": "test_run"}
+                "context": {"run_id": "test_run"},
             },
         ]
 
         # Write to file
-        with open(self.memory_file, 'w', encoding='utf-8') as f:
+        with open(self.memory_file, "w", encoding="utf-8") as f:
             for mem in self.test_memories:
-                f.write(json.dumps(mem, ensure_ascii=False) + '\n')
+                f.write(json.dumps(mem, ensure_ascii=False) + "\n")
 
     def tearDown(self):
         # Clean up temp file
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(self.memory_file)
-        except FileNotFoundError:
-            pass
 
     def test_load_memories(self):
         """Test loading memories from file."""
@@ -396,11 +395,12 @@ class TestRetrievalRanker(unittest.TestCase):
         # Import using the full module path (same pattern as memory_store imports)
         import os
         import sys
-        _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-        _BACKEND_DIR = os.path.abspath(os.path.join(_CURRENT_DIR, "..", "..", "src", "backend"))
 
-        if _BACKEND_DIR not in sys.path:
-            sys.path.insert(0, _BACKEND_DIR)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.abspath(os.path.join(current_dir, "..", "..", "src", "backend"))
+
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
 
         # Import from the full module path
         from polaris.kernelone.memory.retrieval_ranker import AdaptiveDiversityReranker, MMRReranker, create_reranker
@@ -452,13 +452,7 @@ class TestRetrievalRanker(unittest.TestCase):
         """Test adaptive reranker with different query types."""
         reranker = self.AdaptiveDiversityReranker()
 
-        results = reranker.rerank(
-            self.mock_items,
-            self.relevance_scores,
-            query_type="error",
-            current_step=50,
-            top_k=3
-        )
+        results = reranker.rerank(self.mock_items, self.relevance_scores, query_type="error", current_step=50, top_k=3)
 
         self.assertEqual(len(results), 3)
 

@@ -125,7 +125,7 @@ class EnhancedErrorClassifier:
 
         try:
             return "".join(traceback.format_tb(tb))
-        except Exception:  # noqa: BLE001
+        except (TypeError, ValueError):
             return str(tb)
 
     def get_strategy_info(self) -> list[dict[str, str]]:

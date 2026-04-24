@@ -3,14 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.state_owner.public import AppState, Auth
 from polaris.delivery.http.app_factory import create_app
 from polaris.kernelone.storage import resolve_storage_roots
 
 
-def _make_client(workspace: Path, *, ramdisk_root: str = "", token: str = "test-runtime-token") -> tuple[TestClient, AppState]:
+def _make_client(
+    workspace: Path, *, ramdisk_root: str = "", token: str = "test-runtime-token"
+) -> tuple[TestClient, AppState]:
     settings = Settings(workspace=str(workspace), ramdisk_root=ramdisk_root)
     app = create_app(settings)
     app.state.app_state = AppState(settings=settings)
@@ -98,7 +100,7 @@ def test_runtime_reset_tasks_clears_runtime_records_and_history(tmp_path: Path) 
 
 
 def test_app_shutdown_terminates_managed_and_external_processes(tmp_path: Path) -> None:
-    client, state = _make_client(tmp_path)
+    client, _ = _make_client(tmp_path)
 
     class _FakePMService:
         stopped = False
@@ -154,4 +156,3 @@ def test_app_shutdown_terminates_managed_and_external_processes(tmp_path: Path) 
     assert fake_director_service.stopped is True
     external_pm_mock.assert_called_once()
     assert Path(str(external_pm_mock.call_args.args[0])) == tmp_path
-

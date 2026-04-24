@@ -61,7 +61,7 @@ def test_invoke_pm_backend_generic_prefers_runtime_provider(monkeypatch) -> None
     monkeypatch.setattr(
         pm_backend,
         "_invoke_generic_runtime_provider",
-        lambda **_: "{\"tasks\":[]}",
+        lambda **_: '{"tasks":[]}',
     )
 
     def _should_not_call_ollama(*_args, **_kwargs):
@@ -69,7 +69,7 @@ def test_invoke_pm_backend_generic_prefers_runtime_provider(monkeypatch) -> None
 
     monkeypatch.setattr(pm_backend, "invoke_ollama", _should_not_call_ollama)
     output = pm_backend.invoke_pm_backend(state, "prompt", "generic", args, usage_ctx=None)
-    assert output == "{\"tasks\":[]}"
+    assert output == '{"tasks":[]}'
 
 
 def test_invoke_pm_backend_generic_raises_on_empty_runtime_output(monkeypatch) -> None:
@@ -101,4 +101,3 @@ def test_invoke_pm_backend_generic_raises_on_empty_runtime_output(monkeypatch) -
 
     with pytest.raises(RuntimeError, match="empty response"):
         pm_backend.invoke_pm_backend(state, "prompt", "generic", args, usage_ctx=None)
-

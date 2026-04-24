@@ -9,6 +9,7 @@ Verifies that:
 5. Optional subsystem failures (anthro, resident) are logged at debug level.
 6. build_llm_status failures are logged at warning level.
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,6 +20,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_minimal_state():
     """Return a minimal AppState-like object sufficient for projection calls."""
@@ -35,6 +37,7 @@ def _make_minimal_state():
 # director_runtime_status
 # ---------------------------------------------------------------------------
 
+
 class TestDirectorRuntimeStatusObservability:
     """_read_director_service_status_sync must log and return None on failure."""
 
@@ -45,9 +48,7 @@ class TestDirectorRuntimeStatusObservability:
         # Patch only _read_director_service_status_sync itself to return None
         # (the internal ImportError path is already tested by the fact that source="none")
         with patch.object(drs, "_read_director_service_status_sync", return_value=None):
-            result = drs.build_director_runtime_status(
-                _make_minimal_state(), "/tmp/ws", "/tmp/cache"
-            )
+            result = drs.build_director_runtime_status(_make_minimal_state(), "/tmp/ws", "/tmp/cache")
 
         assert result["source"] == "none"
         assert result["running"] is False
@@ -59,13 +60,16 @@ class TestDirectorRuntimeStatusObservability:
         async def _raise():
             raise RuntimeError("DI container not ready")
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.director_runtime_status._read_director_service_status_sync",
-            return_value=None,
-        ), caplog.at_level(logging.WARNING, logger="polaris.cells.runtime.projection.internal.director_runtime_status"):
-            result = drs.build_director_runtime_status(
-                _make_minimal_state(), "/tmp/ws", "/tmp/cache"
-            )
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.director_runtime_status._read_director_service_status_sync",
+                return_value=None,
+            ),
+            caplog.at_level(
+                logging.WARNING, logger="polaris.cells.runtime.projection.internal.director_runtime_status"
+            ),
+        ):
+            result = drs.build_director_runtime_status(_make_minimal_state(), "/tmp/ws", "/tmp/cache")
 
         # When _read returns None, source must be "none" not "v2_service"
         assert result["source"] == "none"
@@ -73,9 +77,6 @@ class TestDirectorRuntimeStatusObservability:
 
     def test_sync_bridge_exception_logs_warning(self, caplog):
         """Exception escaping the thread pool bridge must be logged at WARNING."""
-        from polaris.cells.runtime.projection.internal import director_runtime_status as drs
-
-        original = drs._read_director_service_status_sync
 
         def patched():
             # Simulate the outer try block catching an exception
@@ -83,17 +84,21 @@ class TestDirectorRuntimeStatusObservability:
                 raise TimeoutError("executor timeout")
             except Exception as exc:
                 import logging as _logging
-                _logging.getLogger(
-                    "polaris.cells.runtime.projection.internal.director_runtime_status"
-                ).warning(
+
+                _logging.getLogger("polaris.cells.runtime.projection.internal.director_runtime_status").warning(
                     "Sync bridge for DirectorService status failed: %s", exc, exc_info=True
                 )
                 return None
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.director_runtime_status._read_director_service_status_sync",
-            side_effect=patched,
-        ), caplog.at_level(logging.WARNING, logger="polaris.cells.runtime.projection.internal.director_runtime_status"):
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.director_runtime_status._read_director_service_status_sync",
+                side_effect=patched,
+            ),
+            caplog.at_level(
+                logging.WARNING, logger="polaris.cells.runtime.projection.internal.director_runtime_status"
+            ),
+        ):
             patched()
 
         assert any("Sync bridge" in r.message for r in caplog.records)
@@ -102,6 +107,7 @@ class TestDirectorRuntimeStatusObservability:
 # ---------------------------------------------------------------------------
 # get_director_local_status
 # ---------------------------------------------------------------------------
+
 
 class TestGetDirectorLocalStatusObservability:
     """get_director_local_status must log and return degraded state on failure."""
@@ -115,10 +121,13 @@ class TestGetDirectorLocalStatusObservability:
         async def _bad_container():
             raise RuntimeError("container exploded")
 
-        with patch(
-            "polaris.infrastructure.di.container.get_container",
-            new=_bad_container,
-        ), caplog.at_level(logging.WARNING, logger=rps.__name__):
+        with (
+            patch(
+                "polaris.infrastructure.di.container.get_container",
+                new=_bad_container,
+            ),
+            caplog.at_level(logging.WARNING, logger=rps.__name__),
+        ):
             result = await rps.get_director_local_status()
 
         # Must carry a projection_error key so callers can distinguish degraded from clean
@@ -154,6 +163,7 @@ class TestGetDirectorLocalStatusObservability:
 # get_workflow_director_status_sync
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowDirectorStatusObservability:
     """Workflow archive read failures must be logged at WARNING."""
 
@@ -161,10 +171,13 @@ class TestWorkflowDirectorStatusObservability:
         """When get_workflow_runtime_status raises, warning is emitted."""
         from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.runtime_projection_service.get_workflow_runtime_status",
-            side_effect=OSError("disk read error"),
-        ), caplog.at_level(logging.WARNING, logger=rps.__name__):
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.runtime_projection_service.get_workflow_runtime_status",
+                side_effect=OSError("disk read error"),
+            ),
+            caplog.at_level(logging.WARNING, logger=rps.__name__),
+        ):
             result = rps.get_workflow_director_status_sync("/tmp/ws", "/tmp/cache")
 
         assert result is None
@@ -186,6 +199,7 @@ class TestWorkflowDirectorStatusObservability:
 # ---------------------------------------------------------------------------
 # build_runtime_projection - workflow_task_rows failure path
 # ---------------------------------------------------------------------------
+
 
 class TestBuildRuntimeProjectionTaskRowsObservability:
     """build_workflow_task_rows failures inside build_runtime_projection must be logged."""
@@ -247,6 +261,7 @@ class TestBuildRuntimeProjectionTaskRowsObservability:
 # build_anthro_state - optional module failure
 # ---------------------------------------------------------------------------
 
+
 class TestBuildAnthroStateObservability:
     """build_anthro_state failure must log at DEBUG (optional module)."""
 
@@ -255,10 +270,13 @@ class TestBuildAnthroStateObservability:
 
         state = _make_minimal_state()
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.runtime_projection_service.init_anthropomorphic_modules",
-            side_effect=ImportError("lancedb not installed"),
-        ), caplog.at_level(logging.DEBUG, logger=rps.__name__):
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.runtime_projection_service.init_anthropomorphic_modules",
+                side_effect=ImportError("lancedb not installed"),
+            ),
+            caplog.at_level(logging.DEBUG, logger=rps.__name__),
+        ):
             result = rps.build_anthro_state(state)
 
         assert result is None
@@ -273,19 +291,24 @@ class TestBuildAnthroStateObservability:
 # build_resident_state - optional subsystem failure
 # ---------------------------------------------------------------------------
 
+
 class TestBuildResidentStateObservability:
     """build_resident_state failure must log at DEBUG (optional subsystem)."""
 
     def test_outer_exception_logs_at_debug(self, caplog):
         from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.runtime_projection_service.build_resident_state",
-            wraps=rps.build_resident_state,
-        ), patch.dict(
-            "sys.modules",
-            {"polaris.cells.resident.autonomy.public.service": None},
-        ), caplog.at_level(logging.DEBUG, logger=rps.__name__):
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.runtime_projection_service.build_resident_state",
+                wraps=rps.build_resident_state,
+            ),
+            patch.dict(
+                "sys.modules",
+                {"polaris.cells.resident.autonomy.public.service": None},
+            ),
+            caplog.at_level(logging.DEBUG, logger=rps.__name__),
+        ):
             result = rps.build_resident_state("/tmp/ws")
 
         assert result is None
@@ -301,10 +324,13 @@ class TestBuildResidentStateObservability:
         mock_module = MagicMock()
         mock_module.get_resident_service.return_value = mock_service
 
-        with patch.dict(
-            "sys.modules",
-            {"polaris.cells.resident.autonomy.public.service": mock_module},
-        ), caplog.at_level(logging.DEBUG, logger=rps.__name__):
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.cells.resident.autonomy.public.service": mock_module},
+            ),
+            caplog.at_level(logging.DEBUG, logger=rps.__name__),
+        ):
             result = rps.build_resident_state("/tmp/ws")
 
         assert result == {"running": False}
@@ -315,6 +341,7 @@ class TestBuildResidentStateObservability:
 # ---------------------------------------------------------------------------
 # status_snapshot_builder - build_llm_status failure
 # ---------------------------------------------------------------------------
+
 
 class TestBuildLlmStatusObservability:
     """build_llm_status failure in build_status_payload_sync must log at WARNING."""
@@ -352,10 +379,13 @@ class TestBuildLlmStatusObservability:
             mock_artifact_module.build_success_stats_payload.return_value = {}
             mock_artifact_module.build_snapshot.return_value = {}
 
-            with patch.dict(
-                "sys.modules",
-                {"polaris.cells.runtime.artifact_store.public.service": mock_artifact_module},
-            ), caplog.at_level(logging.WARNING, logger=ssb.__name__):
+            with (
+                patch.dict(
+                    "sys.modules",
+                    {"polaris.cells.runtime.artifact_store.public.service": mock_artifact_module},
+                ),
+                caplog.at_level(logging.WARNING, logger=ssb.__name__),
+            ):
                 result = ssb.build_status_payload_sync(
                     state,
                     "/tmp/ws",
@@ -371,6 +401,7 @@ class TestBuildLlmStatusObservability:
 # ---------------------------------------------------------------------------
 # Dependency manifest - verify cross-cell imports match declared depends_on
 # ---------------------------------------------------------------------------
+
 
 class TestDependencyManifest:
     """Verify that runtime.projection's declared depends_on covers all actual cross-cell imports.
@@ -402,25 +433,20 @@ class TestDependencyManifest:
         import yaml
 
         backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cell_yaml_path = os.path.join(
-            backend_root, "polaris", "cells", "runtime", "projection", "cell.yaml"
-        )
+        cell_yaml_path = os.path.join(backend_root, "polaris", "cells", "runtime", "projection", "cell.yaml")
         with open(cell_yaml_path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh)
 
-        declared = set(str(d) for d in doc.get("depends_on", []))
+        declared = {str(d) for d in doc.get("depends_on", [])}
         declared.add("audit.evidence")  # baseline - always present
 
         missing: list[str] = []
         for module_prefix, cell_id in self.EXPECTED_CELL_DEPENDENCIES.items():
             if cell_id not in declared:
-                missing.append(
-                    f"cell.yaml missing '{cell_id}' (source imports {module_prefix})"
-                )
+                missing.append(f"cell.yaml missing '{cell_id}' (source imports {module_prefix})")
 
-        assert not missing, (
-            "runtime.projection cell.yaml depends_on is out of sync with source imports:\n"
-            + "\n".join(f"  - {m}" for m in missing)
+        assert not missing, "runtime.projection cell.yaml depends_on is out of sync with source imports:\n" + "\n".join(
+            f"  - {m}" for m in missing
         )
 
     def test_observability_test_declares_expected_dependencies_up_to_date(self):
@@ -433,9 +459,7 @@ class TestDependencyManifest:
         import os
 
         backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        internal_dir = os.path.join(
-            backend_root, "polaris", "cells", "runtime", "projection", "internal"
-        )
+        internal_dir = os.path.join(backend_root, "polaris", "cells", "runtime", "projection", "internal")
         violations: list[str] = []
         for module_prefix, cell_id in self.EXPECTED_CELL_DEPENDENCIES.items():
             found = False
@@ -457,9 +481,8 @@ class TestDependencyManifest:
                     f"but no source file in internal/ imports it - remove or fix"
                 )
 
-        assert not violations, (
-            "EXPECTED_CELL_DEPENDENCIES is out of sync with source:\n"
-            + "\n".join(f"  - {v}" for v in violations)
+        assert not violations, "EXPECTED_CELL_DEPENDENCIES is out of sync with source:\n" + "\n".join(
+            f"  - {v}" for v in violations
         )
 
 
@@ -475,9 +498,7 @@ class TestProjectionReadBoundaryInvariant:
         import re
 
         backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        internal_dir = os.path.join(
-            backend_root, "polaris", "cells", "runtime", "projection", "internal"
-        )
+        internal_dir = os.path.join(backend_root, "polaris", "cells", "runtime", "projection", "internal")
         # Pattern: "from polaris.cells.<cell>." NOT followed by "public."
         # or "from polaris.cells.<cell>.public."
         # This catches direct internal-to-internal imports.
@@ -499,9 +520,7 @@ class TestProjectionReadBoundaryInvariant:
                 continue
             for m in pattern.finditer(content):
                 line_num = content[: m.start()].count("\n") + 1
-                violations.append(
-                    f"{fname}:{line_num}: imports other Cell internal: {m.group().rstrip()}"
-                )
+                violations.append(f"{fname}:{line_num}: imports other Cell internal: {m.group().rstrip()}")
 
         assert not violations, (
             "Cross-cell internal imports found in runtime.projection internal modules:\n"

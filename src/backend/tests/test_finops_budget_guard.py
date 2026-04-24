@@ -24,6 +24,7 @@ from polaris.kernelone.fs.registry import set_default_adapter
 # Helpers: minimal filesystem adapter (no external deps, no global state)
 # ---------------------------------------------------------------------------
 
+
 class _LocalFSAdapter:
     """Minimal local-filesystem-backed adapter for testing."""
 
@@ -88,6 +89,7 @@ def _make_fs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[KernelFil
 # Helpers: read the raw KFS budget state file
 # ---------------------------------------------------------------------------
 
+
 def _read_kfs_state(fs: KernelFileSystem, scope_id: str) -> dict | None:
     """Read and deserialise the raw state file for a scope.  None if absent."""
     path = f"runtime/state/budget/{scope_id}.json"
@@ -101,15 +103,15 @@ def _read_kfs_state(fs: KernelFileSystem, scope_id: str) -> dict | None:
 # 1. Budget update — three-view consistency
 # ---------------------------------------------------------------------------
 
+
 class TestThreeViewConsistency:
-    def test_allocate_budget_persists_to_kfs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_allocate_budget_persists_to_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """After allocate_budget, KFS file must contain the record."""
         from polaris.cells.finops.budget_guard.internal.budget_store import (
             BudgetKFSStore,
             BudgetRecord,
         )
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
         store = BudgetKFSStore("workspace", scope_id="test-alloc", fs=fs)
 
@@ -132,14 +134,13 @@ class TestThreeViewConsistency:
         assert "b-001" in kfs_state["budgets"]
         assert kfs_state["budgets"]["b-001"]["limit"] == 1000
 
-    def test_record_usage_persists_to_kfs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_record_usage_persists_to_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """After append_usage, KFS file must contain the usage record."""
         from polaris.cells.finops.budget_guard.internal.budget_store import (
             BudgetKFSStore,
             UsageRecord,
         )
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
         store = BudgetKFSStore("workspace", scope_id="test-usage", fs=fs)
 
@@ -163,15 +164,14 @@ class TestThreeViewConsistency:
         assert len(kfs_state["usage"]) == 1
         assert kfs_state["usage"][0]["amount"] == 150
 
-    def test_multiple_mutations_all_reflected_in_kfs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_multiple_mutations_all_reflected_in_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Sequential budget + usage mutations stay consistent across all views."""
         from polaris.cells.finops.budget_guard.internal.budget_store import (
             BudgetKFSStore,
             BudgetRecord,
             UsageRecord,
         )
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
         store = BudgetKFSStore("workspace", scope_id="multi-mut", fs=fs)
 
@@ -179,7 +179,9 @@ class TestThreeViewConsistency:
         b2 = BudgetRecord(budget_id="b-2", task_id="t2", budget_type="tokens", limit=300)
         store.save_budget(b1)
         store.save_budget(b2)
-        store.append_usage(UsageRecord(record_id="u-1", task_id="t1", agent_id="ag", resource_type="tokens", amount=100))
+        store.append_usage(
+            UsageRecord(record_id="u-1", task_id="t1", agent_id="ag", resource_type="tokens", amount=100)
+        )
         store.append_usage(UsageRecord(record_id="u-2", task_id="t1", agent_id="ag", resource_type="tokens", amount=50))
 
         kfs_state = _read_kfs_state(fs, "multi-mut")
@@ -191,9 +193,7 @@ class TestThreeViewConsistency:
         assert totals["tokens"] == 150
 
         # KFS totals computed fresh match in-memory totals
-        kfs_usage_sum = sum(
-            u["amount"] for u in kfs_state["usage"] if u["task_id"] == "t1"
-        )
+        kfs_usage_sum = sum(u["amount"] for u in kfs_state["usage"] if u["task_id"] == "t1")
         assert kfs_usage_sum == 150
 
 
@@ -201,26 +201,24 @@ class TestThreeViewConsistency:
 # 2. Restart recovery
 # ---------------------------------------------------------------------------
 
+
 class TestRestartRecovery:
-    def test_new_store_recovers_budgets_from_kfs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_new_store_recovers_budgets_from_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A new store instance recovers all state from the KFS file."""
         from polaris.cells.finops.budget_guard.internal.budget_store import (
             BudgetKFSStore,
             BudgetRecord,
             UsageRecord,
         )
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
 
         # First store writes state
         store1 = BudgetKFSStore("workspace", scope_id="restart-test", fs=fs)
-        store1.save_budget(BudgetRecord(
-            budget_id="b-restart", task_id="t-restart", budget_type="tokens", limit=9999
-        ))
-        store1.append_usage(UsageRecord(
-            record_id="u-restart", task_id="t-restart", agent_id="ag", resource_type="tokens", amount=42
-        ))
+        store1.save_budget(BudgetRecord(budget_id="b-restart", task_id="t-restart", budget_type="tokens", limit=9999))
+        store1.append_usage(
+            UsageRecord(record_id="u-restart", task_id="t-restart", agent_id="ag", resource_type="tokens", amount=42)
+        )
 
         # Second store (simulates restart) reads from same KFS
         store2 = BudgetKFSStore("workspace", scope_id="restart-test", fs=fs)
@@ -232,11 +230,10 @@ class TestRestartRecovery:
         assert len(recovered_usage) == 1
         assert recovered_usage[0].amount == 42
 
-    def test_restart_with_no_prior_file_starts_empty(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_restart_with_no_prior_file_starts_empty(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A store with no prior KFS file starts with empty state."""
         from polaris.cells.finops.budget_guard.internal.budget_store import BudgetKFSStore
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
 
         store = BudgetKFSStore("workspace", scope_id="fresh-scope", fs=fs)
@@ -252,6 +249,7 @@ class TestRestartRecovery:
             BudgetKFSStore,
             _scope_path,
         )
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
 
         # Write corrupt JSON directly via the adapter
@@ -268,21 +266,20 @@ class TestRestartRecovery:
 # 3. Event vs state reconciliation
 # ---------------------------------------------------------------------------
 
+
 class TestEventStateReconciliation:
-    def test_usage_totals_match_kfs_state(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_usage_totals_match_kfs_state(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """In-memory usage_totals == sum of usage records in KFS file."""
         from polaris.cells.finops.budget_guard.internal.budget_store import (
             BudgetKFSStore,
             UsageRecord,
         )
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
         store = BudgetKFSStore("workspace", scope_id="reconcile", fs=fs)
 
         records = [
-            UsageRecord(record_id=f"u-{i}", task_id="t1", agent_id="ag",
-                        resource_type="tokens", amount=i * 10)
+            UsageRecord(record_id=f"u-{i}", task_id="t1", agent_id="ag", resource_type="tokens", amount=i * 10)
             for i in range(1, 6)
         ]
         for r in records:
@@ -297,15 +294,14 @@ class TestEventStateReconciliation:
         kfs_total = sum(u["amount"] for u in kfs_state["usage"])
         assert kfs_total == expected, "KFS state diverged from in-memory totals"
 
-    def test_budget_used_counter_consistent(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_budget_used_counter_consistent(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """budget.used in KFS matches what record_usage applied in-memory."""
         from polaris.cells.finops.budget_guard.internal.budget_store import (
             BudgetKFSStore,
             BudgetRecord,
             UsageRecord,
         )
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
         store = BudgetKFSStore("workspace", scope_id="budget-used", fs=fs)
 
@@ -315,8 +311,11 @@ class TestEventStateReconciliation:
         # Simulate two record_usage calls (as CFOAgent._tool_record_usage does)
         for amount in (100, 75):
             usage = UsageRecord(
-                record_id=f"u-{amount}", task_id="t1", agent_id="ag",
-                resource_type="tokens", amount=amount,
+                record_id=f"u-{amount}",
+                task_id="t1",
+                agent_id="ag",
+                resource_type="tokens",
+                amount=amount,
             )
             store.append_usage(usage)
             current = store.get_budget("b-used")
@@ -337,16 +336,16 @@ class TestEventStateReconciliation:
 # 4. TokenService no longer uses Path.write_text
 # ---------------------------------------------------------------------------
 
+
 class TestTokenServiceKFSPersistence:
-    def test_record_usage_does_not_call_path_write_text(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_record_usage_does_not_call_path_write_text(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """TokenService.record_usage must not write to the old absolute state_file path.
 
         It must go through KFS (which resolves to a KFS-managed logical path),
         not directly to the absolute OS path passed as ``state_file``.
         """
         from polaris.domain.services.token_service import TokenService
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
 
         # The absolute legacy state_file path should never receive a direct write.
@@ -369,11 +368,10 @@ class TestTokenServiceKFSPersistence:
             f"{writes_to_legacy_path}"
         )
 
-    def test_token_service_persists_and_recovers_via_kfs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_token_service_persists_and_recovers_via_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """TokenService persists used_tokens to KFS and recovers on restart."""
         from polaris.domain.services.token_service import TokenService, reset_token_service
+
         fs, _ = _make_fs(monkeypatch, tmp_path)
         reset_token_service()
 
@@ -388,14 +386,13 @@ class TestTokenServiceKFSPersistence:
 
         # Simulate restart: new instance reads same KFS file
         svc2 = TokenService(budget_limit=5000, kfs_logical_path=kfs_path, fs=fs)
-        assert svc2._used_tokens == 500, (
-            f"Restart did not recover used_tokens: got {svc2._used_tokens}, expected 500"
-        )
+        assert svc2._used_tokens == 500, f"Restart did not recover used_tokens: got {svc2._used_tokens}, expected 500"
         reset_token_service()
 
     def test_token_service_without_state_file_works_in_memory_only(self) -> None:
         """TokenService without state_file stays in-memory (no KFS interaction)."""
         from polaris.domain.services.token_service import TokenService, reset_token_service
+
         reset_token_service()
         svc = TokenService(budget_limit=100)
         svc.record_usage(30)
@@ -408,18 +405,16 @@ class TestTokenServiceKFSPersistence:
 # 5. CFOAgent integration (uses BudgetKFSStore under the hood)
 # ---------------------------------------------------------------------------
 
+
 class TestCFOAgentIntegration:
-    def test_cfo_allocate_and_check_persisted(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_cfo_allocate_and_check_persisted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """CFOAgent allocate_budget + check_budget results match KFS state."""
         from polaris.cells.finops.budget_guard.internal.budget_agent import CFOAgent
+
         fs, workspace = _make_fs(monkeypatch, tmp_path)
 
         agent = CFOAgent(str(workspace), fs=fs)
-        alloc = agent._tool_allocate_budget(
-            task_id="t-cfo", budget_type="tokens", limit=1000
-        )
+        alloc = agent._tool_allocate_budget(task_id="t-cfo", budget_type="tokens", limit=1000)
         assert alloc["ok"] is True
         budget_id = alloc["budget"]["budget_id"]
 
@@ -436,11 +431,10 @@ class TestCFOAgentIntegration:
         assert kfs_state is not None
         assert budget_id in kfs_state["budgets"]
 
-    def test_cfo_record_usage_updates_kfs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_cfo_record_usage_updates_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """CFOAgent record_usage updates both in-memory and KFS state."""
         from polaris.cells.finops.budget_guard.internal.budget_agent import CFOAgent
+
         fs, workspace = _make_fs(monkeypatch, tmp_path)
 
         agent = CFOAgent(str(workspace), fs=fs)
@@ -453,16 +447,13 @@ class TestCFOAgentIntegration:
 
         kfs_state = _read_kfs_state(fs, "global")
         assert kfs_state is not None
-        kfs_usage_total = sum(
-            u["amount"] for u in kfs_state["usage"] if u["task_id"] == "t-usage"
-        )
+        kfs_usage_total = sum(u["amount"] for u in kfs_state["usage"] if u["task_id"] == "t-usage")
         assert kfs_usage_total == 500
 
-    def test_cfo_restart_recovers_from_kfs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_cfo_restart_recovers_from_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A new CFOAgent over the same workspace recovers all state from KFS."""
         from polaris.cells.finops.budget_guard.internal.budget_agent import CFOAgent
+
         fs, workspace = _make_fs(monkeypatch, tmp_path)
 
         agent1 = CFOAgent(str(workspace), fs=fs)
@@ -478,6 +469,4 @@ class TestCFOAgentIntegration:
         assert budgets[0]["limit"] == 500
 
         stats = agent2._tool_get_usage_stats(task_id="t-persist")
-        assert stats["totals"].get("tokens", 0) == 100, (
-            "Usage not recovered after restart"
-        )
+        assert stats["totals"].get("tokens", 0) == 100, "Usage not recovered after restart"

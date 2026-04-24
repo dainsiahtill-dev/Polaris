@@ -27,7 +27,7 @@ class _FakeStreamExecutor:
         self._plans = plans
         self.commands = []
 
-    def stream_session(self, command):  # noqa: ANN001
+    def stream_session(self, command):
         self.commands.append(command)
         metadata = dict(command.metadata or {})
         case_id = str(metadata.get("benchmark_case_id"))
@@ -266,7 +266,7 @@ def test_run_agentic_benchmark_suite_retries_failed_case_with_repair_appendix() 
             self.commands: list[Any] = []
             self._attempts = 0
 
-        def stream_session(self, command):  # noqa: ANN001
+        def stream_session(self, command):
             self.commands.append(command)
             self._attempts += 1
 

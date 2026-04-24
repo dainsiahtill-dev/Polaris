@@ -18,27 +18,13 @@ MAX_LINES = {
 # Backend paths to check
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 PM_CLI_DIR = BACKEND_DIR / "polaris" / "delivery" / "cli" / "pm"
-DIRECTOR_EXECUTION_INTERNAL_DIR = (
-    BACKEND_DIR / "polaris" / "cells" / "director" / "execution" / "internal"
-)
-DIRECTOR_TASKING_INTERNAL_DIR = (
-    BACKEND_DIR / "polaris" / "cells" / "director" / "tasking" / "internal"
-)
-COURT_WORKFLOW_INTERNAL_DIR = (
-    BACKEND_DIR / "polaris" / "cells" / "docs" / "court_workflow" / "internal"
-)
-PM_DISPATCH_INTERNAL_DIR = (
-    BACKEND_DIR / "polaris" / "cells" / "orchestration" / "pm_dispatch" / "internal"
-)
-PM_PLANNING_INTERNAL_DIR = (
-    BACKEND_DIR / "polaris" / "cells" / "orchestration" / "pm_planning" / "internal"
-)
-RUNTIME_STATE_OWNER_INTERNAL_DIR = (
-    BACKEND_DIR / "polaris" / "cells" / "runtime" / "state_owner" / "internal"
-)
-CHIEF_ENGINEER_BLUEPRINT_INTERNAL_DIR = (
-    BACKEND_DIR / "polaris" / "cells" / "chief_engineer" / "blueprint" / "internal"
-)
+DIRECTOR_EXECUTION_INTERNAL_DIR = BACKEND_DIR / "polaris" / "cells" / "director" / "execution" / "internal"
+DIRECTOR_TASKING_INTERNAL_DIR = BACKEND_DIR / "polaris" / "cells" / "director" / "tasking" / "internal"
+COURT_WORKFLOW_INTERNAL_DIR = BACKEND_DIR / "polaris" / "cells" / "docs" / "court_workflow" / "internal"
+PM_DISPATCH_INTERNAL_DIR = BACKEND_DIR / "polaris" / "cells" / "orchestration" / "pm_dispatch" / "internal"
+PM_PLANNING_INTERNAL_DIR = BACKEND_DIR / "polaris" / "cells" / "orchestration" / "pm_planning" / "internal"
+RUNTIME_STATE_OWNER_INTERNAL_DIR = BACKEND_DIR / "polaris" / "cells" / "runtime" / "state_owner" / "internal"
+CHIEF_ENGINEER_BLUEPRINT_INTERNAL_DIR = BACKEND_DIR / "polaris" / "cells" / "chief_engineer" / "blueprint" / "internal"
 
 
 def get_line_count(file_path: Path) -> int:
@@ -100,10 +86,7 @@ def test_polaris_engine_size():
     limit = MAX_LINES["polaris_engine.py"]
 
     if lines > limit:
-        pytest.xfail(
-            f"polaris_engine.py has {lines} lines (limit: {limit}). "
-            f"Refactoring may be needed."
-        )
+        pytest.xfail(f"polaris_engine.py has {lines} lines (limit: {limit}). Refactoring may be needed.")
 
     assert lines <= limit, f"polaris_engine.py has {lines} lines (limit: {limit})"
 
@@ -194,5 +177,3 @@ def test_orchestration_engine_imports_extracted_modules():
             missing.append(imp)
 
     assert not missing, f"orchestration_engine.py missing imports: {missing}"
-
-

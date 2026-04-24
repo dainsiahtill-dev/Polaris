@@ -196,5 +196,3 @@ def test_load_llm_test_index_prefers_global_index_over_workspace_copy(tmp_path):
     assert index["roles"]["pm"]["ready"] is True
     assert "global_provider" in index["providers"]
     assert "workspace_provider" not in index["providers"]
-
-

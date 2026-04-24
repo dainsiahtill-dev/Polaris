@@ -28,12 +28,14 @@ from polaris.kernelone.storage import clear_storage_roots_cache
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_service(workspace: Path):
     """Construct a HistoryArchiveService, clearing the storage-roots cache first."""
     clear_storage_roots_cache()
     from polaris.cells.archive.run_archive.internal.history_archive_service import (
         HistoryArchiveService,
     )
+
     return HistoryArchiveService(str(workspace))
 
 
@@ -43,6 +45,7 @@ def _make_repo(workspace: Path):
     from polaris.cells.archive.run_archive.internal.history_manifest_repository import (
         HistoryManifestRepository,
     )
+
     return HistoryManifestRepository(str(workspace))
 
 
@@ -66,9 +69,8 @@ def test_service_and_repo_history_roots_are_identical(tmp_path: Path) -> None:
 
     service = _make_service(workspace)
 
-    assert service.history_root == service._manifest_repo.history_root, (  # noqa: SLF001
-        f"Path mismatch: service={service.history_root!r}  "
-        f"repo={service._manifest_repo.history_root!r}"  # noqa: SLF001
+    assert service.history_root == service._manifest_repo.history_root, (
+        f"Path mismatch: service={service.history_root!r}  repo={service._manifest_repo.history_root!r}"
     )
 
 
@@ -78,11 +80,9 @@ def test_no_nested_history_segment_in_history_root(tmp_path: Path) -> None:
     workspace.mkdir()
 
     service = _make_service(workspace)
-    repo_history_root = _to_fwd(service._manifest_repo.history_root)  # noqa: SLF001
+    repo_history_root = _to_fwd(service._manifest_repo.history_root)
 
-    assert _NESTED_SEGMENT not in repo_history_root, (
-        f"Double-nested path detected: {repo_history_root!r}"
-    )
+    assert _NESTED_SEGMENT not in repo_history_root, f"Double-nested path detected: {repo_history_root!r}"
 
 
 def test_history_root_is_workspace_polaris_history(tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ def test_history_root_is_workspace_polaris_history(tmp_path: Path) -> None:
     expected = workspace.resolve() / ".polaris" / "history"
 
     assert service.history_root == expected
-    assert service._manifest_repo.history_root == expected  # noqa: SLF001
+    assert service._manifest_repo.history_root == expected
 
 
 def test_index_dir_is_inside_canonical_history_root(tmp_path: Path) -> None:
@@ -103,7 +103,7 @@ def test_index_dir_is_inside_canonical_history_root(tmp_path: Path) -> None:
     workspace.mkdir()
 
     service = _make_service(workspace)
-    repo = service._manifest_repo  # noqa: SLF001
+    repo = service._manifest_repo
 
     assert repo.index_dir == repo.history_root / "index"
     assert _NESTED_SEGMENT not in _to_fwd(repo.index_dir)
@@ -115,17 +115,14 @@ def test_index_file_paths_have_single_polaris_history_occurrence(tmp_path: Path)
     workspace.mkdir()
 
     service = _make_service(workspace)
-    repo = service._manifest_repo  # noqa: SLF001
+    repo = service._manifest_repo
 
     from polaris.cells.archive.run_archive.internal.history_manifest_repository import IndexType
 
     for index_type in IndexType:
-        index_path = _to_fwd(repo._get_index_path(index_type))  # noqa: SLF001
+        index_path = _to_fwd(repo._get_index_path(index_type))
         count = index_path.count(".polaris/history")
-        assert count == 1, (
-            f"Expected exactly 1 occurrence of '.polaris/history' in "
-            f"{index_path!r}, found {count}"
-        )
+        assert count == 1, f"Expected exactly 1 occurrence of '.polaris/history' in {index_path!r}, found {count}"
 
 
 def test_invariant_holds_after_cache_clear(tmp_path: Path) -> None:
@@ -140,7 +137,7 @@ def test_invariant_holds_after_cache_clear(tmp_path: Path) -> None:
     service2 = _make_service(workspace)
 
     assert service2.history_root == first_history_root
-    assert service2._manifest_repo.history_root == first_history_root  # noqa: SLF001
+    assert service2._manifest_repo.history_root == first_history_root
 
 
 def test_standalone_repo_with_workspace_matches_service_repo(tmp_path: Path) -> None:
@@ -153,7 +150,7 @@ def test_standalone_repo_with_workspace_matches_service_repo(tmp_path: Path) -> 
     standalone_repo = _make_repo(workspace)
 
     assert standalone_repo.history_root == service.history_root
-    assert standalone_repo.history_root == service._manifest_repo.history_root  # noqa: SLF001
+    assert standalone_repo.history_root == service._manifest_repo.history_root
 
 
 def test_passing_history_root_to_repo_directly_produces_nested_path(tmp_path: Path) -> None:
@@ -176,6 +173,7 @@ def test_passing_history_root_to_repo_directly_produces_nested_path(tmp_path: Pa
     from polaris.cells.archive.run_archive.internal.history_manifest_repository import (
         HistoryManifestRepository,
     )
+
     buggy_repo = HistoryManifestRepository(str(history_root))
 
     buggy_path = _to_fwd(buggy_repo.history_root)

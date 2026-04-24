@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from tests.agent_stress.paths import ensure_backend_root_on_syspath
 
@@ -39,6 +39,7 @@ MAX_FACTORY_RUNS_TRACKED = 64
 
 class EventType(Enum):
     """事件类型"""
+
     TASK_CREATED = "task_created"
     TASK_CLAIMED = "task_claimed"
     TASK_COMPLETED = "task_completed"
@@ -53,10 +54,11 @@ class EventType(Enum):
 @dataclass
 class TaskLineage:
     """任务血缘节点"""
+
     task_id: str
     subject: str
     status: str
-    created_by: str = ""          # pm/architect/chief_engineer/director
+    created_by: str = ""  # pm/architect/chief_engineer/director
     parent_task: str | None = None
     child_tasks: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
@@ -87,6 +89,7 @@ class TaskLineage:
 @dataclass
 class FactoryRun:
     """Factory 运行记录"""
+
     run_id: str
     status: str
     goal: str = ""
@@ -111,9 +114,10 @@ class FactoryRun:
 @dataclass
 class QAConclusion:
     """QA 审查结论"""
+
     review_id: str
     timestamp: str
-    verdict: str                    # PASS/FAIL/PARTIAL
+    verdict: str  # PASS/FAIL/PARTIAL
     confidence: str
     summary: str
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -139,12 +143,13 @@ class QAConclusion:
 @dataclass
 class RoundTrace:
     """单轮压测追踪数据"""
+
     round_number: int
     project_id: str
     project_name: str
     start_time: str
     end_time: str | None = None
-    status: str = "running"          # running/completed/failed
+    status: str = "running"  # running/completed/failed
     factory_run_id: str | None = None  # 关联的 Factory run ID
 
     # 追踪数据
@@ -177,14 +182,10 @@ class RoundTrace:
                 if isinstance(value, dict)
             },
             factory_runs=[
-                FactoryRun.from_dict(item)
-                for item in (payload.get("factory_runs") or [])
-                if isinstance(item, dict)
+                FactoryRun.from_dict(item) for item in (payload.get("factory_runs") or []) if isinstance(item, dict)
             ],
             qa_conclusions=[
-                QAConclusion.from_dict(item)
-                for item in (payload.get("qa_conclusions") or [])
-                if isinstance(item, dict)
+                QAConclusion.from_dict(item) for item in (payload.get("qa_conclusions") or []) if isinstance(item, dict)
             ],
             total_tasks=int(stats.get("total_tasks") or payload.get("total_tasks") or 0),
             completed_tasks=int(stats.get("completed_tasks") or payload.get("completed_tasks") or 0),
@@ -363,7 +364,7 @@ class RuntimeTracer:
         factory_sync_interval: float = 15.0,
         qa_sync_interval: float = 20.0,
         rate_limit_backoff_cap: float = 30.0,
-    ):
+    ) -> None:
         self.backend_url = str(backend_url or "").strip().rstrip("/")
         self.workspace = Path(workspace).resolve() if workspace else Path.cwd()
         self.poll_interval = poll_interval
@@ -391,10 +392,10 @@ class RuntimeTracer:
         self._factory_rate_limit_backoff: float = self.poll_interval
         self._qa_rate_limit_backoff: float = self.poll_interval
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args):
+    async def __aexit__(self, *args: Any) -> None:
         await self.stop()
         await self.client.aclose()
 
@@ -452,10 +453,7 @@ class RuntimeTracer:
             try:
                 await asyncio.wait_for(self._sync_all(), timeout=self.final_sync_timeout)
             except asyncio.TimeoutError:
-                print(
-                    f"[tracer] Final sync timed out after {self.final_sync_timeout:.1f}s; "
-                    "returning partial trace"
-                )
+                print(f"[tracer] Final sync timed out after {self.final_sync_timeout:.1f}s; returning partial trace")
             except Exception as e:
                 print(f"[tracer] Final sync failed: {type(e).__name__}: {e}")
 
@@ -473,13 +471,11 @@ class RuntimeTracer:
             except Exception as e:
                 print(f"[tracer] Sync error: {e}")
 
-            try:
+            with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
                     self._stop_event.wait(),
                     timeout=self.poll_interval,
                 )
-            except asyncio.TimeoutError:
-                pass
 
     async def _sync_periodic(self):
         """运行中低频同步，降低控制面负载。"""
@@ -516,7 +512,7 @@ class RuntimeTracer:
             *(coroutine for _, coroutine in sync_steps),
             return_exceptions=True,
         )
-        for (name, _), outcome in zip(sync_steps, results):
+        for (name, _), outcome in zip(sync_steps, results, strict=False):
             if isinstance(outcome, asyncio.CancelledError):
                 raise outcome
             if isinstance(outcome, Exception):
@@ -580,9 +576,8 @@ class RuntimeTracer:
                         subject=str(task_data.get("subject") or "").strip(),
                         status=normalize_status(task_data.get("status")),
                         created_by=director_task_claimed_by(task_data),
-                        parent_task=str(
-                            task_data.get("parent_id") or metadata_dict.get("parent_id") or ""
-                        ).strip() or None,
+                        parent_task=str(task_data.get("parent_id") or metadata_dict.get("parent_id") or "").strip()
+                        or None,
                         dependencies=[
                             str(dep).strip()
                             for dep in (task_data.get("blocked_by") or metadata_dict.get("blocked_by") or [])
@@ -591,7 +586,8 @@ class RuntimeTracer:
                         created_at=str(task_data.get("created_at") or metadata_dict.get("created_at") or "").strip(),
                         completed_at=str(
                             task_data.get("completed_at") or metadata_dict.get("completed_at") or ""
-                        ).strip() or None,
+                        ).strip()
+                        or None,
                         result_summary=summarize_director_task_result(task_data),
                         evidence_refs=[
                             str(item).strip()
@@ -623,11 +619,11 @@ class RuntimeTracer:
                 # 更新统计
                 self.current_round.total_tasks = len(self.current_round.tasks)
                 self.current_round.completed_tasks = sum(
-                    1 for t in self.current_round.tasks.values()
-                    if t.status in {"completed", "success", "done"}
+                    1 for t in self.current_round.tasks.values() if t.status in {"completed", "success", "done"}
                 )
                 self.current_round.failed_tasks = sum(
-                    1 for t in self.current_round.tasks.values()
+                    1
+                    for t in self.current_round.tasks.values()
                     if t.status in {"failed", "error", "cancelled", "blocked", "timeout"}
                 )
 
@@ -705,15 +701,12 @@ class RuntimeTracer:
                             )
                             self.current_round.factory_runs.append(run)
                     if len(self.current_round.factory_runs) > MAX_FACTORY_RUNS_TRACKED:
-                        self.current_round.factory_runs = self.current_round.factory_runs[
-                            -MAX_FACTORY_RUNS_TRACKED:
-                        ]
+                        self.current_round.factory_runs = self.current_round.factory_runs[-MAX_FACTORY_RUNS_TRACKED:]
 
                     # 更新统计
                     self.current_round.total_factory_runs = len(self.current_round.factory_runs)
                     self.current_round.completed_factory_runs = sum(
-                        1 for r in self.current_round.factory_runs
-                        if r.status in ("completed", "success")
+                        1 for r in self.current_round.factory_runs if r.status in ("completed", "success")
                     )
 
                 # 在锁外获取 events，但需要重新获取引用
@@ -771,15 +764,12 @@ class RuntimeTracer:
                     )
                     self.current_round.factory_runs.append(run)
                     if len(self.current_round.factory_runs) > MAX_FACTORY_RUNS_TRACKED:
-                        self.current_round.factory_runs = self.current_round.factory_runs[
-                            -MAX_FACTORY_RUNS_TRACKED:
-                        ]
+                        self.current_round.factory_runs = self.current_round.factory_runs[-MAX_FACTORY_RUNS_TRACKED:]
 
                 # 更新统计
                 self.current_round.total_factory_runs = len(self.current_round.factory_runs)
                 self.current_round.completed_factory_runs = sum(
-                    1 for item in self.current_round.factory_runs
-                    if item.status in ("completed", "success")
+                    1 for item in self.current_round.factory_runs if item.status in ("completed", "success")
                 )
 
             # 获取 events
@@ -855,11 +845,14 @@ class RuntimeTracer:
                     verdict=verdict,
                     confidence="high" if verdict == "PASS" else "medium",
                     summary=f"QA gates: {len(gates)} total, {len(failed_gates)} failed",
-                    findings=[{
-                        "gate_name": factory_gate_name(g),
-                        "status": g.get("status", ""),
-                        "message": g.get("message", ""),
-                    } for g in gates],
+                    findings=[
+                        {
+                            "gate_name": factory_gate_name(g),
+                            "status": g.get("status", ""),
+                            "message": g.get("message", ""),
+                        }
+                        for g in gates
+                    ],
                     metrics={"total_gates": len(gates), "failed_gates": len(failed_gates)},
                     checklist_results={
                         factory_gate_name(g): normalize_status(g.get("status")) == "passed" for g in gates

@@ -10,12 +10,14 @@ def test_process_handle_defaults():
     assert handle.process is None
     assert handle.mode == ""
 
+
 def test_app_state_initialization():
     settings = Settings(workspace="/tmp")
     state = AppState(settings=settings)
     assert str(state.settings.workspace) == str(settings.workspace)
     assert isinstance(state.pm, ProcessHandle)
     assert isinstance(state.director, ProcessHandle)
+
 
 def test_mock_subprocess_lifecycle():
     with mock.patch("subprocess.Popen") as mock_popen:

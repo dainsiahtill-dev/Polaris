@@ -230,7 +230,8 @@ class DevelopmentWorkflowRuntime:
             intent = await self.synthesis_llm(context)
             if isinstance(intent, str) and intent.strip():
                 return intent.strip()
-        except Exception:  # noqa: BLE001
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError):
+            # TODO: narrow exception type — synthesis_llm may raise provider-specific errors
             pass
         return f"修复测试失败: {test_result.summary[:200]}"
 
@@ -354,7 +355,8 @@ class DevelopmentWorkflowRuntime:
                 },
             )
             return True
-        except Exception:  # noqa: BLE001
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError, TypeError):
+            # TODO: narrow exception type — tool_executor may raise provider-specific errors
             return False
 
     def _validate_ast_structure(self, code: str, language: str = "python") -> dict[str, Any]:

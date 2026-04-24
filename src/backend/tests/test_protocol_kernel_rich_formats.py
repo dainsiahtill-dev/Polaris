@@ -17,13 +17,7 @@ def _make_workspace() -> Path:
 def test_apply_protocol_output_routes_apply_patch_add_file() -> None:
     workspace = _make_workspace()
     try:
-        text = (
-            "*** Begin Patch\n"
-            "*** Add File: src/new.py\n"
-            "+def new_fn():\n"
-            "+    return 42\n"
-            "*** End Patch\n"
-        )
+        text = "*** Begin Patch\n*** Add File: src/new.py\n+def new_fn():\n+    return 42\n*** End Patch\n"
         report = apply_protocol_output(text, str(workspace), strict=True, allow_fuzzy_match=True)
         assert report.success is True
         assert "src/new.py" in report.changed_files

@@ -153,7 +153,7 @@ class CognitiveGateway:
             else:
                 logger.debug("[SLM warmup] SLM 返回空结果 (模型可能离线或配置错误)")
                 logger.info("SLM warmup skipped: model returned empty response (may be offline).")
-        except Exception as exc:  # noqa: BLE001
+        except (ConnectionError, TimeoutError, RuntimeError) as exc:
             logger.debug("[SLM warmup] SLM warmup 失败 (model may be offline): %s", exc, exc_info=True)
             logger.info("SLM warmup failed: %s", exc)
 
@@ -225,7 +225,7 @@ class CognitiveGateway:
             )
             # 必须返回非空字符串才判定健康；空字符串意味着模型未加载成功
             return healthy
-        except Exception:  # noqa: BLE001
+        except (ConnectionError, TimeoutError, RuntimeError):
             logger.debug("[SLM health] 探测异常", exc_info=True)
             return False
 
@@ -251,7 +251,7 @@ class CognitiveGateway:
                 if emb_result is not None:
                     logger.debug("CognitiveGateway intent from embedding: %s", emb_result)
                     return emb_result
-            except Exception:  # noqa: BLE001
+            except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                 logger.debug("Embedding router classify failed", exc_info=True)
 
         # Level 2: SLM Coprocessor（若健康且启用）
@@ -263,7 +263,7 @@ class CognitiveGateway:
                     if slm_result and slm_result != "UNKNOWN":
                         logger.debug("CognitiveGateway intent from SLM: %s", slm_result)
                         return slm_result
-                except Exception:  # noqa: BLE001
+                except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM classify_intent failed", exc_info=True)
 
         # Level 3: Hard-coded Regex（100% 可用兜底）
@@ -439,7 +439,7 @@ class CognitiveGateway:
                 confidence=max(0.0, min(1.0, float(data.get("confidence", 0.0)))),
                 is_negated=self._parse_slm_bool(data.get("is_negated", False)),
             )
-        except Exception:  # noqa: BLE001
+        except (TypeError, ValueError, KeyError):
             logger.debug("EnrichmentContext parse failed from SLM JSON", exc_info=True)
             enrichment = None
 
@@ -547,7 +547,7 @@ class CognitiveGateway:
                         logger.debug("[SLM routing] JSON 解析返回 None，回退到 regex")
                     else:
                         logger.debug("[SLM routing] SLM 返回空结果，回退到 regex")
-                except Exception:  # noqa: BLE001
+                except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("[SLM routing] SLM 路由请求失败", exc_info=True)
         else:
             logger.debug("[SLM routing] SLM 不健康，跳过富路由，回退到 regex")
@@ -633,7 +633,7 @@ class CognitiveGateway:
             if slm is not None:
                 try:
                     return await slm.distill_long_logs(raw_logs, max_tokens=max_tokens)
-                except Exception:  # noqa: BLE001
+                except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM distill_long_logs failed", exc_info=True)
         # Fallback: 暴力截断尾部
         return raw_logs[-2000:] if len(raw_logs) > 2000 else raw_logs
@@ -645,7 +645,7 @@ class CognitiveGateway:
             if slm is not None:
                 try:
                     return await slm.heal_json(broken_json)
-                except Exception:  # noqa: BLE001
+                except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM heal_json failed", exc_info=True)
         return None
 
@@ -656,7 +656,7 @@ class CognitiveGateway:
             if slm is not None:
                 try:
                     return await slm.expand_search_query(user_query)
-                except Exception:  # noqa: BLE001
+                except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM expand_search_query failed", exc_info=True)
         return [user_query]
 
@@ -670,7 +670,7 @@ class CognitiveGateway:
             if slm is not None:
                 try:
                     return await slm._invoke_slm(prompt, max_tokens=max_tokens)
-                except Exception:  # noqa: BLE001
+                except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM compress_text failed", exc_info=True)
         return ""
 

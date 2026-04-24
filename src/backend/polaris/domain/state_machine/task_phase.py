@@ -255,10 +255,21 @@ class TaskStateMachine:
         """Check if execution is stalled (no progress).
 
         Returns True if no improvement compared to previous round.
+        First call is always considered non-stalled (no baseline to compare against).
         """
-        # Compare with previous
-        missing_improved = len(current_missing) < len(self.context.previous_missing_targets)
-        unresolved_improved = len(current_unresolved) < len(self.context.previous_unresolved_imports)
+        prev_missing = getattr(self.context, "previous_missing_targets", None)
+        prev_unresolved = getattr(self.context, "previous_unresolved_imports", None)
+
+        # First call: no baseline to compare against
+        if prev_missing is None or prev_unresolved is None:
+            # Initialize for next comparison
+            self.context.previous_missing_targets = list(current_missing) if current_missing else []
+            self.context.previous_unresolved_imports = list(current_unresolved) if current_unresolved else []
+            return False
+
+        # Compare with previous round
+        missing_improved = len(current_missing) < len(prev_missing)
+        unresolved_improved = len(current_unresolved) < len(prev_unresolved)
 
         if not missing_improved and not unresolved_improved:
             self.context.stall_count += 1
@@ -266,8 +277,8 @@ class TaskStateMachine:
             self.context.stall_count = 0
 
         # Update context for next comparison
-        self.context.previous_missing_targets = current_missing
-        self.context.previous_unresolved_imports = current_unresolved
+        self.context.previous_missing_targets = list(current_missing) if current_missing else []
+        self.context.previous_unresolved_imports = list(current_unresolved) if current_unresolved else []
 
         # Check if exceeded max stall threshold
         return self.context.stall_count >= 2  # stall_round_threshold

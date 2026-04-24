@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.state_owner.internal.state import AppState, Auth
 from polaris.delivery.http.app_factory import create_app
 from polaris.kernelone.storage import resolve_storage_roots
@@ -122,4 +122,6 @@ def test_history_factory_overview_aggregates_round_flow(tmp_path: Path, monkeypa
     round_item = payload["rounds"][0]
     assert round_item["factory_flow"]["pipeline_status"]["status"] == "passed"
     assert round_item["factory_flow"]["defect_loop"]["auditor_fail_detected"] is True
-    assert round_item["factory_flow"]["non_director_execution"]["results"][0]["error_code"] == "AUDITOR_FAILS_WITH_DEFECT"
+    assert (
+        round_item["factory_flow"]["non_director_execution"]["results"][0]["error_code"] == "AUDITOR_FAILS_WITH_DEFECT"
+    )

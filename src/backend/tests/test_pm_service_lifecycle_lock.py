@@ -118,9 +118,7 @@ def test_pm_service_refreshes_storage_layout_when_workspace_changes(tmp_path) ->
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
 
     expected_a = (
-        StorageLayout(Path(str(workspace_a)), settings.runtime_base)
-        .get_path("logs", "pm.process.log")
-        .resolve()
+        StorageLayout(Path(str(workspace_a)), settings.runtime_base).get_path("logs", "pm.process.log").resolve()
     )
     resolved_a = Path(service._resolve_log_path()).resolve()
     assert resolved_a == expected_a
@@ -129,9 +127,7 @@ def test_pm_service_refreshes_storage_layout_when_workspace_changes(tmp_path) ->
     service.refresh_storage_layout()
 
     expected_b = (
-        StorageLayout(Path(str(workspace_b)), settings.runtime_base)
-        .get_path("logs", "pm.process.log")
-        .resolve()
+        StorageLayout(Path(str(workspace_b)), settings.runtime_base).get_path("logs", "pm.process.log").resolve()
     )
     resolved_b = Path(service._resolve_log_path()).resolve()
     assert resolved_b == expected_b
@@ -177,5 +173,3 @@ def test_pm_service_prefers_persisted_workspace_when_configured_workspace_is_def
     workspace_arg = cmd[cmd.index("--workspace") + 1]
     assert Path(workspace_arg).resolve() == workspace_target.resolve()
     assert Path(str(settings.workspace)).resolve() == workspace_target.resolve()
-
-

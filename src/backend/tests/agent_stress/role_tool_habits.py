@@ -186,16 +186,12 @@ def seed_demo_workspace(workspace: Path) -> list[str]:
             'name = "expense-tracker-demo"\n'
             'version = "0.1.0"\n'
             'description = "Demo workspace for role tool habit probing"\n'
-            "requires-python = \">=3.11\"\n\n"
+            'requires-python = ">=3.11"\n\n'
             "[tool.pytest.ini_options]\n"
             'pythonpath = ["."]\n'
             'testpaths = ["tests"]\n'
         ),
-        "src/config.py": (
-            'APP_NAME = "expense-tracker-demo"\n'
-            'DEFAULT_CURRENCY = "TWD"\n'
-            "ENABLE_AUDIT = True\n"
-        ),
+        "src/config.py": ('APP_NAME = "expense-tracker-demo"\nDEFAULT_CURRENCY = "TWD"\nENABLE_AUDIT = True\n'),
         "src/ledger.py": (
             "from __future__ import annotations\n\n"
             "from dataclasses import dataclass\n\n"
@@ -390,9 +386,7 @@ def analyze_tool_interaction(
 
 def allocate_fresh_workspace(requested: str | Path | None) -> Path:
     if requested is None:
-        return ensure_stress_workspace_path(
-            default_stress_workspace_base(f"hp-role-tool-habits-{_timestamp_token()}")
-        )
+        return ensure_stress_workspace_path(default_stress_workspace_base(f"hp-role-tool-habits-{_timestamp_token()}"))
 
     candidate = Path(requested).expanduser().resolve()
     if candidate.exists():
@@ -776,9 +770,7 @@ async def run_single_role_tool_habit_probe(
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Single-role tool habit probe for common LLM tool-use patterns."
-    )
+    parser = argparse.ArgumentParser(description="Single-role tool habit probe for common LLM tool-use patterns.")
     parser.add_argument("--role", choices=SUPPORTED_ROLES, default=DEFAULT_ROLE)
     parser.add_argument("--scenario", default=DEFAULT_SCENARIO)
     parser.add_argument("--workspace", help="Fresh workspace path. Defaults to a unique C:/Temp workspace.")
@@ -815,9 +807,7 @@ async def _async_main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     prompts = _resolve_prompts(args)
     workspace = allocate_fresh_workspace(args.workspace)
-    ramdisk_root = ensure_stress_runtime_root(
-        args.ramdisk_root or default_stress_runtime_root(DEFAULT_RUNTIME_NAME)
-    )
+    ramdisk_root = ensure_stress_runtime_root(args.ramdisk_root or default_stress_runtime_root(DEFAULT_RUNTIME_NAME))
     output_path = Path(args.output).expanduser().resolve() if args.output else workspace / "role_tool_habit_report.json"
     polaris_home = Path(args.polaris_home).expanduser().resolve()
 

@@ -270,7 +270,7 @@ class TreeSitterSummarizer:
         signature_types = SIGNATURE_NODE_TYPES.get(lang_name, [])
         error_types = ERROR_NODE_TYPES.get(lang_name, [])
 
-        def process_node(node, depth=0):
+        def process_node(node: Any, depth: int = 0) -> bool:
             """递归处理节点"""
             if node.type in signature_types:
                 # 这是一个签名节点，保留签名，折叠实现
@@ -355,7 +355,7 @@ class TreeSitterSummarizer:
         try:
             data = json.loads(content)
 
-            def truncate_obj(obj, depth=0):
+            def truncate_obj(obj: Any, depth: int = 0) -> Any:
                 """递归截断对象"""
                 if depth > 3:
                     return "..."

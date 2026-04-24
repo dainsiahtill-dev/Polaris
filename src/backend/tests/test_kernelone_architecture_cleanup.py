@@ -219,11 +219,7 @@ def test_kernelone_modules_do_not_call_enforce_utf8_at_import_time() -> None:
 
     for path in targets:
         text = path.read_text(encoding="utf-8")
-        lines = [
-            line.strip()
-            for line in text.splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
+        lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
         assert "enforce_utf8()" not in lines
 
 
@@ -241,9 +237,7 @@ def test_message_bus_async_handler_timeout_does_not_block(monkeypatch) -> None:
         bus = MessageBus()
         await bus.subscribe(MessageType.TASK_STARTED, _slow_handler)
         started = asyncio.get_running_loop().time()
-        await bus.publish(
-            Message(type=MessageType.TASK_STARTED, sender="tester", payload={})
-        )
+        await bus.publish(Message(type=MessageType.TASK_STARTED, sender="tester", payload={}))
         return asyncio.get_running_loop().time() - started
 
     elapsed = asyncio.run(_exercise())

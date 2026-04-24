@@ -29,4 +29,3 @@ def test_workspace_executors_are_isolated() -> None:
     ws_b = manager.get_executor_sync("/workspace/b")
 
     assert ws_a is not ws_b
-

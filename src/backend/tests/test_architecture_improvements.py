@@ -148,6 +148,7 @@ class TestCircuitBreaker:
 
         # Wait for recovery timeout
         import time
+
         time.sleep(0.15)
 
         # Now should be HALF_OPEN
@@ -160,6 +161,7 @@ class TestCircuitBreaker:
 
         cb.record_failure()
         import time
+
         time.sleep(0.15)
 
         assert cb.state == CircuitBreaker.State.HALF_OPEN
@@ -269,7 +271,7 @@ class TestStateConsistencyChecker:
         checker = StateConsistencyChecker(task_board, workflow_store=store)
 
         # Create task only in TaskBoard
-        task = task_board.create("Test task")
+        task_board.create("Test task")
 
         report = await checker.check_consistency("test-workflow")
 

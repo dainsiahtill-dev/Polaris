@@ -56,9 +56,7 @@ class TestLLMDefaultConfigUniqueProviderKeys:
         providers = config.get("providers", {})
 
         minimax_count = (
-            providers.count("minimax")
-            if hasattr(providers, "count")
-            else sum(1 for k in providers.keys() if k == "minimax")
+            providers.count("minimax") if hasattr(providers, "count") else sum(1 for k in providers if k == "minimax")
         )
 
         assert minimax_count == 1, f"Expected exactly one 'minimax' provider, found {minimax_count}"
@@ -87,34 +85,36 @@ class TestLLMStatusLastUpdated:
         mock_settings.qa_model = None
         mock_settings.qa_enabled = True
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
-            return_value={"schema_version": 1, "providers": {}, "roles": {}},
-        ):
-            with patch(
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value={"schema_version": 1, "providers": {}, "roles": {}},
+            ),
+            patch(
                 "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
                 return_value={"providers": {}, "roles": {}},
-            ):
-                with patch(
-                    "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
-                    return_value={},
-                ):
-                    with patch(
-                        "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
-                        return_value="/tmp/test_cache",
-                    ):
-                        response = build_llm_status(mock_settings)
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
 
-                        assert "last_updated" in response, "Response missing 'last_updated' field"
-                        assert response["last_updated"] is None or isinstance(response["last_updated"], str), (
-                            f"last_updated should be None or ISO string, got {type(response['last_updated'])}"
-                        )
+            assert "last_updated" in response, "Response missing 'last_updated' field"
+            assert response["last_updated"] is None or isinstance(response["last_updated"], str), (
+                f"last_updated should be None or ISO string, got {type(response['last_updated'])}"
+            )
 
-                        if response["last_updated"] is not None:
-                            try:
-                                datetime.fromisoformat(response["last_updated"])
-                            except (TypeError, ValueError) as e:
-                                pytest.fail(f"last_updated is not valid ISO format: {e}")
+            if response["last_updated"] is not None:
+                try:
+                    datetime.fromisoformat(response["last_updated"])
+                except (TypeError, ValueError) as e:
+                    pytest.fail(f"last_updated is not valid ISO format: {e}")
 
 
 class TestRoleRuntimeSupportConsistency:
@@ -141,23 +141,25 @@ class TestRoleRuntimeSupportConsistency:
             },
         }
 
-        with patch(
-            "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
-            return_value=config_payload,
-        ):
-            with patch(
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
                 "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
                 return_value={"providers": {}, "roles": {}},
-            ):
-                with patch(
-                    "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
-                    return_value={},
-                ):
-                    with patch(
-                        "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
-                        return_value="/tmp/test_cache",
-                    ):
-                        response = build_llm_status(mock_settings)
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
 
         assert response["roles"]["director"]["runtime_supported"] is True
         assert "director" not in response["unsupported_roles"]
@@ -577,7 +579,7 @@ class TestLLMConfigStandardProviders:
         config = build_default_config()
         providers = config.get("providers", {})
 
-        minimax_entries = [k for k in providers.keys() if "minimax" in k.lower()]
+        minimax_entries = [k for k in providers if "minimax" in k.lower()]
         minimax_types = [v.get("type") for v in providers.values() if "minimax" in str(v.get("type", "")).lower()]
 
         assert len(minimax_entries) <= 1, f"Found multiple minimax entries: {minimax_entries}"

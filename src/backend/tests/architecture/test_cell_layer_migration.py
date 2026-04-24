@@ -14,10 +14,10 @@ class TestCellLayerMigration:
     def test_cell_role_integrations_exist(self):
         """验证 Cell 层包含所有角色集成类."""
         from polaris.cells.llm.tool_runtime.internal import (
-            PMToolIntegration,
             ArchitectToolIntegration,
             ChiefEngineerToolIntegration,
             DirectorToolIntegration,
+            PMToolIntegration,
             QAToolIntegration,
             ScoutToolIntegration,
         )
@@ -32,8 +32,8 @@ class TestCellLayerMigration:
     def test_cell_role_registry(self):
         """验证 Cell 层包含角色注册表."""
         from polaris.cells.llm.tool_runtime.internal import (
-            PMToolIntegration,
             ROLE_TOOL_INTEGRATIONS,
+            PMToolIntegration,
             get_role_tool_integration,
         )
 
@@ -131,8 +131,8 @@ class TestCellLayerBackwardCompatibility:
     def test_cell_integration_basic_usage(self):
         """验证基本使用模式."""
         from polaris.cells.llm.tool_runtime.internal import (
-            PMToolIntegration,
             ROLE_TOOL_INTEGRATIONS,
+            PMToolIntegration,
         )
 
         # 直接实例化

@@ -145,7 +145,7 @@ class IntentEmbeddingRouter:
                 try:
                     vec = port.get_embedding(desc)
                     vectors.append(vec)
-                except Exception:  # noqa: BLE001
+                except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("Failed to embed description for %s", label, exc_info=True)
             if vectors:
                 centroids[label] = self._average_vectors(vectors)
@@ -169,7 +169,7 @@ class IntentEmbeddingRouter:
             return None
         try:
             vec = await self._embed_async(message)
-        except Exception:  # noqa: BLE001
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError):
             logger.debug("Embedding call failed for intent classification", exc_info=True)
             return None
         best_label, best_score = self._find_best(vec)

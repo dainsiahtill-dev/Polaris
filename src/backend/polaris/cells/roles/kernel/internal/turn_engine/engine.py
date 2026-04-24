@@ -364,7 +364,9 @@ class TurnEngine(TurnEngineCompatMixin):
                     args=arguments,
                     context={"profile": profile, "request": request},
                 )
-            except Exception:
+            except (RuntimeError, TypeError, ValueError):
+                # TODO: narrow exception type — underlying tool executor may raise
+                # provider-specific exceptions (ConnectionError, TimeoutError, etc.)
                 logger.exception("tool_runtime failed: tool=%s", tool_name)
                 raise
 

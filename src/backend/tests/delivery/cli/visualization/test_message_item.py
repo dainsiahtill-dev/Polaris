@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from polaris.delivery.cli.visualization import (
     CollapsibleMessageGroup,
     MessageItem,
@@ -103,7 +101,7 @@ class TestCollapsibleMessageGroup:
                 MessageItem(id="d1", type=MessageType.DEBUG, title="D1", content="..."),
                 MessageItem(id="d2", type=MessageType.DEBUG, title="D2", content="..."),
                 MessageItem(id="u1", type=MessageType.USER, title="U1", content="..."),
-            ]
+            ],
         )
 
         group.collapse_by_type(MessageType.DEBUG)
@@ -119,7 +117,7 @@ class TestCollapsibleMessageGroup:
             items=[
                 MessageItem(id="d1", type=MessageType.DEBUG, title="D1", content="...", is_collapsed=True),
                 MessageItem(id="u1", type=MessageType.USER, title="U1", content="...", is_collapsed=True),
-            ]
+            ],
         )
 
         group.expand_by_type(MessageType.DEBUG)
@@ -135,7 +133,7 @@ class TestCollapsibleMessageGroup:
                 MessageItem(id="d1", type=MessageType.DEBUG, title="D1", content="..."),
                 MessageItem(id="u1", type=MessageType.USER, title="U1", content="..."),
                 MessageItem(id="d2", type=MessageType.DEBUG, title="D2", content="..."),
-            ]
+            ],
         )
 
         debug_items = group.get_items_by_type(MessageType.DEBUG)
@@ -156,7 +154,7 @@ class TestCollapsibleMessageGroup:
             id="test",
             items=[
                 MessageItem(id="d1", type=MessageType.DEBUG, title="D1", content="..."),
-            ]
+            ],
         )
         assert group.remove_item("d1") is True
         assert group.count() == 0
@@ -169,7 +167,7 @@ class TestCollapsibleMessageGroup:
             items=[
                 MessageItem(id="d1", type=MessageType.DEBUG, title="D1", content="..."),
                 MessageItem(id="u1", type=MessageType.USER, title="U1", content="..."),
-            ]
+            ],
         )
 
         group.collapse_all()
@@ -185,7 +183,7 @@ class TestCollapsibleMessageGroup:
             title="Test Group",
             items=[
                 MessageItem(id="d1", type=MessageType.DEBUG, title="D1", content="..."),
-            ]
+            ],
         )
         d = group.to_dict()
         assert d["id"] == "test"

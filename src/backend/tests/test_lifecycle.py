@@ -143,10 +143,7 @@ class TestDirectorLifecycle:
                     errors.append(e)
 
             # Create and start threads
-            threads = [
-                threading.Thread(target=update_worker, args=(i,))
-                for i in range(5)
-            ]
+            threads = [threading.Thread(target=update_worker, args=(i,)) for i in range(5)]
             for t in threads:
                 t.start()
             for t in threads:

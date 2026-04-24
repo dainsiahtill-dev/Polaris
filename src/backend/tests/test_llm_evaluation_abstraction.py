@@ -108,6 +108,7 @@ def _reset_embedding_port():
 def _reset_reports_port():
     """Restore the global reports port after each test."""
     import polaris.cells.llm.evaluation.internal.index as idx_mod
+
     original = idx_mod._default_reports_port
     yield
     idx_mod._default_reports_port = original
@@ -137,7 +138,7 @@ class TestGetEmbeddingVectorUsesPort:
         assert all(isinstance(v, float) for v in result)
         # The fake port was called exactly once.
         assert len(fake.calls) == 1
-        text_arg, model_arg = fake.calls[0]
+        text_arg, _ = fake.calls[0]
         assert text_arg == "test text"
 
     def test_returns_none_when_port_raises(self):
@@ -243,6 +244,7 @@ class TestReconcileUsesReportsPort:
         # The fake port's list_json_files returns filenames; the reconcile
         # function will attempt to open them — patch open to return the report.
         import builtins
+
         original_open = builtins.open
 
         def _fake_open(path, *args, **kwargs):
@@ -250,6 +252,7 @@ class TestReconcileUsesReportsPort:
             path_str = str(path)
             if path_str.endswith("report_run1.json"):
                 import io
+
                 return io.StringIO(json.dumps(report))
             return original_open(path, *args, **kwargs)
 

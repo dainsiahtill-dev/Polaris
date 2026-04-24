@@ -50,4 +50,3 @@ async def test_task_queue_manager_stats_sum_subqueues() -> None:
 
     assert stats["workflow"]["size"] == 3
     assert stats["workflow"]["subqueues"] == {"director": 2, "qa": 1}
-

@@ -1,4 +1,3 @@
-# ruff: noqa: BLE001
 from __future__ import annotations
 
 import hashlib
@@ -83,11 +82,11 @@ def build_env_fingerprint(workspace: str = ".") -> str:
         )
         if result.returncode == 0 and result.stdout.strip():
             return f"git:{result.stdout.strip()}"
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
 
     try:
         stat = os.stat(workspace)
         return f"mtime:{int(stat.st_mtime)}"
-    except Exception:
+    except OSError:
         return "env:unknown"

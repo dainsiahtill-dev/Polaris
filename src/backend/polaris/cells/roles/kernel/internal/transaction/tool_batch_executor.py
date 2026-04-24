@@ -354,7 +354,8 @@ class ToolBatchExecutor:
             result = reset_hook(turn_id)
             if asyncio.iscoroutine(result):
                 await result
-        except Exception:  # noqa: BLE001
+        except (RuntimeError, TypeError, ValueError):
+            # TODO: narrow exception type — reset_hook is an external callback
             logger.warning("tool-runtime turn boundary reset failed: turn_id=%s", turn_id, exc_info=True)
 
     def _check_idempotency(self, batch_idempotency_key: str) -> dict | None:
@@ -833,7 +834,9 @@ class ToolBatchExecutor:
                     )
                 except asyncio.CancelledError:
                     raise
-                except Exception:  # noqa: BLE001
+                except (RuntimeError, TypeError, ValueError):
+                    # TODO: narrow exception type — shadow_engine.resolve_or_execute
+                    # may raise provider-specific errors
                     resolution = {"action": "replay", "result": None, "error": None}
                 action = str(resolution.get("action", "replay"))
                 is_write_tool = WriteToolPhases.is_write_tool(tool_name)

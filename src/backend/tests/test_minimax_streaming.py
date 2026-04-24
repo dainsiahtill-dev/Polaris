@@ -25,7 +25,7 @@ class TestMiniMaxStreaming:
 
     def test_invoke_stream_is_override(self):
         """Test that MiniMax actually overrides invoke_stream (not using BaseProvider default)"""
-        is_override = 'invoke_stream' in MiniMaxProvider.__dict__
+        is_override = "invoke_stream" in MiniMaxProvider.__dict__
         assert is_override, "MiniMax must override invoke_stream for true streaming"
 
     def test_provider_info_declares_streaming(self):
@@ -57,13 +57,13 @@ class TestMiniMaxStreaming:
         mock_chunks = [
             b'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n',
             b'data: {"choices": [{"delta": {"content": " world"}}]}\n\n',
-            b'data: [DONE]\n\n',
+            b"data: [DONE]\n\n",
         ]
 
         # Create mock response
         mock_response = AsyncMock()
         mock_response.status = 200
-        mock_response.headers = {'Content-Type': 'text/event-stream'}
+        mock_response.headers = {"Content-Type": "text/event-stream"}
         mock_response.content = AsyncMock()
         mock_response.content.__aiter__.return_value = mock_chunks
 
@@ -76,7 +76,7 @@ class TestMiniMaxStreaming:
             "timeout": 30,
         }
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
+        with patch("aiohttp.ClientSession", return_value=mock_session):
             tokens = []
             async for token in provider.invoke_stream("Hi", "MiniMax-M2.1", config):
                 tokens.append(token)
@@ -91,13 +91,11 @@ class TestMiniMaxStreaming:
         provider = MiniMaxProvider()
 
         # Mock JSON response
-        mock_response_data = {
-            "choices": [{"message": {"content": "Hello world this is a test"}}]
-        }
+        mock_response_data = {"choices": [{"message": {"content": "Hello world this is a test"}}]}
 
         mock_response = AsyncMock()
         mock_response.status = 200
-        mock_response.headers = {'Content-Type': 'application/json'}
+        mock_response.headers = {"Content-Type": "application/json"}
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
         mock_session = _build_mock_client_session(mock_response)
@@ -107,14 +105,14 @@ class TestMiniMaxStreaming:
             "base_url": "https://api.test.com",
         }
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
+        with patch("aiohttp.ClientSession", return_value=mock_session):
             tokens = []
             async for token in provider.invoke_stream("Hi", "MiniMax-M2.1", config):
                 tokens.append(token)
 
             # Should yield word by word for JSON response
             assert len(tokens) > 0
-            full_response = ''.join(tokens)
+            full_response = "".join(tokens)
             assert "Hello world" in full_response
 
     @pytest.mark.asyncio
@@ -133,7 +131,7 @@ class TestMiniMaxStreaming:
             "base_url": "https://api.test.com",
         }
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
+        with patch("aiohttp.ClientSession", return_value=mock_session):
             tokens = []
             async for token in provider.invoke_stream("Hi", "MiniMax-M2.1", config):
                 tokens.append(token)
@@ -163,8 +161,8 @@ class TestStreamingDetection:
         provider = MiniMaxProvider()
 
         # The new detection logic
-        has_attr = hasattr(provider, 'invoke_stream')
-        is_override = 'invoke_stream' in provider.__class__.__dict__
+        has_attr = hasattr(provider, "invoke_stream")
+        is_override = "invoke_stream" in provider.__class__.__dict__
         supports_true = is_override  # New logic
 
         assert has_attr is True  # Always true due to BaseProvider

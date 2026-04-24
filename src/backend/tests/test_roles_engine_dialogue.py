@@ -19,9 +19,11 @@ import pytest
 # 辅助工具
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _make_engine_context(llm_caller=None, role: str = "director", task: str = "test"):
     """构造一个最小 EngineContext，optionally 注入 llm_caller。"""
     from polaris.cells.roles.engine.internal.base import EngineContext
+
     return EngineContext(
         workspace="/tmp/test_workspace",
         role=role,
@@ -33,6 +35,7 @@ def _make_engine_context(llm_caller=None, role: str = "director", task: str = "t
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. BaseEngine._call_llm 委托路径测试
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestBaseEngineLlmCaller:
     """BaseEngine._call_llm 是 DI 委托包装，不直接调用 LLM。"""
@@ -169,6 +172,7 @@ class TestNoCellInternalCrossImport:
 # 3. adapters._call_role_llm 通过 llm.dialogue public service 调用
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestAdapterCallsPublicService:
     """BaseRoleAdapter._call_role_llm 必须通过 generate_role_response（public service）。"""
 
@@ -183,18 +187,12 @@ class TestAdapterCallsPublicService:
         src = src_path.read_text(encoding="utf-8")
 
         # 确认 _call_role_llm 函数体内引用的是 generate_role_response（非 internal 路径）
-        assert "generate_role_response" in src, (
-            "_call_role_llm 应调用 generate_role_response"
-        )
-        assert "dialogue.internal" not in src, (
-            "_call_role_llm 不应引用 llm.dialogue.internal 路径"
-        )
+        assert "generate_role_response" in src, "_call_role_llm 应调用 generate_role_response"
+        assert "dialogue.internal" not in src, "_call_role_llm 不应引用 llm.dialogue.internal 路径"
 
         # 确认顶层 import 行存在，保证 patch 可拦截
         import_line = "from polaris.cells.llm.dialogue.public.service import generate_role_response"
-        assert import_line in src, (
-            f"generate_role_response 应作为顶层导入存在，实际未找到：{import_line}"
-        )
+        assert import_line in src, f"generate_role_response 应作为顶层导入存在，实际未找到：{import_line}"
 
     def test_generate_role_response_import_is_at_module_level_in_base(self):
         """generate_role_response 必须作为顶层导入出现在 base.py 源码中（静态扫描）。"""
@@ -212,9 +210,11 @@ class TestAdapterCallsPublicService:
             "generate_role_response 应作为顶层导入存在于 director_adapter.py，而非运行时导入"
         )
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. _call_llm 在 BaseEngine 中的 max_tokens 参数可定制
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestBaseEngineLlmCallerMaxTokens:
     """验证 max_tokens 参数可传递到 llm_caller。"""
@@ -225,6 +225,7 @@ class TestBaseEngineLlmCallerMaxTokens:
 
         class _MinEngine:
             """仅用于测试，不继承 BaseEngine，直接调用 _call_llm 逻辑。"""
+
             async def _call_llm(self, context, prompt, max_tokens=2000):
                 # 这是 BaseEngine._call_llm 的逻辑副本，仅用于隔离测试
                 if context.llm_caller:

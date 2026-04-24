@@ -10,19 +10,9 @@ import yaml
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_catalog_governance_gate.py"
-BASELINE_FILE = (
-    BACKEND_ROOT
-    / "tests"
-    / "architecture"
-    / "allowlists"
-    / "catalog_governance_gate.baseline.json"
-)
+BASELINE_FILE = BACKEND_ROOT / "tests" / "architecture" / "allowlists" / "catalog_governance_gate.baseline.json"
 MISMATCH_BASELINE_FILE = (
-    BACKEND_ROOT
-    / "tests"
-    / "architecture"
-    / "allowlists"
-    / "manifest_catalog_mismatches.baseline.jsonl"
+    BACKEND_ROOT / "tests" / "architecture" / "allowlists" / "manifest_catalog_mismatches.baseline.jsonl"
 )
 FITNESS_RULES_FILE = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 
@@ -86,10 +76,6 @@ def test_fitness_rules_document_depends_on_gate() -> None:
     rules = payload.get("rules")
     assert isinstance(rules, list), "fitness-rules.yaml must define a rules list"
 
-    rule_ids = {
-        str(item.get("id") or "").strip()
-        for item in rules
-        if isinstance(item, dict)
-    }
+    rule_ids = {str(item.get("id") or "").strip() for item in rules if isinstance(item, dict)}
     assert "declared_cell_dependencies_match_imports" in rule_ids
     assert "manifest_catalog_consistency" in rule_ids

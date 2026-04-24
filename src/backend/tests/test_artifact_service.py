@@ -191,10 +191,7 @@ class TestArtifactServiceWriteRead:
 
         service = ArtifactService(workspace=temp_workspace)
         data = {
-            "tasks": [
-                {"id": "1", "title": "Test Task"},
-                {"id": "2", "title": "Another Task"}
-            ],
+            "tasks": [{"id": "1", "title": "Test Task"}, {"id": "2", "title": "Another Task"}],
             "overall_goal": "Complete test",
         }
 
@@ -479,5 +476,3 @@ class TestLegacyPathAliases:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-
-

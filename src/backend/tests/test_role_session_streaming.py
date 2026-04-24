@@ -87,7 +87,7 @@ async def test_send_message_stream_snapshots_session_data_before_service_closes(
     _FakeRoleSessionService.add_calls = []
     captured_invocation: dict[str, object] = {}
 
-    async def _fake_generate_role_response_streaming(**kwargs):  # noqa: ANN003
+    async def _fake_generate_role_response_streaming(**kwargs):
         captured_invocation.update(kwargs)
         output_queue = kwargs["output_queue"]
         await output_queue.put({"type": "content_chunk", "data": {"content": "done"}})

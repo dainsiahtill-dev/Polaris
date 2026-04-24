@@ -51,6 +51,8 @@ def read_tail_lines(path: str, max_lines: int = 200) -> list[str]:
     """Read last N lines from a file."""
     if not path or not os.path.isfile(path):
         return []
+    if max_lines <= 0:
+        return []
     try:
         with open(path, "rb") as handle:
             handle.seek(0, os.SEEK_END)
@@ -66,7 +68,7 @@ def read_tail_lines(path: str, max_lines: int = 200) -> list[str]:
         return []
     text = data.decode("utf-8", errors="ignore")
     lines = text.splitlines()
-    if max_lines > 0 and len(lines) > max_lines:
+    if len(lines) > max_lines:
         return lines[-max_lines:]
     return lines
 

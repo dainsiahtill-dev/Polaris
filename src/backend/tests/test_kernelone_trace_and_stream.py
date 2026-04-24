@@ -151,7 +151,7 @@ async def test_stream_executor_decodes_structured_openai_tool_calls(
                                     "id": "call_readme",
                                     "function": {
                                         "name": "read_file",
-                                        "arguments": "{\"path\":\"README",
+                                        "arguments": '{"path":"README',
                                     },
                                 }
                             ]
@@ -167,7 +167,7 @@ async def test_stream_executor_decodes_structured_openai_tool_calls(
                                 {
                                     "index": 0,
                                     "function": {
-                                        "arguments": ".md\"}",
+                                        "arguments": '.md"}',
                                     },
                                 }
                             ]
@@ -246,7 +246,7 @@ async def test_stream_executor_anthropic_partial_tool_delta_keeps_arguments_and_
                 "index": 0,
                 "delta": {
                     "type": "input_json_delta",
-                    "partial_json": "{\"path\":\"README",
+                    "partial_json": '{"path":"README',
                 },
             }
             yield {
@@ -254,7 +254,7 @@ async def test_stream_executor_anthropic_partial_tool_delta_keeps_arguments_and_
                 "index": 0,
                 "delta": {
                     "type": "input_json_delta",
-                    "partial_json": ".md\"}",
+                    "partial_json": '.md"}',
                 },
             }
             yield {
@@ -301,11 +301,7 @@ async def test_stream_executor_anthropic_partial_tool_delta_keeps_arguments_and_
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    tool_call_events = [
-        event
-        for event in events
-        if event.type == stream_executor_module.StreamEventType.TOOL_CALL
-    ]
+    tool_call_events = [event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
     assert tool_call_events[0].tool_call == {
@@ -343,7 +339,7 @@ async def test_stream_executor_anthropic_placeholder_input_waits_for_json_delta(
                     "input": {},
                 },
             }
-            for chunk in ["{\"", "file", "\":\"", "ARCH", "ITECT", "URE", ".md", "\"}"]:
+            for chunk in ['{"', "file", '":"', "ARCH", "ITECT", "URE", ".md", '"}']:
                 yield {
                     "type": "content_block_delta",
                     "index": 0,
@@ -386,11 +382,7 @@ async def test_stream_executor_anthropic_placeholder_input_waits_for_json_delta(
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    tool_call_events = [
-        event
-        for event in events
-        if event.type == stream_executor_module.StreamEventType.TOOL_CALL
-    ]
+    tool_call_events = [event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL]
 
     assert len(tool_call_events) == 1
     assert tool_call_events[0].tool_call == {
@@ -481,9 +473,7 @@ async def test_stream_executor_decodes_structured_ollama_tool_calls(
     reasoning_events = [
         event for event in events if event.type == stream_executor_module.StreamEventType.REASONING_CHUNK
     ]
-    tool_call_events = [
-        event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL
-    ]
+    tool_call_events = [event for event in events if event.type == stream_executor_module.StreamEventType.TOOL_CALL]
 
     assert len(reasoning_events) == 1
     assert reasoning_events[0].reasoning == "Need to inspect the README first."
@@ -562,8 +552,6 @@ async def test_stream_executor_ignores_ollama_terminal_content_snapshot(
     )
 
     events = [event async for event in executor.invoke_stream(request)]
-    chunk_events = [
-        event for event in events if event.type == stream_executor_module.StreamEventType.CHUNK
-    ]
+    chunk_events = [event for event in events if event.type == stream_executor_module.StreamEventType.CHUNK]
 
     assert [event.chunk for event in chunk_events] == ["hello world"]

@@ -5,8 +5,6 @@ from typing import Any
 
 import pytest
 from polaris.cells.director.execution.public.tools import is_command_blocked
-from polaris.kernelone.single_agent.role_framework.base import RoleBase, RoleInfo, RoleState
-from polaris.kernelone.single_agent.role_framework.fastapi import FASTAPI_AVAILABLE, RoleFastAPI
 from polaris.kernelone.llm.toolkit.native_function_calling import (
     NativeFunctionCallingHandler,
 )
@@ -14,6 +12,8 @@ from polaris.kernelone.process.command_executor import (
     CommandExecutionService,
     CommandRequest,
 )
+from polaris.kernelone.single_agent.role_framework.base import RoleBase, RoleInfo, RoleState
+from polaris.kernelone.single_agent.role_framework.fastapi import FASTAPI_AVAILABLE, RoleFastAPI
 
 
 class _DummyRole(RoleBase):
@@ -149,8 +149,7 @@ def test_role_fastapi_uses_spec_compliant_cors(tmp_path: Path) -> None:
     app = api.app
 
     cors_middleware = next(
-        middleware for middleware in app.user_middleware
-        if middleware.cls.__name__ == "CORSMiddleware"
+        middleware for middleware in app.user_middleware if middleware.cls.__name__ == "CORSMiddleware"
     )
 
     assert cors_middleware.kwargs["allow_origins"] == ["*"]

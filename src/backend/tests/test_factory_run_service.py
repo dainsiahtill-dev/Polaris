@@ -1,4 +1,5 @@
 """Tests for FactoryRunService and FactoryStore."""
+
 import asyncio
 import json
 import tempfile
@@ -22,7 +23,7 @@ from polaris.kernelone.storage import resolve_runtime_path
 class FakeStageExecutor:
     """Deterministic stage executor for FactoryRunService tests."""
 
-    def __init__(self, fail_stages: set[str] | None = None):
+    def __init__(self, fail_stages: set[str] | None = None) -> None:
         self.fail_stages = fail_stages or set()
 
     async def execute(self, stage: str, run: FactoryRun, context: dict) -> StageResult:
@@ -45,7 +46,7 @@ class FakeStageExecutor:
 class SlowStageExecutor:
     """Slow executor used to validate cancellation/heartbeat behavior."""
 
-    def __init__(self, sleep_seconds: float = 0.2):
+    def __init__(self, sleep_seconds: float = 0.2) -> None:
         self.sleep_seconds = sleep_seconds
 
     async def execute(self, stage: str, run: FactoryRun, context: dict) -> StageResult:
@@ -95,7 +96,7 @@ class TestFactoryConfig:
             description="A full factory run",
             stages=["docs_generation", "pm_planning"],
             auto_dispatch=False,
-            checkpoint_interval=600
+            checkpoint_interval=600,
         )
         assert config.name == "full-run"
         assert config.description == "A full factory run"
@@ -110,10 +111,7 @@ class TestFactoryRun:
     def test_to_dict(self):
         config = FactoryConfig(name="test-run")
         run = FactoryRun(
-            id="factory_abc123",
-            config=config,
-            status=FactoryRunStatus.PENDING,
-            created_at="2025-01-01T00:00:00"
+            id="factory_abc123", config=config, status=FactoryRunStatus.PENDING, created_at="2025-01-01T00:00:00"
         )
 
         data = run.to_dict()
@@ -129,7 +127,7 @@ class TestFactoryRun:
             "status": "running",
             "created_at": "2025-01-01T12:00:00",
             "stages_completed": ["stage1"],
-            "metadata": {"key": "value"}
+            "metadata": {"key": "value"},
         }
 
         run = FactoryRun.from_dict(data)
@@ -150,7 +148,7 @@ class TestFactoryStore:
             id="factory_test123",
             config=config,
             status=FactoryRunStatus.PENDING,
-            created_at=datetime.now(timezone.utc).isoformat()
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
 
         await store.save_run(run)
@@ -204,7 +202,7 @@ class TestFactoryStore:
             config=config,
             status=FactoryRunStatus.RUNNING,
             created_at=datetime.now(timezone.utc).isoformat(),
-            updated_at=datetime.now(timezone.utc).isoformat()
+            updated_at=datetime.now(timezone.utc).isoformat(),
         )
 
         await store.checkpoint(run)
@@ -342,8 +340,7 @@ class TestFactoryRunService:
 
         events = await service.get_run_events(run.id)
         heartbeat_events = [
-            event for event in events
-            if event.get("type") == "stage_heartbeat" and event.get("stage") == "pm_planning"
+            event for event in events if event.get("type") == "stage_heartbeat" and event.get("stage") == "pm_planning"
         ]
         assert heartbeat_events
 
@@ -494,10 +491,7 @@ class _DetailedFailureCommandService:
         return CommandResult(
             run_id=run_id,
             status="failed",
-            message=(
-                "Run status: failed | failed_task=task-0-pm (pm) | "
-                "error=PM contract normalization failed"
-            ),
+            message=("Run status: failed | failed_task=task-0-pm (pm) | error=PM contract normalization failed"),
             metadata={
                 "failed_task_count": 1,
                 "failed_tasks": [
@@ -739,11 +733,7 @@ class TestOrchestrationStageExecutor:
         payload = json.loads(signal_path.read_text(encoding="utf-8"))
         rows = payload.get("signals") if isinstance(payload, dict) else []
         assert isinstance(rows, list)
-        codes = {
-            str(item.get("code") or "")
-            for item in rows
-            if isinstance(item, dict)
-        }
+        codes = {str(item.get("code") or "") for item in rows if isinstance(item, dict)}
         assert "pm.run_status_non_success" in codes
         assert "pm.contract_issue_detected" in codes
         assert command_service.query_calls >= 1

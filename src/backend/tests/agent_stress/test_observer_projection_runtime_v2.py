@@ -55,7 +55,7 @@ async def test_connect_ws_subscribes_runtime_v2_with_jetstream(
         ]
     )
 
-    async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeWebSocket:  # noqa: ANN401
+    async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeWebSocket:
         del args, kwargs
         return fake_ws
 
@@ -66,11 +66,11 @@ async def test_connect_ws_subscribes_runtime_v2_with_jetstream(
         token="token",
         workspace=str(tmp_path / "workspace"),
     )
-    connected = await projection._connect_ws()  # noqa: SLF001
+    connected = await projection._connect_ws()
 
     assert connected is True
-    assert projection._runtime_v2_enabled is True  # noqa: SLF001
-    assert projection._runtime_v2_jetstream is True  # noqa: SLF001
+    assert projection._runtime_v2_enabled is True
+    assert projection._runtime_v2_jetstream is True
     assert projection.transport_used in {"none", "ws.runtime_v2"}
 
     assert fake_ws.sent_messages
@@ -101,7 +101,7 @@ async def test_connect_ws_fails_when_runtime_v2_has_no_jetstream(
         ]
     )
 
-    async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeWebSocket:  # noqa: ANN401
+    async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeWebSocket:
         del args, kwargs
         return fake_ws
 
@@ -112,7 +112,7 @@ async def test_connect_ws_fails_when_runtime_v2_has_no_jetstream(
         token="token",
         workspace=str(tmp_path / "workspace"),
     )
-    connected = await projection._connect_ws()  # noqa: SLF001
+    connected = await projection._connect_ws()
 
     assert connected is False
     assert projection.connection_error == "runtime_v2_subscribed_without_jetstream"
@@ -127,10 +127,10 @@ async def test_runtime_v2_event_is_acked_and_projected_to_reasoning(tmp_path: Pa
         workspace=str(tmp_path / "workspace"),
     )
     fake_ws = _FakeWebSocket(incoming_messages=[])
-    projection.ws = fake_ws  # noqa: SLF001
-    projection._runtime_v2_enabled = True  # noqa: SLF001
+    projection.ws = fake_ws
+    projection._runtime_v2_enabled = True
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "EVENT",
             "protocol": "runtime.v2",
@@ -171,10 +171,10 @@ async def test_runtime_v2_projection_event_tags_drive_waiting_state(tmp_path: Pa
         workspace=str(tmp_path / "workspace"),
     )
     fake_ws = _FakeWebSocket(incoming_messages=[])
-    projection.ws = fake_ws  # noqa: SLF001
-    projection._runtime_v2_enabled = True  # noqa: SLF001
+    projection.ws = fake_ws
+    projection._runtime_v2_enabled = True
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "EVENT",
             "protocol": "runtime.v2",
@@ -209,10 +209,10 @@ async def test_runtime_v2_structured_tool_event_uses_raw_payload_fields(tmp_path
         workspace=str(tmp_path / "workspace"),
     )
     fake_ws = _FakeWebSocket(incoming_messages=[])
-    projection.ws = fake_ws  # noqa: SLF001
-    projection._runtime_v2_enabled = True  # noqa: SLF001
+    projection.ws = fake_ws
+    projection._runtime_v2_enabled = True
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "EVENT",
             "protocol": "runtime.v2",
@@ -268,10 +268,10 @@ async def test_runtime_v2_content_preview_preserves_preview_event_type(tmp_path:
         workspace=str(tmp_path / "workspace"),
     )
     fake_ws = _FakeWebSocket(incoming_messages=[])
-    projection.ws = fake_ws  # noqa: SLF001
-    projection._runtime_v2_enabled = True  # noqa: SLF001
+    projection.ws = fake_ws
+    projection._runtime_v2_enabled = True
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "EVENT",
             "protocol": "runtime.v2",
@@ -312,9 +312,9 @@ async def test_legacy_llm_stream_is_ignored_once_runtime_v2_is_enabled(tmp_path:
         token="token",
         workspace=str(tmp_path / "workspace"),
     )
-    projection._runtime_v2_enabled = True  # noqa: SLF001
+    projection._runtime_v2_enabled = True
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "llm_stream",
             "timestamp": "2026-03-20T12:00:03Z",
@@ -340,7 +340,7 @@ async def test_status_snapshot_tasks_populate_taskboard_panel(tmp_path: Path) ->
         workspace=str(tmp_path / "workspace"),
     )
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "status",
             "timestamp": "2026-03-20T13:00:00+00:00",
@@ -383,10 +383,10 @@ async def test_runtime_v2_system_event_refs_taskboard_populates_panel(tmp_path: 
         workspace=str(tmp_path / "workspace"),
     )
     fake_ws = _FakeWebSocket(incoming_messages=[])
-    projection.ws = fake_ws  # noqa: SLF001
-    projection._runtime_v2_enabled = True  # noqa: SLF001
+    projection.ws = fake_ws
+    projection._runtime_v2_enabled = True
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "EVENT",
             "protocol": "runtime.v2",
@@ -439,9 +439,7 @@ async def test_runtime_v2_system_event_refs_taskboard_populates_panel(tmp_path: 
     assert "total=1" in str(latest.get("summary") or "")
     items = latest.get("items")
     assert isinstance(items, list)
-    matched = next(
-        item for item in items if isinstance(item, dict) and str(item.get("id") or "") == "task-7"
-    )
+    matched = next(item for item in items if isinstance(item, dict) and str(item.get("id") or "") == "task-7")
     assert matched["resume_state"] == "resumed"
 
 
@@ -455,7 +453,7 @@ async def test_task_trace_focus_task_keeps_running_task_visible_across_stale_sta
         workspace=str(tmp_path / "workspace"),
     )
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "task_trace",
             "timestamp": "2026-03-20T13:11:00+00:00",
@@ -503,7 +501,7 @@ async def test_task_trace_focus_task_keeps_running_task_visible_across_stale_sta
     assert first_item["status"] == "in_progress"
     assert first_item["execution_backend"] == "code_edit"
 
-    await projection._on_message(  # noqa: SLF001
+    await projection._on_message(
         {
             "type": "status",
             "timestamp": "2026-03-20T13:11:05+00:00",

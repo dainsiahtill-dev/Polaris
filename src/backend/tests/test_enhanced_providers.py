@@ -6,8 +6,8 @@ import sys
 from types import SimpleNamespace
 
 import polaris.infrastructure.llm.providers.anthropic_compat_provider as anthropic_provider_module
-import polaris.infrastructure.llm.providers.openai_compat_provider as openai_provider_module
 import polaris.infrastructure.llm.providers.ollama_provider as ollama_provider_module
+import polaris.infrastructure.llm.providers.openai_compat_provider as openai_provider_module
 import pytest
 from polaris.infrastructure.llm.providers.anthropic_compat_provider import AnthropicCompatProvider
 from polaris.infrastructure.llm.providers.codex_cli_provider import CodexCLIProvider
@@ -48,14 +48,7 @@ class TestCodexCLIProvider:
     def test_validate_config(self):
         """Test configuration validation"""
         # Valid config
-        valid_config = {
-            "command": "codex",
-            "codex_exec": {
-                "json": True,
-                "sandbox": "read-only"
-            },
-            "timeout": 60
-        }
+        valid_config = {"command": "codex", "codex_exec": {"json": True, "sandbox": "read-only"}, "timeout": 60}
         result = CodexCLIProvider.validate_config(valid_config)
         assert result.valid is True
         assert len(result.errors) == 0
@@ -64,7 +57,7 @@ class TestCodexCLIProvider:
         invalid_config = {
             "command": "definitely_not_a_real_command_12345",
             "codex_exec": "not_a_dict",  # Wrong type
-            "timeout": -1  # Invalid timeout
+            "timeout": -1,  # Invalid timeout
         }
         result = CodexCLIProvider.validate_config(invalid_config)
         assert result.valid is False
@@ -88,13 +81,14 @@ class TestCodexCLIProvider:
         """Test thinking extraction"""
         response = {
             "output": "<thinking>This is my reasoning process.</thinking>Here's the answer.",
-            "config": {"thinking_extraction": {"enabled": True}}
+            "config": {"thinking_extraction": {"enabled": True}},
         }
 
         thinking = CodexCLIProvider.extract_thinking_support(response)
         assert thinking.supports_thinking is True
         assert "reasoning process" in thinking.thinking_text
         assert thinking.confidence > 0.1
+
 
 class TestGeminiCLIProvider:
     """Test Gemini CLI Provider"""
@@ -121,17 +115,13 @@ class TestGeminiCLIProvider:
         valid_config = {
             "command": "gemini",
             "env": {"GOOGLE_API_KEY": "test_key"},
-            "args": ["chat", "--model", "{model}", "--prompt", "{prompt}"]
+            "args": ["chat", "--model", "{model}", "--prompt", "{prompt}"],
         }
         result = GeminiCLIProvider.validate_config(valid_config)
         assert result.valid is True
 
         # Invalid config - missing API key
-        invalid_config = {
-            "command": "gemini",
-            "env": {},
-            "args": []
-        }
+        invalid_config = {"command": "gemini", "env": {}, "args": []}
         result = GeminiCLIProvider.validate_config(invalid_config)
         assert result.valid is False
         assert "api key" in str(result.errors).lower()
@@ -140,7 +130,7 @@ class TestGeminiCLIProvider:
         """Test thinking extraction"""
         response = {
             "output": "Let me think about this problem step by step.First, I need to analyze the requirements.",
-            "config": {"thinking_extraction": {"enabled": True}}
+            "config": {"thinking_extraction": {"enabled": True}},
         }
 
         thinking = GeminiCLIProvider.extract_thinking_support(response)
@@ -167,6 +157,7 @@ class TestMiniMaxProvider:
         assert config["temperature"] == 0.7
         assert config["max_tokens"] == 2048  # Updated to match actual default
 
+
 class TestGeminiAPIProvider:
     """Test Gemini API Provider"""
 
@@ -189,7 +180,7 @@ class TestGeminiAPIProvider:
         """Test thinking extraction"""
         response = {
             "output": "Looking at this problem, I need to consider multiple factors.Step by step: first analyze, then implement.",
-            "config": {"thinking_extraction": {"enabled": True}}
+            "config": {"thinking_extraction": {"enabled": True}},
         }
 
         thinking = GeminiAPIProvider.extract_thinking_support(response)
@@ -231,7 +222,7 @@ class TestOpenAICompatProvider:
         provider = OpenAICompatProvider()
         captured = {}
 
-        def _fake_invoke_with_retry(url, headers, payload, *args, **kwargs):  # noqa: ANN001
+        def _fake_invoke_with_retry(url, headers, payload, *args, **kwargs):
             captured["url"] = url
             captured["headers"] = headers
             captured["payload"] = payload
@@ -297,7 +288,7 @@ class TestAnthropicCompatProvider:
         provider = AnthropicCompatProvider()
         captured = {}
 
-        def _fake_invoke_with_retry(url, headers, payload, *args, **kwargs):  # noqa: ANN001
+        def _fake_invoke_with_retry(url, headers, payload, *args, **kwargs):
             captured["url"] = url
             captured["headers"] = headers
             captured["payload"] = payload
@@ -356,7 +347,7 @@ class TestOllamaProvider:
         provider = OllamaProvider()
         captured = {}
 
-        def _fake_post(url, json=None, headers=None, timeout=None):  # noqa: ANN001
+        def _fake_post(url, json=None, headers=None, timeout=None):
             captured["url"] = url
             captured["payload"] = json
             captured["headers"] = headers
@@ -406,7 +397,7 @@ class TestOllamaProvider:
 
         class _FakeResponse:
             def __init__(self) -> None:
-                async def _content_iter():  # noqa: ANN202
+                async def _content_iter():
                     yield b'{"response":"hello","done":false}\n'
                     yield b'{"done":true}\n'
 
@@ -415,21 +406,21 @@ class TestOllamaProvider:
             async def __aenter__(self):  # noqa: ANN204
                 return self
 
-            async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001, ANN204
+            async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN204
                 return False
 
             def raise_for_status(self) -> None:
                 return None
 
         class _FakeSession:
-            def post(self, url, headers=None, json=None, timeout=None):  # noqa: ANN001
+            def post(self, url, headers=None, json=None, timeout=None):
                 captured["url"] = url
                 captured["headers"] = headers
                 captured["payload"] = json
                 captured["timeout"] = timeout
                 return _FakeResponse()
 
-        async def _fake_get_stream_session(provider_name: str, timeout_seconds: int):  # noqa: ANN202
+        async def _fake_get_stream_session(provider_name: str, timeout_seconds: int):
             assert provider_name == "ollama"
             assert timeout_seconds == 7
             return _FakeSession()
@@ -491,18 +482,14 @@ class TestProviderRegistry:
 
         # Check that all providers have required fields
         for info in providers_info:
-            assert hasattr(info, 'name')
-            assert hasattr(info, 'type')
-            assert hasattr(info, 'supported_features')
+            assert hasattr(info, "name")
+            assert hasattr(info, "type")
+            assert hasattr(info, "supported_features")
 
     def test_provider_config_validation(self):
         """Test provider configuration validation"""
         # Test valid CLI config
-        valid_cli_config = {
-            "command": sys.executable,
-            "args": ["hello"],
-            "timeout": 60
-        }
+        valid_cli_config = {"command": sys.executable, "args": ["hello"], "timeout": 60}
         assert provider_manager.validate_provider_config("codex_cli", valid_cli_config) is True
 
         # Test invalid CLI config
@@ -529,14 +516,8 @@ class TestProviderRegistry:
         """Test legacy configuration migration"""
         legacy_config = {
             "providers": {
-                "old_codex": {
-                    "command": "codex",
-                    "args": ["exec", "--model", "{model}"]
-                },
-                "unknown_provider": {
-                    "type": "unknown",
-                    "some_setting": "value"
-                }
+                "old_codex": {"command": "codex", "args": ["exec", "--model", "{model}"]},
+                "unknown_provider": {"type": "unknown", "some_setting": "value"},
             }
         }
 

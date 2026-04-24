@@ -39,7 +39,9 @@ def test_make_audit_llm_caller_prefers_local_ollama(monkeypatch, tmp_path) -> No
             model="glm-4.7-flash:latest",
         )
 
-    monkeypatch.setattr("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke)
+    monkeypatch.setattr(
+        "polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke
+    )
     monkeypatch.setattr(
         "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
         lambda _workspace, _settings: {"openai_compat"},
@@ -89,7 +91,9 @@ def test_make_audit_llm_caller_falls_back_to_role_runtime(monkeypatch, tmp_path)
             model="gpt-4o",
         )
 
-    monkeypatch.setattr("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke)
+    monkeypatch.setattr(
+        "polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke
+    )
     monkeypatch.setattr(
         "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
         lambda _workspace, _settings: {"openai_compat"},
@@ -129,7 +133,9 @@ def test_make_audit_llm_caller_local_only_returns_inconclusive_payload(monkeypat
             model="gpt-4o",
         )
 
-    monkeypatch.setattr("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke)
+    monkeypatch.setattr(
+        "polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke
+    )
     monkeypatch.setattr(
         "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
         lambda _workspace, _settings: {"openai_compat"},
@@ -156,7 +162,7 @@ def test_make_audit_llm_caller_local_only_returns_inconclusive_payload(monkeypat
 
 def test_bind_audit_llm_to_task_service(monkeypatch, tmp_path) -> None:
     class _TaskService:
-        def __init__(self):
+        def __init__(self) -> None:
             self.caller = None
 
         def set_audit_llm_caller(self, llm_caller):
@@ -184,4 +190,3 @@ def test_bind_audit_llm_to_task_service(monkeypatch, tmp_path) -> None:
     )
     assert enabled is True
     assert enabled_service.caller is sentinel
-

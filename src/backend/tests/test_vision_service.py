@@ -7,6 +7,7 @@ Covers:
 - trust_remote_code enabled via env var, with warning log (test_trust_remote_code_env_enabled)
 - unload_model emits a warning on CUDA cache flush failure (test_unload_model_warning_on_error)
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -28,10 +29,7 @@ _MODULE_PATH = "polaris.cells.llm.control_plane.internal.vision_service"
 # bypassing the package __init__.py chain (which in the current state of the
 # repo has a pre-existing SyntaxError in an unrelated file deep in the chain).
 _BACKEND_DIR = pathlib.Path(__file__).parent.parent.resolve()
-_VISION_SERVICE_FILE = (
-    _BACKEND_DIR
-    / "polaris/cells/llm/control_plane/internal/vision_service.py"
-)
+_VISION_SERVICE_FILE = _BACKEND_DIR / "polaris/cells/llm/control_plane/internal/vision_service.py"
 
 
 def _reload_vision_module() -> types.ModuleType:
@@ -142,12 +140,8 @@ def test_trust_remote_code_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
         svc.load_model("some/model")
 
     # Both from_pretrained calls should have received trust_remote_code=False
-    mock_processor_cls.from_pretrained.assert_called_once_with(
-        "some/model", trust_remote_code=False
-    )
-    mock_model_cls.from_pretrained.assert_called_once_with(
-        "some/model", trust_remote_code=False
-    )
+    mock_processor_cls.from_pretrained.assert_called_once_with("some/model", trust_remote_code=False)
+    mock_model_cls.from_pretrained.assert_called_once_with("some/model", trust_remote_code=False)
 
 
 # ---------------------------------------------------------------------------
@@ -155,9 +149,7 @@ def test_trust_remote_code_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_trust_remote_code_env_enabled(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_trust_remote_code_env_enabled(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """When KERNELONE_VISION_TRUST_REMOTE_CODE=1, trust_remote_code=True is
     forwarded to from_pretrained AND a warning is emitted."""
     monkeypatch.setenv("KERNELONE_VISION_TRUST_REMOTE_CODE", "1")
@@ -181,18 +173,14 @@ def test_trust_remote_code_env_enabled(
         svc.load_model("some/model")
 
     # from_pretrained must be called with trust_remote_code=True
-    mock_processor_cls.from_pretrained.assert_called_once_with(
-        "some/model", trust_remote_code=True
-    )
-    mock_model_cls.from_pretrained.assert_called_once_with(
-        "some/model", trust_remote_code=True
-    )
+    mock_processor_cls.from_pretrained.assert_called_once_with("some/model", trust_remote_code=True)
+    mock_model_cls.from_pretrained.assert_called_once_with("some/model", trust_remote_code=True)
 
     # A warning log must have been emitted
     warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any(
-        "KERNELONE_VISION_TRUST_REMOTE_CODE" in str(m) for m in warning_messages
-    ), f"Expected warning about trust_remote_code env var, got: {warning_messages}"
+    assert any("KERNELONE_VISION_TRUST_REMOTE_CODE" in str(m) for m in warning_messages), (
+        f"Expected warning about trust_remote_code env var, got: {warning_messages}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +207,5 @@ def test_unload_model_warning_on_error(caplog: pytest.LogCaptureFixture) -> None
 
     warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
     assert any(
-        "CUDA cache" in str(m) or "empty_cache" in str(m) or "unload" in str(m).lower()
-        for m in warning_messages
+        "CUDA cache" in str(m) or "empty_cache" in str(m) or "unload" in str(m).lower() for m in warning_messages
     ), f"Expected warning about CUDA cache flush failure, got: {warning_messages}"

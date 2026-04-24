@@ -751,15 +751,23 @@ def test_query_status_returns_correct_counts(tmp_path: Path) -> None:
     svc = TaskMarketService()
 
     # Publish tasks in different stages
-    publish_design_task(svc, workspace, task_id="q-design-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache"))
-    publish_design_task(svc, workspace, task_id="q-design-2", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache"))
-    publish_exec_task(svc, workspace, task_id="q-exec-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache"))
-    publish_exec_task(svc, workspace, task_id="q-exec-2", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache"))
-    publish_exec_task(svc, workspace, task_id="q-exec-3", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache"))
-
-    result = svc.query_status(
-        QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=False)
+    publish_design_task(
+        svc, workspace, task_id="q-design-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache")
     )
+    publish_design_task(
+        svc, workspace, task_id="q-design-2", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache")
+    )
+    publish_exec_task(
+        svc, workspace, task_id="q-exec-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache")
+    )
+    publish_exec_task(
+        svc, workspace, task_id="q-exec-2", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache")
+    )
+    publish_exec_task(
+        svc, workspace, task_id="q-exec-3", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache")
+    )
+
+    result = svc.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=False))
 
     assert result.total == 5
     # pending_design: 2, pending_exec: 3
@@ -773,12 +781,14 @@ def test_query_status_with_stage_filter(tmp_path: Path) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     svc = TaskMarketService()
 
-    publish_design_task(svc, workspace, task_id="qs-design-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache"))
-    publish_exec_task(svc, workspace, task_id="qs-exec-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache"))
-
-    result = svc.query_status(
-        QueryTaskMarketStatusV1(workspace=str(workspace), stage="pending_design")
+    publish_design_task(
+        svc, workspace, task_id="qs-design-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache")
     )
+    publish_exec_task(
+        svc, workspace, task_id="qs-exec-1", run_dir=str(tmp_path / "runs"), cache_root=str(tmp_path / "cache")
+    )
+
+    result = svc.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), stage="pending_design"))
     assert result.total == 1
     assert result.items[0].get("task_id") == "qs-design-1"
 

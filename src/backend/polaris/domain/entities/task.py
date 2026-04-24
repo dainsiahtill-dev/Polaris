@@ -276,9 +276,16 @@ class Task:
         self.claimed_at = _now_seconds()
 
     def start(self) -> None:
-        """Mark as actively executing (CLAIMED -> IN_PROGRESS)."""
-        if self.status not in (TaskStatus.CLAIMED, TaskStatus.READY):
-            raise TaskStateError(f"Cannot start from {self.status.value!r}")
+        """Mark as actively executing (CLAIMED -> IN_PROGRESS).
+
+        Tasks MUST be claimed before starting. This enforces the lifecycle:
+        PENDING -> READY -> CLAIMED -> IN_PROGRESS
+        """
+        if self.status != TaskStatus.CLAIMED:
+            raise TaskStateError(
+                f"Cannot start from {self.status.value!r}; "
+                f"task must be CLAIMED first (use claim() method)"
+            )
         self.status = TaskStatus.IN_PROGRESS
         if self.started_at is None:
             self.started_at = _now_seconds()

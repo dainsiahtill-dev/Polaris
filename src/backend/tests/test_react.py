@@ -19,6 +19,7 @@ from polaris.cells.roles.engine.internal.react import ReActEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine() -> ReActEngine:
     return ReActEngine(workspace="", max_iterations=5)
 
@@ -27,13 +28,16 @@ def _make_engine() -> ReActEngine:
 # _parse_response: balanced-extraction path raises → debug logged
 # ---------------------------------------------------------------------------
 
+
 class TestParseResponseBalancedExtractionObservability:
     def test_logs_debug_when_balanced_extraction_raises(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=ValueError("corrupt bracket")):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_response("not valid json {{{{")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=ValueError("corrupt bracket")),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_response("not valid json {{{{")
 
         # Must return a dict (never raise), falling back to regex or default
         assert isinstance(result, dict)
@@ -46,31 +50,31 @@ class TestParseResponseBalancedExtractionObservability:
     def test_no_exception_propagated_on_balanced_extraction_failure(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)):
-            with caplog.at_level(logging.DEBUG):
-                result = engine._parse_response("not json at all")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=json.JSONDecodeError("x", "y", 0)),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = engine._parse_response("not json at all")
 
         assert isinstance(result, dict), "Must always return a dict, never raise"
 
     def test_exc_info_preserved_in_debug_log_on_failure(self, caplog):
         engine = _make_engine()
 
-        with patch.object(engine, "_extract_balanced_json", side_effect=ValueError("traceback test")):
-            with caplog.at_level(logging.DEBUG):
-                engine._parse_response("garbage input")
+        with (
+            patch.object(engine, "_extract_balanced_json", side_effect=ValueError("traceback test")),
+            caplog.at_level(logging.DEBUG),
+        ):
+            engine._parse_response("garbage input")
 
-        debug_records = [
-            r for r in caplog.records
-            if r.levelno <= logging.DEBUG and r.exc_info is not None
-        ]
-        assert debug_records, (
-            "At least one debug record with exc_info must be emitted so the traceback is preserved"
-        )
+        debug_records = [r for r in caplog.records if r.levelno <= logging.DEBUG and r.exc_info is not None]
+        assert debug_records, "At least one debug record with exc_info must be emitted so the traceback is preserved"
 
 
 # ---------------------------------------------------------------------------
 # _parse_response: action_input JSON fallback raises → debug logged
 # ---------------------------------------------------------------------------
+
 
 class TestParseResponseActionInputObservability:
     def test_logs_debug_when_action_input_parse_fails(self, caplog):
@@ -112,14 +116,17 @@ class TestParseResponseActionInputObservability:
 # _parse_response: happy paths
 # ---------------------------------------------------------------------------
 
+
 class TestParseResponseHappyPath:
     def test_valid_json_parsed_directly(self):
         engine = _make_engine()
-        payload = json.dumps({
-            "thought": "I should list files",
-            "action": "list_directory",
-            "action_input": {"path": "."},
-        })
+        payload = json.dumps(
+            {
+                "thought": "I should list files",
+                "action": "list_directory",
+                "action_input": {"path": "."},
+            }
+        )
         result = engine._parse_response(payload)
         assert result["thought"] == "I should list files"
         assert result["action"] == "list_directory"
@@ -127,11 +134,13 @@ class TestParseResponseHappyPath:
 
     def test_finish_action_parsed_correctly(self):
         engine = _make_engine()
-        payload = json.dumps({
-            "thought": "Done",
-            "action": "finish",
-            "action_input": {"answer": "42"},
-        })
+        payload = json.dumps(
+            {
+                "thought": "Done",
+                "action": "finish",
+                "action_input": {"answer": "42"},
+            }
+        )
         result = engine._parse_response(payload)
         assert result["action"] == "finish"
         assert result["action_input"]["answer"] == "42"
@@ -151,6 +160,7 @@ class TestParseResponseHappyPath:
 # ---------------------------------------------------------------------------
 # _parse_response: balanced JSON extraction success path (regression guard)
 # ---------------------------------------------------------------------------
+
 
 class TestParseResponseBalancedExtractionSuccess:
     def test_embedded_json_object_in_markdown_extracted(self):

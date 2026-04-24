@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 from polaris.bootstrap import config as bootstrap_config
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.runtime.public.service import SequentialMode

@@ -119,7 +119,7 @@ def test_log_writer_extracts_workspace_key_from_storage_roots(tmp_path, monkeypa
     expected_key = resolve_storage_roots(str(workspace)).workspace_key
 
     assert writer.workspace_key == expected_key
-    assert writer._extract_workspace_key() == expected_key  # noqa: SLF001
+    assert writer._extract_workspace_key() == expected_key
 
 
 def test_log_writer_enqueues_jetstream_publish_with_canonical_workspace_key(tmp_path, monkeypatch):

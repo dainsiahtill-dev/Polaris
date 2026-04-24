@@ -8,12 +8,8 @@ def test_core_io_modules_support_package_imports(tmp_path) -> None:
     io_jsonl_ops = importlib.import_module("polaris.kernelone.fs.jsonl.ops")
     io_memory = importlib.import_module("polaris.kernelone.fs.memory_snapshot")
     io_paths = importlib.import_module("polaris.kernelone.storage.io_paths")
-    io_plan_template = importlib.import_module(
-        "polaris.cells.docs.court_workflow.internal.plan_template"
-    )
-    io_workspace_integrity = importlib.import_module(
-        "polaris.cells.workspace.integrity.public.service"
-    )
+    io_plan_template = importlib.import_module("polaris.cells.docs.court_workflow.internal.plan_template")
+    io_workspace_integrity = importlib.import_module("polaris.cells.workspace.integrity.public.service")
     io_text = importlib.import_module("polaris.kernelone.fs.text_ops")
     io_tools = importlib.import_module("polaris.kernelone.tools.io_tools")
 

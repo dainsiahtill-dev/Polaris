@@ -6,12 +6,7 @@ for process execution instead of subprocess.run().
 
 from __future__ import annotations
 
-import asyncio
-import tempfile
-import time
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,8 +20,8 @@ class TestExecutionBrokerIntegration:
     def test_executor_core_uses_execution_facade(self) -> None:
         """Verify executor_core.py imports and uses ExecutionFacade."""
         from polaris.cells.director.execution.internal.tools.executor_core import (
-            get_shared_execution_facade,
             ProcessSpec,
+            get_shared_execution_facade,
         )
 
         # Verify imports are available
@@ -36,8 +31,8 @@ class TestExecutionBrokerIntegration:
     def test_executor_uses_execution_facade(self) -> None:
         """Verify executor.py imports and uses ExecutionFacade."""
         from polaris.cells.director.execution.internal.tools.executor import (
-            get_shared_execution_facade,
             ProcessSpec,
+            get_shared_execution_facade,
         )
 
         # Verify imports are available
@@ -46,7 +41,9 @@ class TestExecutionBrokerIntegration:
 
     def test_no_subprocess_imports_in_executor_core(self) -> None:
         """Verify subprocess is not imported in executor_core.py."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should not have subprocess import
@@ -55,7 +52,9 @@ class TestExecutionBrokerIntegration:
 
     def test_no_subprocess_imports_in_executor(self) -> None:
         """Verify subprocess is not imported in executor.py."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should not have subprocess import
@@ -68,7 +67,9 @@ class TestExecutionBrokerMetadata:
 
     def test_metadata_includes_cell_name(self) -> None:
         """Verify ProcessSpec includes cell='director' in metadata."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should include cell metadata
@@ -76,7 +77,9 @@ class TestExecutionBrokerMetadata:
 
     def test_metadata_includes_tool_name(self) -> None:
         """Verify ProcessSpec includes tool_name in metadata."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should include tool_name metadata
@@ -84,7 +87,9 @@ class TestExecutionBrokerMetadata:
 
     def test_metadata_includes_workspace(self) -> None:
         """Verify ProcessSpec includes workspace in metadata."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should include workspace metadata
@@ -96,7 +101,9 @@ class TestUtf8Encoding:
 
     def test_utf8_env_used_in_executor_core(self) -> None:
         """Verify build_utf8_env is used in executor_core.py."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should use build_utf8_env
@@ -104,7 +111,9 @@ class TestUtf8Encoding:
 
     def test_utf8_env_used_in_executor(self) -> None:
         """Verify build_utf8_env is used in executor.py."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should use build_utf8_env
@@ -116,7 +125,9 @@ class TestTimeoutHandling:
 
     def test_asyncio_timeout_used_in_executor_core(self) -> None:
         """Verify asyncio.TimeoutError is caught instead of subprocess.TimeoutExpired."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor_core.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should catch asyncio.TimeoutError
@@ -126,7 +137,9 @@ class TestTimeoutHandling:
 
     def test_asyncio_timeout_used_in_executor(self) -> None:
         """Verify asyncio.TimeoutError is caught instead of subprocess.TimeoutExpired."""
-        source_file = _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor.py"
+        source_file = (
+            _BACKEND_ROOT / "polaris" / "cells" / "director" / "execution" / "internal" / "tools" / "executor.py"
+        )
         content = source_file.read_text(encoding="utf-8")
 
         # Should catch asyncio.TimeoutError
@@ -139,7 +152,6 @@ class TestTimeoutHandling:
 async def test_execution_facade_run_process_basic() -> None:
     """Integration test: verify ExecutionFacade.run_process works for director tooling."""
     from polaris.kernelone.runtime.execution_facade import (
-        ExecutionFacade,
         ProcessSpec,
         get_shared_execution_facade,
     )

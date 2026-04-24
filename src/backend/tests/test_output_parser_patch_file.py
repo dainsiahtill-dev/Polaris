@@ -26,11 +26,14 @@ def test_parse_tool_calls_supports_patch_file_search_replace() -> None:
         allowed_tool_names=["edit_file", "write_file"],
     )
     payload = _to_payload(calls)
-    assert ("edit_file", {
-        "file": "src/role_agent_service.py",
-        "search": "def old():\n    pass",
-        "replace": "def old():\n    return 1",
-    }) in payload
+    assert (
+        "edit_file",
+        {
+            "file": "src/role_agent_service.py",
+            "search": "def old():\n    pass",
+            "replace": "def old():\n    return 1",
+        },
+    ) in payload
 
 
 def test_parse_tool_calls_converts_empty_search_to_write_file() -> None:
@@ -74,15 +77,7 @@ def test_parse_tool_calls_rejects_unsafe_patch_path() -> None:
 
 def test_parse_tool_calls_filters_by_allowed_tool_names() -> None:
     parser = OutputParser()
-    content = (
-        "PATCH_FILE: src/app.py\n"
-        "<<<<<<< SEARCH\n"
-        "<empty>\n"
-        "=======\n"
-        "print('x')\n"
-        ">>>>>>> REPLACE\n"
-        "END PATCH_FILE\n"
-    )
+    content = "PATCH_FILE: src/app.py\n<<<<<<< SEARCH\n<empty>\n=======\nprint('x')\n>>>>>>> REPLACE\nEND PATCH_FILE\n"
 
     calls = parser.parse_tool_calls(content, allowed_tool_names=["edit_file"])
     assert calls == []
@@ -96,7 +91,7 @@ def test_parse_tool_calls_supports_native_openai_tool_calls() -> None:
             "type": "function",
             "function": {
                 "name": "glob",
-                "arguments": "{\"pattern\":\"**/*.py\",\"path\":\".\"}",
+                "arguments": '{"pattern":"**/*.py","path":"."}',
             },
         }
     ]
@@ -154,11 +149,7 @@ def test_parse_tool_calls_does_not_misparse_read_file_tags_as_file_protocol() ->
 
 def test_parse_tool_calls_still_supports_file_protocol_with_end_file_markers() -> None:
     parser = OutputParser()
-    content = (
-        "FILE: src/expense_tracker/runtime_config.py\n"
-        "APP_NAME = \"expense-tracker\"\n"
-        "END FILE\n"
-    )
+    content = 'FILE: src/expense_tracker/runtime_config.py\nAPP_NAME = "expense-tracker"\nEND FILE\n'
 
     calls = parser.parse_tool_calls(
         content,
@@ -170,7 +161,7 @@ def test_parse_tool_calls_still_supports_file_protocol_with_end_file_markers() -
             "write_file",
             {
                 "file": "src/expense_tracker/runtime_config.py",
-                "content": "APP_NAME = \"expense-tracker\"",
+                "content": 'APP_NAME = "expense-tracker"',
             },
         )
     ]
@@ -216,13 +207,7 @@ def test_extract_search_replace_delegates_to_unified_parser() -> None:
 
 def test_extract_search_replace_keeps_legacy_fallback() -> None:
     parser = OutputParser()
-    content = (
-        "<<<<<<< SEARCH\n"
-        "x = 1\n"
-        "=======\n"
-        "x = 2\n"
-        ">>>>>>> REPLACE\n"
-    )
+    content = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
 
     payload = parser.extract_search_replace(content)
     assert payload == [{"search": "x = 1", "replace": "x = 2"}]

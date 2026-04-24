@@ -104,9 +104,7 @@ def test_no_orchestration_keyword_signature_drift() -> None:
                 passed = {kw.arg for kw in node.keywords if kw.arg is not None}
                 unknown = sorted(passed - set(signature["accepted"]))
                 if unknown:
-                    problems.append(
-                        f"{path.as_posix()}:{node.lineno}:{node.func.id}->{module}.{original}:{unknown}"
-                    )
+                    problems.append(f"{path.as_posix()}:{node.lineno}:{node.func.id}->{module}.{original}:{unknown}")
     assert problems == []
 
 

@@ -74,4 +74,3 @@ def test_resident_pm_bridge_stages_and_promotes_governed_goal(tmp_path: Path) ->
     assert saved_goal.materialization_artifacts["promotion"]["promoted_at"] == staged["promotion"]["promoted_at"]
 
     reset_resident_services()
-

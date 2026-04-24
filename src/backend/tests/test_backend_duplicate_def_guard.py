@@ -18,8 +18,7 @@ PRODUCTION_ROOTS = [
 
 def _iter_python_files():
     for root in PRODUCTION_ROOTS:
-        for path in sorted(root.rglob("*.py")):
-            yield path
+        yield from sorted(root.rglob("*.py"))
 
 
 def _read_text(path: Path) -> str:

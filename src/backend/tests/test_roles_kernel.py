@@ -122,7 +122,7 @@ class TestRoleToolGateway:
         assert can_write is True
 
         # 但默认禁止删除
-        can_delete, reason = gateway.check_tool_permission("delete_file")
+        can_delete, _ = gateway.check_tool_permission("delete_file")
         assert can_delete is False
 
     def test_path_traversal_protection(self, registry, temp_workspace):
@@ -131,10 +131,7 @@ class TestRoleToolGateway:
         gateway = RoleToolGateway(pm_profile, temp_workspace)
 
         # 尝试路径穿越
-        can_access, reason = gateway.check_tool_permission(
-            "read_file",
-            {"path": "../../../etc/passwd"}
-        )
+        can_access, reason = gateway.check_tool_permission("read_file", {"path": "../../../etc/passwd"})
         assert can_access is False
         assert "穿越" in reason or "traversal" in reason.lower()
 
@@ -171,10 +168,7 @@ class TestRoleToolGateway:
         gateway = RoleToolGateway(director_profile, temp_workspace)
 
         # 危险命令
-        can_run, reason = gateway.check_tool_permission(
-            "execute_command",
-            {"command": "rm -rf /"}
-        )
+        can_run, reason = gateway.check_tool_permission("execute_command", {"command": "rm -rf /"})
         assert can_run is False
         assert "危险" in reason or "dangerous" in reason.lower()
 
@@ -189,10 +183,10 @@ class TestRoleToolGateway:
         gateway = RoleToolGateway(director_profile, temp_workspace)
 
         class _FakeExecutor:
-            def __init__(self, workspace: str, **_kwargs):  # noqa: ANN001
+            def __init__(self, workspace: str, **_kwargs) -> None:
                 self.workspace = workspace
 
-            def execute(self, tool_name: str, tool_args: dict):  # noqa: ANN001
+            def execute(self, tool_name: str, tool_args: dict):
                 return {"ok": False, "error": f"handler_missing:{tool_name}", "args": tool_args}
 
         import polaris.kernelone.llm.toolkit as llm_toolkit_module
@@ -218,10 +212,10 @@ class TestRoleToolGateway:
         gateway = RoleToolGateway(director_profile, temp_workspace)
 
         class _FakeExecutor:
-            def __init__(self, workspace: str, **_kwargs):  # noqa: ANN001
+            def __init__(self, workspace: str, **_kwargs) -> None:
                 self.workspace = workspace
 
-            def execute(self, tool_name: str, tool_args: dict):  # noqa: ANN001
+            def execute(self, tool_name: str, tool_args: dict):
                 return {"ok": True, "result": {"tool": tool_name, "args": tool_args}}
 
         import polaris.kernelone.llm.toolkit as llm_toolkit_module
@@ -245,10 +239,10 @@ class TestRoleToolGateway:
         gateway = RoleToolGateway(director_profile, temp_workspace)
 
         class _FakeExecutor:
-            def __init__(self, workspace: str, **_kwargs):  # noqa: ANN001
+            def __init__(self, workspace: str, **_kwargs) -> None:
                 self.workspace = workspace
 
-            def execute(self, tool_name: str, _tool_args: dict):  # noqa: ANN001
+            def execute(self, tool_name: str, _tool_args: dict):
                 return {"ok": True, "result": {"tool": tool_name}}
 
         import polaris.kernelone.llm.toolkit as llm_toolkit_module
@@ -272,7 +266,7 @@ class TestPromptFingerprint:
 
     def test_fingerprint_consistency(self, kernel):
         """测试相同输入生成相同指纹"""
-        request = RoleTurnRequest(
+        RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
             message="测试消息",
         )
@@ -363,7 +357,7 @@ class TestRoleExecutionKernel:
             def reset_execution_count(self) -> None:
                 return None
 
-            def execute_tool(self, _tool: str, _args: dict) -> dict:  # noqa: ANN001
+            def execute_tool(self, _tool: str, _args: dict) -> dict:
                 raise ToolAuthorizationError("forbidden_tool")
 
             def close(self) -> None:
@@ -413,10 +407,7 @@ class TestRoleExecutionKernel:
 
         result = await kernel.run(role="director", request=request)
         assert str(result.error or "").strip()
-        assert (
-            "验证失败" in str(result.error or "")
-            or "assistant_visible_output_empty" in str(result.error or "")
-        )
+        assert "验证失败" in str(result.error or "") or "assistant_visible_output_empty" in str(result.error or "")
 
     @pytest.mark.asyncio
     async def test_kernel_tool_only_thinking_turn_reports_empty_visible_output(self, kernel, monkeypatch):
@@ -481,7 +472,7 @@ class TestRoleExecutionKernel:
                                 "type": "function",
                                 "function": {
                                     "name": "read_file",
-                                    "arguments": "{\"path\":\"tui_runtime.md\"}",
+                                    "arguments": '{"path":"tui_runtime.md"}',
                                 },
                             }
                         ],
@@ -538,13 +529,13 @@ class TestRoleExecutionKernel:
                 {
                     "function": {
                         "name": "file_exists",
-                        "arguments": "{\"path\":\"setup.py\"}",
+                        "arguments": '{"path":"setup.py"}',
                     }
                 },
             ]
         }
 
-        calls = kernel._extract_structured_tool_calls(payload)  # noqa: SLF001
+        calls = kernel._extract_structured_tool_calls(payload)
 
         assert len(calls) == 3
         assert calls[0]["function"]["name"] == "search_code"
@@ -586,7 +577,7 @@ class TestRoleExecutionKernel:
                             "type": "function",
                             "function": {
                                 "name": "read_file",
-                                "arguments": "{\"path\":\"tui_runtime.md\"}",
+                                "arguments": '{"path":"tui_runtime.md"}',
                             },
                         }
                     ],
@@ -603,14 +594,14 @@ class TestRoleExecutionKernel:
                 metadata={},
             )
 
-        def fake_parse_execution_tool_calls(_text, *_, **kwargs):  # noqa: ANN001
+        def fake_parse_execution_tool_calls(_text, *_, **kwargs):
             native_tool_calls = kwargs.get("native_tool_calls")
             if native_tool_calls:
                 captured["native_tool_calls"] = native_tool_calls
                 return [SimpleNamespace(tool="read_file", args={"path": "tui_runtime.md"})]
             return []
 
-        async def fake_execute_single_tool(*args, **kwargs):  # noqa: ANN001
+        async def fake_execute_single_tool(*args, **kwargs):
             call = kwargs.get("call")
             if call is None and args:
                 call = args[-1]
@@ -680,7 +671,9 @@ class TestRoleExecutionKernel:
         monkeypatch.setattr(
             kernel._output_parser,
             "parse_execution_tool_calls",
-            lambda *_args, **_kwargs: [SimpleNamespace(tool="write_file", args={"file": "src/fastapi_entrypoint.py", "content": "y"})],
+            lambda *_args, **_kwargs: [
+                SimpleNamespace(tool="write_file", args={"file": "src/fastapi_entrypoint.py", "content": "y"})
+            ],
         )
         monkeypatch.setattr(
             kernel._output_parser,
@@ -802,7 +795,7 @@ class TestDataStore:
 
         # 写入JSON
         test_data = {"test": "data", "version": 1}
-        filepath = store.write_json("test.json", test_data)
+        store.write_json("test.json", test_data)
 
         # 读取
         read_data = store.read_json("test.json")
@@ -838,8 +831,8 @@ class TestChatWorkflowConsistency:
         """测试同角色在不同模式下指纹一致"""
         profile = kernel.registry.get_profile("pm")
 
-        chat_request = RoleTurnRequest(mode=RoleExecutionMode.CHAT, message="test")
-        workflow_request = RoleTurnRequest(mode=RoleExecutionMode.WORKFLOW, message="test")
+        RoleTurnRequest(mode=RoleExecutionMode.CHAT, message="test")
+        RoleTurnRequest(mode=RoleExecutionMode.WORKFLOW, message="test")
 
         # 构建指纹（不依赖LLM调用）
         chat_fp = kernel._get_prompt_builder().build_fingerprint(profile, "")

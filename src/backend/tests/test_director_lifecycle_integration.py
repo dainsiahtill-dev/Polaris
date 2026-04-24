@@ -13,13 +13,10 @@ polaris.kernelone.runtime to polaris.domain.director.
 
 from __future__ import annotations
 
-import json
-import tempfile
 import threading
 from pathlib import Path
 
 import pytest
-
 from polaris.domain.director import (
     DEFAULT_DIRECTOR_LIFECYCLE,
     DirectorLifecycleManager,
@@ -192,10 +189,7 @@ class TestDirectorLifecycleConcurrency:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=worker, args=(i,))
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
 
         for t in threads:
             t.start()
@@ -225,7 +219,7 @@ class TestDirectorLifecycleConcurrency:
             nonlocal read_count
             for _ in range(20):
                 try:
-                    state = manager.get_state()
+                    manager.get_state()
                     with read_lock:
                         read_count += 1
                 except Exception as e:

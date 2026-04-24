@@ -124,9 +124,7 @@ class TestConstitutionEnforcer:
         enforcer = ConstitutionEnforcer()
 
         message = {"tasks": [], "iteration": 1}
-        errors = enforcer.check_communication(
-            Role.PM, Role.CHIEF_ENGINEER, message
-        )
+        errors = enforcer.check_communication(Role.PM, Role.CHIEF_ENGINEER, message)
         assert len(errors) == 0
 
     def test_check_communication_direct_coupling(self):
@@ -135,7 +133,9 @@ class TestConstitutionEnforcer:
 
         message = {"tasks": []}
         errors = enforcer.check_communication(
-            Role.PM, Role.DIRECTOR, message  # PM 不应直接通信 Director
+            Role.PM,
+            Role.DIRECTOR,
+            message,  # PM 不应直接通信 Director
         )
         assert len(errors) > 0
 
@@ -144,18 +144,14 @@ class TestConstitutionEnforcer:
         enforcer = ConstitutionEnforcer()
 
         # Director 试图访问 PM 的私有状态
-        allowed = enforcer.check_state_access(
-            Role.DIRECTOR, Role.PM, "task_history"
-        )
+        allowed = enforcer.check_state_access(Role.DIRECTOR, Role.PM, "task_history")
         assert allowed is False
 
     def test_check_state_access_own(self):
         """访问自己的状态应被允许。"""
         enforcer = ConstitutionEnforcer()
 
-        allowed = enforcer.check_state_access(
-            Role.PM, Role.PM, "task_history"
-        )
+        allowed = enforcer.check_state_access(Role.PM, Role.PM, "task_history")
         assert allowed is True
 
 
@@ -277,6 +273,7 @@ class TestRequireRolePermission:
 
     def test_decorator_allows_authorized(self):
         """装饰器应允许授权行为。"""
+
         # 注意：这里的行为不在禁止列表中，所以应该通过
         @require_role_permission(Role.PM, "parse_requirements")
         def pm_parses():

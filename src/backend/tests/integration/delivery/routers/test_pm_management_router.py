@@ -87,9 +87,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/documents")
 
         assert response.status_code == 200
@@ -106,9 +104,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=pm,
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/documents")
 
         assert response.status_code == 400
@@ -117,16 +113,17 @@ class TestPMManagementRouter:
     async def test_get_document_returns_200(self) -> None:
         """GET /pm/documents/{doc_path} returns 200 with document info."""
         app = _build_app()
-        with patch(
-            "polaris.delivery.http.routers.pm_management._get_pm_instance",
-            return_value=_mock_pm_instance(),
-        ), patch(
-            "polaris.delivery.http.routers.pm_management._resolve_document_path",
-            return_value="/test/path.md",
+        with (
+            patch(
+                "polaris.delivery.http.routers.pm_management._get_pm_instance",
+                return_value=_mock_pm_instance(),
+            ),
+            patch(
+                "polaris.delivery.http.routers.pm_management._resolve_document_path",
+                return_value="/test/path.md",
+            ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/documents/test.md")
 
         assert response.status_code == 200
@@ -138,16 +135,17 @@ class TestPMManagementRouter:
         app = _build_app()
         pm = _mock_pm_instance()
         pm.get_document.return_value = None
-        with patch(
-            "polaris.delivery.http.routers.pm_management._get_pm_instance",
-            return_value=pm,
-        ), patch(
-            "polaris.delivery.http.routers.pm_management._resolve_document_path",
-            return_value="/test/missing.md",
+        with (
+            patch(
+                "polaris.delivery.http.routers.pm_management._get_pm_instance",
+                return_value=pm,
+            ),
+            patch(
+                "polaris.delivery.http.routers.pm_management._resolve_document_path",
+                return_value="/test/missing.md",
+            ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/documents/missing.md")
 
         assert response.status_code == 404
@@ -156,16 +154,17 @@ class TestPMManagementRouter:
     async def test_create_document_returns_200(self) -> None:
         """POST /pm/documents/{doc_path} returns 200 on success."""
         app = _build_app()
-        with patch(
-            "polaris.delivery.http.routers.pm_management._get_pm_instance",
-            return_value=_mock_pm_instance(),
-        ), patch(
-            "polaris.delivery.http.routers.pm_management._resolve_document_path",
-            return_value="/test/path.md",
+        with (
+            patch(
+                "polaris.delivery.http.routers.pm_management._get_pm_instance",
+                return_value=_mock_pm_instance(),
+            ),
+            patch(
+                "polaris.delivery.http.routers.pm_management._resolve_document_path",
+                return_value="/test/path.md",
+            ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.post(
                     "/pm/documents/test.md",
                     json={"content": "Test content", "change_summary": "Initial"},
@@ -179,9 +178,7 @@ class TestPMManagementRouter:
     async def test_create_document_returns_422_without_content(self) -> None:
         """POST /pm/documents/{doc_path} returns 422 without required fields."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/pm/documents/test.md",
                 json={},
@@ -192,16 +189,17 @@ class TestPMManagementRouter:
     async def test_delete_document_returns_200(self) -> None:
         """DELETE /pm/documents/{doc_path} returns 200 on success."""
         app = _build_app()
-        with patch(
-            "polaris.delivery.http.routers.pm_management._get_pm_instance",
-            return_value=_mock_pm_instance(),
-        ), patch(
-            "polaris.delivery.http.routers.pm_management._resolve_document_path",
-            return_value="/test/path.md",
+        with (
+            patch(
+                "polaris.delivery.http.routers.pm_management._get_pm_instance",
+                return_value=_mock_pm_instance(),
+            ),
+            patch(
+                "polaris.delivery.http.routers.pm_management._resolve_document_path",
+                return_value="/test/path.md",
+            ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.delete("/pm/documents/test.md")
 
         assert response.status_code == 200
@@ -232,9 +230,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get(
                     "/pm/search/documents",
                     params={"q": "test"},
@@ -247,9 +243,7 @@ class TestPMManagementRouter:
     async def test_search_documents_returns_422_without_query(self) -> None:
         """GET /pm/search/documents returns 422 without query param."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/pm/search/documents")
 
         assert response.status_code == 422
@@ -261,9 +255,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/tasks")
 
         assert response.status_code == 200
@@ -277,9 +269,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/tasks/task-1")
 
         assert response.status_code == 200
@@ -295,9 +285,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=pm,
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/tasks/missing-task")
 
         assert response.status_code == 404
@@ -310,9 +298,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/tasks/history")
 
         assert response.status_code == 200
@@ -324,9 +310,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/tasks/director")
 
         assert response.status_code == 200
@@ -338,9 +322,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/tasks/task-1/assignments")
 
         assert response.status_code == 200
@@ -354,9 +336,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get(
                     "/pm/search/tasks",
                     params={"q": "test"},
@@ -369,9 +349,7 @@ class TestPMManagementRouter:
     async def test_search_tasks_returns_422_without_query(self) -> None:
         """GET /pm/search/tasks returns 422 without query param."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/pm/search/tasks")
 
         assert response.status_code == 422
@@ -383,9 +361,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/requirements")
 
         assert response.status_code == 200
@@ -399,9 +375,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/requirements/req-1")
 
         assert response.status_code == 200
@@ -417,9 +391,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=pm,
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/requirements/missing-req")
 
         assert response.status_code == 404
@@ -432,9 +404,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/status")
 
         assert response.status_code == 200
@@ -450,9 +420,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=pm,
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/status")
 
         assert response.status_code == 200
@@ -466,9 +434,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/health")
 
         assert response.status_code == 200
@@ -484,9 +450,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=pm,
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/pm/health")
 
         assert response.status_code == 400
@@ -500,9 +464,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=pm,
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.post(
                     "/pm/init",
                     params={"project_name": "Test Project"},
@@ -519,9 +481,7 @@ class TestPMManagementRouter:
             "polaris.delivery.http.routers.pm_management._get_pm_instance",
             return_value=_mock_pm_instance(),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.post("/pm/init")
 
         assert response.status_code == 200
@@ -532,9 +492,7 @@ class TestPMManagementRouter:
     async def test_nonexistent_endpoint_returns_404(self) -> None:
         """GET /pm/nonexistent returns 404."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/pm/nonexistent")
 
         assert response.status_code == 404

@@ -102,7 +102,7 @@ class MockLLMResponse:
 class MockLLMProvider:
     """Mock LLM provider for testing."""
 
-    def __init__(self, responses: list | None = None):
+    def __init__(self, responses: list | None = None) -> None:
         self.responses = responses or []
         self.call_history: list = []
         self._response_index = 0
@@ -396,7 +396,7 @@ def _create_mock_audit_store(runtime_root: Path):
     from polaris.kernelone.audit.contracts import KernelAuditStorePort
 
     class MockAuditStore(KernelAuditStorePort):
-        def __init__(self, root: Path):
+        def __init__(self, root: Path) -> None:
             self._root = root
             self._events: list = []
 

@@ -18,4 +18,3 @@ async def test_bootstrap_rejects_meta_project_workspace_without_self_upgrade() -
 
     assert not result.is_success()
     assert "self_upgrade_mode" in result.get_error()
-

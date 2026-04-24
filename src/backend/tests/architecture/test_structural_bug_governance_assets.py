@@ -10,44 +10,17 @@ import yaml
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 DEBT_REGISTER_PATH = BACKEND_ROOT / "docs" / "governance" / "debt.register.yaml"
-DEBT_REGISTER_SCHEMA_PATH = (
-    BACKEND_ROOT / "docs" / "governance" / "schemas" / "debt-register.schema.yaml"
-)
-VERIFY_PACK_SCHEMA_PATH = (
-    BACKEND_ROOT / "docs" / "governance" / "schemas" / "verify-pack.schema.yaml"
-)
-VERIFY_PACK_PATH = (
-    BACKEND_ROOT / "polaris" / "cells" / "roles" / "kernel" / "generated" / "verify.pack.json"
-)
-VERIFY_CARD_SCHEMA_PATH = (
-    BACKEND_ROOT / "docs" / "governance" / "schemas" / "verification-card.schema.yaml"
-)
+DEBT_REGISTER_SCHEMA_PATH = BACKEND_ROOT / "docs" / "governance" / "schemas" / "debt-register.schema.yaml"
+VERIFY_PACK_SCHEMA_PATH = BACKEND_ROOT / "docs" / "governance" / "schemas" / "verify-pack.schema.yaml"
+VERIFY_PACK_PATH = BACKEND_ROOT / "polaris" / "cells" / "roles" / "kernel" / "generated" / "verify.pack.json"
+VERIFY_CARD_SCHEMA_PATH = BACKEND_ROOT / "docs" / "governance" / "schemas" / "verification-card.schema.yaml"
 VERIFY_CARD_PATH = (
-    BACKEND_ROOT
-    / "docs"
-    / "governance"
-    / "templates"
-    / "verification-cards"
-    / "vc-20260325-turn-engine-tool-loop.yaml"
+    BACKEND_ROOT / "docs" / "governance" / "templates" / "verification-cards" / "vc-20260325-turn-engine-tool-loop.yaml"
 )
-ADR_0042_PATH = (
-    BACKEND_ROOT
-    / "docs"
-    / "governance"
-    / "decisions"
-    / "adr-0042-turn-engine-triple-responsibility.md"
-)
-ADR_0043_PATH = (
-    BACKEND_ROOT
-    / "docs"
-    / "governance"
-    / "decisions"
-    / "adr-0043-structural-bug-governance-loop.md"
-)
+ADR_0042_PATH = BACKEND_ROOT / "docs" / "governance" / "decisions" / "adr-0042-turn-engine-triple-responsibility.md"
+ADR_0043_PATH = BACKEND_ROOT / "docs" / "governance" / "decisions" / "adr-0043-structural-bug-governance-loop.md"
 FITNESS_RULES_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
-PIPELINE_TEMPLATE_PATH = (
-    BACKEND_ROOT / "docs" / "governance" / "ci" / "pipeline.template.yaml"
-)
+PIPELINE_TEMPLATE_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "pipeline.template.yaml"
 
 EXPECTED_DEBT_IDS = {
     "DEBT-20260325-roles-kernel-turn-stage-contract",
@@ -147,11 +120,7 @@ def test_debt_register_shape_and_links() -> None:
 def test_roles_kernel_verify_pack_shape_and_links() -> None:
     verify_pack = _read_json(VERIFY_PACK_PATH)
     debt_register = _read_yaml(DEBT_REGISTER_PATH)
-    debt_ids = {
-        str(item.get("id") or "")
-        for item in debt_register.get("debts", [])
-        if isinstance(item, dict)
-    }
+    debt_ids = {str(item.get("id") or "") for item in debt_register.get("debts", []) if isinstance(item, dict)}
 
     assert verify_pack.get("version") == 1
     assert verify_pack.get("cell_id") == "roles.kernel"
@@ -214,18 +183,10 @@ def test_structural_bug_governance_chain_is_complete() -> None:
     assert "debt.register.yaml" in adr_0043_text
     assert "verify.pack.json" in adr_0043_text
 
-    rule_ids = {
-        str(item.get("id") or "")
-        for item in fitness_rules.get("rules", [])
-        if isinstance(item, dict)
-    }
+    rule_ids = {str(item.get("id") or "") for item in fitness_rules.get("rules", []) if isinstance(item, dict)}
     assert EXPECTED_RULE_IDS.issubset(rule_ids)
 
     stages = pipeline_template.get("stages")
     assert isinstance(stages, list) and stages
-    stage_ids = {
-        str(item.get("id") or "")
-        for item in stages
-        if isinstance(item, dict)
-    }
+    stage_ids = {str(item.get("id") or "") for item in stages if isinstance(item, dict)}
     assert "structural_bug_governance_gate" in stage_ids

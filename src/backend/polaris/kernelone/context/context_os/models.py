@@ -1183,7 +1183,7 @@ class ContextOSProjection:
     MAX_EVENTS_BEFORE_EMERGENCY_COMPACT = 50
     EMERGENCY_COMPACT_TOKEN_RATIO = 0.5
 
-    def compress(self, target_tokens: int, llm=None) -> ContextOSProjection:
+    def compress(self, target_tokens: int, llm: Any = None) -> ContextOSProjection:
         """Compress active_window to target token count using turn-block-aware selection.
 
         Preserves entire turn blocks for the current (most recent) turn, ensuring

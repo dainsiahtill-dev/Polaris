@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import subprocess
-
 import pytest
 from polaris.kernelone.llm.toolkit import executor as executor_module
 
@@ -118,7 +116,7 @@ def test_execute_command_returns_error_without_shell_fallback_on_permission_erro
     executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
     call_shell_modes: list[bool] = []
 
-    def _fake_run(args, **kwargs):  # noqa: ANN001, ANN003
+    def _fake_run(args, **kwargs):
         call_shell_modes.append(bool(kwargs.get("shell")))
         raise PermissionError("Access is denied")
 
@@ -341,7 +339,7 @@ def test_file_exists_accepts_projects_prefixed_path(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
     executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
     target = tmp_path / "config.json"
-    target.write_text('{}', encoding="utf-8")
+    target.write_text("{}", encoding="utf-8")
 
     result = executor.execute("file_exists", {"path": "/projects/config.json"})
 
@@ -349,4 +347,3 @@ def test_file_exists_accepts_projects_prefixed_path(monkeypatch, tmp_path) -> No
     payload = result.get("result")
     assert isinstance(payload, dict)
     assert payload.get("exists") is True
-

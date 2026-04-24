@@ -9,7 +9,7 @@ import pytest
 # Skip tests if zstandard is not available
 pytestmark = pytest.mark.skipif(
     True,  # Skip by default since we don't have zstd installed in test env
-    reason="zstandard not available"
+    reason="zstandard not available",
 )
 
 
@@ -55,8 +55,7 @@ class TestHistoryArchiveService:
         # Create some test files
         (run_dir / "results").mkdir()
         (run_dir / "results" / "director.result.json").write_text(
-            '{"status": "completed", "successes": 5}',
-            encoding="utf-8"
+            '{"status": "completed", "successes": 5}', encoding="utf-8"
         )
 
         # Archive the run
@@ -117,10 +116,7 @@ class TestHistoryArchiveService:
         tasks_dir = service.runtime_root / "tasks"
         tasks_dir.mkdir(parents=True)
 
-        (tasks_dir / "task_1.json").write_text(
-            '{"id": 1, "subject": "Test task"}',
-            encoding="utf-8"
-        )
+        (tasks_dir / "task_1.json").write_text('{"id": 1, "subject": "Test task"}', encoding="utf-8")
 
         # Archive snapshot
         snapshot_id = "pm-00001-1234567890"
@@ -140,17 +136,10 @@ class TestHistoryArchiveService:
         factory_dir = service.history_root.parent / "factory" / "factory_run_001"
         factory_dir.mkdir(parents=True)
 
-        (factory_dir / "config.json").write_text(
-            '{"name": "test_factory"}',
-            encoding="utf-8"
-        )
+        (factory_dir / "config.json").write_text('{"name": "test_factory"}', encoding="utf-8")
 
         # Archive factory run
-        manifest = service.archive_factory_run(
-            "factory_run_001",
-            str(factory_dir),
-            "completed"
-        )
+        manifest = service.archive_factory_run("factory_run_001", str(factory_dir), "completed")
 
         assert manifest.scope == "factory_run"
         assert manifest.id == "factory_run_001"

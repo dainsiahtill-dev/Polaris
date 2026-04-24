@@ -194,6 +194,7 @@ class RoleResult:
             "next_role": self.next_role,
             "continue_reason": self.continue_reason,
             "metadata": self.metadata,
+            "usage_ctx": self.usage_ctx,
             "duration_ms": self.duration_ms,
             "tokens_used": self.tokens_used,
         }

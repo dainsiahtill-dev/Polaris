@@ -111,10 +111,12 @@ class TestWebSocketLifecycle:
             _receive_until_type(websocket, {"STATUS"})
 
             # Subscribe to a legacy channel
-            websocket.send_json({
-                "type": "SUBSCRIBE",
-                "channels": ["custom_channel"],
-            })
+            websocket.send_json(
+                {
+                    "type": "SUBSCRIBE",
+                    "channels": ["custom_channel"],
+                }
+            )
 
             # Receive SUBSCRIBED confirmation
             response = _receive_until_type(websocket, {"SUBSCRIBED"})
@@ -228,9 +230,7 @@ class TestRealtimeSignalHubIntegration:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock workspace context to use temp dir
-            with patch(
-                "polaris.delivery.ws.runtime_endpoint.resolve_workspace_runtime_context"
-            ) as mock_ctx:
+            with patch("polaris.delivery.ws.runtime_endpoint.resolve_workspace_runtime_context") as mock_ctx:
                 mock_context = MagicMock()
                 mock_context.workspace = tmpdir
                 mock_context.runtime_root = tmpdir
@@ -239,7 +239,7 @@ class TestRealtimeSignalHubIntegration:
                 mock_context.source = "test"
                 mock_ctx.return_value = mock_context
 
-                initial_watches = len(REALTIME_SIGNAL_HUB.list_watches())
+                len(REALTIME_SIGNAL_HUB.list_watches())
 
                 with client.websocket_connect("/v2/ws/runtime?token=valid") as websocket:
                     # Receive initial status
@@ -262,12 +262,10 @@ class TestRealtimeSignalHubIntegration:
             await REALTIME_SIGNAL_HUB.ensure_watch(dir2)
 
             # Notify for dir1
-            seq1 = await REALTIME_SIGNAL_HUB.notify(source="test", path="/test", root=dir1)
+            await REALTIME_SIGNAL_HUB.notify(source="test", path="/test", root=dir1)
 
             # Wait with dir2 filter should timeout (no matching signal)
-            next_seq = await REALTIME_SIGNAL_HUB.wait_for_update(
-                0, timeout_sec=0.1, workspace=dir2
-            )
+            await REALTIME_SIGNAL_HUB.wait_for_update(0, timeout_sec=0.1, workspace=dir2)
 
             # Sequence should not have advanced for dir2
             # (this tests that workspace filtering works)

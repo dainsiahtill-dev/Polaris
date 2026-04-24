@@ -19,7 +19,7 @@ import logging
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 if TYPE_CHECKING:
     pass
@@ -673,7 +673,7 @@ class ContextOSSnapshotV2(BaseModel):
         for v in transcript_log_data:
             try:
                 transcript_log.append(TranscriptEventV2.model_validate(v))
-            except Exception:  # noqa: BLE001
+            except ValidationError:
                 # Fallback: construct from raw fields
                 evt = TranscriptEventV2(
                     event_id=str(v.get("event_id", "")),

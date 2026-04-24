@@ -106,16 +106,7 @@ def test_evaluate_strict_depth_detects_fallback_hits(tmp_path: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(f"line_{i}" for i in range(120)), encoding="utf-8")
 
-    log_path = (
-        runtime_root
-        / "runs"
-        / "pm-00001"
-        / "engine"
-        / "tasks"
-        / "PM-0001-R1"
-        / "logs"
-        / "director.process.log"
-    )
+    log_path = runtime_root / "runs" / "pm-00001" / "engine" / "tasks" / "PM-0001-R1" / "logs" / "director.process.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
         "[WorkerExecutor] Round 1/1 fallback generated 1 file template(s)\n",
@@ -154,16 +145,7 @@ def test_evaluate_strict_depth_ignores_low_signal_retry_logs(tmp_path: Path) -> 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(f"line_{i}" for i in range(120)), encoding="utf-8")
 
-    log_path = (
-        runtime_root
-        / "runs"
-        / "pm-00001"
-        / "engine"
-        / "tasks"
-        / "PM-0001-R1"
-        / "logs"
-        / "director.process.log"
-    )
+    log_path = runtime_root / "runs" / "pm-00001" / "engine" / "tasks" / "PM-0001-R1" / "logs" / "director.process.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
         "[WorkerExecutor] Round 1/1 low-signal output, retrying with patch-only prompt\n",

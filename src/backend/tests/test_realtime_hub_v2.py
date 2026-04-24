@@ -121,7 +121,7 @@ async def test_concurrent_release_watch_cleanup(temp_dir):
             hub.release_watch(temp_dir)
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            list(executor.submit(release) for _ in range(10))
+            [executor.submit(release) for _ in range(10)]
             executor.shutdown(wait=True)
 
         # Give time for cleanup

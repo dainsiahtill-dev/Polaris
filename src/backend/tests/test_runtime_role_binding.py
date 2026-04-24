@@ -39,7 +39,7 @@ def test_invoke_runtime_provider_strict_mode_rejects_missing_provider_type(
     tmp_path,
 ) -> None:
     class _Settings:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             self.ramdisk_root = ""
 
     monkeypatch.setenv("KERNELONE_ROLE_MODEL_BINDING_MODE", "strict")
@@ -78,7 +78,7 @@ async def test_provider_runtime_adapter_requires_settings_or_di_registration(
     tmp_path,
 ) -> None:
     class _Settings:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             self.ramdisk_root = ""
 
     async def _fake_get_container():
@@ -102,7 +102,7 @@ async def test_provider_runtime_adapter_requires_settings_or_di_registration(
     adapter = AppLLMRuntimeAdapter()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with pytest.raises(RuntimeError, match="Settings resolution via DI failed|Settings is not registered"):
+        with pytest.raises(RuntimeError, match=r"Settings resolution via DI failed|Settings is not registered"):
             adapter.load_provider_config(
                 workspace=str(tmp_path),
                 provider_id="provider-a",

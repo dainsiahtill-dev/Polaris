@@ -6,13 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from polaris.kernelone.process.command_executor import (
+    _DANGEROUS_ENV_VAR_PREFIXES,
+    _DANGEROUS_ENV_VARS_EXACT,
+    _SAFE_DEFAULT_ENV,
     CommandExecutionService,
     _filter_dangerous_env_vars,
-    _DANGEROUS_ENV_VARS_EXACT,
-    _DANGEROUS_ENV_VAR_PREFIXES,
-    _SAFE_DEFAULT_ENV,
 )
 
 
@@ -230,7 +229,7 @@ class TestBuildEnv:
     def test_dangerous_var_override_warning(self, service: CommandExecutionService) -> None:
         """verify overriding dangerous variables produces a warning."""
         with patch("polaris.kernelone.process.command_executor._logger.warning") as mock_warning:
-            env = service._build_env("clean", {"PYTHONPATH": "/test"})
+            service._build_env("clean", {"PYTHONPATH": "/test"})
 
         mock_warning.assert_called_once()
         # The second argument (index 1) is the actual variable name
@@ -289,9 +288,7 @@ class TestBuildSubprocessSpec:
     def test_spec_contains_filtered_env(self, service: CommandExecutionService) -> None:
         """verify subprocess spec contains filtered environment."""
         # Use python executable which is in the allowlist
-        request = CommandExecutionService.parse_command(
-            service, "python --version", env_policy="inherit"
-        )
+        request = CommandExecutionService.parse_command(service, "python --version", env_policy="inherit")
 
         with patch.dict("os.environ", {"PATH": "/usr/bin", "LD_PRELOAD": "/evil"}, clear=False):
             spec = service.build_subprocess_spec(request)

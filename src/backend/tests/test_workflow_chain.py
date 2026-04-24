@@ -48,20 +48,22 @@ def mock_context():
     context.requirements = "实现用户登录功能"
     context.run_id = "TEST-001"
     context.pm_iteration = 1
-    context.get_tasks = MagicMock(return_value=[
-        {
-            "id": "TASK-001",
-            "title": "创建登录页面",
-            "description": "实现用户登录UI",
-            "status": "ready",
-        },
-        {
-            "id": "TASK-002",
-            "title": "实现认证API",
-            "description": "后端登录接口",
-            "status": "ready",
-        },
-    ])
+    context.get_tasks = MagicMock(
+        return_value=[
+            {
+                "id": "TASK-001",
+                "title": "创建登录页面",
+                "description": "实现用户登录UI",
+                "status": "ready",
+            },
+            {
+                "id": "TASK-002",
+                "title": "实现认证API",
+                "description": "后端登录接口",
+                "status": "ready",
+            },
+        ]
+    )
     context.director_result = {
         "status": "completed",
         "executed_tasks": ["TASK-001", "TASK-002"],
@@ -95,6 +97,7 @@ class TestWorkflowDependencies:
     def _get_registry(self):
         """获取并初始化注册表"""
         from polaris.cells.roles.runtime.public.service import registry
+
         # 确保核心角色已加载
         if not registry.list_roles():
             load_core_roles()
@@ -153,7 +156,7 @@ class TestWorkflowExecutionChain:
         """测试内核执行（Mock）"""
         kernel = RoleExecutionKernel(workspace=temp_workspace)
 
-        with patch.object(kernel, 'run', new_callable=AsyncMock) as mock_run:
+        with patch.object(kernel, "run", new_callable=AsyncMock) as mock_run:
             mock_result = MagicMock()
             mock_result.success = True
             mock_result.content = "test response"
@@ -175,7 +178,7 @@ class TestWorkflowExecutionChain:
         """测试 PM 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
 
-        with patch.object(adapter.kernel, 'run', new_callable=AsyncMock) as mock_run:
+        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
             mock_result = MagicMock()
             mock_result.success = True
             mock_result.content = '{"tasks": [{"id": "TASK-001", "title": "test"}]}'
@@ -195,7 +198,7 @@ class TestWorkflowExecutionChain:
         """测试 Director 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
 
-        with patch.object(adapter.kernel, 'run', new_callable=AsyncMock) as mock_run:
+        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
             mock_result = MagicMock()
             mock_result.success = True
             mock_result.content = "patch applied"
@@ -215,7 +218,7 @@ class TestWorkflowExecutionChain:
         """测试 QA 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
 
-        with patch.object(adapter.kernel, 'run', new_callable=AsyncMock) as mock_run:
+        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
             mock_result = MagicMock()
             mock_result.success = True
             mock_result.content = '{"verdict": "PASS"}'
@@ -235,7 +238,7 @@ class TestWorkflowExecutionChain:
         """测试 Architect 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
 
-        with patch.object(adapter.kernel, 'run', new_callable=AsyncMock) as mock_run:
+        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
             mock_result = MagicMock()
             mock_result.success = True
             mock_result.content = '{"architecture": "design"}'
@@ -254,7 +257,7 @@ class TestWorkflowExecutionChain:
         """测试 ChiefEngineer 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
 
-        with patch.object(adapter.kernel, 'run', new_callable=AsyncMock) as mock_run:
+        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
             mock_result = MagicMock()
             mock_result.success = True
             mock_result.content = '{"blueprint": "plan"}'
@@ -275,6 +278,7 @@ class TestWorkflowFingerprintConsistency:
     def _get_registry(self):
         """获取并初始化注册表"""
         from polaris.cells.roles.runtime.public.service import registry
+
         if not registry.list_roles():
             load_core_roles()
         return registry
@@ -287,7 +291,7 @@ class TestWorkflowFingerprintConsistency:
         assert pm_profile is not None
 
         # 验证角色指纹存在
-        assert hasattr(pm_profile, 'profile_id') or hasattr(pm_profile, 'role_id')
+        assert hasattr(pm_profile, "profile_id") or hasattr(pm_profile, "role_id")
 
 
 class TestWorkflowToolPolicy:
@@ -296,6 +300,7 @@ class TestWorkflowToolPolicy:
     def _get_registry(self):
         """获取并初始化注册表"""
         from polaris.cells.roles.runtime.public.service import registry
+
         if not registry.list_roles():
             load_core_roles()
         return registry
@@ -318,4 +323,3 @@ class TestWorkflowToolPolicy:
         for role_id in ["pm", "architect", "chief_engineer", "director", "qa"]:
             profile = reg.get_profile(role_id)
             assert profile is not None, f"{role_id} 角色配置不存在"
-

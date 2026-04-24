@@ -120,4 +120,3 @@ def test_invariant_sentinel_failure_hops_missing(monkeypatch, tmp_path):
     )
     codes = [v.get("code") for v in result.get("violations", [])]
     assert "FAILURE_3HOPS_MISSING" in codes
-

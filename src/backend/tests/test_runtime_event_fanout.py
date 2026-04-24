@@ -31,9 +31,10 @@ def fanout():
     yield f
     # Clean up using asyncio directly in pytest
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # If we're in an async context, close properly
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             pool.submit(asyncio.run, f.close()).result()
     except RuntimeError:
@@ -53,9 +54,7 @@ def mock_bus():
 
     async def unsubscribe(msg_type, handler):
         if msg_type in bus.subscribers:
-            bus.subscribers[msg_type] = [
-                h for h in bus.subscribers[msg_type] if h != handler
-            ]
+            bus.subscribers[msg_type] = [h for h in bus.subscribers[msg_type] if h != handler]
         return True
 
     bus.subscribe = subscribe
@@ -225,7 +224,7 @@ class TestRuntimeEventFanout:
         fanout = RuntimeEventFanout()
 
         try:
-            with patch.object(fanout, '_bus', mock_director_service._bus):
+            with patch.object(fanout, "_bus", mock_director_service._bus):
                 fanout._file_handler = fanout._make_file_written_handler(asyncio.get_event_loop())
 
                 # Register connections
@@ -262,7 +261,7 @@ class TestRuntimeEventFanout:
         fanout = RuntimeEventFanout()
 
         try:
-            with patch.object(fanout, '_bus', mock_director_service._bus):
+            with patch.object(fanout, "_bus", mock_director_service._bus):
                 fanout._trace_handler = fanout._make_task_trace_handler(asyncio.get_event_loop())
 
                 # Register connection
@@ -292,7 +291,7 @@ class TestRuntimeEventFanout:
         fanout = RuntimeEventFanout()
 
         try:
-            with patch.object(fanout, '_bus', mock_director_service._bus):
+            with patch.object(fanout, "_bus", mock_director_service._bus):
                 fanout._file_handler = fanout._make_file_written_handler(asyncio.get_event_loop())
 
                 # Register connection
@@ -333,25 +332,29 @@ class TestRuntimeEventFanout:
         fanout = RuntimeEventFanout()
 
         try:
-            with patch.object(fanout, '_bus', mock_director_service._bus):
+            with patch.object(fanout, "_bus", mock_director_service._bus):
                 fanout._file_handler = fanout._make_file_written_handler(asyncio.get_event_loop())
                 fanout._trace_handler = fanout._make_task_trace_handler(asyncio.get_event_loop())
 
                 await fanout.register_connection("conn-1", "/ws1", "/cache1")
 
                 # File written event
-                fanout._file_handler(Message(
-                    type=MessageType.FILE_WRITTEN,
-                    sender="test",
-                    payload={"file_path": "/test.py"},
-                ))
+                fanout._file_handler(
+                    Message(
+                        type=MessageType.FILE_WRITTEN,
+                        sender="test",
+                        payload={"file_path": "/test.py"},
+                    )
+                )
 
                 # Task trace event
-                fanout._trace_handler(Message(
-                    type=MessageType.TASK_TRACE,
-                    sender="director",
-                    payload={"task_id": "task-1"},
-                ))
+                fanout._trace_handler(
+                    Message(
+                        type=MessageType.TASK_TRACE,
+                        sender="director",
+                        payload={"task_id": "task-1"},
+                    )
+                )
 
                 stats = fanout.get_global_stats()
                 assert stats["file_written_events"] == 1
@@ -444,7 +447,7 @@ class TestRuntimeEventFanoutConcurrency:
         fanout = RuntimeEventFanout()
 
         try:
-            with patch.object(fanout, '_bus', mock_director_service._bus):
+            with patch.object(fanout, "_bus", mock_director_service._bus):
                 fanout._file_handler = fanout._make_file_written_handler(asyncio.get_event_loop())
 
                 # Register multiple connections

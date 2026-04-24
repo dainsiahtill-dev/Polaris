@@ -401,53 +401,62 @@ class OllamaProvider(BaseProvider):
             "ollama",
             timeout_seconds=timeout,
         )
-        async with session.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=timeout_seconds_or_none(timeout, default=60)),
-        ) as response:
-            response.raise_for_status()
-
-            if is_compat:
-                async for data in iter_sse_data_payloads(response.content):
-                    if data == "[DONE]":
-                        break
-                    try:
-                        payload_obj = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(payload_obj, dict):
-                        yield payload_obj
-                return
-
-            buffer = ""
-            async for chunk in response.content:
-                text = chunk.decode("utf-8", errors="ignore")
-                if not text:
-                    continue
-                buffer += text
-                lines = buffer.split("\n")
-                buffer = lines.pop() if lines else ""
-                for raw_line in lines:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload_obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(payload_obj, dict):
-                        yield payload_obj
-
-            trailing = buffer.strip()
-            if trailing:
+        try:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds_or_none(timeout, default=60)),
+            ) as response:
                 try:
-                    payload_obj = json.loads(trailing)
-                except json.JSONDecodeError:
-                    payload_obj = None
-                if isinstance(payload_obj, dict):
-                    yield payload_obj
+                    response.raise_for_status()
+                except aiohttp.ClientResponseError as exc:
+                    yield {"error": True, "code": exc.status, "message": str(exc)}
+                    return
+
+                if is_compat:
+                    async for data in iter_sse_data_payloads(response.content):
+                        if data == "[DONE]":
+                            break
+                        try:
+                            payload_obj = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(payload_obj, dict):
+                            yield payload_obj
+                    return
+
+                buffer = ""
+                async for chunk in response.content:
+                    text = chunk.decode("utf-8", errors="ignore")
+                    if not text:
+                        continue
+                    buffer += text
+                    lines = buffer.split("\n")
+                    buffer = lines.pop() if lines else ""
+                    for raw_line in lines:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        try:
+                            payload_obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(payload_obj, dict):
+                            yield payload_obj
+
+                trailing = buffer.strip()
+                if trailing:
+                    try:
+                        payload_obj = json.loads(trailing)
+                    except json.JSONDecodeError:
+                        payload_obj = None
+                    if isinstance(payload_obj, dict):
+                        yield payload_obj
+        except aiohttp.ClientError as exc:
+            yield {"error": True, "code": None, "message": f"Connection error: {exc}"}
+        except asyncio.TimeoutError:
+            yield {"error": True, "code": None, "message": "Request timeout"}
 
     async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]) -> AsyncGenerator[str, None]:
         """Stream invoke via thread executor to avoid blocking the event loop.

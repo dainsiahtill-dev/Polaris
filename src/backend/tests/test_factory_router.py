@@ -9,8 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRunService,
@@ -281,4 +281,3 @@ def test_delivery_loop_fails_when_docs_pipeline_stalled_without_new_plan(temp_wo
     )
     assert decision["action"] == "fail"
     assert decision["reason"] == "docs_pipeline_stalled"
-

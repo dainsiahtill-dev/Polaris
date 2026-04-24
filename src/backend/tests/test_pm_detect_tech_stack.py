@@ -32,4 +32,3 @@ def test_detect_tech_stack_typescript_react_when_explicit() -> None:
     detected = detect_tech_stack(requirements, "")
     assert detected.get("language") == "typescript"
     assert detected.get("framework") == "react"
-

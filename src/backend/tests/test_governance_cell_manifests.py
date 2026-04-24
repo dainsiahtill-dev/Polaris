@@ -21,7 +21,6 @@ GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_cat
 # ------------------------------------------------------------------
 
 from docs.governance.ci.scripts.run_catalog_governance_gate import (
-    GovernanceIssue,
     ManifestCatalogMismatch,
     _check_manifest_catalog_consistency,
     _count_new_mismatches,
@@ -277,7 +276,6 @@ class TestReconciliationWithRealFiles:
         assert isinstance(catalog_payload, dict)
         cells = _build_cell_index(catalog_payload)
 
-        issues: list[GovernanceIssue] = []  # kept for type-checking the import; unused below
         mismatches = _check_manifest_catalog_consistency(
             repo_root=BACKEND_ROOT,
             catalog_cells=cells,
@@ -287,8 +285,7 @@ class TestReconciliationWithRealFiles:
         # The fail-on-new gate handles regression detection.
         if mismatches:
             mismatch_summary = [
-                f"  {mm.cell_id} | {mm.field} | {mm.mismatch_type} | {mm.manifest_value}"
-                for mm in mismatches[:10]
+                f"  {mm.cell_id} | {mm.field} | {mm.mismatch_type} | {mm.manifest_value}" for mm in mismatches[:10]
             ]
             pytest.skip(
                 f"Found {len(mismatches)} manifest-catalog mismatches (existing debt); "
@@ -348,7 +345,7 @@ class TestReconciliationWithRealFiles:
         )
 
         # Audit-only: should detect the mismatch
-        report, mismatch_info = run_governance_gate(
+        _, mismatch_info = run_governance_gate(
             workspace=str(synth_root),
             mode="audit-only",
             baseline_path=None,
@@ -356,23 +353,20 @@ class TestReconciliationWithRealFiles:
         )
         # MC findings are in mismatch_info, not in report.issues (baselines stay independent).
         assert mismatch_info["mismatch_count"] >= 1, (
-            f"Expected manifest-catalog mismatch to be detected. "
-            f"mismatch_info: {mismatch_info}"
+            f"Expected manifest-catalog mismatch to be detected. mismatch_info: {mismatch_info}"
         )
 
         # With empty baseline, all mismatches are "new"
         mismatch_baseline = tmp_path / "mismatch_baseline.jsonl"
         _write_mismatch_baseline(mismatch_baseline, [])
 
-        report2, mismatch_info2 = run_governance_gate(
+        _, mismatch_info2 = run_governance_gate(
             workspace=str(synth_root),
             mode="fail-on-new",
             baseline_path=None,
             mismatch_baseline_path=mismatch_baseline,
         )
-        assert mismatch_info2["new_mismatch_count"] >= 1, (
-            "With empty baseline, should see mismatches as new"
-        )
+        assert mismatch_info2["new_mismatch_count"] >= 1, "With empty baseline, should see mismatches as new"
 
 
 # ------------------------------------------------------------------
@@ -409,11 +403,7 @@ def test_polaris_cell_manifests_are_in_catalog():
         pytest.skip(f"missing catalog: {CATALOG_PATH}")
 
     catalog_data = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
-    catalog_ids = {
-        str(e["id"])
-        for e in (catalog_data.get("cells") or [])
-        if isinstance(e, dict) and e.get("id")
-    }
+    catalog_ids = {str(e["id"]) for e in (catalog_data.get("cells") or []) if isinstance(e, dict) and e.get("id")}
 
     manifests = sorted(CELLS_ROOT.glob("**/cell.yaml"))
     not_in_catalog = []

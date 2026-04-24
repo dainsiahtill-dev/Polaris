@@ -39,11 +39,11 @@ def test_invoke_with_retry_uses_exponential_backoff(monkeypatch):
             status_code = 200
 
             @staticmethod
-            def raise_for_status():
+            def raise_for_status() -> None:
                 return None
 
             @staticmethod
-            def json():
+            def json() -> dict[str, str]:
                 return {"output": "ok"}
 
         return _Resp()

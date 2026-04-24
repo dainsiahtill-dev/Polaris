@@ -29,7 +29,7 @@ class _SubmitCaptureService:
     def __init__(self) -> None:
         self.request = None
 
-    async def submit_run(self, request):  # noqa: ANN001
+    async def submit_run(self, request):
         self.request = request
         return OrchestrationSnapshot(
             run_id=request.run_id,
@@ -207,4 +207,3 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
     assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_reproject"
     assert stub.request.metadata["execution_backend"] == "projection_reproject"
     assert stub.request.metadata["projection"]["experiment_id"] == "exp-001"
-

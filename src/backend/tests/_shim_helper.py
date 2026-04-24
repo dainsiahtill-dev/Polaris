@@ -1,4 +1,5 @@
 """Shared shim loader -- eliminates duplicate bootstrapping across test files."""
+
 from __future__ import annotations
 
 import importlib.util

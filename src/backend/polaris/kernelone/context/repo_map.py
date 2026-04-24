@@ -272,7 +272,7 @@ def _get_ts_parser(language: str) -> Any:
         return None
 
 
-def _ts_extract_name(content: str, node) -> str:
+def _ts_extract_name(content: str, node: Any) -> str:
     name_node = node.child_by_field_name("name")
     if name_node is None:
         name_node = node.child_by_field_name("property")
@@ -286,7 +286,7 @@ def _ts_extract_name(content: str, node) -> str:
     return content[name_node.start_byte : name_node.end_byte]
 
 
-def _collect_nodes(root, types: tuple[str, ...], root_only: bool) -> list[Any]:
+def _collect_nodes(root: Any, types: tuple[str, ...], root_only: bool) -> list[Any]:
     nodes: list[Any] = []
     if root_only:
         for child in root.children:
@@ -303,7 +303,7 @@ def _collect_nodes(root, types: tuple[str, ...], root_only: bool) -> list[Any]:
     return nodes
 
 
-def _collect_methods(class_node, language: str) -> list[Any]:
+def _collect_methods(class_node: Any, language: str) -> list[Any]:
     method_types = _method_types(language)
     methods: list[Any] = []
     for child in class_node.children:

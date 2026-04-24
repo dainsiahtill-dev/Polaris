@@ -6,11 +6,10 @@
 3. 内容不应重复输出
 """
 
-
 # 导入需要测试的模块
 import sys
 
-sys.path.insert(0, 'src/backend')
+sys.path.insert(0, "src/backend")
 
 from polaris.kernelone.llm.providers import THINKING_PREFIX
 from polaris.kernelone.llm.providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
@@ -33,7 +32,9 @@ def test_stream_thinking_parser_basic():
     assert len(text_chunks) == 2, f"Expected 2 TEXT results, got {len(text_chunks)}"
     assert len(thinking_chunks) == 1, f"Expected 1 THINKING result, got {len(thinking_chunks)}"
     assert text_chunks[0] == (ChunkKind.TEXT, "Hello "), f"Expected (ChunkKind.TEXT, 'Hello '), got {text_chunks[0]}"
-    assert thinking_chunks[0] == (ChunkKind.THINKING, "thinking content"), f"Expected (ChunkKind.THINKING, 'thinking content'), got {thinking_chunks[0]}"
+    assert thinking_chunks[0] == (ChunkKind.THINKING, "thinking content"), (
+        f"Expected (ChunkKind.THINKING, 'thinking content'), got {thinking_chunks[0]}"
+    )
     assert text_chunks[1] == (ChunkKind.TEXT, " world"), f"Expected (ChunkKind.TEXT, ' world'), got {text_chunks[1]}"
     print("  ✓ PASSED\n")
 
@@ -97,7 +98,7 @@ def test_no_duplicate_reasoning():
 
     for token in provider_outputs:
         if token.startswith(THINKING_PREFIX):
-            reasoning_text = token[len(THINKING_PREFIX):]
+            reasoning_text = token[len(THINKING_PREFIX) :]
             reasoning_chunks.append(reasoning_text)
             has_native_reasoning = True
         else:
@@ -160,12 +161,10 @@ def test_kimi_provider_logic():
 
     for delta in deltas:
         # 首先检查原生的 reasoning 字段
-        has_native_reasoning_in_this_delta = False
         for key in ("reasoning_content", "reasoning", "thinking"):
             for text in flatten_text(delta.get(key)):
                 if text:
                     out.append(f"[REASONING]{text}")
-                    has_native_reasoning_in_this_delta = True
                     has_seen_native_reasoning = True
 
         # 处理 content 字段

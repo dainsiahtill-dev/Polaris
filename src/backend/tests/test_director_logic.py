@@ -38,17 +38,17 @@ class TestParseJsonPayload:
 
     def test_parse_json_with_markdown_code_block(self):
         """Should parse JSON inside markdown code blocks."""
-        text = '''```json
+        text = """```json
 {"key": "value"}
-```'''
+```"""
         result = parse_json_payload(text)
         assert result == {"key": "value"}
 
     def test_parse_json_with_generic_code_block(self):
         """Should parse JSON inside generic markdown blocks."""
-        text = '''```
+        text = """```
 {"key": "value"}
-```'''
+```"""
         result = parse_json_payload(text)
         assert result == {"key": "value"}
 
@@ -221,7 +221,7 @@ class TestValidateDefectTicket:
             "artifact_path": "/path/to/artifact",
             "suspected_scope": "src/module",
         }
-        is_valid, ticket, missing = validate_defect_ticket(payload)
+        is_valid, _, missing = validate_defect_ticket(payload)
         assert is_valid is True
         assert len(missing) == 0
 
@@ -230,7 +230,7 @@ class TestValidateDefectTicket:
         payload = {
             "defect_id": "DEFECT-001",
         }
-        is_valid, ticket, missing = validate_defect_ticket(payload)
+        is_valid, _, missing = validate_defect_ticket(payload)
         assert is_valid is False
         assert len(missing) > 0
         assert "severity" in missing
@@ -241,9 +241,7 @@ class TestValidateDefectTicket:
             "defect_id": "DEFECT-001",
             "severity": "high",
         }
-        is_valid, ticket, missing = validate_defect_ticket(
-            payload, required_fields=["defect_id", "severity"]
-        )
+        is_valid, _, missing = validate_defect_ticket(payload, required_fields=["defect_id", "severity"])
         assert is_valid is True
         assert len(missing) == 0
 
@@ -254,9 +252,7 @@ class TestValidateDefectTicket:
             "severity": "high",
             "repro_steps": [],  # Empty list
         }
-        is_valid, ticket, missing = validate_defect_ticket(
-            payload, required_fields=["defect_id", "severity", "repro_steps"]
-        )
+        is_valid, _, missing = validate_defect_ticket(payload, required_fields=["defect_id", "severity", "repro_steps"])
         assert is_valid is False
         assert "repro_steps" in missing
 
@@ -287,10 +283,7 @@ class TestCompactPmPayload:
         """Should limit number of tasks."""
         payload = {
             "overall_goal": "Test",
-            "tasks": [
-                {"id": f"task-{i}", "title": f"Task {i}"}
-                for i in range(10)
-            ],
+            "tasks": [{"id": f"task-{i}", "title": f"Task {i}"} for i in range(10)],
         }
         result = compact_pm_payload(payload, 500)
         assert len(result["tasks"]) < 10
@@ -330,9 +323,7 @@ class TestValidateFilesToEdit:
     def test_validate_missing_files(self, tmp_path):
         """Should report missing files."""
         files = ["nonexistent.py"]
-        is_valid, missing, unreadable = validate_files_to_edit(
-            files, str(tmp_path)
-        )
+        is_valid, missing, _ = validate_files_to_edit(files, str(tmp_path))
         assert is_valid is True  # Missing files don't make it invalid
         assert len(missing) == 1
         assert "nonexistent.py" in missing
@@ -341,9 +332,7 @@ class TestValidateFilesToEdit:
         """Should skip directories."""
         (tmp_path / "test_dir").mkdir()
         files = ["test_dir"]
-        is_valid, missing, unreadable = validate_files_to_edit(
-            files, str(tmp_path)
-        )
+        is_valid, _, unreadable = validate_files_to_edit(files, str(tmp_path))
         assert is_valid is True
         assert unreadable == []
 
@@ -352,9 +341,7 @@ class TestValidateFilesToEdit:
         test_file = tmp_path / "test.py"
         test_file.write_text("print('hello')")
         files = ["test.py"]
-        is_valid, missing, unreadable = validate_files_to_edit(
-            files, str(tmp_path)
-        )
+        is_valid, missing, unreadable = validate_files_to_edit(files, str(tmp_path))
         assert is_valid is True
         assert missing == []
         assert unreadable == []
@@ -365,7 +352,7 @@ class TestWriteGateCheck:
 
     def test_gate_no_changes_not_required(self):
         """Should pass when no changes and change not required."""
-        is_valid, message = write_gate_check(
+        is_valid, _ = write_gate_check(
             changed_files=[],
             act_files=["file.py"],
             require_change=False,
@@ -403,7 +390,7 @@ class TestWriteGateCheck:
 
     def test_gate_with_pm_scope(self):
         """Should check PM target scope."""
-        is_valid, message = write_gate_check(
+        is_valid, _ = write_gate_check(
             changed_files=["src/file.py"],
             act_files=["src/file.py"],
             pm_target_files=["src/"],
@@ -423,7 +410,7 @@ class TestWriteGateCheck:
 
     def test_gate_companion_files_allowed(self):
         """Should allow companion files (tests, docs, etc.)."""
-        is_valid, message = write_gate_check(
+        is_valid, _ = write_gate_check(
             changed_files=["src/file.py", "tests/test_file.py"],
             act_files=["src/file.py"],
         )
@@ -453,7 +440,7 @@ class TestExtractRequiredEvidence:
                     "id": "task-1",
                     "required_evidence": {
                         "coverage_report": True,
-                    }
+                    },
                 }
             ]
         }
@@ -467,8 +454,6 @@ class TestExtractRequiredEvidence:
 
     def test_extract_no_evidence(self):
         """Should return empty dict when no evidence."""
-        payload = {
-            "tasks": [{"id": "task-1"}]
-        }
+        payload = {"tasks": [{"id": "task-1"}]}
         result = extract_required_evidence(payload)
         assert result == {}

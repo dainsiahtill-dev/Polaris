@@ -27,6 +27,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 # Helper: collect names imported from a specific module in a specific file.
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _imported_names(file_path: Path, *, level: int, module: str) -> set[str]:
     """Return the set of names that file_path imports from the given module."""
     source = file_path.read_text(encoding="utf-8")
@@ -42,6 +43,7 @@ def _imported_names(file_path: Path, *, level: int, module: str) -> set[str]:
 # Test 1: core import sanity
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_executor_module_import_succeeds() -> None:
     assert AIExecutor.__name__ == "AIExecutor"
 
@@ -49,6 +51,7 @@ def test_executor_module_import_succeeds() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 2: type identity — engine.contracts re-exports are the same objects
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_stream_event_type_reexport_identity() -> None:
     """engine.contracts must re-export (not redefine) StreamEventType."""
@@ -63,6 +66,7 @@ def test_toolkit_contracts_stream_event_type_identity() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 3: engine/contracts.__all__ covers all shared_contracts types
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_engine_contracts_all_includes_shared_types() -> None:
     """engine/contracts.py __all__ must list every type from shared_contracts.__all__.
@@ -82,6 +86,7 @@ def test_engine_contracts_all_includes_shared_types() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 4: consumer files import shared types via contracts, not directly
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_executor_imports_stream_event_type_from_contracts() -> None:
     """executor.py must import StreamEventType from .contracts, not shared_contracts."""
@@ -107,6 +112,7 @@ def test_model_catalog_imports_modelspec_from_contracts() -> None:
 # Test 5: StreamEventType value-level parity — catches new enum members
 #        that are added to shared_contracts but not handled by consumers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_stream_event_type_values_match_across_layers() -> None:
     """All enum values defined in shared_contracts.StreamEventType must exist

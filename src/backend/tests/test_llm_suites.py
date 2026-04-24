@@ -10,9 +10,7 @@ Tests cover all 5 suite functions:
 
 from __future__ import annotations
 
-import asyncio
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,10 +18,7 @@ import pytest
 
 # Direct import from internal module path using __import__ to bypass package __init__
 # This avoids circular import issues with evaluation cell
-_suites_spec = __import__(
-    "polaris.cells.llm.evaluation.internal.suites",
-    fromlist=["run_connectivity_suite"]
-)
+_suites_spec = __import__("polaris.cells.llm.evaluation.internal.suites", fromlist=["run_connectivity_suite"])
 run_connectivity_suite = _suites_spec.run_connectivity_suite
 run_connectivity_suite_sync = _suites_spec.run_connectivity_suite_sync
 run_response_suite = _suites_spec.run_response_suite
@@ -32,17 +27,18 @@ run_qualification_suite = _suites_spec.run_qualification_suite
 run_interview_suite = _suites_spec.run_interview_suite
 
 from polaris.kernelone.llm.providers.base_provider import BaseProvider
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult
 from polaris.kernelone.llm.shared_contracts import Usage
-
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult
 
 # =============================================================================
 # Fixtures
 # =============================================================================
 
+
 @dataclass
 class FakeHealthResult:
     """Fake HealthResult for testing."""
+
     ok: bool
     latency_ms: int
     error: str | None = None
@@ -51,6 +47,7 @@ class FakeHealthResult:
 @dataclass
 class FakeInvokeResult:
     """Fake InvokeResult for testing."""
+
     ok: bool
     output: str
     latency_ms: int
@@ -60,6 +57,7 @@ class FakeInvokeResult:
 @dataclass
 class FakeModelListResult:
     """Fake ModelListResult for testing."""
+
     ok: bool
     models: list[Any]
     error: str | None = None
@@ -161,15 +159,14 @@ def fake_provider(
 # run_connectivity_suite Tests
 # =============================================================================
 
+
 class TestRunConnectivitySuite:
     """Tests for run_connectivity_suite function."""
 
     @pytest.mark.asyncio
     async def test_provider_not_found(self) -> None:
         """Test that provider not found returns appropriate error."""
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = None
 
             result = await run_connectivity_suite(
@@ -195,15 +192,9 @@ class TestRunConnectivitySuite:
     @pytest.mark.asyncio
     async def test_health_check_failure(self) -> None:
         """Test that health check failure returns appropriate error."""
-        fake = FakeProvider(
-            health_result=FakeHealthResult(
-                ok=False, latency_ms=0, error="Connection timeout"
-            )
-        )
+        fake = FakeProvider(health_result=FakeHealthResult(ok=False, latency_ms=0, error="Connection timeout"))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -220,12 +211,9 @@ class TestRunConnectivitySuite:
         """Test that health check exception returns appropriate error."""
         fake = FakeProvider()
         # Make health raise an exception
-        original_health = fake.health
         fake.health = MagicMock(side_effect=RuntimeError("Network error"))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -238,17 +226,11 @@ class TestRunConnectivitySuite:
         assert result["details"]["health"]["status"] == "error"
 
     @pytest.mark.asyncio
-    async def test_health_check_success(
-        self, mock_provider_manager: MagicMock
-    ) -> None:
+    async def test_health_check_success(self, mock_provider_manager: MagicMock) -> None:
         """Test successful health check returns ok=True."""
-        fake = FakeProvider(
-            health_result=FakeHealthResult(ok=True, latency_ms=50)
-        )
+        fake = FakeProvider(health_result=FakeHealthResult(ok=True, latency_ms=50))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -266,14 +248,10 @@ class TestRunConnectivitySuite:
         """Test Ollama list_models failure returns appropriate error."""
         fake = FakeProvider(
             health_result=FakeHealthResult(ok=True, latency_ms=50),
-            list_models_result=FakeModelListResult(
-                ok=False, models=[], error="Failed to connect"
-            ),
+            list_models_result=FakeModelListResult(ok=False, models=[], error="Failed to connect"),
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -296,9 +274,7 @@ class TestRunConnectivitySuite:
             ),
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -319,14 +295,10 @@ class TestRunConnectivitySuite:
                 ok=True,
                 models=[ModelInfo(id="llama2:latest"), ModelInfo(id="other-model")],
             ),
-            invoke_result=FakeInvokeResult(
-                ok=True, output="OK", latency_ms=100
-            ),
+            invoke_result=FakeInvokeResult(ok=True, output="OK", latency_ms=100),
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -349,14 +321,10 @@ class TestRunConnectivitySuite:
                 ok=True,
                 models=[ModelInfo(id="llama2")],
             ),
-            invoke_result=FakeInvokeResult(
-                ok=False, output="", latency_ms=0, error="Invoke failed"
-            ),
+            invoke_result=FakeInvokeResult(ok=False, output="", latency_ms=0, error="Invoke failed"),
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -370,13 +338,9 @@ class TestRunConnectivitySuite:
     @pytest.mark.asyncio
     async def test_api_key_override(self) -> None:
         """Test that api_key parameter overrides provider_cfg api_key."""
-        fake = FakeProvider(
-            health_result=FakeHealthResult(ok=True, latency_ms=50)
-        )
+        fake = FakeProvider(health_result=FakeHealthResult(ok=True, latency_ms=50))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             await run_connectivity_suite(
@@ -393,18 +357,15 @@ class TestRunConnectivitySuite:
 # run_connectivity_suite_sync Tests
 # =============================================================================
 
+
 class TestRunConnectivitySuiteSync:
     """Tests for run_connectivity_suite_sync function."""
 
     def test_sync_wrapper_success(self) -> None:
         """Test synchronous wrapper returns successful result."""
-        fake = FakeProvider(
-            health_result=FakeHealthResult(ok=True, latency_ms=50)
-        )
+        fake = FakeProvider(health_result=FakeHealthResult(ok=True, latency_ms=50))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = run_connectivity_suite_sync(
@@ -420,9 +381,7 @@ class TestRunConnectivitySuiteSync:
         fake = FakeProvider()
         fake.health = MagicMock(side_effect=RuntimeError("Sync error"))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = run_connectivity_suite_sync(
@@ -438,15 +397,14 @@ class TestRunConnectivitySuiteSync:
 # run_response_suite Tests
 # =============================================================================
 
+
 class TestRunResponseSuite:
     """Tests for run_response_suite function."""
 
     @pytest.mark.asyncio
     async def test_provider_not_found(self) -> None:
         """Test that provider not found returns appropriate error."""
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = None
 
             result = await run_response_suite(
@@ -460,15 +418,9 @@ class TestRunResponseSuite:
     @pytest.mark.asyncio
     async def test_invoke_failure(self) -> None:
         """Test that invoke failure returns appropriate error."""
-        fake = FakeProvider(
-            invoke_result=FakeInvokeResult(
-                ok=False, output="", latency_ms=0, error="API error"
-            )
-        )
+        fake = FakeProvider(invoke_result=FakeInvokeResult(ok=False, output="", latency_ms=0, error="API error"))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_response_suite(
@@ -490,9 +442,7 @@ class TestRunResponseSuite:
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_response_suite(
@@ -515,9 +465,7 @@ class TestRunResponseSuite:
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_response_suite(
@@ -534,9 +482,7 @@ class TestRunResponseSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=RuntimeError("Connection lost"))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_response_suite(
@@ -552,15 +498,14 @@ class TestRunResponseSuite:
 # run_thinking_suite Tests
 # =============================================================================
 
+
 class TestRunThinkingSuite:
     """Tests for run_thinking_suite function."""
 
     @pytest.mark.asyncio
     async def test_provider_not_found(self) -> None:
         """Test that provider not found returns appropriate error."""
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = None
 
             result = await run_thinking_suite(
@@ -574,15 +519,9 @@ class TestRunThinkingSuite:
     @pytest.mark.asyncio
     async def test_invoke_failure(self) -> None:
         """Test that invoke failure returns appropriate error."""
-        fake = FakeProvider(
-            invoke_result=FakeInvokeResult(
-                ok=False, output="", latency_ms=0, error="API error"
-            )
-        )
+        fake = FakeProvider(invoke_result=FakeInvokeResult(ok=False, output="", latency_ms=0, error="API error"))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(
@@ -613,9 +552,7 @@ class TestRunThinkingSuite:
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(
@@ -639,9 +576,7 @@ class TestRunThinkingSuite:
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(
@@ -664,9 +599,7 @@ class TestRunThinkingSuite:
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(
@@ -683,17 +616,12 @@ class TestRunThinkingSuite:
         fake = FakeProvider(
             invoke_result=FakeInvokeResult(
                 ok=True,
-                output=(
-                    "<thinking>Let me calculate</thinking>\n"
-                    "<answer>The speed is 60 km/h</answer>"
-                ),
+                output=("<thinking>Let me calculate</thinking>\n<answer>The speed is 60 km/h</answer>"),
                 latency_ms=100,
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(
@@ -711,17 +639,12 @@ class TestRunThinkingSuite:
         fake = FakeProvider(
             invoke_result=FakeInvokeResult(
                 ok=True,
-                output=(
-                    "<thinking>Reasoning process here</thinking>\n"
-                    "<answer>The answer is 120</answer>"
-                ),
+                output=("<thinking>Reasoning process here</thinking>\n<answer>The answer is 120</answer>"),
                 latency_ms=100,
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(
@@ -738,9 +661,7 @@ class TestRunThinkingSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=RuntimeError("Connection lost"))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(
@@ -756,15 +677,14 @@ class TestRunThinkingSuite:
 # run_qualification_suite Tests
 # =============================================================================
 
+
 class TestRunQualificationSuite:
     """Tests for run_qualification_suite function."""
 
     @pytest.mark.asyncio
     async def test_provider_not_found(self) -> None:
         """Test that provider not found returns appropriate error."""
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = None
 
             result = await run_qualification_suite(
@@ -800,9 +720,7 @@ class TestRunQualificationSuite:
         fake = FakeProvider()
         fake.invoke = invoke_sync  # type: ignore - replace with sync function
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_qualification_suite(
@@ -830,7 +748,7 @@ class TestRunQualificationSuite:
         responses = [
             '{"result": "success", "value": 42}',  # json_basic
             '["a", "b", "c"]',  # list_format
-            'def hello():\n    pass',  # no_deflection
+            "def hello():\n    pass",  # no_deflection
         ]
         response_index = {"index": 0}
 
@@ -847,9 +765,7 @@ class TestRunQualificationSuite:
         fake = FakeProvider()
         fake.invoke = invoke_sync  # type: ignore - replace with sync function
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_qualification_suite(
@@ -867,8 +783,8 @@ class TestRunQualificationSuite:
         """Test that below 60% pass rate returns ok=False."""
         responses = [
             '{"result": "success"}',  # json_basic - passes
-            'invalid',  # list_format - fails (no brackets)
-            'I cannot help',  # no_deflection - fails (deflection detected)
+            "invalid",  # list_format - fails (no brackets)
+            "I cannot help",  # no_deflection - fails (deflection detected)
         ]
         response_index = {"index": 0}
 
@@ -885,9 +801,7 @@ class TestRunQualificationSuite:
         fake = FakeProvider()
         fake.invoke = invoke_sync  # type: ignore - replace with sync function
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_qualification_suite(
@@ -905,9 +819,7 @@ class TestRunQualificationSuite:
         """Test that exception in one case doesn't fail entire suite."""
         call_count = {"count": 0}
 
-        def invoke_side_effect(
-            prompt: str, model: str, config: dict[str, Any]
-        ) -> InvokeResult:
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
             call_count["count"] += 1
             if call_count["count"] == 1:
                 # First call succeeds
@@ -924,9 +836,7 @@ class TestRunQualificationSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=invoke_side_effect)
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_qualification_suite(
@@ -947,15 +857,14 @@ class TestRunQualificationSuite:
 # run_interview_suite Tests
 # =============================================================================
 
+
 class TestRunInterviewSuite:
     """Tests for run_interview_suite function."""
 
     @pytest.mark.asyncio
     async def test_provider_not_found(self) -> None:
         """Test that provider not found returns appropriate error."""
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = None
 
             result = await run_interview_suite(
@@ -969,10 +878,9 @@ class TestRunInterviewSuite:
     @pytest.mark.asyncio
     async def test_semantic_scoring_enabled(self) -> None:
         """Test semantic scoring when INTERVIEW_SEMANTIC_ENABLED is True."""
+
         # Mock semantic_criteria_hits to return specific values
-        def invoke_side_effect(
-            prompt: str, model: str, config: dict[str, Any]
-        ) -> InvokeResult:
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
             return InvokeResult(
                 ok=True,
                 output=(
@@ -991,14 +899,10 @@ class TestRunInterviewSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=invoke_side_effect)
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
-            with patch(
-                "polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits"
-            ) as mock_hits:
+            with patch("polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits") as mock_hits:
                 # Return hits indicating all criteria met
                 mock_hits.return_value = {
                     "prioritize": 0.8,
@@ -1020,9 +924,8 @@ class TestRunInterviewSuite:
     @pytest.mark.asyncio
     async def test_fallback_scoring_short_answer(self) -> None:
         """Test fallback scoring when answer is too short."""
-        def invoke_side_effect(
-            prompt: str, model: str, config: dict[str, Any]
-        ) -> InvokeResult:
+
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
             # Very short answer
             return InvokeResult(
                 ok=True,
@@ -1034,9 +937,7 @@ class TestRunInterviewSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=invoke_side_effect)
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             with patch(
@@ -1055,9 +956,8 @@ class TestRunInterviewSuite:
     @pytest.mark.asyncio
     async def test_fallback_scoring_semantic_disabled(self) -> None:
         """Test fallback scoring when semantic scoring is disabled."""
-        def invoke_side_effect(
-            prompt: str, model: str, config: dict[str, Any]
-        ) -> InvokeResult:
+
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
             # Long enough answer for semantic but will use fallback
             return InvokeResult(
                 ok=True,
@@ -1075,9 +975,7 @@ class TestRunInterviewSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=invoke_side_effect)
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             # Disable semantic scoring
@@ -1099,9 +997,7 @@ class TestRunInterviewSuite:
         """Test that average score above 0.6 returns ok=True."""
         call_count = {"count": 0}
 
-        def invoke_side_effect(
-            prompt: str, model: str, config: dict[str, Any]
-        ) -> InvokeResult:
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
             call_count["count"] += 1
             return InvokeResult(
                 ok=True,
@@ -1119,14 +1015,10 @@ class TestRunInterviewSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=invoke_side_effect)
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
-            with patch(
-                "polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits"
-            ) as mock_hits:
+            with patch("polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits") as mock_hits:
                 # All criteria hit with high scores
                 mock_hits.return_value = {
                     "prioritize": 0.9,
@@ -1153,9 +1045,7 @@ class TestRunInterviewSuite:
         ]
         response_index = {"index": 0}
 
-        def invoke_sync(
-            prompt: str, model: str, config: dict[str, Any]
-        ) -> InvokeResult:
+        def invoke_sync(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
             idx = response_index["index"]
             response_index["index"] = idx + 1
             if idx > 0:
@@ -1170,14 +1060,10 @@ class TestRunInterviewSuite:
         fake = FakeProvider()
         fake.invoke = invoke_sync  # type: ignore - replace with sync function
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
-            with patch(
-                "polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits"
-            ) as mock_hits:
+            with patch("polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits") as mock_hits:
                 mock_hits.return_value = {
                     "prioritize": 0.8,
                     "communicate": 0.7,
@@ -1200,9 +1086,7 @@ class TestRunInterviewSuite:
         """Test that role parameter is passed correctly."""
         captured_prompts: list[str] = []
 
-        def invoke_side_effect(
-            prompt: str, model: str, config: dict[str, Any]
-        ) -> InvokeResult:
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
             captured_prompts.append(prompt)
             return InvokeResult(
                 ok=True,
@@ -1214,9 +1098,7 @@ class TestRunInterviewSuite:
         fake = FakeProvider()
         fake.invoke = MagicMock(side_effect=invoke_side_effect)
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             await run_interview_suite(
@@ -1233,6 +1115,7 @@ class TestRunInterviewSuite:
 # =============================================================================
 # Edge Cases and Boundary Tests
 # =============================================================================
+
 
 class TestEdgeCases:
     """Edge case tests for suite functions."""
@@ -1259,13 +1142,9 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_none_model(self) -> None:
         """Test handling of None model."""
-        fake = FakeProvider(
-            health_result=FakeHealthResult(ok=True, latency_ms=50)
-        )
+        fake = FakeProvider(health_result=FakeHealthResult(ok=True, latency_ms=50))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -1287,9 +1166,7 @@ class TestEdgeCases:
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_response_suite(
@@ -1303,13 +1180,9 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_none_latency(self) -> None:
         """Test handling of None latency in result."""
-        fake = FakeProvider(
-            health_result=FakeHealthResult(ok=True, latency_ms=0)
-        )
+        fake = FakeProvider(health_result=FakeHealthResult(ok=True, latency_ms=0))
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -1326,6 +1199,7 @@ class TestEdgeCases:
 # Integration-like Tests (with mocked provider)
 # =============================================================================
 
+
 class TestSuiteIntegration:
     """Integration-like tests using mocked providers."""
 
@@ -1338,14 +1212,10 @@ class TestSuiteIntegration:
                 ok=True,
                 models=[ModelInfo(id="llama2:latest")],
             ),
-            invoke_result=FakeInvokeResult(
-                ok=True, output="OK", latency_ms=75
-            ),
+            invoke_result=FakeInvokeResult(ok=True, output="OK", latency_ms=75),
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_connectivity_suite(
@@ -1384,9 +1254,7 @@ class TestSuiteIntegration:
             )
         )
 
-        with patch(
-            "polaris.cells.llm.evaluation.internal.suites.get_provider_manager"
-        ) as mock_pm:
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
             result = await run_thinking_suite(

@@ -15,11 +15,7 @@ from polaris.kernelone.context.engine import (  # noqa: E402
 def test_repo_map_provider_basic(tmp_path):
     sample = tmp_path / "sample.py"
     sample.write_text(
-        "class Foo:\n"
-        "    def bar(self):\n"
-        "        return 1\n\n"
-        "def baz():\n"
-        "    return 2\n",
+        "class Foo:\n    def bar(self):\n        return 1\n\ndef baz():\n    return 2\n",
         encoding="utf-8",
     )
 

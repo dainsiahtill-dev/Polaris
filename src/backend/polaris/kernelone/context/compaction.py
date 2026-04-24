@@ -14,7 +14,10 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from polaris.kernelone.llm.toolkit.abc import LLMClient
 
 from polaris.kernelone.context.control_plane_noise import is_control_plane_noise
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
@@ -329,7 +332,7 @@ class RoleContextCompressor:
         self,
         workspace: str,
         role_name: str = "ContextCompressor",
-        llm_client=None,
+        llm_client: "LLMClient | None" = None,
         model: str = "",
         transcript_service: TranscriptServicePort | None = None,
         config: dict[str, Any] | None = None,

@@ -195,9 +195,7 @@ async def test_dialogue_service_role_success(monkeypatch: pytest.MonkeyPatch) ->
     result = await service.invoke_role_dialogue(
         InvokeRoleDialogueCommandV1(workspace="workspace", role="pm", message="hi")
     )
-    parsed = service.validate_role_output(
-        ValidateRoleOutputQueryV1(role="pm", output='{"task":"ok"}')
-    )
+    parsed = service.validate_role_output(ValidateRoleOutputQueryV1(role="pm", output='{"task":"ok"}'))
 
     assert result.ok is True
     assert result.content == "hello"

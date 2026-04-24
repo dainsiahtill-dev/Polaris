@@ -8,4 +8,3 @@ def test_plan_sync_no_plan_source_is_noop(tmp_path) -> None:
     workspace = str(tmp_path)
     cache_root = build_cache_root("", workspace)
     _sync_plan_to_runtime(workspace, cache_root)
-

@@ -179,7 +179,9 @@ def observed_with_tools() -> ObservedBenchmarkRun:
 class TestCheckRequiredTools:
     """Test suite for _check_required_tools function."""
 
-    def test_required_tools_all_present(self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_required_tools_all_present(
+        self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """All required tools are present in the observed trace."""
         checks = _check_required_tools(tool_case_with_requirements, observed_with_tools)
         required_tool_checks = [c for c in checks if c.code.startswith("required_tool:")]
@@ -207,7 +209,9 @@ class TestCheckRequiredTools:
         assert search_code_check.passed is False
         assert search_code_check.category == "tooling"
 
-    def test_min_tool_calls_pass(self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_min_tool_calls_pass(
+        self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """Tool call count meets minimum requirement."""
         checks = _check_required_tools(tool_case_with_requirements, observed_with_tools)
         min_check = next(c for c in checks if c.code == "min_tool_calls")
@@ -234,7 +238,9 @@ class TestCheckRequiredTools:
         assert min_check.passed is False
         assert min_check.evidence["tool_call_count"] == 1
 
-    def test_max_tool_calls_pass(self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_max_tool_calls_pass(
+        self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """Tool call count is within maximum."""
         checks = _check_required_tools(tool_case_with_requirements, observed_with_tools)
         max_check = next(c for c in checks if c.code == "max_tool_calls")
@@ -262,7 +268,9 @@ class TestCheckRequiredTools:
         assert max_check.passed is False
         assert max_check.evidence["tool_call_count"] == 10
 
-    def test_max_tool_calls_not_set(self, basic_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_max_tool_calls_not_set(
+        self, basic_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """No max_tool_calls check when limit is not set."""
         checks = _check_required_tools(basic_case, observed_with_tools)
         max_checks = [c for c in checks if c.code == "max_tool_calls"]
@@ -286,7 +294,9 @@ class TestCheckRequiredTools:
 
         assert all(not c.passed for c in required_tool_checks)
 
-    def test_observed_tools_in_evidence(self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_observed_tools_in_evidence(
+        self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """Evidence contains the list of observed tools."""
         checks = _check_required_tools(tool_case_with_requirements, observed_with_tools)
         check = checks[0]
@@ -303,7 +313,9 @@ class TestCheckRequiredTools:
 class TestCheckForbiddenTools:
     """Test suite for forbidden tools detection (via _check_required_tools)."""
 
-    def test_forbidden_tool_not_in_trace(self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_forbidden_tool_not_in_trace(
+        self, tool_case_with_requirements: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """Forbidden tool is not present in the trace."""
         checks = _check_required_tools(tool_case_with_requirements, observed_with_tools)
         forbidden_check = next(c for c in checks if c.code.startswith("forbidden_tool:"))
@@ -373,7 +385,9 @@ class TestCheckForbiddenTools:
 class TestCheckToolArguments:
     """Test suite for _check_tool_arguments function."""
 
-    def test_required_argument_matching(self, argument_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_required_argument_matching(
+        self, argument_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """Required argument fragment is found in tool calls."""
         checks = _check_tool_arguments(argument_case, observed_with_tools)
         required_checks = [c for c in checks if c.code.startswith("required_tool_argument:")]
@@ -400,7 +414,9 @@ class TestCheckToolArguments:
         assert py_check.passed is False
         assert py_check.category == "evidence"
 
-    def test_forbidden_argument_not_in_trace(self, argument_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_forbidden_argument_not_in_trace(
+        self, argument_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """Forbidden argument fragment is not in trace."""
         checks = _check_tool_arguments(argument_case, observed_with_tools)
         forbidden_checks = [c for c in checks if c.code.startswith("forbidden_tool_argument:")]
@@ -448,7 +464,9 @@ class TestCheckToolArguments:
         # Should fail because the rule requires read_file tool
         assert py_check.passed is False
 
-    def test_empty_arguments_case(self, basic_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun) -> None:
+    def test_empty_arguments_case(
+        self, basic_case: AgenticBenchmarkCase, observed_with_tools: ObservedBenchmarkRun
+    ) -> None:
         """Case with no argument rules returns empty checks."""
         checks = _check_tool_arguments(basic_case, observed_with_tools)
         assert len(checks) == 0
@@ -628,7 +646,7 @@ class TestValidatorPmPlanJson:
 
         Let me know if you have questions.
         """
-        ok, message = _validator_pm_plan_json(output, MagicMock(), [])
+        ok, _ = _validator_pm_plan_json(output, MagicMock(), [])
 
         assert ok is True
 
@@ -669,7 +687,7 @@ class TestValidatorPmPlanJson:
 
     def test_empty_string(self) -> None:
         """Empty string fails validation."""
-        ok, message = _validator_pm_plan_json("", MagicMock(), [])
+        ok, _ = _validator_pm_plan_json("", MagicMock(), [])
 
         assert ok is False
 
@@ -683,14 +701,16 @@ class TestValidatorPmPlanJson:
 
     def test_extra_keys_allowed(self) -> None:
         """Extra keys in PM plan are allowed."""
-        output = json.dumps({
-            "goal": "Ship feature",
-            "backlog": ["task1"],
-            "timeline": "week 1",
-            "extra": "value",
-            "priority": "high",
-        })
-        ok, message = _validator_pm_plan_json(output, MagicMock(), [])
+        output = json.dumps(
+            {
+                "goal": "Ship feature",
+                "backlog": ["task1"],
+                "timeline": "week 1",
+                "extra": "value",
+                "priority": "high",
+            }
+        )
+        ok, _ = _validator_pm_plan_json(output, MagicMock(), [])
 
         assert ok is True
 
@@ -714,14 +734,14 @@ class TestValidatorQaPassfailJson:
     def test_valid_pass_boolean(self) -> None:
         """Valid QA verdict with pass=true (alternative key) passes."""
         output = json.dumps({"pass": True})
-        ok, message = _validator_qa_passfail_json(output, MagicMock(), [])
+        ok, _ = _validator_qa_passfail_json(output, MagicMock(), [])
 
         assert ok is True
 
     def test_valid_success_key(self) -> None:
         """Valid QA verdict with success=true (alternative key) passes."""
         output = json.dumps({"success": True})
-        ok, message = _validator_qa_passfail_json(output, MagicMock(), [])
+        ok, _ = _validator_qa_passfail_json(output, MagicMock(), [])
 
         assert ok is True
 
@@ -758,28 +778,28 @@ class TestValidatorQaPassfailJson:
         {"passed": true, "findings": ["all tests green"]}
         ```
         """
-        ok, message = _validator_qa_passfail_json(output, MagicMock(), [])
+        ok, _ = _validator_qa_passfail_json(output, MagicMock(), [])
 
         assert ok is True
 
     def test_qa_verdict_as_plain_object(self) -> None:
         """QA verdict as plain object (not in code block) is parsed."""
         output = '{"passed": true}'
-        ok, message = _validator_qa_passfail_json(output, MagicMock(), [])
+        ok, _ = _validator_qa_passfail_json(output, MagicMock(), [])
 
         assert ok is True
 
     def test_qa_verdict_integer_pass_value(self) -> None:
         """QA verdict with integer pass value (1) passes."""
         output = json.dumps({"passed": 1})
-        ok, message = _validator_qa_passfail_json(output, MagicMock(), [])
+        ok, _ = _validator_qa_passfail_json(output, MagicMock(), [])
 
         assert ok is True
 
     def test_qa_verdict_string_pass_value(self) -> None:
         """QA verdict with string pass value ('true') passes."""
         output = json.dumps({"passed": "true"})
-        ok, message = _validator_qa_passfail_json(output, MagicMock(), [])
+        ok, _ = _validator_qa_passfail_json(output, MagicMock(), [])
 
         assert ok is True
 
@@ -843,7 +863,7 @@ class TestHelperFunctions:
 
     def test_extract_json_dict_in_text(self) -> None:
         """Extract JSON object embedded in text."""
-        text = "Here is the result: ```json\n{\"status\": \"ok\"}\n``` End."
+        text = 'Here is the result: ```json\n{"status": "ok"}\n``` End.'
         result = _extract_json_dict(text)
 
         assert result == {"status": "ok"}
@@ -1162,7 +1182,7 @@ class TestValidatorRegistry:
 
         result = registry.get("custom_validator")
         assert result is not None
-        metadata, func = result
+        metadata, _ = result
         assert metadata.category == ValidatorCategory.CONTRACT  # default
 
     def test_registry_get_nonexistent(self) -> None:
@@ -1184,15 +1204,11 @@ class TestValidatorRegistry:
         registry = ValidatorRegistry()
 
         @registry.register("validator_1")
-        def v1(
-            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
-        ) -> tuple[bool, str]:
+        def v1(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
             return (True, "ok")
 
         @registry.register("validator_2", category=ValidatorCategory.SAFETY)
-        def v2(
-            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
-        ) -> tuple[bool, str]:
+        def v2(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
             return (True, "ok")
 
         validators = registry.list_validators()
@@ -1261,15 +1277,11 @@ class TestValidatorRegistry:
         registry = ValidatorRegistry()
 
         @registry.register("v1")
-        def v1(
-            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
-        ) -> tuple[bool, str]:
+        def v1(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
             return (True, "ok")
 
         @registry.register("v2")
-        def v2(
-            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
-        ) -> tuple[bool, str]:
+        def v2(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
             return (True, "ok")
 
         assert registry.validator_count == 2
@@ -1374,15 +1386,11 @@ class TestCompositeValidator:
         registry = ValidatorRegistry()
 
         @registry.register("v1")
-        def v1(
-            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
-        ) -> tuple[bool, str]:
+        def v1(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
             return (True, "v1 passed")
 
         @registry.register("v2")
-        def v2(
-            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
-        ) -> tuple[bool, str]:
+        def v2(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
             return (False, "v2 failed")
 
         composite = CompositeValidator(
@@ -1483,4 +1491,3 @@ class TestBackwardCompatibility:
 
         verdict = judge_agentic_case(case, observed)
         assert verdict.case_id == "compat_test"
-

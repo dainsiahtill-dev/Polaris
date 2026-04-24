@@ -19,30 +19,25 @@ from polaris.cells.audit.evidence.bundle_service import EvidenceBundleService
 # _get_current_commit: command executor raises an exception
 # ---------------------------------------------------------------------------
 
+
 class TestGetCurrentCommitException:
     def test_returns_sha_unknown_on_exception(self, tmp_path, caplog):
         svc = EvidenceBundleService()
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.side_effect = RuntimeError("git not found")
 
             with caplog.at_level(logging.WARNING):
                 result = svc._get_current_commit(str(tmp_path))
 
-        assert result == "sha-unknown", (
-            "Must return sentinel 'sha-unknown', not 'unknown' or empty string"
-        )
+        assert result == "sha-unknown", "Must return sentinel 'sha-unknown', not 'unknown' or empty string"
 
     def test_logs_warning_with_exc_info_on_exception(self, tmp_path, caplog):
         svc = EvidenceBundleService()
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.side_effect = OSError("permission denied")
 
             with caplog.at_level(logging.WARNING):
@@ -58,10 +53,8 @@ class TestGetCurrentCommitException:
         svc = EvidenceBundleService()
         workspace_str = str(tmp_path)
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.side_effect = RuntimeError("boom")
 
             with caplog.at_level(logging.WARNING):
@@ -70,14 +63,13 @@ class TestGetCurrentCommitException:
         # The workspace path must appear in at least one warning message
         # so operators can locate which workspace triggered the failure
         combined = " ".join(r.message for r in caplog.records if r.levelno >= logging.WARNING)
-        assert workspace_str in combined, (
-            "Warning log must include the workspace path for operator traceability"
-        )
+        assert workspace_str in combined, "Warning log must include the workspace path for operator traceability"
 
 
 # ---------------------------------------------------------------------------
 # _get_current_commit: command returns non-zero exit code
 # ---------------------------------------------------------------------------
+
 
 class TestGetCurrentCommitNonZeroExit:
     def _make_failed_result(self):
@@ -86,10 +78,8 @@ class TestGetCurrentCommitNonZeroExit:
     def test_returns_sha_unknown_on_nonzero_exit(self, tmp_path, caplog):
         svc = EvidenceBundleService()
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.return_value = self._make_failed_result()
 
             with caplog.at_level(logging.WARNING):
@@ -100,10 +90,8 @@ class TestGetCurrentCommitNonZeroExit:
     def test_logs_warning_on_nonzero_exit(self, tmp_path, caplog):
         svc = EvidenceBundleService()
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.return_value = self._make_failed_result()
 
             with caplog.at_level(logging.WARNING):
@@ -118,37 +106,33 @@ class TestGetCurrentCommitNonZeroExit:
 # _get_current_commit: command returns empty stdout
 # ---------------------------------------------------------------------------
 
+
 class TestGetCurrentCommitEmptyStdout:
     def test_returns_sha_unknown_on_empty_stdout(self, tmp_path, caplog):
         svc = EvidenceBundleService()
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.return_value = {"ok": True, "returncode": 0, "stdout": "   "}
 
             with caplog.at_level(logging.WARNING):
                 result = svc._get_current_commit(str(tmp_path))
 
-        assert result == "sha-unknown", (
-            "Empty/whitespace-only stdout must also yield 'sha-unknown'"
-        )
+        assert result == "sha-unknown", "Empty/whitespace-only stdout must also yield 'sha-unknown'"
 
 
 # ---------------------------------------------------------------------------
 # _get_current_commit: happy path (sanity check)
 # ---------------------------------------------------------------------------
 
+
 class TestGetCurrentCommitSuccess:
     def test_returns_sha_on_success(self, tmp_path):
         svc = EvidenceBundleService()
         expected_sha = "abc123def456abc123def456abc123def456abc1"
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.return_value = {
                 "ok": True,
                 "returncode": 0,
@@ -164,6 +148,7 @@ class TestGetCurrentCommitSuccess:
 # Sentinel value contract: "sha-unknown" is detectable, "unknown" is not
 # ---------------------------------------------------------------------------
 
+
 class TestSentinelContract:
     """Verify the sentinel is the specific string 'sha-unknown'.
 
@@ -175,17 +160,14 @@ class TestSentinelContract:
     def test_sentinel_is_not_generic_unknown(self, tmp_path, caplog):
         svc = EvidenceBundleService()
 
-        with patch(
-            "polaris.cells.audit.evidence.bundle_service.CommandExecutionService"
-        ) as MockCmdSvc:
-            instance = MockCmdSvc.return_value
+        with patch("polaris.cells.audit.evidence.bundle_service.CommandExecutionService") as mock_cmd_svc:
+            instance = mock_cmd_svc.return_value
             instance.run.side_effect = RuntimeError("any failure")
 
             with caplog.at_level(logging.WARNING):
                 result = svc._get_current_commit(str(tmp_path))
 
         assert result != "unknown", (
-            "Sentinel must NOT be the ambiguous string 'unknown'; "
-            "it must be 'sha-unknown' to be clearly detectable"
+            "Sentinel must NOT be the ambiguous string 'unknown'; it must be 'sha-unknown' to be clearly detectable"
         )
         assert result == "sha-unknown"

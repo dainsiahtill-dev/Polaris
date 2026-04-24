@@ -20,10 +20,13 @@ from polaris.cells.director.execution.internal.context_gatherer import GatheredC
 # Stubs
 # ---------------------------------------------------------------------------
 
+
 def _make_run_tool(responses: dict) -> callable:
     """Return a run_tool stub that returns responses[tool_name] or {}."""
+
     def _run(tool_name: str, **kwargs):
         return responses.get(tool_name, {})
+
     return _run
 
 
@@ -36,13 +39,16 @@ FILE_RESULT = {"content": [{"t": "export function hello() {"}, {"t": "  return 4
 # CREATE mode
 # ---------------------------------------------------------------------------
 
+
 class TestGatherCreate:
     def test_returns_gathered_context(self, tmp_path):
         ws = str(tmp_path)
-        run_tool = _make_run_tool({
-            "repo_tree": TREE_RESULT,
-            "repo_read_head": PACKAGE_RESULT,
-        })
+        run_tool = _make_run_tool(
+            {
+                "repo_tree": TREE_RESULT,
+                "repo_read_head": PACKAGE_RESULT,
+            }
+        )
         ctx = gather("create", ["src/new.ts"], ws, run_tool=run_tool)
         assert isinstance(ctx, GatheredContext)
         assert ctx.mode == "create"
@@ -52,10 +58,12 @@ class TestGatherCreate:
         ws = str(tmp_path)
         pkg_json = tmp_path / "package.json"
         pkg_json.write_text('{"name": "test"}')
-        run_tool = _make_run_tool({
-            "repo_tree": TREE_RESULT,
-            "repo_read_head": PACKAGE_RESULT,
-        })
+        run_tool = _make_run_tool(
+            {
+                "repo_tree": TREE_RESULT,
+                "repo_read_head": PACKAGE_RESULT,
+            }
+        )
         ctx = gather("create", ["src/new.ts"], ws, run_tool=run_tool)
         assert ctx.package_meta != ""
 
@@ -74,25 +82,30 @@ class TestGatherCreate:
 # MODIFY mode
 # ---------------------------------------------------------------------------
 
+
 class TestGatherModify:
     def test_reads_existing_target_files(self, tmp_path):
         ws = str(tmp_path)
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "existing.ts").write_text("export const x = 1;")
-        run_tool = _make_run_tool({
-            "repo_tree": TREE_RESULT,
-            "repo_read_head": FILE_RESULT,
-        })
+        run_tool = _make_run_tool(
+            {
+                "repo_tree": TREE_RESULT,
+                "repo_read_head": FILE_RESULT,
+            }
+        )
         ctx = gather("modify", ["src/existing.ts"], ws, run_tool=run_tool)
         assert ctx.mode == "modify"
         assert "src/existing.ts" in ctx.target_contents
 
     def test_missing_file_in_modify_noted_as_to_create(self, tmp_path):
         ws = str(tmp_path)
-        run_tool = _make_run_tool({
-            "repo_tree": TREE_RESULT,
-            "repo_read_head": {},
-        })
+        run_tool = _make_run_tool(
+            {
+                "repo_tree": TREE_RESULT,
+                "repo_read_head": {},
+            }
+        )
         ctx = gather("modify", ["src/missing.ts"], ws, run_tool=run_tool)
         assert "files_to_create" in ctx.extra
         assert "src/missing.ts" in ctx.extra["files_to_create"]
@@ -102,11 +115,14 @@ class TestGatherModify:
 # Tool failure resilience
 # ---------------------------------------------------------------------------
 
+
 class TestGatherResilient:
     def test_tree_failure_does_not_crash(self, tmp_path):
         ws = str(tmp_path)
+
         def _failing_run(tool_name, **kwargs):
             raise RuntimeError("tool unavailable")
+
         ctx = gather("create", ["src/new.ts"], ws, run_tool=_failing_run)
         assert ctx is not None
         assert ctx.tree == ""

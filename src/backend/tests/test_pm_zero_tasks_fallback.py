@@ -83,11 +83,7 @@ def test_build_requirements_fallback_payload_generates_tasks() -> None:
     assert any("bootstrap" in title for title in titles)
     assert any("tests" in title for title in titles)
     bootstrap = next(
-        (
-            item
-            for item in tasks
-            if "bootstrap" in str(item.get("title") or "").lower()
-        ),
+        (item for item in tasks if "bootstrap" in str(item.get("title") or "").lower()),
         {},
     )
     metadata = bootstrap.get("metadata")
@@ -131,9 +127,7 @@ def test_build_requirements_fallback_payload_extracts_round_tasks() -> None:
         targets = task.get("target_files") or []
         assert "src/monolith_service.py" in targets
 
-    all_acceptance = "\n".join(
-        "\n".join(task.get("acceptance_criteria") or []) for task in first_three
-    ).lower()
+    all_acceptance = "\n".join("\n".join(task.get("acceptance_criteria") or []) for task in first_three).lower()
     assert "add_task" in all_acceptance
     assert "update_task" in all_acceptance
     assert "deprecated helper" in all_acceptance
@@ -224,4 +218,3 @@ def test_build_requirements_fallback_payload_honors_docs_stage_without_synthetic
 
     notes = str(payload.get("notes") or "").lower()
     assert "docs stage strict mode active" in notes
-

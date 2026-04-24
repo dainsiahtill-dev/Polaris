@@ -11,8 +11,8 @@ from polaris.infrastructure.compat.io_utils import (
 )
 from polaris.kernelone.fs.text_ops import (
     append_text_atomic as kernel_append_text_atomic,
+    write_text_atomic as kernel_write_text_atomic,
 )
-from polaris.kernelone.fs.text_ops import write_text_atomic as kernel_write_text_atomic
 from polaris.kernelone.storage import resolve_storage_roots
 
 

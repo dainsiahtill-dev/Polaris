@@ -30,9 +30,7 @@ class TestPMChatRouter:
     async def test_ping_returns_200(self) -> None:
         """GET /v2/pm/chat/ping returns 200 with status."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v2/pm/chat/ping")
 
         assert response.status_code == 200
@@ -55,9 +53,7 @@ class TestPMChatRouter:
                 "provider": "test-provider",
             }
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.post(
                     "/v2/pm/chat",
                     json={"message": "Hello PM"},
@@ -72,9 +68,7 @@ class TestPMChatRouter:
     async def test_chat_returns_error_without_message(self) -> None:
         """POST /v2/pm/chat returns error when message is missing."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/v2/pm/chat",
                 json={},
@@ -88,9 +82,7 @@ class TestPMChatRouter:
     async def test_chat_returns_error_with_empty_message(self) -> None:
         """POST /v2/pm/chat returns error when message is empty string."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/v2/pm/chat",
                 json={"message": "   "},
@@ -110,9 +102,7 @@ class TestPMChatRouter:
         ) as mock_generate:
             mock_generate.side_effect = RuntimeError("LLM service unavailable")
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.post(
                     "/v2/pm/chat",
                     json={"message": "Hello PM"},
@@ -125,14 +115,14 @@ class TestPMChatRouter:
 
     async def test_chat_stream_returns_sse_response(self) -> None:
         """POST /v2/pm/chat/stream returns SSE response."""
-        app = _build_app()
+        _build_app()
         # Skip SSE test as it requires streaming response handling
         # The endpoint is tested for basic functionality
         pytest.skip("SSE streaming test requires special handling")
 
     async def test_chat_stream_returns_error_without_message(self) -> None:
         """POST /v2/pm/chat/stream returns SSE error when message is missing."""
-        app = _build_app()
+        _build_app()
         # Skip SSE test as it requires streaming response handling
         pytest.skip("SSE streaming test requires special handling")
 
@@ -151,18 +141,12 @@ class TestPMChatRouter:
             patch(
                 "polaris.delivery.http.routers.pm_chat.llm_config.load_llm_config",
                 return_value={
-                    "roles": {
-                        "pm": {"provider_id": "openai", "model": "gpt-4"}
-                    },
-                    "providers": {
-                        "openai": {"type": "openai"}
-                    },
+                    "roles": {"pm": {"provider_id": "openai", "model": "gpt-4"}},
+                    "providers": {"openai": {"type": "openai"}},
                 },
             ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/pm/chat/status")
 
         assert response.status_code == 200
@@ -189,9 +173,7 @@ class TestPMChatRouter:
                 return_value={"roles": {}, "providers": {}},
             ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/pm/chat/status")
 
         assert response.status_code == 200
@@ -203,9 +185,7 @@ class TestPMChatRouter:
     async def test_nonexistent_endpoint_returns_404(self) -> None:
         """GET /v2/pm/chat/nonexistent returns 404."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v2/pm/chat/nonexistent")
 
         assert response.status_code == 404

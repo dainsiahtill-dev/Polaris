@@ -42,9 +42,7 @@ class TestCanonicalResultConstruction:
         assert r.value is None
 
     def test_err_with_tagged_error(self) -> None:
-        r: Result[int, TaggedError] = Result.err(
-            TaggedError("NOT_FOUND", "Record not found")
-        )
+        r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "Record not found"))
         assert r.is_ok is False
         assert r.is_err is True
         assert r.error is not None
@@ -66,9 +64,7 @@ class TestCanonicalResultConstruction:
         assert r.error.category == ErrorCategory.INTERNAL_ERROR
 
     def test_err_with_message_only(self) -> None:
-        r: Result[str, TaggedError] = Result.err(
-            TaggedError("INVALID_ARGUMENT", "bad value"), message="Details here"
-        )
+        r: Result[str, TaggedError] = Result.err(TaggedError("INVALID_ARGUMENT", "bad value"), message="Details here")
         assert r.is_ok is False
         assert r.error_message == "Details here"
 
@@ -91,20 +87,16 @@ class TestCanonicalResultAccessors:
     def test_unwrap_on_none_ok(self) -> None:
         r: Result[None, TaggedError] = Result.ok(None)
         # Canonical unwrap() raises on None value (safe: avoids silent None bugs)
-        with pytest.raises(KernelOneError, match="Result.unwrap"):
+        with pytest.raises(KernelOneError, match=r"Result\.unwrap"):
             r.unwrap()
 
     def test_unwrap_raises_on_err(self) -> None:
-        r: Result[int, TaggedError] = Result.err(
-            TaggedError("NOT_FOUND", "not found")
-        )
-        with pytest.raises(KernelOneError, match="Result.unwrap"):
+        r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "not found"))
+        with pytest.raises(KernelOneError, match=r"Result\.unwrap"):
             r.unwrap()
 
     def test_unwrap_raises_on_err_with_message(self) -> None:
-        r: Result[int, TaggedError] = Result.err(
-            TaggedError("NOT_FOUND", "record gone")
-        )
+        r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "record gone"))
         with pytest.raises(KernelOneError, match="record gone"):
             r.unwrap()
 
@@ -113,9 +105,7 @@ class TestCanonicalResultAccessors:
         assert r.unwrap_or(99) == 5
 
     def test_unwrap_or_returns_default_on_err(self) -> None:
-        r: Result[int, TaggedError] = Result.err(
-            TaggedError("UNKNOWN", "bad")
-        )
+        r: Result[int, TaggedError] = Result.err(TaggedError("UNKNOWN", "bad"))
         assert r.unwrap_or(99) == 99
 
 
@@ -178,9 +168,7 @@ class TestCanonicalResultSerialization:
         assert d["value"] == "hello"
 
     def test_to_dict_err(self) -> None:
-        r: Result[int, TaggedError] = Result.err(
-            TaggedError("NOT_FOUND", "not found")
-        )
+        r: Result[int, TaggedError] = Result.err(TaggedError("NOT_FOUND", "not found"))
         d = r.to_dict()
         assert d["ok"] is False
         assert d["error"] is not None

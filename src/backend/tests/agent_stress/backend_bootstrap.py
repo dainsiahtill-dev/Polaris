@@ -44,9 +44,7 @@ logger = logging.getLogger(__name__)
 BOOTSTRAP_CONTEXT_SOURCE = "terminal-auto-bootstrap"
 DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 30.0
 DEFAULT_BOOTSTRAP_WORKSPACE_PREFIX = "tests-agent-stress-backend"
-DEFAULT_BOOTSTRAP_RAMDISK = ensure_stress_runtime_root(
-    default_stress_runtime_root("tests-agent-stress-runtime")
-)
+DEFAULT_BOOTSTRAP_RAMDISK = ensure_stress_runtime_root(default_stress_runtime_root("tests-agent-stress-runtime"))
 BACKEND_SERVER_SCRIPT = BACKEND_ROOT / "server.py"
 
 
@@ -54,9 +52,7 @@ def _fresh_bootstrap_workspace() -> Path:
     """Allocate a unique stress bootstrap workspace to avoid cross-run pollution."""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
     suffix = f"{timestamp}-{secrets.token_hex(4)}"
-    return ensure_stress_workspace_path(
-        default_stress_workspace_base(f"{DEFAULT_BOOTSTRAP_WORKSPACE_PREFIX}-{suffix}")
-    )
+    return ensure_stress_workspace_path(default_stress_workspace_base(f"{DEFAULT_BOOTSTRAP_WORKSPACE_PREFIX}-{suffix}"))
 
 
 def _resolve_bootstrap_workspace(startup_workspace: Path | None) -> Path:
@@ -143,11 +139,11 @@ def _validate_python_environment(python_path: str) -> None:
                 "reason": f"OSError: {exc}",
             },
         ) from exc
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         raise BackendBootstrapError(
             f"Python executable is unresponsive (timeout): {python_path}",
             details={"python_path": python_path},
-        )
+        ) from exc
 
     if version_result.returncode != 0:
         raise BackendBootstrapError(
@@ -169,10 +165,7 @@ def _validate_python_environment(python_path: str) -> None:
         encoding="utf-8",
         errors="replace",
     )
-    has_site_packages = (
-        site_packages_check.returncode == 0
-        and bool(site_packages_check.stdout.strip())
-    )
+    has_site_packages = site_packages_check.returncode == 0 and bool(site_packages_check.stdout.strip())
 
     # 3. Import check inside the target interpreter.  Use a compact
     #    single-line script to avoid Windows -c length limits.
@@ -180,10 +173,7 @@ def _validate_python_environment(python_path: str) -> None:
     #    corrupt the output for subsequent modules.
     import_probe_code = (
         "import sys, importlib.util, json; "
-        + "; ".join(
-            f"print(('OK' if importlib.util.find_spec('{m}') else 'MISSING'))"
-            for m in critical_modules
-        )
+        + "; ".join(f"print(('OK' if importlib.util.find_spec('{m}') else 'MISSING'))" for m in critical_modules)
         + "; print('__SEP__'); "
         + "print(json.dumps(sys.path[:6], ensure_ascii=False))"
     )
@@ -207,16 +197,14 @@ def _validate_python_environment(python_path: str) -> None:
         if sep_idx >= 0:
             spec_part = stdout[:sep_idx].strip()
             path_part = stdout[sep_idx + len("__SEP__") :].strip()
-            for module_name, line in zip(critical_modules, spec_part.splitlines()):
+            for module_name, line in zip(critical_modules, spec_part.splitlines(), strict=False):
                 stripped = line.strip()
                 if stripped == "OK":
                     found.append(module_name)
                 else:
                     missing.append(module_name)
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 sys_path = json.loads(path_part)
-            except json.JSONDecodeError:
-                pass
         else:
             # No separator: treat all as potentially missing.
             missing = list(critical_modules)
@@ -390,11 +378,7 @@ class ManagedBackendSession:
         self._process = None
 
     async def _drain_background_tasks(self, *, timeout: float) -> list[str]:
-        tasks = [
-            task
-            for task in (self._stdout_task, self._stderr_task, self._watch_task)
-            if task is not None
-        ]
+        tasks = [task for task in (self._stdout_task, self._stderr_task, self._watch_task) if task is not None]
         if not tasks:
             return []
 
@@ -655,14 +639,13 @@ async def ensure_backend_session(
     if explicit_cli_values:
         return session
 
-    allow_desktop_context = str(
-        os.environ.get("KERNELONE_STRESS_ALLOW_DESKTOP_CONTEXT") or ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
-    if (
-        auto_bootstrap
-        and context.source == "desktop-backend-info"
-        and not allow_desktop_context
-    ):
+    allow_desktop_context = str(os.environ.get("KERNELONE_STRESS_ALLOW_DESKTOP_CONTEXT") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if auto_bootstrap and context.source == "desktop-backend-info" and not allow_desktop_context:
         return await _auto_bootstrap_backend(
             startup_workspace=_resolve_bootstrap_workspace(startup_workspace),
             ramdisk_root=_resolve_bootstrap_ramdisk_root(ramdisk_root),

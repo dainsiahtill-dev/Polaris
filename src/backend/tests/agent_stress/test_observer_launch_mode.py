@@ -10,12 +10,15 @@ def test_should_spawn_new_console_for_terminal_hosted_local_sessions(
 ) -> None:
     monkeypatch.setattr(observer_main, "IS_WINDOWS", True)
 
-    assert observer_main._should_spawn_new_console_window(
-        {
-            "SESSIONNAME": "Console",
-            "VSCODE_PID": "11128",
-        }
-    ) is True
+    assert (
+        observer_main._should_spawn_new_console_window(
+            {
+                "SESSIONNAME": "Console",
+                "VSCODE_PID": "11128",
+            }
+        )
+        is True
+    )
 
 
 def test_should_spawn_new_console_for_plain_windows_console(
@@ -23,11 +26,14 @@ def test_should_spawn_new_console_for_plain_windows_console(
 ) -> None:
     monkeypatch.setattr(observer_main, "IS_WINDOWS", True)
 
-    assert observer_main._should_spawn_new_console_window(
-        {
-            "SESSIONNAME": "Console",
-        }
-    ) is True
+    assert (
+        observer_main._should_spawn_new_console_window(
+            {
+                "SESSIONNAME": "Console",
+            }
+        )
+        is True
+    )
 
 
 def test_should_not_spawn_new_console_for_ci_or_remote_sessions(
@@ -35,9 +41,12 @@ def test_should_not_spawn_new_console_for_ci_or_remote_sessions(
 ) -> None:
     monkeypatch.setattr(observer_main, "IS_WINDOWS", True)
 
-    assert observer_main._should_spawn_new_console_window(
-        {
-            "SESSIONNAME": "Console",
-            "CI": "1",
-        }
-    ) is False
+    assert (
+        observer_main._should_spawn_new_console_window(
+            {
+                "SESSIONNAME": "Console",
+                "CI": "1",
+            }
+        )
+        is False
+    )

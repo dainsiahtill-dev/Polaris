@@ -3,6 +3,7 @@
 Covers parse_tool_chain_step, normalize_tool_plan, and build_tool_cli_args.
 These are pure, synchronous functions with no I/O — ideal unit test targets.
 """
+
 from __future__ import annotations
 
 from polaris.kernelone.tool_execution.chain import (
@@ -41,15 +42,17 @@ class TestParseToolChainStep:
         assert step.max_retries == 2  # max_retries still set, but on_error=stop means no retries
 
     def test_parses_step_with_chain_metadata(self) -> None:
-        step = parse_tool_chain_step({
-            "tool": "repo_read",
-            "args": {"file": "a.txt"},
-            "step_id": "s1",
-            "save_as": "content_a",
-            "input_from": None,
-            "on_error": "continue",
-            "max_retries": 3,
-        })
+        step = parse_tool_chain_step(
+            {
+                "tool": "repo_read",
+                "args": {"file": "a.txt"},
+                "step_id": "s1",
+                "save_as": "content_a",
+                "input_from": None,
+                "on_error": "continue",
+                "max_retries": 3,
+            }
+        )
 
         assert step.step_id == "s1"
         assert step.save_as == "content_a"

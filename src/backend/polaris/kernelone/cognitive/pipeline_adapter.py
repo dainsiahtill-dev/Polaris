@@ -100,8 +100,10 @@ class CognitivePipelineAdapter:
                 governance_verdict="PASS",
                 confidence=confidence,
             )
-        except Exception:  # noqa: BLE001
+        except (RuntimeError, TypeError, ValueError):
             # 认知管道故障不应阻断 TurnEngine — fail-open
+            # TODO: narrow exception type — evolution pipeline may raise
+            # provider-specific errors (ConnectionError, TimeoutError, etc.)
             logger.debug(
                 "[CognitivePipelineAdapter] pre_turn_cognitive_check failed, proceeding (fail-open)",
                 exc_info=True,
@@ -134,7 +136,9 @@ class CognitivePipelineAdapter:
                 quality_score=1.0,
                 should_continue=True,
             )
-        except Exception:  # noqa: BLE001
+        except (RuntimeError, TypeError, ValueError):
+            # TODO: narrow exception type — evolution pipeline may raise
+            # provider-specific errors (ConnectionError, TimeoutError, etc.)
             logger.debug(
                 "[CognitivePipelineAdapter] post_tool_cognitive_assess failed, continuing (fail-open)",
                 exc_info=True,

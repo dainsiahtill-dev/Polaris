@@ -326,9 +326,7 @@ class TestAuditFailureIsolation:
         assert result.allowed is False
 
     @pytest.mark.asyncio
-    async def test_failing_audit_logs_error(
-        self, service_with_failing_audit, caplog
-    ):
+    async def test_failing_audit_logs_error(self, service_with_failing_audit, caplog):
         """An audit failure must be logged at ERROR level (observable)."""
         import logging
 

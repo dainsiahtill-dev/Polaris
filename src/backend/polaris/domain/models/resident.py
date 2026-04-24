@@ -78,9 +78,11 @@ def coerce_float(
     minimum: float | None = None,
     maximum: float | None = None,
 ) -> float:
+    if value is None:
+        return float(default)
     try:
         parsed = float(value)
-    except (RuntimeError, ValueError) as e:
+    except (RuntimeError, ValueError, TypeError) as e:
         logger.warning("coerce_float failed for value=%r: %s", value, e, exc_info=True)
         parsed = float(default)
     if minimum is not None:

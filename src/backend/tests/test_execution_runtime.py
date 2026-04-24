@@ -9,24 +9,20 @@ from __future__ import annotations
 import asyncio
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from polaris.kernelone.process.async_contracts import (
     PopenAsyncHandle,
     ProcessStatus,
     StreamResult,
 )
 from polaris.kernelone.runtime.execution_runtime import (
-    ExecutionHandle,
-    ExecutionRuntime,
     ExecutionLane,
+    ExecutionRuntime,
     ExecutionStatus,
     _ExecutionState,
 )
-
 
 # =============================================================================
 # Test Fixtures
@@ -46,7 +42,7 @@ def runtime() -> ExecutionRuntime:
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.ensure_future(runtime.close())
+            _ = asyncio.ensure_future(runtime.close())
         else:
             loop.run_until_complete(runtime.close())
     except RuntimeError:
@@ -129,9 +125,7 @@ async def test_handle_process_timeout_logs_warning_on_graceful_failure(
     mock_process_handle.terminate = AsyncMock(return_value=False)
     mock_process_handle.kill = AsyncMock()
 
-    state = make_test_state(
-        "test-789", "my-test-process", mock_process_handle, timeout_seconds=10.0
-    )
+    state = make_test_state("test-789", "my-test-process", mock_process_handle, timeout_seconds=10.0)
 
     await runtime._handle_process_timeout(state, mock_process_handle)
 
@@ -165,9 +159,7 @@ async def test_await_process_completion_handles_timeout_correctly(
         )
     )
 
-    state = make_test_state(
-        "test-timeout", "timeout-process", mock_process_handle, timeout_seconds=1.0
-    )
+    state = make_test_state("test-timeout", "timeout-process", mock_process_handle, timeout_seconds=1.0)
 
     await runtime._await_process_completion(state)
 
@@ -184,9 +176,7 @@ async def test_await_process_completion_cancels_on_task_cancellation(
     mock_process_handle.wait = AsyncMock(side_effect=asyncio.CancelledError)
     mock_process_handle.terminate = AsyncMock(return_value=True)
 
-    state = make_test_state(
-        "test-cancel", "cancel-process", mock_process_handle, timeout_seconds=30.0
-    )
+    state = make_test_state("test-cancel", "cancel-process", mock_process_handle, timeout_seconds=30.0)
 
     with pytest.raises(asyncio.CancelledError):
         await runtime._await_process_completion(state)
@@ -249,9 +239,7 @@ async def test_await_process_completion_handles_success(
         )
     )
 
-    state = make_test_state(
-        "test-success", "success-process", mock_process_handle, timeout_seconds=30.0
-    )
+    state = make_test_state("test-success", "success-process", mock_process_handle, timeout_seconds=30.0)
 
     await runtime._await_process_completion(state)
 
@@ -279,9 +267,7 @@ async def test_await_process_completion_handles_failure(
         )
     )
 
-    state = make_test_state(
-        "test-failure", "failure-process", mock_process_handle, timeout_seconds=30.0
-    )
+    state = make_test_state("test-failure", "failure-process", mock_process_handle, timeout_seconds=30.0)
 
     await runtime._await_process_completion(state)
 
@@ -353,9 +339,7 @@ async def test_timed_out_process_is_not_orphaned(runtime: ExecutionRuntime) -> N
     process = handle.process
     if process is not None:
         poll_result = process.poll()
-        assert poll_result is not None, (
-            "Process should have been terminated and not be still running"
-        )
+        assert poll_result is not None, "Process should have been terminated and not be still running"
 
 
 # =============================================================================
@@ -391,7 +375,7 @@ async def test_terminate_returns_false_when_process_not_responding(
 
     await asyncio.sleep(0.3)
 
-    terminated = await runtime.terminate(handle.execution_id, timeout=1.0)
+    await runtime.terminate(handle.execution_id, timeout=1.0)
 
     snapshot = handle.snapshot()
     assert snapshot.status == ExecutionStatus.CANCELLED
@@ -407,9 +391,7 @@ async def test_await_process_completion_with_missing_handle(
     runtime: ExecutionRuntime,
 ) -> None:
     """Verify proper handling when process handle is None."""
-    state = make_test_state(
-        "test-no-handle", "no-handle-process", None, timeout_seconds=30.0
-    )
+    state = make_test_state("test-no-handle", "no-handle-process", None, timeout_seconds=30.0)
 
     await runtime._await_process_completion(state)
 
@@ -445,9 +427,7 @@ async def test_handle_process_timeout_handles_kill_exception(
     mock_process_handle.terminate = AsyncMock(return_value=False)
     mock_process_handle.kill = AsyncMock(side_effect=Exception("kill failed"))
 
-    state = make_test_state(
-        "test-kill-exception", "kill-exception-process", mock_process_handle
-    )
+    state = make_test_state("test-kill-exception", "kill-exception-process", mock_process_handle)
 
     # Should not raise
     await runtime._handle_process_timeout(state, mock_process_handle)

@@ -21,6 +21,7 @@ import pytest
 # audit.diagnosis - _git_changed_files
 # ---------------------------------------------------------------------------
 
+
 def test_git_changed_files_logs_on_command_failure(monkeypatch, tmp_path: Path) -> None:
     """_git_changed_files must log at debug level when git command fails."""
     from polaris.cells.audit.diagnosis.internal.diagnosis_engine import (
@@ -33,16 +34,12 @@ def test_git_changed_files_logs_on_command_failure(monkeypatch, tmp_path: Path) 
     )
 
     # Mock CommandExecutionService.run to raise an exception
-    with patch(
-        "polaris.cells.audit.diagnosis.internal.diagnosis_engine.CommandExecutionService"
-    ) as mock_cls:
+    with patch("polaris.cells.audit.diagnosis.internal.diagnosis_engine.CommandExecutionService") as mock_cls:
         mock_instance = MagicMock()
         mock_instance.run.side_effect = RuntimeError("git not installed")
         mock_cls.return_value = mock_instance
 
-        with patch(
-            "polaris.cells.audit.diagnosis.internal.diagnosis_engine.logger"
-        ) as mock_logger:
+        with patch("polaris.cells.audit.diagnosis.internal.diagnosis_engine.logger") as mock_logger:
             result = engine._git_changed_files()
 
             # Must return empty list (graceful degradation)
@@ -56,9 +53,7 @@ def test_git_changed_files_logs_on_command_failure(monkeypatch, tmp_path: Path) 
             assert call_args.kwargs.get("exc_info") is True
 
 
-def test_git_changed_files_returns_empty_on_nonzero_returncode(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_git_changed_files_returns_empty_on_nonzero_returncode(monkeypatch, tmp_path: Path) -> None:
     """_git_changed_files returns [] when git returns non-zero (no repo, etc.)."""
     from polaris.cells.audit.diagnosis.internal.diagnosis_engine import (
         AuditDiagnosisEngine,
@@ -69,9 +64,7 @@ def test_git_changed_files_returns_empty_on_nonzero_returncode(
         workspace=str(tmp_path / "workspace"),
     )
 
-    with patch(
-        "polaris.cells.audit.diagnosis.internal.diagnosis_engine.CommandExecutionService"
-    ) as mock_cls:
+    with patch("polaris.cells.audit.diagnosis.internal.diagnosis_engine.CommandExecutionService") as mock_cls:
         mock_instance = MagicMock()
         mock_instance.run.return_value.get.return_value = 128  # git error
         mock_cls.return_value = mock_instance
@@ -84,9 +77,8 @@ def test_git_changed_files_returns_empty_on_nonzero_returncode(
 # orchestration.pm_dispatch - iteration_state error handlers
 # ---------------------------------------------------------------------------
 
-def test_handle_invoke_error_logs_on_append_meta_prompt_hint_failure(
-    caplog, tmp_path: Path
-) -> None:
+
+def test_handle_invoke_error_logs_on_append_meta_prompt_hint_failure(caplog, tmp_path: Path) -> None:
     """_handle_invoke_error must log at debug level when append_meta_prompt_hint fails."""
     caplog.set_level(
         logging.DEBUG,
@@ -135,8 +127,7 @@ def test_handle_invoke_error_logs_on_append_meta_prompt_hint_failure(
 
     # The inner except for append_meta_prompt_hint logs at debug level
     assert any("append_meta_prompt_hint" in r.message for r in caplog.records), (
-        f"Expected debug log about append_meta_prompt_hint failure but got: "
-        f"{[r.message for r in caplog.records]}"
+        f"Expected debug log about append_meta_prompt_hint failure but got: {[r.message for r in caplog.records]}"
     )
 
 
@@ -148,15 +139,21 @@ def test_handle_invoke_error_does_not_raise_on_any_failure(tmp_path: Path) -> No
     )
 
     # Patch all I/O functions to avoid actual file operations
-    with patch.object(iteration_state, "write_json_atomic", lambda *a, **kw: None), patch(
-        "polaris.infrastructure.compat.io_utils.emit_dialogue",
-        lambda *a, **kw: None,
-    ), patch(
-        "polaris.infrastructure.compat.io_utils.emit_llm_event",
-        lambda *a, **kw: None,
-    ), patch.object(iteration_state, "emit_event", lambda *a, **kw: None), patch(
-        "polaris.kernelone.prompts.meta_prompting.append_meta_prompt_hint",
-        side_effect=RuntimeError("total failure"),
+    with (
+        patch.object(iteration_state, "write_json_atomic", lambda *a, **kw: None),
+        patch(
+            "polaris.infrastructure.compat.io_utils.emit_dialogue",
+            lambda *a, **kw: None,
+        ),
+        patch(
+            "polaris.infrastructure.compat.io_utils.emit_llm_event",
+            lambda *a, **kw: None,
+        ),
+        patch.object(iteration_state, "emit_event", lambda *a, **kw: None),
+        patch(
+            "polaris.kernelone.prompts.meta_prompting.append_meta_prompt_hint",
+            side_effect=RuntimeError("total failure"),
+        ),
     ):
         # Must NOT raise - append_meta_prompt_hint exception is
         # caught by inner try-except and does NOT re-raise.
@@ -175,9 +172,7 @@ def test_handle_invoke_error_does_not_raise_on_any_failure(tmp_path: Path) -> No
         )
 
 
-def test_clear_manual_intervention_logs_on_pause_flag_failure(
-    caplog, tmp_path: Path
-) -> None:
+def test_clear_manual_intervention_logs_on_pause_flag_failure(caplog, tmp_path: Path) -> None:
     """_clear_manual_intervention must log when pause flag removal fails."""
     caplog.set_level(
         logging.WARNING,
@@ -225,14 +220,14 @@ def test_clear_manual_intervention_logs_on_pause_flag_failure(
 
     # Must have logged a warning about pause flag removal failure
     assert any("pause flag" in r.message.lower() for r in caplog.records), (
-        f"Expected warning log about pause flag but got: "
-        f"{[(r.levelname, r.message) for r in caplog.records]}"
+        f"Expected warning log about pause flag but got: {[(r.levelname, r.message) for r in caplog.records]}"
     )
 
 
 # ---------------------------------------------------------------------------
 # orchestration.workflow_runtime - director_workflow resident decision
 # ---------------------------------------------------------------------------
+
 
 def test_record_resident_decision_safe_logs_on_failure(monkeypatch, tmp_path: Path) -> None:
     """_record_resident_decision_safe must log at warning level on failure."""
@@ -241,10 +236,13 @@ def test_record_resident_decision_safe_logs_on_failure(monkeypatch, tmp_path: Pa
     )
 
     # record_resident_decision is imported inside the function, so patch at source
-    with patch(
-        "polaris.cells.resident.autonomy.public.service.record_resident_decision",
-        side_effect=RuntimeError("disk full"),
-    ), patch.object(director_workflow, "logger") as mock_logger:
+    with (
+        patch(
+            "polaris.cells.resident.autonomy.public.service.record_resident_decision",
+            side_effect=RuntimeError("disk full"),
+        ),
+        patch.object(director_workflow, "logger") as mock_logger,
+    ):
         director_workflow._record_resident_decision_safe(
             workspace=str(tmp_path),
             payload={"run_id": "run-1", "stage": "planning"},
@@ -277,6 +275,7 @@ def test_record_resident_decision_safe_does_not_raise(monkeypatch, tmp_path: Pat
 # events.fact_stream - debug_trace emit_event
 # ---------------------------------------------------------------------------
 
+
 def test_emit_event_logs_on_stdout_failure(monkeypatch, tmp_path: Path) -> None:
     """DebugTracer.emit_event must log at warning level when stdout write fails."""
     from polaris.cells.events.fact_stream.internal import debug_trace
@@ -304,6 +303,7 @@ def test_emit_event_logs_on_stdout_failure(monkeypatch, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # factory.pipeline - factory_run_service _run_tool
 # ---------------------------------------------------------------------------
+
 
 def test_factory_run_service_handles_tool_timeout(monkeypatch, tmp_path: Path) -> None:
     """FactoryRunService._run_tool must propagate TimeoutExpired from subprocess."""

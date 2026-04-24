@@ -53,12 +53,7 @@ def test_extract_tech_stack_prefers_metadata_when_present() -> None:
 
 def test_extract_files_from_response_supports_file_header_blocks() -> None:
     executor = WorkerExecutor(workspace=".")
-    response = (
-        "File: src/service.rs\n"
-        "```rust\n"
-        "pub fn ping() -> &'static str { \"ok\" }\n"
-        "```\n"
-    )
+    response = 'File: src/service.rs\n```rust\npub fn ping() -> &\'static str { "ok" }\n```\n'
     files = executor._extract_files_from_response(response)
     assert len(files) == 1
     assert files[0]["path"] == "src/service.rs"
@@ -254,11 +249,7 @@ def test_invoke_generation_with_retries_uses_deterministic_repair_in_strict_mode
         metadata={
             "phase": "bootstrap",
             "tech_stack": {"language": "python"},
-            "construction_plan": {
-                "file_plans": [
-                    {"path": "src/monolith_service.py", "method_names": ["add_task"]}
-                ]
-            },
+            "construction_plan": {"file_plans": [{"path": "src/monolith_service.py", "method_names": ["add_task"]}]},
         },
     )
 

@@ -26,7 +26,7 @@ def test_build_request_resilience_applies_request_options() -> None:
 async def test_invoke_with_resilience_uses_request_level_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, float | int] = {}
 
-    async def _fake_execute_with_resilience(self, operation, operation_name):  # noqa: ANN001
+    async def _fake_execute_with_resilience(self, operation, operation_name):
         del operation, operation_name
         captured["request_timeout"] = self.timeout_config.request_timeout
         captured["max_attempts"] = self.retry_config.max_attempts

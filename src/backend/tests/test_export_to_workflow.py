@@ -105,9 +105,7 @@ def test_export_bundle_persistence(tmp_path):
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "target": "pm",
         "export_kind": "session_bundle",
-        "artifacts": [
-            {"id": "art-1", "type": "directive", "content": "Test directive"}
-        ],
+        "artifacts": [{"id": "art-1", "type": "directive", "content": "Test directive"}],
         "event_count": 5,
     }
 
@@ -132,6 +130,7 @@ def test_build_directive_from_artifacts():
     """测试从 artifacts 构建 directive"""
     # Import the helper function
     import sys
+
     sys.path.insert(0, "src/backend")
 
     artifacts = [
@@ -166,11 +165,7 @@ def test_build_task_filter_from_artifacts():
         if artifact_type in ("task", "todo", "action_item"):
             tasks.append(content)
 
-    if tasks:
-        result = "Execute tasks: " + "; ".join(tasks[:5])
-    else:
-        result = "Execute ready tasks"
+    result = "Execute tasks: " + "; ".join(tasks[:5]) if tasks else "Execute ready tasks"
 
     assert "Create user model" in result
     assert "Implement auth API" in result
-

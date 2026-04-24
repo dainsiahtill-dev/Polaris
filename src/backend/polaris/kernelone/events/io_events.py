@@ -567,7 +567,7 @@ def emit_event(
 
     try:
         _append_jsonl_via_kernel(event_path, payload)
-    except Exception:
+    except (OSError, TypeError, ValueError):
         # If JSONL write fails, do NOT commit the sequence - it will be
         # re-incremented on the next attempt, ensuring seq/event consistency.
         raise

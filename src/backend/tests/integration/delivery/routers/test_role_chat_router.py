@@ -34,9 +34,7 @@ class TestRoleChatRouter:
             "polaris.delivery.http.routers.role_chat.get_registered_roles",
             return_value=["pm", "architect", "director"],
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/chat/ping")
 
         assert response.status_code == 200
@@ -60,18 +58,12 @@ class TestRoleChatRouter:
             patch(
                 "polaris.delivery.http.routers.role_chat._load_llm_config_async",
                 return_value={
-                    "roles": {
-                        "pm": {"provider_id": "openai", "model": "gpt-4"}
-                    },
-                    "providers": {
-                        "openai": {"type": "openai"}
-                    },
+                    "roles": {"pm": {"provider_id": "openai", "model": "gpt-4"}},
+                    "providers": {"openai": {"type": "openai"}},
                 },
             ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/pm/chat/status")
 
         assert response.status_code == 200
@@ -103,9 +95,7 @@ class TestRoleChatRouter:
                 return_value=["pm", "architect"],
             ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/architect/chat/status")
 
         assert response.status_code == 200
@@ -129,9 +119,7 @@ class TestRoleChatRouter:
             patch(
                 "polaris.delivery.http.routers.role_chat._load_llm_config_async",
                 return_value={
-                    "roles": {
-                        "pm": {"provider_id": "", "model": ""}
-                    },
+                    "roles": {"pm": {"provider_id": "", "model": ""}},
                     "providers": {},
                 },
             ),
@@ -140,9 +128,7 @@ class TestRoleChatRouter:
                 return_value=["pm"],
             ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/pm/chat/status")
 
         assert response.status_code == 200
@@ -165,9 +151,7 @@ class TestRoleChatRouter:
             patch(
                 "polaris.delivery.http.routers.role_chat._load_llm_config_async",
                 return_value={
-                    "roles": {
-                        "pm": {"provider_id": "missing", "model": "gpt-4"}
-                    },
+                    "roles": {"pm": {"provider_id": "missing", "model": "gpt-4"}},
                     "providers": {},
                 },
             ),
@@ -176,9 +160,7 @@ class TestRoleChatRouter:
                 return_value=["pm"],
             ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/pm/chat/status")
 
         assert response.status_code == 200
@@ -193,9 +175,7 @@ class TestRoleChatRouter:
             "polaris.delivery.http.routers.role_chat.get_registered_roles",
             return_value=["pm", "architect", "director", "qa"],
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/chat/roles")
 
         assert response.status_code == 200
@@ -232,9 +212,7 @@ class TestRoleChatRouter:
     async def test_nonexistent_endpoint_returns_404(self) -> None:
         """GET /v2/role/nonexistent returns 404."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v2/role/nonexistent")
 
         assert response.status_code == 404

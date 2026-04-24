@@ -28,6 +28,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _DeliveryBlocker(types.ModuleType):
     """Fake package that raises ImportError for any non-dunder sub-attribute access.
 
@@ -41,14 +42,11 @@ class _DeliveryBlocker(types.ModuleType):
     trigger our guard.
     """
 
-    def __getattr__(self, name: str):  # type: ignore[override]
+    def __getattr__(self, name: str) -> None:  # type: ignore[override]
         if name.startswith("__") and name.endswith("__"):
             # Allow import-machinery dunder access to pass through
             raise AttributeError(name)
-        raise ImportError(
-            f"[isolation-test] polaris.delivery accessed from Cell layer: "
-            f"polaris.delivery.{name}"
-        )
+        raise ImportError(f"[isolation-test] polaris.delivery accessed from Cell layer: polaris.delivery.{name}")
 
 
 def _make_delivery_guard() -> dict:
@@ -111,9 +109,7 @@ def _make_stub_package(full_name: str) -> types.ModuleType:
 # ---------------------------------------------------------------------------
 
 #: Modules/packages to evict so they can be reimported fresh.
-_CELL_PREFIXES = (
-    "polaris.cells.orchestration.pm_planning",
-)
+_CELL_PREFIXES = ("polaris.cells.orchestration.pm_planning",)
 
 #: The target module we care about.
 TARGET_MODULES = [
@@ -182,6 +178,7 @@ def delivery_blocked() -> Generator[None, None, None]:
 # Helper: import a module given its dotted name, bypassing its package __init__
 # ---------------------------------------------------------------------------
 
+
 def _import_internal_module(module_name: str) -> types.ModuleType:
     """Import a module directly from its .py file, bypassing package __init__."""
     # Convert dotted name to file path relative to the backend root.
@@ -205,6 +202,7 @@ def _import_internal_module(module_name: str) -> types.ModuleType:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("module_name", TARGET_MODULES)
 def test_cell_module_importable_without_delivery(
     delivery_blocked: None,
@@ -217,17 +215,13 @@ def test_cell_module_importable_without_delivery(
     try:
         mod = _import_internal_module(module_name)
     except ImportError as exc:
-        pytest.fail(
-            f"Module '{module_name}' triggered a delivery import at load time: {exc}"
-        )
+        pytest.fail(f"Module '{module_name}' triggered a delivery import at load time: {exc}")
     assert mod is not None, f"_import_internal_module returned None for {module_name}"
 
 
 def test_pipeline_ports_no_delivery_symbol(delivery_blocked: None) -> None:
     """pipeline_ports must expose its public API without any delivery reference."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     for symbol in (
         "PmInvokeBackendPort",
         "PmStatePort",
@@ -244,16 +238,12 @@ def test_pipeline_ports_no_delivery_symbol(delivery_blocked: None) -> None:
         "get_pm_invoke_port",
         "get_pm_state_port",
     ):
-        assert hasattr(mod, symbol), (
-            f"pipeline_ports is missing expected symbol '{symbol}'"
-        )
+        assert hasattr(mod, symbol), f"pipeline_ports is missing expected symbol '{symbol}'"
 
 
 def test_pipeline_no_delivery_at_module_level(delivery_blocked: None) -> None:
     """pipeline must not have imported any delivery module at load time."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.pipeline"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.pipeline")
     for symbol in (
         "run_pm_planning_iteration",
         "_should_promote_pm_quality_candidate",
@@ -263,16 +253,12 @@ def test_pipeline_no_delivery_at_module_level(delivery_blocked: None) -> None:
         "_pick_task_scope_hint",
         "_handle_invoke_error",
     ):
-        assert hasattr(mod, symbol), (
-            f"pipeline is missing expected public callable '{symbol}'"
-        )
+        assert hasattr(mod, symbol), f"pipeline is missing expected public callable '{symbol}'"
 
 
 def test_normalize_priority_values(delivery_blocked: None) -> None:
     """normalize_priority must return canonical integer values."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     fn = mod.normalize_priority
     assert fn("high") == 1
     assert fn("normal") == 5
@@ -284,9 +270,7 @@ def test_normalize_priority_values(delivery_blocked: None) -> None:
 
 def test_looks_like_tool_call_output(delivery_blocked: None) -> None:
     """_looks_like_tool_call_output detects tool-call markers."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     fn = mod._looks_like_tool_call_output
     assert fn("[tool_call]do something[/tool_call]") is True
     assert fn("<tool_call>action</tool_call>") is True
@@ -296,9 +280,7 @@ def test_looks_like_tool_call_output(delivery_blocked: None) -> None:
 
 def test_migrate_tasks_in_place_basic(delivery_blocked: None) -> None:
     """_migrate_tasks_in_place must add backlog_ref and fix failed status."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     fn = mod._migrate_tasks_in_place
 
     payload = {
@@ -316,9 +298,7 @@ def test_migrate_tasks_in_place_basic(delivery_blocked: None) -> None:
 
 def test_normalize_engine_config(delivery_blocked: None) -> None:
     """normalize_engine_config must extract execution mode settings."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     fn = mod.normalize_engine_config
     assert fn({}) == {}
     result = fn({"director_execution_mode": "multi", "max_directors": 4})
@@ -328,9 +308,7 @@ def test_normalize_engine_config(delivery_blocked: None) -> None:
 
 def test_extract_json_from_llm_output(delivery_blocked: None) -> None:
     """_extract_json_from_llm_output must parse JSON from raw LLM output."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     fn = mod._extract_json_from_llm_output
 
     # Simple JSON
@@ -354,19 +332,15 @@ def test_extract_json_from_llm_output(delivery_blocked: None) -> None:
 
 def test_noop_pm_invoke_port_stub(delivery_blocked: None) -> None:
     """NoopPmInvokePort must raise on invoke() when delivery is not available."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     port = mod.NoopPmInvokePort()
-    with pytest.raises(RuntimeError, match="NoopPmInvokePort.invoke called"):
+    with pytest.raises(RuntimeError, match=r"NoopPmInvokePort\.invoke called"):
         port.invoke(state=None, prompt="test", backend_kind="auto", args=None, usage_ctx=None)
 
 
 def test_noop_pm_state_port_properties(delivery_blocked: None) -> None:
     """NoopPmStatePort must return safe empty values for all properties."""
-    mod = _import_internal_module(
-        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports"
-    )
+    mod = _import_internal_module("polaris.cells.orchestration.pm_planning.internal.pipeline_ports")
     port = mod.NoopPmStatePort()
     assert port.workspace_full == ""
     assert port.timeout == 0

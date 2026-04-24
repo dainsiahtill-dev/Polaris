@@ -2,8 +2,8 @@ import json
 import time
 from pathlib import Path
 
-from polaris.bootstrap.config import Settings
 from fastapi.testclient import TestClient
+from polaris.bootstrap.config import Settings
 from polaris.delivery.http.app_factory import create_app
 from polaris.kernelone.storage.io_paths import build_cache_root
 
@@ -58,10 +58,12 @@ def test_websocket_close_events_are_persisted(tmp_path, monkeypatch):
     )
     app = create_app(settings)
 
-    with TestClient(app) as client:
-        with client.websocket_connect(f"/v2/ws/runtime?token={token}&roles=pm,director,qa") as ws:
-            payload = json.loads(ws.receive_text())
-            assert payload.get("type") == "status"
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(f"/v2/ws/runtime?token={token}&roles=pm,director,qa") as ws,
+    ):
+        payload = json.loads(ws.receive_text())
+        assert payload.get("type") == "status"
 
     events = _wait_for_events(_audit_log_path(workspace, ramdisk_root))
     assert events, "ws connection audit log should not be empty"
@@ -77,4 +79,3 @@ def test_websocket_close_events_are_persisted(tmp_path, monkeypatch):
     assert str(accepted_details.get("workspace_key") or "").strip()
     assert str(accepted_details.get("runtime_root") or "").strip()
     assert str(accepted_details.get("workspace_source") or "").strip() == "settings"
-

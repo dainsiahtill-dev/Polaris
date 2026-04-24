@@ -84,7 +84,9 @@ class SLMCoprocessor:
             return None
         try:
             return self._provider_manager.get_provider_instance(self.config.slm_provider)
-        except Exception:  # noqa: BLE001
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError):
+            # TODO: narrow exception type — provider_manager may raise
+            # provider-specific lookup errors
             logger.debug(
                 "SLM provider %s not available",
                 self.config.slm_provider,
@@ -124,7 +126,9 @@ class SLMCoprocessor:
             if result.ok:
                 return str(result.output or "").strip()
             logger.debug("SLM invoke failed: %s", result.error)
-        except Exception:  # noqa: BLE001
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError):
+            # TODO: narrow exception type — client.invoke may raise
+            # provider-specific network or parsing errors
             logger.debug("SLM invoke exception", exc_info=True)
         return ""
 

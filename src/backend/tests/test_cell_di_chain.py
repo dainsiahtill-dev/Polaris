@@ -3,6 +3,7 @@
 Tests cover DIContainer singleton/factory resolution, public contract imports,
 and the bootstrap assembly wiring invariants.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -85,6 +86,7 @@ class TestDIContainerPublicContracts:
             build_file_evidence,
             create_evidence_bundle_service,
         )
+
         assert EvidenceService is not None
         assert callable(build_error_evidence)
         assert callable(build_file_evidence)
@@ -96,6 +98,7 @@ class TestDIContainerPublicContracts:
             PmStatePort,
             run_pm_planning_iteration,
         )
+
         # These are the public contract types
         assert PmInvokeBackendPort is not None
         assert PmStatePort is not None
@@ -107,6 +110,7 @@ class TestDIContainerPublicContracts:
             ErrorClassifier,
             resolve_director_dispatch_tasks,
         )
+
         assert DispatchPmTasksCommandV1 is not None
         assert resolve_director_dispatch_tasks is not None
         assert ErrorClassifier is not None
@@ -116,6 +120,7 @@ class TestDIContainerPublicContracts:
             DirectorService,
             TaskService,
         )
+
         assert DirectorService is not None
         assert TaskService is not None
 
@@ -132,6 +137,7 @@ class TestBootstrapAssembly:
     def test_bootstrap_assembly_imports_without_error(self) -> None:
         # Verify all public exports are present in the assembly module
         from polaris.bootstrap import assembly
+
         assert hasattr(assembly, "assemble_core_services")
         assert hasattr(assembly, "get_container")
         assert hasattr(assembly, "PMService")

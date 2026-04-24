@@ -6,8 +6,6 @@ through prompt composition and provider binding.
 
 from __future__ import annotations
 
-import pytest
-
 from polaris.kernelone.role import (
     FallbackChain,
     get_hot_swap_engine,
@@ -175,7 +173,6 @@ class TestHotSwapIntegration:
 
     def test_modifier_application(self) -> None:
         """Test that prompt modifiers can be added and retrieved."""
-        from polaris.kernelone.role.hotswap import SwapReason
 
         engine = get_hot_swap_engine()
         session_id = "modifier_test_session"

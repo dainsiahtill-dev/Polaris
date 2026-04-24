@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-import uuid
 from pathlib import Path
 
 import pytest
-
+from polaris.cells.delivery.cli import get_cli_service as cell_alias_import
 from polaris.cells.delivery.cli.public.contracts import (
     CliCommandType,
-    CliCommandStartedEventV1,
-    CliCommandCompletedEventV1,
     CommandErrorV1,
     CommandNotFoundError,
     CommandResultV1,
@@ -29,10 +26,9 @@ from polaris.cells.delivery.cli.public.service import (
     get_cli_service,
     register_management_handler,
 )
-from polaris.cells.delivery.cli import get_cli_service as cell_alias_import
-
 
 # ── Shared fixtures ────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def _tmp_workspace() -> Path:
@@ -41,6 +37,7 @@ def _tmp_workspace() -> Path:
 
 
 # ── ExecuteCliCommandV1 validation ─────────────────────────────────────────────
+
 
 class TestExecuteCliCommandV1Validation:
     def test_command_required_non_empty(self) -> None:
@@ -52,9 +49,7 @@ class TestExecuteCliCommandV1Validation:
             ExecuteCliCommandV1(command="pm.status", workspace="  ")
 
     def test_role_required_for_role_execution(self) -> None:
-        with pytest.raises(
-            ValueError, match="role is required when execution_mode == ROLE_EXECUTION"
-        ):
+        with pytest.raises(ValueError, match="role is required when execution_mode == ROLE_EXECUTION"):
             ExecuteCliCommandV1(
                 command="director.run",
                 workspace="/tmp",
@@ -98,9 +93,7 @@ class TestExecuteCliCommandV1Validation:
 
 class TestCliCommandType:
     def test_exact_match(self) -> None:
-        cmd = ExecuteCliCommandV1(
-            command="pm.status", workspace="/tmp", execution_mode=ExecutionMode.MANAGEMENT
-        )
+        cmd = ExecuteCliCommandV1(command="pm.status", workspace="/tmp", execution_mode=ExecutionMode.MANAGEMENT)
         assert cmd.command_type() == CliCommandType.PM_STATUS
 
     def test_prefix_match(self) -> None:
@@ -122,6 +115,7 @@ class TestCliCommandType:
 
 # ── QueryCliStatusV1 validation ───────────────────────────────────────────────
 
+
 class TestQueryCliStatusV1:
     def test_workspace_required(self) -> None:
         with pytest.raises(ValueError, match="workspace must be a non-empty string"):
@@ -134,6 +128,7 @@ class TestQueryCliStatusV1:
 
 
 # ── CommandResultV1 ───────────────────────────────────────────────────────────
+
 
 class TestCommandResultV1:
     def test_happy_path(self) -> None:
@@ -169,6 +164,7 @@ class TestCommandResultV1:
 
 
 # ── CommandErrorV1 ───────────────────────────────────────────────────────────
+
 
 class TestCommandErrorV1:
     def test_basic(self) -> None:
@@ -208,6 +204,7 @@ class TestCommandErrorV1:
 
 # ── CliExecutionService ────────────────────────────────────────────────────────
 
+
 class TestCliExecutionService:
     @pytest.fixture
     def service(self) -> CliExecutionService:
@@ -231,9 +228,7 @@ class TestCliExecutionService:
         assert exc_info.value.code == "command_not_found"
 
     @pytest.mark.asyncio
-    async def test_nonexistent_workspace_raises(
-        self, service: CliExecutionService
-    ) -> None:
+    async def test_nonexistent_workspace_raises(self, service: CliExecutionService) -> None:
         cmd = ExecuteCliCommandV1(
             command="pm.status",
             workspace="/nonexistent/path/that/does/not/exist",
@@ -246,9 +241,7 @@ class TestCliExecutionService:
     # ── MANAGEMENT mode ─────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_management_handler_called(
-        self, service: CliExecutionService, tmp_workspace: Path
-    ) -> None:
+    async def test_management_handler_called(self, service: CliExecutionService, tmp_workspace: Path) -> None:
         handler_calls: list = []
 
         def handler(workspace: Path, args: dict) -> dict:
@@ -272,9 +265,7 @@ class TestCliExecutionService:
         assert handler_calls[0][1] == {"verbose": True}
 
     @pytest.mark.asyncio
-    async def test_management_async_handler(
-        self, service: CliExecutionService, tmp_workspace: Path
-    ) -> None:
+    async def test_management_async_handler(self, service: CliExecutionService, tmp_workspace: Path) -> None:
         async def handler(workspace: Path, args: dict) -> dict:
             await asyncio.sleep(0)
             return {"ok": True, "output": "async ok"}
@@ -291,9 +282,7 @@ class TestCliExecutionService:
         assert result.output == "async ok"
 
     @pytest.mark.asyncio
-    async def test_management_handler_returns_failure(
-        self, service: CliExecutionService, tmp_workspace: Path
-    ) -> None:
+    async def test_management_handler_returns_failure(self, service: CliExecutionService, tmp_workspace: Path) -> None:
         def handler(workspace: Path, args: dict) -> dict:
             return {"ok": False, "output": "failed", "exit_code": 1}
 
@@ -335,9 +324,7 @@ class TestCliExecutionService:
     # ── ROLE_EXECUTION mode ──────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_role_execution_requires_role(
-        self, service: CliExecutionService, tmp_workspace: Path
-    ) -> None:
+    async def test_role_execution_requires_role(self, service: CliExecutionService, tmp_workspace: Path) -> None:
         # No role set — should be rejected at construction time
         with pytest.raises(ValueError, match="role is required"):
             ExecuteCliCommandV1(
@@ -347,9 +334,7 @@ class TestCliExecutionService:
             )
 
     @pytest.mark.asyncio
-    async def test_role_execution_error_propagates(
-        self, service: CliExecutionService, tmp_workspace: Path
-    ) -> None:
+    async def test_role_execution_error_propagates(self, service: CliExecutionService, tmp_workspace: Path) -> None:
         cmd = ExecuteCliCommandV1(
             command="director.run",
             workspace=str(tmp_workspace),
@@ -379,9 +364,7 @@ class TestCliExecutionService:
     # ── Active sessions ──────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_active_sessions_tracked(
-        self, service: CliExecutionService, tmp_workspace: Path
-    ) -> None:
+    async def test_active_sessions_tracked(self, service: CliExecutionService, tmp_workspace: Path) -> None:
         # Use a sync handler that returns quickly
         def handler(workspace: Path, args: dict) -> dict:
             return {"ok": True, "output": "ok"}
@@ -401,6 +384,7 @@ class TestCliExecutionService:
 
 # ── Singleton ────────────────────────────────────────────────────────────────
 
+
 def test_get_cli_service_singleton() -> None:
     s1 = get_cli_service()
     s2 = get_cli_service()
@@ -414,11 +398,10 @@ def test_cell_alias_import() -> None:
 
 # ── DAEMON mode ─────────────────────────────────────────────────────────────
 
+
 class TestDaemonMode:
     @pytest.mark.asyncio
-    async def test_daemon_mode_not_implemented(
-        self, _tmp_workspace: Path
-    ) -> None:
+    async def test_daemon_mode_not_implemented(self, _tmp_workspace: Path) -> None:
         service = CliExecutionService()
         cmd = ExecuteCliCommandV1(
             command="director.serve",
@@ -431,6 +414,7 @@ class TestDaemonMode:
 
 
 # ── Duration and exit code ──────────────────────────────────────────────────
+
 
 class TestResultFields:
     @pytest.mark.asyncio

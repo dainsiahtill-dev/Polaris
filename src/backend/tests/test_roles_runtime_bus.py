@@ -29,6 +29,7 @@ from polaris.cells.roles.runtime.internal.bus_port import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _envelope(
     receiver: str = "agent_b",
     sender: str = "agent_a",
@@ -62,6 +63,7 @@ def _agent_message(
 # AgentEnvelope
 # ---------------------------------------------------------------------------
 
+
 class TestAgentEnvelope:
     def test_from_fields_sets_required_fields(self):
         env = _envelope(receiver="rx", sender="tx", msg_type="result")
@@ -94,15 +96,14 @@ class TestAgentEnvelope:
         assert env.payload == {}
 
     def test_from_fields_max_attempts_floor_is_1(self):
-        env = AgentEnvelope.from_fields(
-            msg_type="task", sender="s", receiver="r", payload={}, max_attempts=0
-        )
+        env = AgentEnvelope.from_fields(msg_type="task", sender="s", receiver="r", payload={}, max_attempts=0)
         assert env.max_attempts == 1
 
 
 # ---------------------------------------------------------------------------
 # InMemoryAgentBusPort — publish / poll
 # ---------------------------------------------------------------------------
+
 
 class TestInMemoryBusPortBasic:
     def test_publish_then_poll(self):
@@ -164,6 +165,7 @@ class TestInMemoryBusPortBasic:
 # InMemoryAgentBusPort — ack
 # ---------------------------------------------------------------------------
 
+
 class TestInMemoryBusPortAck:
     def test_ack_removes_inflight(self):
         bus = InMemoryAgentBusPort()
@@ -191,6 +193,7 @@ class TestInMemoryBusPortAck:
 # ---------------------------------------------------------------------------
 # InMemoryAgentBusPort — nack / requeue / dead-letter
 # ---------------------------------------------------------------------------
+
 
 class TestInMemoryBusPortNack:
     def test_nack_requeues_within_max_attempts(self):
@@ -261,13 +264,14 @@ class TestInMemoryBusPortNack:
 # AgentBusProxy — bridge
 # ---------------------------------------------------------------------------
 
+
 class TestAgentBusProxy:
     def _make_proxy(self, name: str = "agent_a") -> AgentBusProxy:
         bus = InMemoryAgentBusPort()
         return AgentBusProxy(agent_name=name, bus=bus)
 
     def test_send_then_receive_round_trip(self):
-        proxy_a = AgentBusProxy(agent_name="agent_a", bus=InMemoryAgentBusPort())
+        AgentBusProxy(agent_name="agent_a", bus=InMemoryAgentBusPort())
         # Create a shared bus so agent_b can receive from agent_a
         shared_bus = InMemoryAgentBusPort()
         proxy_a2 = AgentBusProxy(agent_name="agent_a", bus=shared_bus)
@@ -376,6 +380,7 @@ class TestAgentBusProxy:
 # IAgentBusPort Protocol structural check (no coupling to real Bus)
 # ---------------------------------------------------------------------------
 
+
 class TestIAgentBusPortProtocol:
     def test_in_memory_bus_port_satisfies_protocol(self):
         """InMemoryAgentBusPort must satisfy IAgentBusPort structurally."""
@@ -399,6 +404,7 @@ class TestIAgentBusPortProtocol:
 # DeadLetterRecord observability
 # ---------------------------------------------------------------------------
 
+
 class TestDeadLetterRecord:
     def test_dead_letter_has_envelope_and_reason(self):
         bus = InMemoryAgentBusPort()
@@ -418,6 +424,7 @@ class TestDeadLetterRecord:
 
     def test_dead_letter_store_bounded(self):
         from polaris.cells.roles.runtime.internal.bus_port import _MAX_DEAD_LETTER
+
         bus = InMemoryAgentBusPort()
         # Publish and nack more than _MAX_DEAD_LETTER messages
         count = _MAX_DEAD_LETTER + 5

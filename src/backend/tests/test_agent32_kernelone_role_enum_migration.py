@@ -111,9 +111,7 @@ class TestKernelAuditRoleMigration:
     def test_kernel_audit_role_has_system_only(self) -> None:
         """SYSTEM sentinel is the only remaining value."""
         members = [m.value for m in KernelAuditRole]
-        assert members == ["system"], (
-            f"Expected only 'system' in KernelAuditRole, got: {members}"
-        )
+        assert members == ["system"], f"Expected only 'system' in KernelAuditRole, got: {members}"
 
     def test_kernel_audit_role_system_value(self) -> None:
         """KernelAuditRole.SYSTEM resolves to 'system' string."""

@@ -7,7 +7,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Self
 
 import httpx
 from tests.agent_stress.contracts import (
@@ -35,22 +35,24 @@ MAX_COLLECTION_WARNINGS = 500
 
 class FailureCategory(Enum):
     """失败分类 - 便于 AI Agent 快速定位问题类型"""
-    LLM_UNAVAILABLE = "llm_unavailable"           # LLM 服务不可用
-    LLM_TIMEOUT = "llm_timeout"                   # LLM 调用超时
-    LLM_FORMAT_ERROR = "llm_format_error"         # LLM 输出格式错误
-    PROMPT_LEAKAGE = "prompt_leakage"             # 提示词泄漏
+
+    LLM_UNAVAILABLE = "llm_unavailable"  # LLM 服务不可用
+    LLM_TIMEOUT = "llm_timeout"  # LLM 调用超时
+    LLM_FORMAT_ERROR = "llm_format_error"  # LLM 输出格式错误
+    PROMPT_LEAKAGE = "prompt_leakage"  # 提示词泄漏
     TOOL_EXECUTION_FAILED = "tool_execution_failed"  # 工具执行失败
     TASK_DESERIALIZATION_FAILED = "task_deserialization_failed"  # 任务反序列化失败
     WORKFLOW_EXECUTION_ERROR = "workflow_execution_error"  # 工作流执行错误
-    RUNTIME_CRASH = "runtime_crash"               # 运行时崩溃
-    RESOURCE_EXHAUSTED = "resource_exhausted"     # 资源耗尽
-    CONFIGURATION_ERROR = "configuration_error"   # 配置错误
-    UNKNOWN = "unknown"                           # 未知错误
+    RUNTIME_CRASH = "runtime_crash"  # 运行时崩溃
+    RESOURCE_EXHAUSTED = "resource_exhausted"  # 资源耗尽
+    CONFIGURATION_ERROR = "configuration_error"  # 配置错误
+    UNKNOWN = "unknown"  # 未知错误
 
 
 @dataclass
 class LLMCallRecord:
     """LLM 调用记录"""
+
     call_id: str
     role: str
     timestamp: str
@@ -68,6 +70,7 @@ class LLMCallRecord:
 @dataclass
 class StageTransition:
     """阶段转换记录"""
+
     from_phase: str
     to_phase: str
     timestamp: str
@@ -79,6 +82,7 @@ class StageTransition:
 @dataclass
 class ToolExecution:
     """工具执行记录"""
+
     tool_name: str
     timestamp: str
     arguments: dict[str, Any] = field(default_factory=dict)
@@ -91,6 +95,7 @@ class ToolExecution:
 @dataclass
 class DiagnosticReport:
     """诊断报告 - AI Agent 可据此分析问题"""
+
     round_number: int
     factory_run_id: str
     failure_category: FailureCategory
@@ -121,12 +126,8 @@ class DiagnosticReport:
             summary=str(payload.get("summary") or "").strip(),
             evidence=list(payload.get("evidence") or []),
             root_cause_analysis=str(payload.get("root_cause_analysis") or "").strip(),
-            suggested_fixes=[
-                str(item).strip() for item in (payload.get("suggested_fixes") or []) if str(item).strip()
-            ],
-            related_logs=[
-                str(item).strip() for item in (payload.get("related_logs") or []) if str(item).strip()
-            ],
+            suggested_fixes=[str(item).strip() for item in (payload.get("suggested_fixes") or []) if str(item).strip()],
+            related_logs=[str(item).strip() for item in (payload.get("related_logs") or []) if str(item).strip()],
             raw_api_responses=dict(payload.get("raw_api_responses") or {}),
         )
 
@@ -153,7 +154,7 @@ class ObservabilityCollector:
         snapshot_timeout: float = 12.0,
         max_task_probes: int = 8,
         task_probe_concurrency: int = 4,
-    ):
+    ) -> None:
         self.backend_url = str(backend_url or "").strip().rstrip("/")
         self.token = str(token or "").strip()
         self.request_timeout = max(float(request_timeout or 0.0), 0.5)
@@ -182,10 +183,10 @@ class ObservabilityCollector:
         self._seen_stage_transitions: set[str] = set()
         self._seen_llm_events: set[str] = set()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args):
+    async def __aexit__(self, *args: Any) -> None:
         await self.client.aclose()
 
     def start_collection(self, round_number: int, factory_run_id: str):
@@ -226,10 +227,7 @@ class ObservabilityCollector:
                 timeout=self.snapshot_timeout,
             )
         except asyncio.TimeoutError:
-            warning = (
-                f"snapshot timeout after {self.snapshot_timeout:.1f}s "
-                f"(factory_run_id={self._factory_run_id})"
-            )
+            warning = f"snapshot timeout after {self.snapshot_timeout:.1f}s (factory_run_id={self._factory_run_id})"
             self._append_with_limit(self.collection_warnings, warning, MAX_COLLECTION_WARNINGS)
             snapshot["capture_timeout"] = warning
         except Exception as e:
@@ -321,11 +319,8 @@ class ObservabilityCollector:
         if not isinstance(tasks, list):
             return
 
-        lineage_tasks = [
-            task for task in tasks
-            if isinstance(task, dict) and director_task_pm_task_id(task)
-        ]
-        tasks_to_probe = (lineage_tasks or tasks)[:self.max_task_probes]
+        lineage_tasks = [task for task in tasks if isinstance(task, dict) and director_task_pm_task_id(task)]
+        tasks_to_probe = (lineage_tasks or tasks)[: self.max_task_probes]
         semaphore = asyncio.Semaphore(self.task_probe_concurrency)
 
         async def fetch_task_events(task: dict[str, Any]) -> list[dict[str, Any]]:
@@ -404,11 +399,7 @@ class ObservabilityCollector:
 
         if event_type in {"tool_execute", "tool_result"}:
             tool_name = str(
-                metadata.get("tool_name")
-                or event.get("tool_name")
-                or metadata.get("tool")
-                or event.get("tool")
-                or ""
+                metadata.get("tool_name") or event.get("tool_name") or metadata.get("tool") or event.get("tool") or ""
             ).strip()
             if tool_name:
                 tool_event_key = f"llm:{event_key}:{event_type}:{tool_name}"
@@ -473,22 +464,12 @@ class ObservabilityCollector:
                 except Exception:
                     duration_ms = 0
                 exec_record = ToolExecution(
-                    tool_name=str(
-                        payload.get("tool_name")
-                        or payload.get("tool")
-                        or event.get("tool_name")
-                        or kind
-                    ),
+                    tool_name=str(payload.get("tool_name") or payload.get("tool") or event.get("tool_name") or kind),
                     timestamp=event_timestamp(event),
                     arguments=payload.get("arguments", payload.get("args", {}))
                     if isinstance(payload.get("arguments", payload.get("args", {})), dict)
                     else {},
-                    result=str(
-                        payload.get("result")
-                        or event.get("result")
-                        or event.get("message")
-                        or ""
-                    )[:1000],
+                    result=str(payload.get("result") or event.get("result") or event.get("message") or "")[:1000],
                     success=kind != "tool_error"
                     and normalize_status(event.get("level")) not in {"error", "critical"}
                     and bool(payload.get("success", True)),
@@ -507,9 +488,7 @@ class ObservabilityCollector:
                 continue
 
             payload = event_payload(event)
-            phase = (
-                str(event.get("phase") or event.get("stage") or payload.get("stage") or "").strip()
-            )
+            phase = str(event.get("phase") or event.get("stage") or payload.get("stage") or "").strip()
             timestamp = event_timestamp(event)
             current_event_id = event_identity(event)
 
@@ -557,10 +536,7 @@ class ObservabilityCollector:
             failure_category=category,
             failure_point=failure_point,
             timestamp=datetime.now().isoformat(),
-            summary=(
-                f"Factory run failed at '{failure_point}': "
-                f"{failure_info.get('detail') or 'Unknown error'}"
-            ),
+            summary=(f"Factory run failed at '{failure_point}': {failure_info.get('detail') or 'Unknown error'}"),
             evidence=evidence,
             root_cause_analysis=root_cause,
             suggested_fixes=suggested_fixes,
@@ -631,61 +607,71 @@ class ObservabilityCollector:
         evidence = []
 
         # 失败信息
-        evidence.append({
-            "type": "failure_info",
-            "phase": phase,
-            "code": failure.get("code", ""),
-            "message": failure.get("detail", ""),
-            "recoverable": bool(failure.get("recoverable")),
-        })
+        evidence.append(
+            {
+                "type": "failure_info",
+                "phase": phase,
+                "code": failure.get("code", ""),
+                "message": failure.get("detail", ""),
+                "recoverable": bool(failure.get("recoverable")),
+            }
+        )
         enriched_evidence = factory_failure_evidence(factory_status)
         if enriched_evidence:
-            evidence.append({
-                "type": "failure_evidence",
-                "summary": enriched_evidence,
-            })
+            evidence.append(
+                {
+                    "type": "failure_evidence",
+                    "summary": enriched_evidence,
+                }
+            )
 
         # 最近的 LLM 调用
         if self.llm_calls:
             recent_calls = [c for c in self.llm_calls if not c.success]
             if recent_calls:
-                evidence.append({
-                    "type": "failed_llm_calls",
-                    "count": len(recent_calls),
-                    "calls": [
-                        {
-                            "role": c.role,
-                            "model": c.model,
-                            "error": c.error_message,
-                            "response_preview": c.response_text[:500] if c.response_text else "",
-                        }
-                        for c in recent_calls[-3:]
-                    ],
-                })
+                evidence.append(
+                    {
+                        "type": "failed_llm_calls",
+                        "count": len(recent_calls),
+                        "calls": [
+                            {
+                                "role": c.role,
+                                "model": c.model,
+                                "error": c.error_message,
+                                "response_preview": c.response_text[:500] if c.response_text else "",
+                            }
+                            for c in recent_calls[-3:]
+                        ],
+                    }
+                )
 
         # 最近的错误事件
         if self.error_events:
-            evidence.append({
-                "type": "error_events",
-                "count": len(self.error_events),
-                "events": self.error_events[-5:],
-            })
+            evidence.append(
+                {
+                    "type": "error_events",
+                    "count": len(self.error_events),
+                    "events": self.error_events[-5:],
+                }
+            )
 
         # 工具执行失败
         failed_tools = [t for t in self.tool_executions if not t.success]
         if failed_tools:
-            evidence.append({
-                "type": "failed_tool_executions",
-                "count": len(failed_tools),
-                "tools": [
-                    {
-                        "name": t.tool_name,
-                        "error": t.error_message,
-                        "arguments": t.arguments,
-                    }
-                    for t in failed_tools[-3:]
-                ],
-            })
+            evidence.append(
+                {
+                    "type": "failed_tool_executions",
+                    "count": len(failed_tools),
+                    "tools": [
+                        {
+                            "name": t.tool_name,
+                            "error": t.error_message,
+                            "arguments": t.arguments,
+                        }
+                        for t in failed_tools[-3:]
+                    ],
+                }
+            )
 
         return evidence
 
@@ -698,39 +684,27 @@ class ObservabilityCollector:
         """分析根因"""
         detail = normalize_status(failure.get("detail"))
         templates = {
-            FailureCategory.LLM_UNAVAILABLE:
-                f"Phase '{phase}' failed because the LLM service is unavailable. "
-                "This could be due to: 1) LLM provider service down, 2) Invalid API key, "
-                "3) Network connectivity issues.",
-            FailureCategory.LLM_TIMEOUT:
-                f"Phase '{phase}' timed out waiting for LLM response. "
-                "The model may be overloaded or the prompt too complex.",
-            FailureCategory.LLM_FORMAT_ERROR:
-                f"Phase '{phase}' received malformed output from LLM. "
-                "The model failed to produce valid JSON/tool calls.",
-            FailureCategory.PROMPT_LEAKAGE:
-                f"Phase '{phase}' may have leaked system prompts in its output.",
-            FailureCategory.TOOL_EXECUTION_FAILED:
-                f"Phase '{phase}' failed when executing a tool. "
-                "The tool arguments may be invalid or the tool crashed.",
-            FailureCategory.TASK_DESERIALIZATION_FAILED:
-                f"Phase '{phase}' produced output that couldn't be parsed into tasks. "
-                "The LLM output format doesn't match the expected schema.",
-            FailureCategory.WORKFLOW_EXECUTION_ERROR:
-                f"Phase '{phase}' encountered a workflow execution error. "
-                "The workflow state machine may have an invalid transition.",
-            FailureCategory.RUNTIME_CRASH:
-                f"Phase '{phase}' caused a runtime crash. "
-                "This is likely a bug in Polaris code.",
-            FailureCategory.RESOURCE_EXHAUSTED:
-                f"Phase '{phase}' failed due to resource exhaustion. "
-                "The system may be running low on memory or disk space.",
-            FailureCategory.CONFIGURATION_ERROR:
-                f"Phase '{phase}' failed due to configuration error. "
-                "Check Polaris settings and LLM provider configuration.",
-            FailureCategory.UNKNOWN:
-                f"Phase '{phase}' failed with an unknown error. "
-                "Manual investigation required.",
+            FailureCategory.LLM_UNAVAILABLE: f"Phase '{phase}' failed because the LLM service is unavailable. "
+            "This could be due to: 1) LLM provider service down, 2) Invalid API key, "
+            "3) Network connectivity issues.",
+            FailureCategory.LLM_TIMEOUT: f"Phase '{phase}' timed out waiting for LLM response. "
+            "The model may be overloaded or the prompt too complex.",
+            FailureCategory.LLM_FORMAT_ERROR: f"Phase '{phase}' received malformed output from LLM. "
+            "The model failed to produce valid JSON/tool calls.",
+            FailureCategory.PROMPT_LEAKAGE: f"Phase '{phase}' may have leaked system prompts in its output.",
+            FailureCategory.TOOL_EXECUTION_FAILED: f"Phase '{phase}' failed when executing a tool. "
+            "The tool arguments may be invalid or the tool crashed.",
+            FailureCategory.TASK_DESERIALIZATION_FAILED: f"Phase '{phase}' produced output that couldn't be parsed into tasks. "
+            "The LLM output format doesn't match the expected schema.",
+            FailureCategory.WORKFLOW_EXECUTION_ERROR: f"Phase '{phase}' encountered a workflow execution error. "
+            "The workflow state machine may have an invalid transition.",
+            FailureCategory.RUNTIME_CRASH: f"Phase '{phase}' caused a runtime crash. "
+            "This is likely a bug in Polaris code.",
+            FailureCategory.RESOURCE_EXHAUSTED: f"Phase '{phase}' failed due to resource exhaustion. "
+            "The system may be running low on memory or disk space.",
+            FailureCategory.CONFIGURATION_ERROR: f"Phase '{phase}' failed due to configuration error. "
+            "Check Polaris settings and LLM provider configuration.",
+            FailureCategory.UNKNOWN: f"Phase '{phase}' failed with an unknown error. Manual investigation required.",
         }
         if category == FailureCategory.WORKFLOW_EXECUTION_ERROR and "not found" in detail:
             return (
@@ -741,12 +715,7 @@ class ObservabilityCollector:
 
         return templates.get(category, templates[FailureCategory.UNKNOWN])
 
-    def _suggest_fixes(
-        self,
-        category: FailureCategory,
-        failure: dict[str, Any],
-        phase: str
-    ) -> list[str]:
+    def _suggest_fixes(self, category: FailureCategory, failure: dict[str, Any], phase: str) -> list[str]:
         """建议修复方案"""
         fixes = {
             FailureCategory.LLM_UNAVAILABLE: [
@@ -817,11 +786,7 @@ class ObservabilityCollector:
 
         return fixes.get(category, fixes[FailureCategory.UNKNOWN])
 
-    def _find_related_logs(
-        self,
-        category: FailureCategory,
-        phase: str
-    ) -> list[str]:
+    def _find_related_logs(self, category: FailureCategory, phase: str) -> list[str]:
         """查找相关日志位置"""
         logs = []
 

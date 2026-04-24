@@ -102,9 +102,14 @@ class UnifiedConcurrencyManager:
     )
 
     _instances: dict[int, UnifiedConcurrencyManager] = {}
+    _instances_lock: threading.Lock = threading.Lock()
 
     def __new__(cls) -> UnifiedConcurrencyManager:
-        """Create or return the singleton for the current event loop."""
+        """Create or return the singleton for the current event loop.
+
+        Thread-safe: uses a class-level lock to prevent race conditions
+        during singleton creation in multi-threaded environments.
+        """
         try:
             import asyncio
 
@@ -114,13 +119,21 @@ class UnifiedConcurrencyManager:
             loop = None
 
         key = id(loop) if loop else 0
-        if key not in cls._instances:
-            instance = super().__new__(cls)
-            instance._init()
-            cls._instances[key] = instance
-            _register_atexit_callback(instance)
 
-        return cls._instances[key]
+        # Fast path: check without lock (read is thread-safe for dict)
+        if key in cls._instances:
+            return cls._instances[key]
+
+        # Slow path: create new manager with lock
+        with cls._instances_lock:
+            # Double-check after acquiring lock
+            if key not in cls._instances:
+                instance = super().__new__(cls)
+                instance._init()
+                cls._instances[key] = instance
+                _register_atexit_callback(instance)
+
+            return cls._instances[key]
 
     def _init(self) -> None:
         """Initialize the manager's internal state."""

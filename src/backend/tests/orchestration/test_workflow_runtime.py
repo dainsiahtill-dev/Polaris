@@ -19,13 +19,13 @@ from polaris.cells.orchestration.workflow_runtime.internal.models import (  # no
     PMWorkflowInput,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_backend_adapter import (
-    RuntimeBackendAdapter,  # noqa: E402
+    RuntimeBackendAdapter,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities import (
-    validate_task_contract,  # noqa: E402
+    validate_task_contract,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities.director_activities import (
-    execute_task_phase,  # noqa: E402
+    execute_task_phase,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import submit_pm_workflow_sync  # noqa: E402
 from polaris.cells.runtime.projection.internal import workflow_status as workflow_status_module
@@ -163,9 +163,7 @@ def test_runtime_adapter_resolves_writable_db_path_from_context_root(
     monkeypatch.setenv("KERNELONE_CONTEXT_ROOT", str(workspace))
 
     db_path = RuntimeBackendAdapter._resolve_runtime_db_path()
-    assert db_path.endswith(
-        os.path.join(".polaris", "runtime", "state", "workflow.runtime.db")
-    )
+    assert db_path.endswith(os.path.join(".polaris", "runtime", "state", "workflow.runtime.db"))
     assert os.path.isdir(os.path.dirname(db_path))
 
 
@@ -322,9 +320,7 @@ def test_get_workflow_runtime_status_uses_workspace_runtime_db_env(
 
     def _fake_describe(workflow_id: str, config) -> dict[str, object]:
         observed["runtime_db"] = str(os.environ.get("KERNELONE_RUNTIME_DB") or "")
-        observed["cache_root"] = str(
-            os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") or ""
-        )
+        observed["cache_root"] = str(os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") or "")
         observed["context_root"] = str(os.environ.get("KERNELONE_CONTEXT_ROOT") or "")
         return {"ok": False, "workflow_id": workflow_id, "error": "unreachable"}
 
@@ -412,10 +408,7 @@ def test_get_workflow_runtime_status_uses_workflow_chain_run_id_for_child_querie
 
     assert isinstance(result, dict)
     assert result["workflow_chain_run_id"] == "pm-00001-20260306001000"
-    assert (
-        result["director_workflow_id"]
-        == "polaris-director-pm-00001-20260306001000"
-    )
+    assert result["director_workflow_id"] == "polaris-director-pm-00001-20260306001000"
     assert "polaris-director-pm-00001-20260306001000" in query_targets
 
 
@@ -664,4 +657,3 @@ def test_should_prefer_workflow_status_accepts_running_snapshot_with_live_rows()
     )
 
     assert prefer_workflow is True
-

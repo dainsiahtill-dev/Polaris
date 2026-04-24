@@ -101,9 +101,18 @@ class CompressionEngine:
                     len(messages),
                     new_tokens,
                 )
+                # emergency_fallback preserves tool messages with truncation - return it even if still over limit
+                # This ensures the latest tool receipt is always available for the next turn
+                if new_tokens > max_tokens and len(messages) > 1:
+                    # Still over limit but preserved important messages (tool, system, user)
+                    # Return these instead of minimal summary to maintain continuity
+                    logger.debug(
+                        "[DEBUG][CompressionEngine] emergency_fallback over limit but preserving messages: %d",
+                        len(messages),
+                    )
+                    return messages, new_tokens
                 if new_tokens > max_tokens:
-                    # FIX: 当无法压缩到限制以下时，返回连续性摘要而不是抛出异常
-                    # 这确保测试和极端情况下总能返回有效消息
+                    # Only return minimal summary if emergency_fallback failed catastrophically
                     if self.compression_strategy == "summarize":
                         content = (
                             "[State-First Context OS] Earlier dialogue summarized. Continuing from recent context."
@@ -182,7 +191,8 @@ class CompressionEngine:
             content = msg.get("content", "")
 
             # 系统消息和用户消息尽量不截断
-            if role in {"system", "user"}:
+            # Tool messages are also preserved without truncation to maintain tool result chain
+            if role in {"system", "user", "tool"}:
                 processed.append(msg)
                 continue
 

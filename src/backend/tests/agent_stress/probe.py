@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from tests.agent_stress.paths import ensure_backend_root_on_syspath
 
@@ -56,15 +56,17 @@ def _write_report_output(output_path: str, content: str) -> None:
 
 class ProbeStatus(Enum):
     """探针状态"""
-    HEALTHY = "healthy"         # 健康可用
-    DEGRADED = "degraded"       # 降级可用
-    UNHEALTHY = "unhealthy"     # 不可用
-    UNKNOWN = "unknown"         # 未知状态
+
+    HEALTHY = "healthy"  # 健康可用
+    DEGRADED = "degraded"  # 降级可用
+    UNHEALTHY = "unhealthy"  # 不可用
+    UNKNOWN = "unknown"  # 未知状态
 
 
 @dataclass
 class RoleProbeResult:
     """单个角色探针结果"""
+
     role: str
     status: ProbeStatus
     provider: str = ""
@@ -92,6 +94,7 @@ class RoleProbeResult:
 @dataclass
 class ProbeReport:
     """探针完整报告"""
+
     timestamp: str
     overall_status: ProbeStatus
     role_results: list[RoleProbeResult]
@@ -102,7 +105,7 @@ class ProbeReport:
     degraded_count: int = 0
     unhealthy_count: int = 0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.total_roles = len(self.role_results)
         self.healthy_count = sum(1 for r in self.role_results if r.status == ProbeStatus.HEALTHY)
         self.degraded_count = sum(1 for r in self.role_results if r.status == ProbeStatus.DEGRADED)
@@ -144,24 +147,28 @@ class ProbeReport:
         ]
 
         if self.backend_preflight is not None:
-            lines.extend([
-                "## Backend 预检",
-                "",
-                f"- 状态: {self.backend_preflight.get('status', 'unknown')}",
-                f"- Backend 可达: {self.backend_preflight.get('backend_reachable', False)}",
-                f"- Settings 可访问: {self.backend_preflight.get('settings_accessible', False)}",
-                f"- WS runtime.v2 可用: {self.backend_preflight.get('ws_runtime_v2_accessible', False)}",
-                f"- JetStream 可用: {self.backend_preflight.get('jetstream_accessible', False)}",
-                f"- 投影传输: {self.backend_preflight.get('projection_transport', 'none')}",
-                "",
-            ])
+            lines.extend(
+                [
+                    "## Backend 预检",
+                    "",
+                    f"- 状态: {self.backend_preflight.get('status', 'unknown')}",
+                    f"- Backend 可达: {self.backend_preflight.get('backend_reachable', False)}",
+                    f"- Settings 可访问: {self.backend_preflight.get('settings_accessible', False)}",
+                    f"- WS runtime.v2 可用: {self.backend_preflight.get('ws_runtime_v2_accessible', False)}",
+                    f"- JetStream 可用: {self.backend_preflight.get('jetstream_accessible', False)}",
+                    f"- 投影传输: {self.backend_preflight.get('projection_transport', 'none')}",
+                    "",
+                ]
+            )
 
-        lines.extend([
-            "## 各角色详情",
-            "",
-            "| 角色 | 状态 | Provider | 模型 | 延迟 | 错误 |",
-            "|------|------|----------|------|------|------|",
-        ])
+        lines.extend(
+            [
+                "## 各角色详情",
+                "",
+                "| 角色 | 状态 | Provider | 模型 | 延迟 | 错误 |",
+                "|------|------|----------|------|------|------|",
+            ]
+        )
 
         for r in self.role_results:
             emoji = self._status_emoji(r.status)
@@ -170,11 +177,13 @@ class ProbeReport:
                 f"| {r.role} | {emoji} {r.status.value} | {r.provider} | {r.model} | {r.latency_ms}ms | {error_short or '-'} |"
             )
 
-        lines.extend([
-            "",
-            "## 结论",
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                "## 结论",
+                "",
+            ]
+        )
 
         if self.overall_status == ProbeStatus.HEALTHY:
             lines.append("✅ 所有角色 LLM 绑定正常，可以进行压测。")
@@ -210,7 +219,7 @@ class RoleAvailabilityProbe:
         probe_timeout: int = 30,
         token: str = "",
         verify_generation: bool = True,
-    ):
+    ) -> None:
         self.backend_url = str(backend_url or "").strip().rstrip("/")
         self.probe_timeout = probe_timeout
         self.token = str(token or "").strip()
@@ -222,10 +231,10 @@ class RoleAvailabilityProbe:
             headers["Authorization"] = f"Bearer {self.token}"
         self.client = httpx.AsyncClient(timeout=probe_timeout, headers=headers)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args):
+    async def __aexit__(self, *args: Any) -> None:
         await self.client.aclose()
 
     async def probe_all(self) -> ProbeReport:
@@ -237,13 +246,15 @@ class RoleAvailabilityProbe:
         tasks = [self._probe_role(role) for role in self.ROLES]
         role_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for role, result in zip(self.ROLES, role_results):
+        for role, result in zip(self.ROLES, role_results, strict=False):
             if isinstance(result, Exception):
-                results.append(RoleProbeResult(
-                    role=role,
-                    status=ProbeStatus.UNHEALTHY,
-                    error=str(result),
-                ))
+                results.append(
+                    RoleProbeResult(
+                        role=role,
+                        status=ProbeStatus.UNHEALTHY,
+                        error=str(result),
+                    )
+                )
             else:
                 results.append(result)
 
@@ -427,9 +438,7 @@ class RoleAvailabilityProbe:
         return max(1, min(MAX_GENERATION_CHECK_ATTEMPTS, value))
 
     def _generation_probe_timeout_seconds(self) -> float:
-        raw = str(
-            os.environ.get("KERNELONE_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS") or ""
-        ).strip()
+        raw = str(os.environ.get("KERNELONE_STRESS_PROBE_GENERATION_TIMEOUT_SECONDS") or "").strip()
         if raw:
             try:
                 value = float(raw)
@@ -490,8 +499,7 @@ def _build_preflight_blocked_report(
         "backend_context": backend_context,
         "backend_preflight": preflight_report,
         "message": (
-            "Polaris backend preflight failed. "
-            "Stop here and repair backend/runtime.v2/JetStream before role probing."
+            "Polaris backend preflight failed. Stop here and repair backend/runtime.v2/JetStream before role probing."
         ),
         "roles": [],
     }
@@ -549,13 +557,17 @@ async def main(argv: list[str] | None = None):
         print("Backend: ")
         print("Backend Context: bootstrap_failed")
         print("")
-        output = json.dumps(blocked_report, indent=2, ensure_ascii=False) if args.json else (
-            "# AI Agent 角色可用性探针报告\n\n"
-            f"**整体状态**: {ProbeStatus.UNHEALTHY.value.upper()}\n\n"
-            "## 阻塞\n\n"
-            "- 原因: backend_bootstrap_failed\n"
-            f"- 详情: {json.dumps(exc.details, ensure_ascii=False)}\n\n"
-            "结论: 当前环境无法通过官方 runner 自举 Polaris backend。"
+        output = (
+            json.dumps(blocked_report, indent=2, ensure_ascii=False)
+            if args.json
+            else (
+                "# AI Agent 角色可用性探针报告\n\n"
+                f"**整体状态**: {ProbeStatus.UNHEALTHY.value.upper()}\n\n"
+                "## 阻塞\n\n"
+                "- 原因: backend_bootstrap_failed\n"
+                f"- 详情: {json.dumps(exc.details, ensure_ascii=False)}\n\n"
+                "结论: 当前环境无法通过官方 runner 自举 Polaris backend。"
+            )
         )
         print(output)
         if args.output:
@@ -687,10 +699,7 @@ async def main(argv: list[str] | None = None):
             report.backend_context = backend_context_payload
 
             # 输出报告
-            if args.json:
-                output = json.dumps(report.to_dict(), indent=2, ensure_ascii=False)
-            else:
-                output = report.to_markdown()
+            output = json.dumps(report.to_dict(), indent=2, ensure_ascii=False) if args.json else report.to_markdown()
 
             print(output)
 

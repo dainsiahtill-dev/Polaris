@@ -30,6 +30,7 @@ class TestBackgroundTaskModuleLoadsWithoutKernelOne:
         from polaris.domain.services.background_task import (
             TaskState,
         )
+
         assert TaskState.QUEUED is not None
         assert TaskState.RUNNING is not None
 
@@ -82,9 +83,7 @@ class TestTaskRunnerInjection:
 
         class DummyExecutor:
             async def execute(self, command, cwd, timeout, tier=None):
-                return ExecutionResult(
-                    success=True, exit_code=0, stdout="ok", stderr="", duration_ms=10
-                )
+                return ExecutionResult(success=True, exit_code=0, stdout="ok", stderr="", duration_ms=10)
 
         service = BackgroundTaskService(
             storage=DummyStorage(),
@@ -122,9 +121,7 @@ class TestTaskRunnerInjection:
 
         class DummyExecutor:
             async def execute(self, command, cwd, timeout, tier=None):
-                return ExecutionResult(
-                    success=True, exit_code=0, stdout="", stderr="", duration_ms=0
-                )
+                return ExecutionResult(success=True, exit_code=0, stdout="", stderr="", duration_ms=0)
 
         # No task_runner argument → uses default
         service = BackgroundTaskService(

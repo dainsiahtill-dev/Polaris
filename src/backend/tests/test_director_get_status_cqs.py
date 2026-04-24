@@ -19,6 +19,7 @@ import pytest
 # Minimal stubs — avoids importing heavy infrastructure dependencies
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _FakeTask:
     id: str
@@ -71,6 +72,7 @@ class _FakeWorkerService:
 # Helper: build a DirectorService with minimal injectable stubs
 # ---------------------------------------------------------------------------
 
+
 def _make_service(
     *,
     state_name: str = "RUNNING",
@@ -118,6 +120,7 @@ def _make_service(
 # Test 1: get_status() is a pure query – no state mutation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_status_does_not_mutate_state_when_running_with_no_workers() -> None:
     """Regression: get_status() must NOT advance RUNNING -> IDLE even when
@@ -132,8 +135,7 @@ async def test_get_status_does_not_mutate_state_when_running_with_no_workers() -
     await svc.get_status()
 
     assert svc.state == original_state, (
-        f"get_status() must not modify state. "
-        f"Expected {original_state!r}, got {svc.state!r}"
+        f"get_status() must not modify state. Expected {original_state!r}, got {svc.state!r}"
     )
 
 
@@ -151,14 +153,13 @@ async def test_get_status_idempotent_on_repeated_calls() -> None:
     assert result1["state"] == result2["state"] == result3["state"], (
         "Repeated get_status() calls must return the same state"
     )
-    assert svc.state == DirectorState.RUNNING, (
-        "Underlying state must remain RUNNING after repeated queries"
-    )
+    assert svc.state == DirectorState.RUNNING, "Underlying state must remain RUNNING after repeated queries"
 
 
 # ---------------------------------------------------------------------------
 # Test 2: concurrent get_status() calls are stable
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_status_concurrent_calls_do_not_mutate_state() -> None:
@@ -173,17 +174,14 @@ async def test_get_status_concurrent_calls_do_not_mutate_state() -> None:
 
     # All results must agree on RUNNING
     states = {r["state"] for r in results}
-    assert states == {"RUNNING"}, (
-        f"Concurrent get_status() produced divergent states: {states}"
-    )
-    assert svc.state == DirectorState.RUNNING, (
-        "Underlying state must remain RUNNING after concurrent queries"
-    )
+    assert states == {"RUNNING"}, f"Concurrent get_status() produced divergent states: {states}"
+    assert svc.state == DirectorState.RUNNING, "Underlying state must remain RUNNING after concurrent queries"
 
 
 # ---------------------------------------------------------------------------
 # Test 3: _try_finalize_idle() IS the correct mutation path
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_try_finalize_idle_advances_running_to_idle() -> None:
@@ -215,9 +213,7 @@ async def test_try_finalize_idle_is_noop_when_workers_remain() -> None:
 
     await svc._try_finalize_idle()
 
-    assert svc.state == DirectorState.RUNNING, (
-        "_try_finalize_idle() must not transition when workers remain"
-    )
+    assert svc.state == DirectorState.RUNNING, "_try_finalize_idle() must not transition when workers remain"
 
 
 @pytest.mark.asyncio
@@ -228,14 +224,13 @@ async def test_try_finalize_idle_is_noop_when_not_running() -> None:
         svc = _make_service(state_name=state_name, workers=[], main_loop_done=True)
         initial = svc.state
         await svc._try_finalize_idle()
-        assert svc.state == initial, (
-            f"_try_finalize_idle() must not modify state {state_name!r}"
-        )
+        assert svc.state == initial, f"_try_finalize_idle() must not modify state {state_name!r}"
 
 
 # ---------------------------------------------------------------------------
 # Test 4: get_status() after _try_finalize_idle() reflects new state
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_status_reflects_idle_after_finalize() -> None:
@@ -252,9 +247,7 @@ async def test_get_status_reflects_idle_after_finalize() -> None:
 
     # Query must reflect the updated state
     status = await svc.get_status()
-    assert status["state"] == "IDLE", (
-        f"get_status() did not reflect IDLE after finalization: {status['state']!r}"
-    )
+    assert status["state"] == "IDLE", f"get_status() did not reflect IDLE after finalization: {status['state']!r}"
 
     # Second query must be stable
     status2 = await svc.get_status()

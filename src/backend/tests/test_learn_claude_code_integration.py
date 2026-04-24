@@ -2,6 +2,7 @@
 
 Run with: pytest tests/test_learn_claude_code_integration.py -v
 """
+
 # Add project root to path
 import sys
 import tempfile
@@ -13,16 +14,14 @@ project_root = str(Path(__file__).parent.parent.parent.parent)
 sys.path.insert(0, project_root)
 
 from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard, TaskStatus
-from polaris.kernelone.single_agent.skill_system import SkillLoader, install_default_skills
 from polaris.kernelone.context import (
     RoleContextCompressor as ContextCompressor,
-)
-from polaris.kernelone.context import (
     RoleContextIdentity as IdentityAnchor,
 )
 from polaris.kernelone.process.background_manager import (
     BackgroundManagerV2,
 )
+from polaris.kernelone.single_agent.skill_system import SkillLoader, install_default_skills
 
 
 class TestPhase2BackgroundManagerV2:
@@ -273,7 +272,7 @@ class TestPhase6TaskBoard:
     def test_get_ready_tasks(self, board):
         """Test getting ready-to-work tasks."""
         task1 = board.create(subject="Ready task")
-        task2 = board.create(subject="Blocked task", blocked_by=[task1.id])
+        board.create(subject="Blocked task", blocked_by=[task1.id])
 
         ready = board.get_ready_tasks()
 
@@ -328,13 +327,15 @@ class TestIntegration:
 
         # Phase 3: Context compression setup
         compressor = ContextCompressor(temp_workspace, llm_client=None)
-        identity = compressor.create_identity_from_task({
-            "id": str(task.id),
-            "goal": task.subject,
-            "acceptance_criteria": [],
-            "write_scope": [],
-            "current_phase": "implementation",
-        })
+        identity = compressor.create_identity_from_task(
+            {
+                "id": str(task.id),
+                "goal": task.subject,
+                "acceptance_criteria": [],
+                "write_scope": [],
+                "current_phase": "implementation",
+            }
+        )
         assert identity.task_id == str(task.id)
 
         print("✓ Full integration workflow passed")

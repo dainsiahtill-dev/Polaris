@@ -22,7 +22,7 @@ class TestArchitectureInvariants:
         """测试设置"""
         self.src_dir = SRC_DIR
 
-    def _find_py_files(self, directory: Path, exclude_dirs: set[str] = None) -> list[Path]:
+    def _find_py_files(self, directory: Path, exclude_dirs: set[str] | None = None) -> list[Path]:
         """递归查找 Python 文件"""
         if exclude_dirs is None:
             exclude_dirs = {".git", "__pycache__", ".mypy_cache", "node_modules", ".venv", "venv"}
@@ -95,8 +95,13 @@ class TestArchitectureInvariants:
         has_duplicate = False
 
         # 检查是否所有 JSONL 函数都有 deprecation warning
-        jsonl_functions = ["append_jsonl_atomic", "append_jsonl", "flush_jsonl_buffers",
-                          "configure_jsonl_buffer", "scan_last_seq"]
+        jsonl_functions = [
+            "append_jsonl_atomic",
+            "append_jsonl",
+            "flush_jsonl_buffers",
+            "configure_jsonl_buffer",
+            "scan_last_seq",
+        ]
 
         for func in jsonl_functions:
             # 查找函数定义
@@ -134,7 +139,7 @@ class TestArchitectureInvariants:
             lines = content.split("\n")
             for i, line in enumerate(lines, 1):
                 # 匹配 open(...) 但不包含 encoding=
-                if "open(" in line and 'encoding=' not in line:
+                if "open(" in line and "encoding=" not in line:
                     # 排除注释和字符串
                     stripped = line.strip()
                     if stripped.startswith("#") or stripped.startswith('"') or stripped.startswith("'"):
@@ -302,6 +307,7 @@ class TestCompatibilityLayers:
                 flush_jsonl_buffers,
                 scan_last_seq,
             )
+
             # 所有函数都应该可导入
             assert callable(append_jsonl)
             assert callable(append_jsonl_atomic)
@@ -321,6 +327,7 @@ class TestCompatibilityLayers:
                 is_retryable,
                 map_error_to_category,
             )
+
             assert PlatformRetryCategory is not None
             assert KernelRepairCategory is not None
             assert NoRetryCategory is not None
@@ -332,7 +339,7 @@ class TestCompatibilityLayers:
     def test_llm_cache_exports(self):
         """测试: LLMCache 应该导出并可用"""
         try:
-            from polaris.cells.roles.kernel.internal.llm_cache import LLMCache, get_global_llm_cache
+            from polaris.cells.roles.kernel.internal.llm_cache import LLMCache, get_global_llm_cache  # noqa: F401
 
             cache = LLMCache()
             assert hasattr(cache, "get")

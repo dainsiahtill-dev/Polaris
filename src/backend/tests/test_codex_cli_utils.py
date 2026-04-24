@@ -1,10 +1,10 @@
 """Tests for Codex CLI Provider utility functions"""
 
-from polaris.infrastructure.llm.providers.codex_cli_provider import CodexCLIProvider
 from polaris.infrastructure.llm.providers.codex_cli_args import (
     _build_codex_exec_args,
     _supports_reasoning_effort,
 )
+from polaris.infrastructure.llm.providers.codex_cli_provider import CodexCLIProvider
 from polaris.infrastructure.llm.providers.codex_command_utils import (
     _normalize_command,
     _truncate,
@@ -20,10 +20,12 @@ class TestNormalizeCommand:
         result = _normalize_command("script.ps1")
         assert "powershell" in result[0].lower()
 
+
 class TestTruncate:
     def test_short_text(self):
         result = _truncate("short", 10)
         assert result == "short"
+
     def test_long_text(self):
         result = _truncate("very long text here", 10)
         assert len(result) <= 10
@@ -33,17 +35,23 @@ class TestTruncate:
         result = _truncate("", 10)
         assert result == ""
 
+
 class TestSupportsReasoningEffort:
     def test_gpt_models(self):
         assert _supports_reasoning_effort("gpt-4") is True
+
     def test_o_series(self):
         assert _supports_reasoning_effort("o1") is True
+
     def test_codex_models(self):
         assert _supports_reasoning_effort("codex") is True
+
     def test_empty_model(self):
         assert _supports_reasoning_effort("") is False
+
     def test_other_models(self):
         assert _supports_reasoning_effort("llama-2") is False
+
 
 class TestBuildCodexExecArgs:
     def test_default_args(self):
@@ -55,6 +63,7 @@ class TestBuildCodexExecArgs:
         config = {"codex_exec": {"sandbox": "workspace-write"}}
         result = _build_codex_exec_args("model", config)
         assert "workspace-write" in result
+
 
 class TestCodexCLIProviderConfig:
     def test_provider_capabilities(self):

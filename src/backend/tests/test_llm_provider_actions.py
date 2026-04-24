@@ -10,6 +10,8 @@ tests and the Cell public services tests.
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 from polaris.cells.llm.provider_runtime.internal.provider_actions import run_provider_action
 from polaris.cells.llm.provider_runtime.public.contracts import (
@@ -37,7 +39,7 @@ def test_run_provider_action_anthropic_fallback_signature():
     """Test that anthropic_compat fallback correctly passes api_key."""
     # This test verifies the fallback path exists without testing internal imports
     # The actual integration is tested in test_llm_cell_public_services.py
-    try:
+    with contextlib.suppress(UnsupportedProviderTypeError):
         # This will fail with UnsupportedProviderTypeError if adapter returns None
         # because there's no direct fallback for anthropic in this module
         run_provider_action(
@@ -46,7 +48,3 @@ def test_run_provider_action_anthropic_fallback_signature():
             provider_cfg={"api_key": "test"},
             api_key="test-key",
         )
-    except UnsupportedProviderTypeError:
-        # Expected when adapter doesn't have an enhanced provider
-        # and there's no direct implementation
-        pass

@@ -3,6 +3,7 @@
 Verifies that tool execution paths emit FILE_WRITTEN events through the
 correct kernelone.events pipeline.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -140,7 +141,7 @@ def test_execute_command_emits_no_file_event(tmp_path) -> None:
     capture = _EventCapture()
     executor._emit_file_written_event = capture  # type: ignore[method-assignment]
 
-    result = executor.execute(
+    executor.execute(
         "execute_command",
         {
             "command": "echo hello",

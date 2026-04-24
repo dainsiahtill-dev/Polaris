@@ -265,7 +265,9 @@ class _FakeTaskService:
         del include_terminal
         return [task.to_dict() for task in self.tasks]
 
-    def select_next_task(self, *, requested_task_id: Any = None, prefer_resumable: bool = True) -> dict[str, Any] | None:
+    def select_next_task(
+        self, *, requested_task_id: Any = None, prefer_resumable: bool = True
+    ) -> dict[str, Any] | None:
         del prefer_resumable
         if requested_task_id is not None:
             for task in self.tasks:
@@ -420,7 +422,9 @@ def test_director_console_host_task_row_apis_use_task_runtime_service() -> None:
         runtime_service_factory=lambda: runtime,
     )
 
-    created = host.create_task(subject="wire the CLI", description="build the host service", metadata={"role": "director"})
+    created = host.create_task(
+        subject="wire the CLI", description="build the host service", metadata={"role": "director"}
+    )
     listed = host.list_tasks()
     selected = host.select_next_task()
 
@@ -479,6 +483,8 @@ def test_director_console_host_constructor_exposes_runtime_service_only() -> Non
     params = inspect.signature(DirectorConsoleHost.__init__).parameters
     assert "runtime_service_factory" in params
     assert "dialogue_streamer" not in params
+
+
 def test_director_console_host_snapshots_payload_inside_service_context() -> None:
     runtime = _FakeRoleRuntime()
     host = DirectorConsoleHost(

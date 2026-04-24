@@ -9,9 +9,7 @@ from pathlib import Path
 import yaml
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-GATE_SCRIPT = (
-    BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_opencode_convergence_gate.py"
-)
+GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_opencode_convergence_gate.py"
 FITNESS_RULES_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 PIPELINE_TEMPLATE_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "pipeline.template.yaml"
 
@@ -67,19 +65,10 @@ def test_opencode_convergence_rule_and_stage_declared() -> None:
 
     rules = rules_payload.get("rules")
     assert isinstance(rules, list), "fitness-rules.yaml must define a rules list"
-    rule_ids = {
-        str(item.get("id") or "").strip()
-        for item in rules
-        if isinstance(item, dict)
-    }
+    rule_ids = {str(item.get("id") or "").strip() for item in rules if isinstance(item, dict)}
     assert "opencode_canonical_entrypoint_non_regressive" in rule_ids
 
     stages = pipeline_payload.get("stages")
     assert isinstance(stages, list), "pipeline.template.yaml must define stages"
-    stage_ids = {
-        str(item.get("id") or "").strip()
-        for item in stages
-        if isinstance(item, dict)
-    }
+    stage_ids = {str(item.get("id") or "").strip() for item in stages if isinstance(item, dict)}
     assert "opencode_convergence_gate" in stage_ids
-

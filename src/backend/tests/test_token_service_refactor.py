@@ -95,11 +95,11 @@ class TestTokenServiceLazyImport:
         reset_token_service()
         svc = TokenService()
         big_output = "x" * 60 * 1024  # 60KB > 50KB limit
-        should, lines = svc.should_truncate_output(big_output)
+        should, _lines = svc.should_truncate_output(big_output)
         assert should is True
 
         small_output = "hello"
-        should, lines = svc.should_truncate_output(small_output)
+        should, _ = svc.should_truncate_output(small_output)
         assert should is False
 
     def test_truncate_output_with_notice(self):
@@ -134,8 +134,7 @@ class TestTokenServiceWithKFSDisabled:
         with patch(
             "polaris.kernelone.fs.registry.get_default_adapter",
             side_effect=RuntimeError(
-                "Default KernelFileSystemAdapter not set. "
-                "It must be injected by the bootstrap layer."
+                "Default KernelFileSystemAdapter not set. It must be injected by the bootstrap layer."
             ),
         ):
             svc = TokenService(

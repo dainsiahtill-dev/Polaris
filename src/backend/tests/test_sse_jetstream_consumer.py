@@ -3,6 +3,7 @@
 This module tests that __anext__() properly caches the stream iterator
 to prevent event loss and state reset issues.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +17,7 @@ import pytest
 class MockJetStreamMessage:
     """Mock NATS JetStream message."""
 
-    def __init__(self, data: dict[str, Any]):
+    def __init__(self, data: dict[str, Any]) -> None:
         self.data = data if isinstance(data, bytes) else str(data).encode("utf-8")
         self._acked = False
 
@@ -53,9 +54,7 @@ class TestSSEJetStreamConsumerGeneratorCaching:
             {"type": "event_c", "data": {"value": 3}},
         ]
 
-    def _create_mock_stream(
-        self, events: list[dict[str, Any]]
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    def _create_mock_stream(self, events: list[dict[str, Any]]) -> AsyncGenerator[dict[str, Any], None]:
         """Create a mock async generator that yields the given events."""
 
         async def mock_generator() -> AsyncGenerator[dict[str, Any], None]:
@@ -107,14 +106,12 @@ class TestSSEJetStreamConsumerGeneratorCaching:
                 "This indicates generator state is being reset on each __anext__() call."
             )
 
-            for i, (received, expected) in enumerate(zip(received_events, mock_events)):
+            for i, (received, expected) in enumerate(zip(received_events, mock_events, strict=False)):
                 assert received["payload"]["type"] == expected["payload"]["type"], (
                     f"Event {i} mismatch: expected type '{expected['payload']['type']}', "
                     f"got '{received['payload']['type']}'"
                 )
-                assert received["cursor"] == expected["cursor"], (
-                    f"Event {i} cursor mismatch"
-                )
+                assert received["cursor"] == expected["cursor"], f"Event {i} cursor mismatch"
 
     @pytest.mark.asyncio
     async def test_anext_raises_stop_iteration_after_exhaustion(
@@ -144,9 +141,7 @@ class TestSSEJetStreamConsumerGeneratorCaching:
                 await consumer.__anext__()
 
     @pytest.mark.asyncio
-    async def test_disconnect_cleans_up_iterator(
-        self, mock_consumer_config: dict[str, Any]
-    ) -> None:
+    async def test_disconnect_cleans_up_iterator(self, mock_consumer_config: dict[str, Any]) -> None:
         """Test that disconnect() properly cleans up the cached iterator."""
         from polaris.delivery.http.routers.sse_utils import SSEJetStreamConsumer
 
@@ -171,17 +166,13 @@ class TestSSEJetStreamConsumerGeneratorCaching:
             await consumer.disconnect()
 
             # Iterator should be None after disconnect
-            assert consumer._stream_iter is None, (
-                "Cached iterator should be None after disconnect()"
-            )
+            assert consumer._stream_iter is None, "Cached iterator should be None after disconnect()"
 
             # Consumer should be marked as closed
             assert consumer._closed is True
 
     @pytest.mark.asyncio
-    async def test_anext_filters_ping_events(
-        self, mock_consumer_config: dict[str, Any]
-    ) -> None:
+    async def test_anext_filters_ping_events(self, mock_consumer_config: dict[str, Any]) -> None:
         """Test that ping events are filtered out by __anext__()."""
         from polaris.delivery.http.routers.sse_utils import SSEJetStreamConsumer
 
@@ -209,9 +200,7 @@ class TestSSEJetStreamConsumerGeneratorCaching:
             assert event2["payload"]["type"] == "event_b"
 
     @pytest.mark.asyncio
-    async def test_iterator_reuse_across_multiple_consumers(
-        self, mock_consumer_config: dict[str, Any]
-    ) -> None:
+    async def test_iterator_reuse_across_multiple_consumers(self, mock_consumer_config: dict[str, Any]) -> None:
         """Test that each consumer instance maintains its own iterator state."""
         from polaris.delivery.http.routers.sse_utils import SSEJetStreamConsumer
 
@@ -230,9 +219,7 @@ class TestSSEJetStreamConsumerGeneratorCaching:
             for event in mock_events2:
                 yield event
 
-        with patch.object(consumer1, "stream", mock_stream1), patch.object(
-            consumer2, "stream", mock_stream2
-        ):
+        with patch.object(consumer1, "stream", mock_stream1), patch.object(consumer2, "stream", mock_stream2):
             # Consume one event from consumer1
             event1 = await consumer1.__anext__()
 
@@ -247,9 +234,7 @@ class TestSSEJetStreamConsumerGeneratorCaching:
             assert consumer1._stream_iter is not consumer2._stream_iter
 
     @pytest.mark.asyncio
-    async def test_initially_none_stream_iter(
-        self, mock_consumer_config: dict[str, Any]
-    ) -> None:
+    async def test_initially_none_stream_iter(self, mock_consumer_config: dict[str, Any]) -> None:
         """Test that _stream_iter is None before any iteration."""
         from polaris.delivery.http.routers.sse_utils import SSEJetStreamConsumer
 
@@ -259,9 +244,7 @@ class TestSSEJetStreamConsumerGeneratorCaching:
         assert consumer._stream_iter is None
 
     @pytest.mark.asyncio
-    async def test_stream_iter_initialized_on_first_anext(
-        self, mock_consumer_config: dict[str, Any]
-    ) -> None:
+    async def test_stream_iter_initialized_on_first_anext(self, mock_consumer_config: dict[str, Any]) -> None:
         """Test that _stream_iter is initialized after first __anext__() call."""
         from polaris.delivery.http.routers.sse_utils import SSEJetStreamConsumer
 
@@ -419,9 +402,7 @@ class TestSSEJetStreamConsumerEdgeCases:
             second_iter = consumer._stream_iter
 
             # Verify same generator is used
-            assert first_iter is second_iter, (
-                "Multiple __anext__ calls should share the same generator"
-            )
+            assert first_iter is second_iter, "Multiple __anext__ calls should share the same generator"
 
             # Verify stream was only initialized once
             # (counting_stream is called once, yielding 5 items)

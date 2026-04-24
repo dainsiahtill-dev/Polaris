@@ -30,12 +30,14 @@ def _make_handler_registry() -> HandlerRegistry:
             from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
                 get_workflow_registry,
             )
+
             return get_workflow_registry().list_workflows()
 
         def get(self, name: str) -> Any | None:
             from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
                 get_workflow_registry,
             )
+
             return get_workflow_registry().get(name)
 
     class _ActivityRegOps:
@@ -45,12 +47,14 @@ def _make_handler_registry() -> HandlerRegistry:
             from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
                 get_activity_registry,
             )
+
             return get_activity_registry().list_activities()
 
         def get(self, name: str) -> Any | None:
             from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
                 get_activity_registry,
             )
+
             return get_activity_registry().get(name)
 
     class CellHandlerRegistry:
@@ -109,6 +113,7 @@ async def _wait_terminal(
 async def test_basic_workflow() -> None:
     engine = await _build_engine()
     try:
+
         async def test_workflow_handler(workflow_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             await asyncio.sleep(0.05)
             return {"status": "completed", "result": payload, "workflow_id": workflow_id}
@@ -134,6 +139,7 @@ async def test_activity() -> None:
     runner = ActivityRunner(max_concurrent=5)
     await runner.start()
     try:
+
         async def test_activity_handler(**kwargs: Any) -> dict[str, Any]:
             input_dict = kwargs.get("input", {})
             await asyncio.sleep(0.05)

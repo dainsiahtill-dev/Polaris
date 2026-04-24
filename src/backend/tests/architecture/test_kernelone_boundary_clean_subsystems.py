@@ -57,10 +57,7 @@ def test_high_trust_subsystems_do_not_use_old_root_import_shortcuts() -> None:
 
     if violations:
         formatted = "\n".join(f"  - {item}" for item in violations)
-        pytest.fail(
-            "Detected old-root or legacy shortcut imports inside high-trust Polaris subsystems:\n"
-            f"{formatted}"
-        )
+        pytest.fail(f"Detected old-root or legacy shortcut imports inside high-trust Polaris subsystems:\n{formatted}")
 
 
 def test_high_trust_subsystems_do_not_mutate_sys_path() -> None:
@@ -83,7 +80,4 @@ def test_high_trust_subsystems_do_not_mutate_sys_path() -> None:
 
     if violations:
         formatted = "\n".join(f"  - {item}" for item in violations)
-        pytest.fail(
-            "Detected sys.path mutation inside high-trust Polaris subsystems:\n"
-            f"{formatted}"
-        )
+        pytest.fail(f"Detected sys.path mutation inside high-trust Polaris subsystems:\n{formatted}")

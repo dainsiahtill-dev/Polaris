@@ -24,6 +24,7 @@ from polaris.kernelone.process.async_contracts import (
 # IAsyncProcessRunner protocol — structural subtyping checks
 # =============================================================================
 
+
 def test_protocol_is_runtime_checkable() -> None:
     """SubprocessAsyncRunner satisfies AsyncProcessRunnerPort at runtime."""
     runner = SubprocessAsyncRunner()
@@ -39,6 +40,7 @@ def test_protocol_rejects_non_implementations() -> None:
 # =============================================================================
 # AsyncProcessHandle protocol — structural subtyping checks
 # =============================================================================
+
 
 class _FakeAsyncProcessHandle:
     """Minimal object that satisfies AsyncProcessHandle."""
@@ -103,6 +105,7 @@ def test_handle_protocol_rejects_incomplete() -> None:
 # StreamChunk — frozen dataclass invariants
 # =============================================================================
 
+
 def test_stream_chunk_is_frozen() -> None:
     """StreamChunk fields cannot be mutated after construction."""
     chunk = StreamChunk(line="hello", source=ProcessStreamSource.STDOUT, pid=1)
@@ -127,11 +130,17 @@ def test_stream_chunk_to_dict() -> None:
 def test_stream_result_ok_property() -> None:
     """StreamResult.ok is True only when exit_code==0 and not timed_out."""
     now = datetime.now(timezone.utc)
-    base = dict(
-        pid=1, exit_code=0, status=ProcessStatus.SUCCESS,
-        stdout_lines=(), stderr_lines=(), timed_out=False,
-        timeout_seconds=30, started_at=now, ended_at=now,
-    )
+    base = {
+        "pid": 1,
+        "exit_code": 0,
+        "status": ProcessStatus.SUCCESS,
+        "stdout_lines": (),
+        "stderr_lines": (),
+        "timed_out": False,
+        "timeout_seconds": 30,
+        "started_at": now,
+        "ended_at": now,
+    }
     assert StreamResult(**base).ok is True
 
     timed_out_result = StreamResult(**{**base, "status": ProcessStatus.TIMED_OUT, "timed_out": True})
@@ -145,16 +154,23 @@ def test_stream_result_ok_property() -> None:
 # ProcessStatus — state machine enum
 # =============================================================================
 
+
 def test_process_status_values() -> None:
     """All expected status values exist."""
     assert {s.value for s in ProcessStatus} == {
-        "pending", "running", "success", "failed", "timed_out", "cancelled",
+        "pending",
+        "running",
+        "success",
+        "failed",
+        "timed_out",
+        "cancelled",
     }
 
 
 # =============================================================================
 # SubprocessAsyncRunner — integration tests using real subprocesses
 # =============================================================================
+
 
 @pytest.mark.asyncio
 async def test_spawn_and_wait_success(tmp_path: Path) -> None:
@@ -219,12 +235,14 @@ async def test_stream_stdout_lines(tmp_path: Path) -> None:
     """stream() yields lines from the subprocess stdout."""
     runner = SubprocessAsyncRunner()
     # Use Python to avoid Windows cmd.exe buffering issues with pipe output.
-    script = ";".join([
-        "import sys",
-        "for i in range(1, 4):",
-        "    print(f'line{i}')",
-        "    sys.stdout.flush()",
-    ])
+    script = ";".join(
+        [
+            "import sys",
+            "for i in range(1, 4):",
+            "    print(f'line{i}')",
+            "    sys.stdout.flush()",
+        ]
+    )
     cmd = ["python", "-c", script]
 
     handle = await runner.spawn(cmd, timeout=10, cwd=str(tmp_path))
@@ -295,9 +313,11 @@ async def test_write_stdin_with_stdin_lines(tmp_path: Path) -> None:
 # _merge_two_streams — async iterator merger
 # =============================================================================
 
+
 @pytest.mark.asyncio
 async def test_merge_two_streams_yields_both_sources() -> None:
     """The merger yields chunks from both source iterators."""
+
     async def stdout_gen() -> AsyncIterator[StreamChunk]:
         for i in range(3):
             yield StreamChunk(line=f"out-{i}", source=ProcessStreamSource.STDOUT)
@@ -321,6 +341,7 @@ async def test_merge_two_streams_yields_both_sources() -> None:
 # =============================================================================
 # Constants
 # =============================================================================
+
 
 def test_default_timeout_is_30() -> None:
     """DEFAULT_TIMEOUT_SECONDS is 30."""

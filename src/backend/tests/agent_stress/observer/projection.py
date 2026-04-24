@@ -17,8 +17,7 @@ from typing import Any
 
 import websockets
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
-
-from .constants import logger
+import contextlib
 
 logger = logging.getLogger("observer.projection")
 
@@ -40,7 +39,7 @@ class RuntimeProjection:
         workspace: str,
         transport: str = "ws",
         focus: str = "all",
-    ):
+    ) -> None:
         self.backend_url = backend_url.rstrip("/")
         self.token = token
         self.workspace = self._normalize_workspace_value(workspace)
@@ -294,7 +293,8 @@ class RuntimeProjection:
         if (
             cls._is_running_task_status(secondary_normalized.get("status"))
             and not cls._is_running_task_status(merged.get("status"))
-            or cls._is_terminal_task_status(secondary_normalized.get("status"))
+        ) or (
+            cls._is_terminal_task_status(secondary_normalized.get("status"))
             and not cls._is_running_task_status(merged.get("status"))
         ):
             merged["status"] = secondary_normalized.get("status", merged.get("status"))
@@ -724,14 +724,13 @@ class RuntimeProjection:
             after_len = len(self.panels.get("taskboard_status", []))
             if after_len > before_len:
                 pushed = True
-        if focus_task is not None:
-            if self._overlay_active_taskboard_snapshot(
-                timestamp=str(timestamp or ""),
-                source=f"{source_prefix}.focus_task",
-                focus_task=focus_task,
-                running_hint=running_hint,
-            ):
-                pushed = True
+        if focus_task is not None and self._overlay_active_taskboard_snapshot(
+            timestamp=str(timestamp or ""),
+            source=f"{source_prefix}.focus_task",
+            focus_task=focus_task,
+            running_hint=running_hint,
+        ):
+            pushed = True
         return pushed
 
     @classmethod
@@ -2133,7 +2132,7 @@ class RuntimeProjection:
                 "channel": "llm",
                 "role": actor,
                 "event_type": event_type,
-                "stream_key": f"runtime.v2:{actor}:{str(envelope.get('run_id') or '')}",
+                "stream_key": f"runtime.v2:{actor}:{envelope.get('run_id') or ''!s}",
                 "content": content[: self._max_llm_content_chars],
             }
             task_id = self._extract_runtime_v2_task_id(payload)
@@ -2391,10 +2390,7 @@ class RuntimeProjection:
             line = msg.get("line", "") or msg.get("event", {})
             timestamp = str(msg.get("timestamp", ""))
             payload = line if isinstance(line, dict) else {}
-            if isinstance(line, dict):
-                content = line.get("content", "") or line.get("text", "")
-            else:
-                content = str(line)
+            content = line.get("content", "") or line.get("text", "") if isinstance(line, dict) else str(line)
             if payload:
                 self._project_llm_lifecycle_from_runtime_payload(
                     timestamp=timestamp,
@@ -2519,10 +2515,8 @@ class RuntimeProjection:
 
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
         if self.ws:

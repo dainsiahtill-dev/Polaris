@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from polaris.infrastructure.messaging.nats import client as nats_client_module
 
 

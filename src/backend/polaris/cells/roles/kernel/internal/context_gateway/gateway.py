@@ -238,6 +238,33 @@ class RoleContextGateway:
                 "state_first_context_os_projection" if has_snapshot else "state_first_context_os_initial_projection"
             )
 
+        # ── Fallback: Include tool messages from history when not in state-first mode ──
+        if not state_first_mode_active and not has_snapshot and request.history:
+            history_tool_messages = self._extract_tool_messages_from_history(request.history)
+            logger.debug(
+                "[DEBUG][ContextGateway] fallback: state_first=%s has_snapshot=%s history_len=%d tool_msgs=%d",
+                state_first_mode_active,
+                has_snapshot,
+                len(request.history) if request.history else 0,
+                len(history_tool_messages),
+            )
+            if history_tool_messages:
+                # Pre-process tool messages: truncate if too large, add CONTEXT_TRUNCATED marker
+                processed_tool_messages = self._process_tool_messages_for_fallback(
+                    history_tool_messages,
+                    max_chars=2000,  # Allow some chars for the tool result
+                )
+                messages.extend(processed_tool_messages)
+                sources.append("history_tool_fallback")
+
+        # ── Context Override Processing with Prompt Injection Detection ──
+        context_override = getattr(request, "context_override", None)
+        if context_override and isinstance(context_override, dict):
+            override_msg = self._process_context_override(context_override)
+            if override_msg:
+                messages.insert(0, override_msg)
+                sources.append("context_override")
+
         # ── ContextOS routing audit telemetry ──
         raw_history_tokens = self._token_estimator.estimate(proj_input)
         projected_tokens = self._token_estimator.estimate(messages)
@@ -353,6 +380,107 @@ class RoleContextGateway:
             parts.append("\n\n【追加上下文】\n" + appendix)
 
         return "\n".join(parts)
+
+    def _process_context_override(self, context_override: dict[str, Any]) -> dict[str, Any] | None:
+        """Process context_override dict with prompt injection detection.
+
+        Args:
+            context_override: Dict of context key-value pairs to inject.
+
+        Returns:
+            Message dict with filtered content, or None if empty.
+        """
+        if not context_override or not isinstance(context_override, dict):
+            return None
+
+        filtered_items: list[str] = []
+        has_injection = False
+
+        for key, value in context_override.items():
+            if not isinstance(key, str):
+                continue
+
+            str_value = str(value) if value is not None else ""
+
+            # Detect prompt injection patterns
+            if self._config.detect_prompt_injection:
+                if SecuritySanitizer.looks_like_prompt_injection(str_value):
+                    has_injection = True
+                    filtered_items.append(f"{key}: [FILTERED_PROMPT_INJECTION]")
+                    logger.warning("Prompt injection detected in context_override key: %s", key)
+                    continue
+
+                # Check for dangerous key names
+                if any(d in key.lower() for d in ("system", "role", "ignore", "override")):
+                    has_injection = True
+                    filtered_items.append(f"{key}: [FILTERED_SUSPICIOUS_KEY]")
+                    logger.warning("Suspicious context_override key: %s", key)
+                    continue
+
+            filtered_items.append(f"{key}: {str_value}")
+
+        if not filtered_items:
+            return None
+
+        content = "\n".join(filtered_items)
+        if has_injection:
+            content = "⚠️ CONTEXT_OVERRIDE_WITH_FILTERED_CONTENT:\n" + content
+
+        return {"role": "system", "name": "context_override", "content": content}
+
+    def _extract_tool_messages_from_history(
+        self, history: list[tuple[str, str] | dict[str, str]]
+    ) -> list[dict[str, Any]]:
+        """Extract tool messages from history for fallback when state-first mode is inactive.
+
+        Args:
+            history: List of (role, content) tuples or dict messages.
+
+        Returns:
+            List of tool message dicts.
+        """
+        tool_messages: list[dict[str, Any]] = []
+        for item in history:
+            if isinstance(item, dict):
+                role = str(item.get("role", "")).lower()
+                content = item.get("content", "")
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                role = str(item[0]).lower()
+                content = str(item[1])
+            else:
+                continue
+
+            if role == "tool":
+                tool_messages.append({"role": "tool", "content": content})
+        return tool_messages
+
+    def _process_tool_messages_for_fallback(
+        self,
+        tool_messages: list[dict[str, Any]],
+        max_chars: int = 2000,
+    ) -> list[dict[str, Any]]:
+        """Process tool messages for fallback, truncating large content.
+
+        Args:
+            tool_messages: List of tool message dicts.
+            max_chars: Maximum characters before truncation.
+
+        Returns:
+            List of processed tool messages with CONTEXT_TRUNCATED markers if needed.
+        """
+        processed: list[dict[str, Any]] = []
+        for msg in tool_messages:
+            content = str(msg.get("content", ""))
+            if len(content) > max_chars:
+                truncated_content = content[:max_chars]
+                new_content = (
+                    f"{truncated_content}\n\n"
+                    f"[CONTEXT_TRUNCATED: Original {len(content)} chars, truncated to {max_chars} chars]"
+                )
+                processed.append({"role": "tool", "content": new_content})
+            else:
+                processed.append(msg)
+        return processed
 
     def _build_projection_dict(
         self,

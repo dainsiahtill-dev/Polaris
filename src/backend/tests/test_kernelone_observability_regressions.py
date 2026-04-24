@@ -274,10 +274,7 @@ def test_runtime_control_logs_pid_termination_failures(monkeypatch, caplog) -> N
         result = runtime_control.terminate_pid(123)
 
     assert result is False
-    assert (
-        "Failed to terminate pid=123" in caplog.text
-        or "taskkill failed for pid=123" in caplog.text
-    )
+    assert "Failed to terminate pid=123" in caplog.text or "taskkill failed for pid=123" in caplog.text
 
 
 def test_task_board_terminal_event_write_does_not_spawn_thread(monkeypatch, tmp_path: Path) -> None:
@@ -292,9 +289,7 @@ def test_task_board_terminal_event_write_does_not_spawn_thread(monkeypatch, tmp_
     updated = board.update_status(task.id, TaskStatus.COMPLETED, result_summary="done")
 
     assert updated is not None
-    events_path = Path(
-        resolve_runtime_path(str(tmp_path), "runtime/events/taskboard.terminal.events.jsonl")
-    )
+    events_path = Path(resolve_runtime_path(str(tmp_path), "runtime/events/taskboard.terminal.events.jsonl"))
     assert events_path.is_file()
     content = events_path.read_text(encoding="utf-8")
     assert "task_id" in content

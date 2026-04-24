@@ -65,6 +65,7 @@ class TestPolarisContext:
     def test_context_from_env_vars(self):
         """测试从环境变量恢复上下文"""
         import os
+
         os.environ["KERNELONE_TRACE_ID"] = "env-trace-123"
         os.environ["KERNELONE_RUN_ID"] = "env-run-456"
 
@@ -188,10 +189,7 @@ class TestAsyncContextPropagation:
                 return (n, get_context().trace_id)
 
             # 创建多个任务
-            tasks = [
-                create_task_with_context(task(i))
-                for i in range(3)
-            ]
+            tasks = [create_task_with_context(task(i)) for i in range(3)]
 
             for t in tasks:
                 n, trace_id = await t
@@ -207,7 +205,7 @@ class TestUnifiedLogger:
 
     def test_logger_with_trace_id(self, caplog):
         """测试日志包含trace_id"""
-        with new_trace("test-log") as ctx:
+        with new_trace("test-log"):
             logger = get_logger("test")
             logger.info("Test message", extra_key="extra_value")
 
@@ -221,6 +219,7 @@ class TestUnifiedLogger:
 
         # 创建一个处理器来捕获输出
         import io
+
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
         handler.setFormatter(logging.Formatter("%(message)s"))
@@ -230,7 +229,7 @@ class TestUnifiedLogger:
         logger.info("JSON test")
 
         # 验证输出是JSON格式
-        output = stream.getvalue()
+        stream.getvalue()
         # 由于我们使用的是root logger配置，这个测试可能需要调整
 
 
@@ -291,6 +290,7 @@ class TestIntegration:
     async def test_full_flow(self):
         """测试完整流程"""
         with new_trace("full-flow", task_id="task-full") as ctx:
+
             async def capture_trace() -> str:
                 return get_context().trace_id
 

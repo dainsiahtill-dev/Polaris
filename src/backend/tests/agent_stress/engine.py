@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import httpx
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
@@ -42,6 +42,7 @@ from tests.agent_stress.stress_path_policy import (
     runtime_layout_policy_violations,
 )
 from tests.agent_stress.tracer import RoundTrace, RuntimeTracer, TaskLineage
+import contextlib
 
 MAX_NON_LLM_CONTROL_PLANE_STALL_SECONDS = 120.0
 DEFAULT_MIN_NEW_CODE_FILES = 2
@@ -386,7 +387,7 @@ class StressEngine:
         require_architect_stage: bool = False,
         require_chief_engineer_stage: bool = False,
         chain_profile: str = "court_strict",
-    ):
+    ) -> None:
         self.root_workspace = Path(workspace).resolve()
         self.workspace = self.root_workspace
         self.backend_url = str(backend_url or "").strip().rstrip("/")
@@ -460,7 +461,7 @@ class StressEngine:
         candidate = self.root_workspace / "projects" / folder_name
         return ensure_stress_workspace_path(candidate)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         self.tracer = RuntimeTracer(
             backend_url=self.backend_url,
             workspace=str(self.workspace),
@@ -482,7 +483,7 @@ class StressEngine:
         await self.collector.__aenter__()
         return self
 
-    async def __aexit__(self, *args):
+    async def __aexit__(self, *args: Any) -> None:
         if self.collector:
             await self.collector.__aexit__(*args)
         if self.tracer:
@@ -2069,17 +2070,13 @@ class StressEngine:
 
         role_logs = hp_root / "runtime" / "roles"
         if role_logs.exists():
-            try:
+            with contextlib.suppress(OSError):
                 candidates.extend(role_logs.glob("*/logs/*.jsonl"))
-            except OSError:
-                pass
 
         runtime_events = hp_root / "runtime" / "events"
         if runtime_events.exists():
-            try:
+            with contextlib.suppress(OSError):
                 candidates.extend(runtime_events.glob("*.jsonl"))
-            except OSError:
-                pass
 
         signature_rows: list[list[Any]] = []
         latest_mtime = 0.0
@@ -2567,8 +2564,8 @@ class StressEngine:
 
             # === B2 强化：阶段耗时校验（单阶段超时告警）===
             # 单阶段超过 600s (10分钟) 触发告警
-            STAGE_TIMEOUT_MS = 600000  # 10 minutes
-            if stage.duration_ms > STAGE_TIMEOUT_MS:
+            stage_timeout_ms = 600000  # 10 minutes
+            if stage.duration_ms > stage_timeout_ms:
                 missing_stage_evidence.append(f"{stage_name}=timeout_exceeded({stage.duration_ms}ms)")
 
             if stage.duration_ms <= 0:

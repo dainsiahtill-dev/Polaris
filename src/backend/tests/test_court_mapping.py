@@ -37,11 +37,17 @@ class TestCourtRoleMapping:
         # 必有的关键角色
         required_roles = {
             "emperor",  # 天子
-            "zhongshu_ling", "zhongshu_shilang",  # 中书省
-            "menxia_shilang", "menxia_shizhong",  # 门下省
+            "zhongshu_ling",
+            "zhongshu_shilang",  # 中书省
+            "menxia_shilang",
+            "menxia_shizhong",  # 门下省
             "shangshu_ling",  # 尚书省
-            "libu_shangshu", "hubu_shangshu", "libu_shangshu2",
-            "bingbu_shangshu", "xingbu_shangshu", "gongbu_shangshu",  # 六部
+            "libu_shangshu",
+            "hubu_shangshu",
+            "libu_shangshu2",
+            "bingbu_shangshu",
+            "xingbu_shangshu",
+            "gongbu_shangshu",  # 六部
         }
 
         for role in required_roles:
@@ -78,8 +84,9 @@ class TestCourtRoleMapping:
 
         for tech_role, expected_court_role in test_cases:
             result = court_mapper.map_tech_role_to_court(tech_role)
-            assert result == expected_court_role, \
+            assert result == expected_court_role, (
                 f"Mapping failed for '{tech_role}': expected '{expected_court_role}', got '{result}'"
+            )
 
 
 class TestEngineToCourtStateMapping:
@@ -111,10 +118,10 @@ class TestEngineToCourtStateMapping:
 
         for engine_payload, expected_phase, expected_scene in phase_mapping:
             state = court_mapper.map_engine_to_court_state(engine_payload)
-            assert state.phase == expected_phase, \
-                f"Phase mapping failed: {engine_payload['phase']} -> {state.phase}"
-            assert state.current_scene == expected_scene, \
+            assert state.phase == expected_phase, f"Phase mapping failed: {engine_payload['phase']} -> {state.phase}"
+            assert state.current_scene == expected_scene, (
                 f"Scene mapping failed: {engine_payload['phase']} -> {state.current_scene}"
+            )
 
     def test_role_status_priority(self):
         """测试角色状态优先级：failed > blocked > executing > thinking > success > idle > offline."""
@@ -134,8 +141,9 @@ class TestEngineToCourtStateMapping:
             state = court_mapper.map_engine_to_court_state(engine_payload)
             actor = state.actors.get("gongbu_shangshu")
             assert actor is not None
-            assert actor.status == expected_status, \
+            assert actor.status == expected_status, (
                 f"Status priority failed for {engine_payload}: expected {expected_status}, got {actor.status}"
+            )
 
     def test_risk_level_calculation(self):
         """测试风险等级计算."""
@@ -151,8 +159,9 @@ class TestEngineToCourtStateMapping:
             state = court_mapper.map_engine_to_court_state(engine_payload)
             # 检查至少一个角色有风险等级
             risks = {a.risk_level for a in state.actors.values()}
-            assert expected_risk in risks, \
+            assert expected_risk in risks, (
                 f"Risk level {expected_risk} not found in state for errors: {len(engine_payload.get('recent_errors', []))}"
+            )
 
     def test_deterministic_output(self):
         """测试输出确定性：给定相同输入，输出必须一致."""
@@ -162,7 +171,7 @@ class TestEngineToCourtStateMapping:
             "roles": {
                 "gongbu_shangshu": {"status": "running", "running": True},
                 "emperor": {"status": "idle"},
-            }
+            },
         }
 
         state1 = court_mapper.map_engine_to_court_state(engine_payload)
@@ -189,8 +198,12 @@ class TestSceneConfigs:
         scenes = get_scene_configs()
         # 文档定义的7个场景
         expected_scenes = [
-            "taiji_hall", "zhongshu_pavilion", "shangshu_hall",
-            "gongbu_blueprint", "construction_site", "menxia_tower"
+            "taiji_hall",
+            "zhongshu_pavilion",
+            "shangshu_hall",
+            "gongbu_blueprint",
+            "construction_site",
+            "menxia_tower",
         ]
         for scene_id in expected_scenes:
             assert scene_id in scenes, f"Scene '{scene_id}' not found"
@@ -220,8 +233,7 @@ class TestSceneConfigs:
             transitions = config.get("transitions", [])
             # 验证切换目标存在
             for target in transitions:
-                assert target in scenes, \
-                    f"Scene '{scene_id}' has invalid transition target '{target}'"
+                assert target in scenes, f"Scene '{scene_id}' has invalid transition target '{target}'"
 
 
 class TestAPICompatibility:

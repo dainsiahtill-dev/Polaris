@@ -162,6 +162,7 @@ class TestBootstrapExecution:
         Marked xfail during Phase 3 migration.
         """
         import warnings
+
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         from polaris.cells.director.tasking.internal.worker_executor import _FileApplyService
@@ -248,6 +249,7 @@ class TestWorkerExecutorUTF8:
         Marked xfail during Phase 3 migration.
         """
         import warnings
+
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         from polaris.cells.director.tasking.internal.worker_executor import _FileApplyService

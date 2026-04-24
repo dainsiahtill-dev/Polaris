@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace

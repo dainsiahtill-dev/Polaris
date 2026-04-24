@@ -158,4 +158,3 @@ class TestEvidenceServiceUTF8:
         evidence = build_error_evidence("错误信息: 文件不存在", 100)
 
         assert "错误信息" in evidence[0].content
-

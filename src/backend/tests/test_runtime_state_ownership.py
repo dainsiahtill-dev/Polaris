@@ -61,6 +61,7 @@ def _effects_write(cell_data: dict) -> list[str]:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def state_owner_cell() -> dict:
     return _load_cell_yaml("runtime.state_owner")
@@ -85,6 +86,7 @@ def artifact_store_catalog() -> dict:
 # Tests: runtime.state_owner
 # ---------------------------------------------------------------------------
 
+
 class TestStateOwnerCell:
     """runtime.state_owner must claim and only claim its three namespaces."""
 
@@ -93,21 +95,15 @@ class TestStateOwnerCell:
 
     def test_owns_contracts_namespace(self, state_owner_cell):
         owners = _state_owners(state_owner_cell)
-        assert "runtime/contracts/*" in owners, (
-            "runtime.state_owner must own runtime/contracts/*"
-        )
+        assert "runtime/contracts/*" in owners, "runtime.state_owner must own runtime/contracts/*"
 
     def test_owns_state_namespace(self, state_owner_cell):
         owners = _state_owners(state_owner_cell)
-        assert "runtime/state/*" in owners, (
-            "runtime.state_owner must own runtime/state/*"
-        )
+        assert "runtime/state/*" in owners, "runtime.state_owner must own runtime/state/*"
 
     def test_owns_runs_namespace(self, state_owner_cell):
         owners = _state_owners(state_owner_cell)
-        assert "runtime/runs/*" in owners, (
-            "runtime.state_owner must own runtime/runs/*"
-        )
+        assert "runtime/runs/*" in owners, "runtime.state_owner must own runtime/runs/*"
 
     def test_does_not_own_artifacts_namespace(self, state_owner_cell):
         owners = _state_owners(state_owner_cell)
@@ -123,8 +119,7 @@ class TestStateOwnerCell:
         owned_prefixes = [re.sub(r"/\*+$", "/", s) for s in owned]
         for effect in _effects_write(state_owner_cell):
             target = effect.removeprefix("fs.write:")
-            assert any(target.startswith(prefix) or target == prefix.rstrip("/")
-                       for prefix in owned_prefixes), (
+            assert any(target.startswith(prefix) or target == prefix.rstrip("/") for prefix in owned_prefixes), (
                 f"runtime.state_owner has write effect on unowned path: {effect}"
             )
 
@@ -132,6 +127,7 @@ class TestStateOwnerCell:
 # ---------------------------------------------------------------------------
 # Tests: runtime.artifact_store
 # ---------------------------------------------------------------------------
+
 
 class TestArtifactStoreCell:
     """runtime.artifact_store must NOT claim namespaces owned by runtime.state_owner."""
@@ -147,9 +143,7 @@ class TestArtifactStoreCell:
 
     def test_owns_artifacts_namespace(self, artifact_store_cell):
         owners = _state_owners(artifact_store_cell)
-        assert "runtime/artifacts/*" in owners, (
-            "runtime.artifact_store must own runtime/artifacts/*"
-        )
+        assert "runtime/artifacts/*" in owners, "runtime.artifact_store must own runtime/artifacts/*"
 
     def test_no_overlap_with_state_owner_namespaces(self, artifact_store_cell):
         """artifact_store must not declare state_owners in namespaces that belong
@@ -179,14 +173,14 @@ class TestArtifactStoreCell:
         runtime.state_owner in depends_on to make the read-dependency explicit."""
         depends = list(artifact_store_cell.get("depends_on") or [])
         assert "runtime.state_owner" in depends, (
-            "runtime.artifact_store reads from runtime.state_owner namespaces and must "
-            "declare it in depends_on"
+            "runtime.artifact_store reads from runtime.state_owner namespaces and must declare it in depends_on"
         )
 
 
 # ---------------------------------------------------------------------------
 # Tests: Cross-cell uniqueness invariant
 # ---------------------------------------------------------------------------
+
 
 class TestStateOwnershipUniqueness:
     """No two cells may declare ownership of the same state namespace."""
@@ -196,14 +190,14 @@ class TestStateOwnershipUniqueness:
         state_owner glob pattern is claimed by at most one cell.
 
         Pre-existing violations in other cells (outside this task's scope) are
-        captured in KNOWN_PREEXISTING_VIOLATIONS. The test fails only on NEW
+        captured in known_preexisting_violations. The test fails only on NEW
         violations not in that set.  Any entry in that set that disappears
         (i.e. the other cell is fixed) is also flagged so the set stays current.
         """
         # Pre-existing violations discovered by this scan but outside the scope
         # of this task (runtime.state_owner / runtime.artifact_store).
         # These must be addressed in a dedicated task for each owning team.
-        KNOWN_PREEXISTING_VIOLATIONS: set[str] = set()
+        known_preexisting_violations: set[str] = set()
 
         seen: dict[str, str] = {}  # pattern -> cell_id
         all_duplicates: list[str] = []
@@ -217,22 +211,21 @@ class TestStateOwnershipUniqueness:
             if not isinstance(data, dict):
                 continue
             cell_id = data.get("id", str(cell_yaml_path))
-            for pattern in (data.get("state_owners") or []):
+            for pattern in data.get("state_owners") or []:
                 pattern_str = str(pattern).strip()
                 if pattern_str in seen:
-                    all_duplicates.append(
-                        f"'{pattern_str}' claimed by both '{seen[pattern_str]}' and '{cell_id}'"
-                    )
+                    all_duplicates.append(f"'{pattern_str}' claimed by both '{seen[pattern_str]}' and '{cell_id}'")
                 else:
                     seen[pattern_str] = cell_id
 
-        new_violations = [d for d in all_duplicates if d not in KNOWN_PREEXISTING_VIOLATIONS]
-        stale_entries = [k for k in KNOWN_PREEXISTING_VIOLATIONS if k not in all_duplicates]
+        new_violations = [d for d in all_duplicates if d not in known_preexisting_violations]
+        stale_entries = [k for k in known_preexisting_violations if k not in all_duplicates]
 
         # Surface pre-existing violations as warnings in the output for visibility
         if all_duplicates:
             import warnings
-            preexisting = [d for d in all_duplicates if d in KNOWN_PREEXISTING_VIOLATIONS]
+
+            preexisting = [d for d in all_duplicates if d in known_preexisting_violations]
             if preexisting:
                 warnings.warn(
                     "Pre-existing ACGA 2.0 state_owner violations (not in scope here):\n"
@@ -242,9 +235,8 @@ class TestStateOwnershipUniqueness:
                 )
 
         assert not stale_entries, (
-            "KNOWN_PREEXISTING_VIOLATIONS has entries that no longer appear in the scan "
-            "(the violation was fixed). Remove these from the set:\n"
-            + "\n".join(f"  - {e}" for e in stale_entries)
+            "known_preexisting_violations has entries that no longer appear in the scan "
+            "(the violation was fixed). Remove these from the set:\n" + "\n".join(f"  - {e}" for e in stale_entries)
         )
 
         assert not new_violations, (
@@ -252,44 +244,31 @@ class TestStateOwnershipUniqueness:
             + "\n".join(f"  - {d}" for d in new_violations)
         )
 
-    def test_catalog_runtime_artifact_store_owns_only_artifacts(
-        self, artifact_store_catalog
-    ):
+    def test_catalog_runtime_artifact_store_owns_only_artifacts(self, artifact_store_catalog):
         """Verify the catalog entry for runtime.artifact_store is consistent."""
         owners = list(artifact_store_catalog.get("state_owners") or [])
         assert owners == ["runtime/artifacts/*"], (
-            f"Catalog runtime.artifact_store state_owners must be exactly "
-            f"['runtime/artifacts/*'], got: {owners}"
+            f"Catalog runtime.artifact_store state_owners must be exactly ['runtime/artifacts/*'], got: {owners}"
         )
 
-    def test_catalog_runtime_state_owner_owns_contracts_state_runs(
-        self, state_owner_catalog
-    ):
+    def test_catalog_runtime_state_owner_owns_contracts_state_runs(self, state_owner_catalog):
         """Verify the catalog entry for runtime.state_owner is consistent."""
         owners = set(state_owner_catalog.get("state_owners") or [])
         expected = {"runtime/contracts/*", "runtime/state/*", "runtime/runs/*"}
-        assert owners == expected, (
-            f"Catalog runtime.state_owner state_owners must be {expected}, got: {owners}"
-        )
+        assert owners == expected, f"Catalog runtime.state_owner state_owners must be {expected}, got: {owners}"
 
-    def test_cell_yaml_and_catalog_consistent_for_artifact_store(
-        self, artifact_store_cell, artifact_store_catalog
-    ):
+    def test_cell_yaml_and_catalog_consistent_for_artifact_store(self, artifact_store_cell, artifact_store_catalog):
         """cell.yaml and catalog must agree on state_owners for artifact_store."""
         cell_owners = set(_state_owners(artifact_store_cell))
         catalog_owners = set(artifact_store_catalog.get("state_owners") or [])
         assert cell_owners == catalog_owners, (
-            f"runtime.artifact_store cell.yaml state_owners {cell_owners} "
-            f"do not match catalog {catalog_owners}"
+            f"runtime.artifact_store cell.yaml state_owners {cell_owners} do not match catalog {catalog_owners}"
         )
 
-    def test_cell_yaml_and_catalog_consistent_for_state_owner(
-        self, state_owner_cell, state_owner_catalog
-    ):
+    def test_cell_yaml_and_catalog_consistent_for_state_owner(self, state_owner_cell, state_owner_catalog):
         """cell.yaml and catalog must agree on state_owners for runtime.state_owner."""
         cell_owners = set(_state_owners(state_owner_cell))
         catalog_owners = set(state_owner_catalog.get("state_owners") or [])
         assert cell_owners == catalog_owners, (
-            f"runtime.state_owner cell.yaml state_owners {cell_owners} "
-            f"do not match catalog {catalog_owners}"
+            f"runtime.state_owner cell.yaml state_owners {cell_owners} do not match catalog {catalog_owners}"
         )

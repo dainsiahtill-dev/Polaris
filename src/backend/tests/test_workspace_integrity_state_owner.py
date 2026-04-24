@@ -21,6 +21,7 @@ import os
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _module_defines_function(module_path: str, fn_name: str) -> bool:
     """Return True if the module itself defines (not merely imports) fn_name."""
     mod = importlib.import_module(module_path)
@@ -35,6 +36,7 @@ def _module_defines_function(module_path: str, fn_name: str) -> bool:
 # ---------------------------------------------------------------------------
 # 1. Canonical writer lives in workspace_service
 # ---------------------------------------------------------------------------
+
 
 def test_write_status_defined_in_workspace_service():
     assert _module_defines_function(
@@ -61,30 +63,29 @@ def test_read_status_defined_in_workspace_service():
 # 2. fs_utils does NOT own write/clear/read status
 # ---------------------------------------------------------------------------
 
+
 def test_fs_utils_does_not_define_write_workspace_status():
     import polaris.cells.workspace.integrity.internal.fs_utils as fs_utils
-    assert not hasattr(fs_utils, "write_workspace_status"), (
-        "fs_utils must not expose write_workspace_status"
-    )
+
+    assert not hasattr(fs_utils, "write_workspace_status"), "fs_utils must not expose write_workspace_status"
 
 
 def test_fs_utils_does_not_define_clear_workspace_status():
     import polaris.cells.workspace.integrity.internal.fs_utils as fs_utils
-    assert not hasattr(fs_utils, "clear_workspace_status"), (
-        "fs_utils must not expose clear_workspace_status"
-    )
+
+    assert not hasattr(fs_utils, "clear_workspace_status"), "fs_utils must not expose clear_workspace_status"
 
 
 def test_fs_utils_does_not_define_read_workspace_status():
     import polaris.cells.workspace.integrity.internal.fs_utils as fs_utils
-    assert not hasattr(fs_utils, "read_workspace_status"), (
-        "fs_utils must not expose read_workspace_status"
-    )
+
+    assert not hasattr(fs_utils, "read_workspace_status"), "fs_utils must not expose read_workspace_status"
 
 
 # ---------------------------------------------------------------------------
 # 3. plan_template does NOT define its own status writers
 # ---------------------------------------------------------------------------
+
 
 def test_plan_template_does_not_define_write_workspace_status():
     assert not _module_defines_function(
@@ -110,6 +111,7 @@ def test_plan_template_does_not_define_read_workspace_status():
 # ---------------------------------------------------------------------------
 # 4. Public surface of workspace.integrity delegates to workspace_service
 # ---------------------------------------------------------------------------
+
 
 def test_public_service_write_is_from_workspace_service():
     from polaris.cells.workspace.integrity.internal import workspace_service as ws
@@ -142,8 +144,10 @@ def test_public_service_read_is_from_workspace_service():
 # 5. court_workflow public service does NOT re-export status writers
 # ---------------------------------------------------------------------------
 
+
 def test_court_workflow_public_does_not_export_write():
     import polaris.cells.docs.court_workflow.public.service as cw
+
     assert not hasattr(cw, "write_workspace_status"), (
         "court_workflow public service must not export write_workspace_status"
     )
@@ -151,6 +155,7 @@ def test_court_workflow_public_does_not_export_write():
 
 def test_court_workflow_public_does_not_export_clear():
     import polaris.cells.docs.court_workflow.public.service as cw
+
     assert not hasattr(cw, "clear_workspace_status"), (
         "court_workflow public service must not export clear_workspace_status"
     )
@@ -158,6 +163,7 @@ def test_court_workflow_public_does_not_export_clear():
 
 def test_court_workflow_public_does_not_export_read():
     import polaris.cells.docs.court_workflow.public.service as cw
+
     assert not hasattr(cw, "read_workspace_status"), (
         "court_workflow public service must not export read_workspace_status"
     )
@@ -166,6 +172,7 @@ def test_court_workflow_public_does_not_export_read():
 # ---------------------------------------------------------------------------
 # 6. Round-trip: write → read → clear through canonical entry point
 # ---------------------------------------------------------------------------
+
 
 def test_write_read_clear_round_trip(tmp_path):
     from polaris.cells.workspace.integrity.internal.workspace_service import (
@@ -193,6 +200,7 @@ def test_write_read_clear_round_trip(tmp_path):
 
     # Status file must exist on disk
     from polaris.cells.workspace.integrity.internal.fs_utils import workspace_status_path
+
     path = workspace_status_path(workspace)
     assert os.path.isfile(path), f"status file must exist at {path}"
 
@@ -231,6 +239,7 @@ def test_clear_on_nonexistent_file_is_safe(tmp_path):
     from polaris.cells.workspace.integrity.internal.workspace_service import (
         clear_workspace_status,
     )
+
     # Must not raise even when the file does not exist
     clear_workspace_status(str(tmp_path))
 
@@ -239,4 +248,5 @@ def test_read_on_missing_file_returns_none(tmp_path):
     from polaris.cells.workspace.integrity.internal.workspace_service import (
         read_workspace_status,
     )
+
     assert read_workspace_status(str(tmp_path)) is None

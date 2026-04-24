@@ -43,24 +43,16 @@ class TestSystemRouter:
             mock_pm_service = MagicMock()
             mock_pm_service.get_status.return_value = {"status": "idle", "running": False}
             mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(
-                return_value={"status": "idle", "state": "idle"}
-            )
+            mock_director_service.get_status = AsyncMock(return_value={"status": "idle", "state": "idle"})
             mock_container = MagicMock()
             mock_container.resolve_async = AsyncMock(
-                side_effect=lambda cls: (
-                    mock_pm_service
-                    if "PMService" in str(cls)
-                    else mock_director_service
-                )
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
             # get_container() returns a coroutine that resolves to mock_container
             # but code doesn't await it, so we need to return mock_container directly
             mock_get_container.return_value = mock_container
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/health")
 
         assert response.status_code == 200
@@ -75,9 +67,7 @@ class TestSystemRouter:
     async def test_settings_get_returns_200(self) -> None:
         """GET /settings returns 200 with settings."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/settings")
 
         assert response.status_code == 200
@@ -100,9 +90,7 @@ class TestSystemRouter:
             mock_ctx.return_value.workspace = "."
             mock_ctx.return_value.runtime_root = "/tmp"
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/state/snapshot")
 
         assert response.status_code == 200
@@ -127,25 +115,17 @@ class TestSystemRouter:
             mock_pm_service.get_status.return_value = {"running": False}
             mock_pm_service.stop = AsyncMock()
             mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(
-                return_value={"state": "idle"}
-            )
+            mock_director_service.get_status = AsyncMock(return_value={"state": "idle"})
             mock_director_service.stop = AsyncMock()
             mock_container = MagicMock()
             mock_container.resolve_async = AsyncMock(
-                side_effect=lambda cls: (
-                    mock_pm_service
-                    if "PMService" in str(cls)
-                    else mock_director_service
-                )
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
             # get_container() returns a coroutine that resolves to mock_container
             # but code doesn't await it, so we need to return mock_container directly
             mock_get_container.return_value = mock_container
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.post("/app/shutdown")
 
         assert response.status_code == 200
@@ -157,9 +137,7 @@ class TestSystemRouter:
     async def test_nonexistent_endpoint_returns_404(self) -> None:
         """GET /nonexistent returns 404."""
         app = _build_app()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/nonexistent")
 
         assert response.status_code == 404

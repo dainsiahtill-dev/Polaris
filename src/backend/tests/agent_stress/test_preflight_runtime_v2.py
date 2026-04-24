@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from tests.agent_stress.preflight import BackendPreflightProbe, BackendPreflightStatus
 
 
@@ -14,6 +13,7 @@ async def test_preflight_is_healthy_when_runtime_v2_and_jetstream_are_ready(
         token="demo-token",
         timeout=1.0,
     ) as probe:
+
         async def _fake_request(path: str, *, include_auth: bool) -> dict[str, object]:
             del include_auth
             if path == "/health":
@@ -62,6 +62,7 @@ async def test_preflight_fails_when_runtime_v2_or_jetstream_is_unavailable(
         token="demo-token",
         timeout=1.0,
     ) as probe:
+
         async def _fake_request(path: str, *, include_auth: bool) -> dict[str, object]:
             del include_auth
             if path == "/health":

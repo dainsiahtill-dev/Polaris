@@ -143,10 +143,7 @@ def _should_spawn_new_console_window(env: dict[str, str] | None = None) -> bool:
         return False
 
     session_name = str(env_map.get("SESSIONNAME") or "").strip().lower()
-    if session_name and session_name != "console":
-        return False
-
-    return True
+    return not (session_name and session_name != "console")
 
 
 def _spawn_new_console(args: argparse.Namespace) -> int:
@@ -184,7 +181,9 @@ async def _run_observer(args: argparse.Namespace) -> int:
         strategy=str(getattr(args, "strategy", "") or ""),
         backend_url=str(getattr(args, "backend_url", "") or ""),
         output_dir=str(output_dir),
-        projection_enabled=bool(getattr(args, "projection_enabled", True) and not getattr(args, "no_projection", False)),
+        projection_enabled=bool(
+            getattr(args, "projection_enabled", True) and not getattr(args, "no_projection", False)
+        ),
         projection_transport=str(getattr(args, "projection_transport", "ws")),
         projection_focus=str(getattr(args, "projection_focus", "all")),
     )
@@ -301,8 +300,7 @@ async def _run_observer(args: argparse.Namespace) -> int:
     console.print()
     console.print(
         Panel(
-            f"[bold cyan]Observer log[/]: {observer_log_path}\n"
-            f"[bold cyan]Runner exit code[/]: {state.exit_code}",
+            f"[bold cyan]Observer log[/]: {observer_log_path}\n[bold cyan]Runner exit code[/]: {state.exit_code}",
             title="[bold]Observer Finished[/bold]",
             border_style="green" if state.exit_code == 0 else "red",
         )

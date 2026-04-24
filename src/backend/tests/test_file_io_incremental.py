@@ -28,7 +28,7 @@ def test_read_incremental_complete_lines_only_drops_partial_leading_line_after_t
     path = tmp_path / "events.jsonl"
     state: dict[str, object] = {"pos": 0}
     long_prefix = "x" * 80
-    path.write_text(f"{long_prefix}\n{{\"ok\":1}}\n", encoding="utf-8")
+    path.write_text(f'{long_prefix}\n{{"ok":1}}\n', encoding="utf-8")
 
     lines = read_incremental(str(path), state, max_chars=20, complete_lines_only=True)
     assert lines == ['{"ok":1}']
@@ -41,4 +41,3 @@ def test_read_incremental_default_mode_keeps_partial_line_behavior(tmp_path):
 
     lines = read_incremental(str(path), state, complete_lines_only=False)
     assert lines == ["partial-line"]
-

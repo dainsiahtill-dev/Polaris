@@ -30,11 +30,11 @@ async def test_generate_role_response_delegates_retry_policy_to_kernel(monkeypat
     seen_request = {"value": None}
 
     class FakeKernel:
-        def __init__(self, workspace: str, registry) -> None:  # noqa: ANN001
+        def __init__(self, workspace: str, registry) -> None:
             self.workspace = workspace
             self.registry = registry
 
-        async def run(self, role: str, request) -> SimpleNamespace:  # noqa: ANN001
+        async def run(self, role: str, request) -> SimpleNamespace:
             call_count["value"] += 1
             seen_request["value"] = request
             return SimpleNamespace(
@@ -67,7 +67,7 @@ async def test_generate_role_response_delegates_retry_policy_to_kernel(monkeypat
     monkeypatch.setattr(
         role_dialogue,
         "validate_and_parse_role_output",
-        lambda role, output: {  # noqa: ARG005
+        lambda role, output: {
             "success": bool(str(output or "").strip()),
             "data": None,
             "errors": [] if str(output or "").strip() else ["empty"],
@@ -133,11 +133,11 @@ async def test_generate_role_response_advances_tool_rounds_until_completion(monk
     )
 
     class FakeKernel:
-        def __init__(self, workspace: str, registry) -> None:  # noqa: ANN001
+        def __init__(self, workspace: str, registry) -> None:
             self.workspace = workspace
             self.registry = registry
 
-        async def run(self, role: str, request) -> SimpleNamespace:  # noqa: ANN001
+        async def run(self, role: str, request) -> SimpleNamespace:
             del role
             call_count["value"] += 1
             requests.append(request)
@@ -152,7 +152,7 @@ async def test_generate_role_response_advances_tool_rounds_until_completion(monk
     monkeypatch.setattr(
         role_dialogue,
         "validate_and_parse_role_output",
-        lambda role, output: {  # noqa: ARG005
+        lambda role, output: {
             "success": bool(str(output or "").strip()),
             "data": {"tasks": [{"id": "TASK-1"}]},
             "errors": [],
@@ -229,11 +229,11 @@ async def test_generate_role_response_adds_loop_breaker_for_repeated_readonly_to
     )
 
     class FakeKernel:
-        def __init__(self, workspace: str, registry) -> None:  # noqa: ANN001
+        def __init__(self, workspace: str, registry) -> None:
             self.workspace = workspace
             self.registry = registry
 
-        async def run(self, role: str, request) -> SimpleNamespace:  # noqa: ANN001
+        async def run(self, role: str, request) -> SimpleNamespace:
             del role
             call_count["value"] += 1
             requests.append(request)
@@ -252,7 +252,7 @@ async def test_generate_role_response_adds_loop_breaker_for_repeated_readonly_to
     monkeypatch.setattr(
         role_dialogue,
         "validate_and_parse_role_output",
-        lambda role, output: {  # noqa: ARG005
+        lambda role, output: {
             "success": bool(str(output or "").strip()),
             "data": {"tasks": [{"id": "TASK-1"}]},
             "errors": [],
@@ -320,11 +320,11 @@ async def test_generate_role_response_guides_write_file_when_read_file_missing(m
     )
 
     class FakeKernel:
-        def __init__(self, workspace: str, registry) -> None:  # noqa: ANN001
+        def __init__(self, workspace: str, registry) -> None:
             self.workspace = workspace
             self.registry = registry
 
-        async def run(self, role: str, request) -> SimpleNamespace:  # noqa: ANN001
+        async def run(self, role: str, request) -> SimpleNamespace:
             del role
             call_count["value"] += 1
             requests.append(request)
@@ -339,7 +339,7 @@ async def test_generate_role_response_guides_write_file_when_read_file_missing(m
     monkeypatch.setattr(
         role_dialogue,
         "validate_and_parse_role_output",
-        lambda role, output: {  # noqa: ARG005
+        lambda role, output: {
             "success": bool(str(output or "").strip()),
             "data": {},
             "errors": [],
@@ -383,11 +383,11 @@ async def test_generate_role_response_marks_error_when_tool_rounds_exhausted(mon
     )
 
     class FakeKernel:
-        def __init__(self, workspace: str, registry) -> None:  # noqa: ANN001
+        def __init__(self, workspace: str, registry) -> None:
             self.workspace = workspace
             self.registry = registry
 
-        async def run(self, role: str, request) -> SimpleNamespace:  # noqa: ANN001
+        async def run(self, role: str, request) -> SimpleNamespace:
             del role, request
             call_count["value"] += 1
             return pending_result
@@ -401,7 +401,7 @@ async def test_generate_role_response_marks_error_when_tool_rounds_exhausted(mon
     monkeypatch.setattr(
         role_dialogue,
         "validate_and_parse_role_output",
-        lambda role, output: {  # noqa: ARG005
+        lambda role, output: {
             "success": False,
             "data": None,
             "errors": ["empty"],
@@ -422,4 +422,3 @@ async def test_generate_role_response_marks_error_when_tool_rounds_exhausted(mon
 
     assert call_count["value"] == 2
     assert "role_tool_rounds_exhausted:1" in str(response.get("error") or "")
-

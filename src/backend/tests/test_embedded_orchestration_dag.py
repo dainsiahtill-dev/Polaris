@@ -44,6 +44,7 @@ async def _wait_terminal(engine: Any, workflow_id: str, *, timeout: float = 8.0)
 async def test_workflow_engine_runs_dag_with_dataflow() -> None:
     engine = await _build_engine()
     try:
+
         async def extract(**kwargs):
             return {"records": [1, 2, 3], "source": kwargs.get("source", "n/a")}
 
@@ -214,4 +215,3 @@ async def test_workflow_engine_pause_resume_signal() -> None:
         assert second_started.is_set() is True
     finally:
         await engine.stop()
-
