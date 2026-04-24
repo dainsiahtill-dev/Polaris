@@ -153,7 +153,7 @@ class PythonCodeValidator:
             return self._handle_indentation_error(e, code, filepath)
         except builtins.SyntaxError as e:
             return self._handle_syntax_error(e, code, filepath)
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             # 未知错误，返回成功但不阻止执行
             logger.warning("Unknown validation error: %s", e)
             return SyntaxValidationResult.success()
@@ -374,7 +374,7 @@ class PythonCodeValidator:
         fixed_lines = []
 
         # 关键字后面跟冒号的行，会开启一个新块
-        BLOCK_OPENERS = (r"^\s*(def|class|if|elif|else|for|while|try|except|finally|with|async\s+def)\b",)
+        block_openers = (r"^\s*(def|class|if|elif|else|for|while|try|except|finally|with|async\s+def)\b",)
 
         # 跟踪期望的缩进级别栈
         # 每个元素是 (indent_level, is_immediate_next_line)
@@ -410,7 +410,7 @@ class PythonCodeValidator:
             stripped = line.lstrip()
 
             # 检查是否是块开启行
-            is_block_opener = bool(re.match(BLOCK_OPENERS[0], stripped))
+            is_block_opener = bool(re.match(block_openers[0], stripped))
 
             # 更新缩进栈
             if is_block_opener:
@@ -437,26 +437,23 @@ class PythonCodeValidator:
                 expected_indent = indent_stack[-1] if indent_stack else 0
 
                 # 如果当前缩进与期望不符，尝试修复
-                if leading_spaces != expected_indent:
-                    # 只修复：如果缩进 < 期望 且 差距是1-3（明显的错误）
-                    # 或者 缩进 > 期望 但小于下一个期望（缺少缩进的情况）
-                    if leading_spaces < expected_indent:
-                        # 当前缩进小于期望，可能是整体偏移错误
-                        # 检查是否整个文件的缩进都是错的
-                        line_indent_delta = expected_indent - leading_spaces
-                        if line_indent_delta <= 3:
-                            # 可能是轻微的偏移错误，修正
-                            line = " " * expected_indent + stripped
-                            fixes.append(
-                                HallucinationFix(
-                                    original=f"{leading_spaces} spaces",
-                                    fixed=f"{expected_indent} spaces",
-                                    explanation=f"Body indentation corrected to match block (expected {expected_indent})",
-                                    line=line_num,
-                                    confidence=0.85,
-                                )
+                if leading_spaces != expected_indent and leading_spaces < expected_indent:
+                    # 当前缩进小于期望，可能是整体偏移错误
+                    # 检查是否整个文件的缩进都是错的
+                    line_indent_delta = expected_indent - leading_spaces
+                    if line_indent_delta <= 3:
+                        # 可能是轻微的偏移错误，修正
+                        line = " " * expected_indent + stripped
+                        fixes.append(
+                            HallucinationFix(
+                                original=f"{leading_spaces} spaces",
+                                fixed=f"{expected_indent} spaces",
+                                explanation=f"Body indentation corrected to match block (expected {expected_indent})",
+                                line=line_num,
+                                confidence=0.85,
                             )
-                            leading_spaces = expected_indent
+                        )
+                        leading_spaces = expected_indent
 
             fixed_lines.append(line)
 
@@ -516,7 +513,7 @@ def verify_written_code(
     if read_func is not None:
         try:
             actual = read_func(filepath)
-        except Exception as e:
+        except (FileNotFoundError, OSError) as e:
             return PostWriteVerification(
                 success=False,
                 expected=expected_content,
@@ -533,7 +530,7 @@ def verify_written_code(
                 actual=None,
                 error="File not found",
             )
-        except Exception as e:
+        except OSError as e:
             return PostWriteVerification(
                 success=False,
                 expected=expected_content,
@@ -589,7 +586,7 @@ def fix_code_with_tool(code: str, filepath: str | None) -> tuple[str, list[Hallu
             return _fix_go_with_gofmt(code, fixes)
         elif ext == ".rs":
             return _fix_rust_with_rustfmt(code, fixes)
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         logger.warning("Auto-fix failed for %s: %s", filepath, e)
 
     return code, fixes
@@ -626,7 +623,7 @@ def _fix_python_with_ruff(code: str, fixes: list[HallucinationFix]) -> tuple[str
             return fixed_code, fixes
     except FileNotFoundError:
         logger.debug("ruff not found, skipping Python auto-fix")
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         logger.warning("ruff auto-fix failed: %s", e)
     return code, fixes
 
@@ -658,7 +655,7 @@ def _fix_js_ts_with_prettier(
             return fixed_code, fixes
     except FileNotFoundError:
         logger.debug("prettier not found, skipping JS/TS auto-fix")
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         logger.warning("prettier auto-fix failed: %s", e)
     return code, fixes
 
@@ -697,7 +694,7 @@ def _fix_go_with_gofmt(code: str, fixes: list[HallucinationFix]) -> tuple[str, l
             Path(temp_path).unlink(missing_ok=True)
     except FileNotFoundError:
         logger.debug("gofmt not found, skipping Go auto-fix")
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         logger.warning("gofmt auto-fix failed: %s", e)
     return code, fixes
 
@@ -734,7 +731,7 @@ def _fix_rust_with_rustfmt(code: str, fixes: list[HallucinationFix]) -> tuple[st
             Path(temp_path).unlink(missing_ok=True)
     except FileNotFoundError:
         logger.debug("rustfmt not found, skipping Rust auto-fix")
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         logger.warning("rustfmt auto-fix failed: %s", e)
     return code, fixes
 

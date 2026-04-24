@@ -223,7 +223,7 @@ class NATSClientWrapper:
             )
             future.result(timeout=self._config.connect_timeout_sec + 1.0)
             return True
-        except Exception as exc:
+        except (RuntimeError, ValueError, ConnectionError, TimeoutError) as exc:
             logger.debug(
                 "NATS connect() failed (will fall back to in-memory): %s",
                 exc,

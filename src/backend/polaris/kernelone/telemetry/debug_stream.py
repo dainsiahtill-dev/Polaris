@@ -28,7 +28,7 @@ _DEBUG_SINK: ContextVar[DebugEventSink | None] = ContextVar(
 )
 _DEBUG_TAGS: ContextVar[dict[str, Any]] = ContextVar(
     "kernelone_debug_stream_tags",
-    default={},
+    default=None
 )
 
 

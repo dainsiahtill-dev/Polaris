@@ -130,7 +130,7 @@ class TestWriteReadText:
         assert content == "Hello, world!"
 
     def test_read_nonexistent_raises(self, store: RoleDataStore) -> None:
-        with pytest.raises(Exception):  # PathSecurityError or OSError
+        with pytest.raises((PathSecurityError, OSError)):
             store.read_text("does_not_exist.txt")
 
 

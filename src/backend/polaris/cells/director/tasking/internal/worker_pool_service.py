@@ -231,11 +231,11 @@ class WorkerService:
         # IMPORTANT: never call spawn_worker/destroy_worker while holding self._lock.
         # Those methods acquire the same lock and would deadlock under auto-scale load.
 
-        MAX_SCALE_ITERATIONS = 10
+        max_scale_iterations = 10
 
         if should_scale_up:
             iterations = 0
-            while iterations < MAX_SCALE_ITERATIONS:
+            while iterations < max_scale_iterations:
                 async with self._lock:
                     current_count = len(self._workers)
                     idle_count = len([w for w in self._workers.values() if w.status == WorkerStatus.IDLE])
@@ -253,7 +253,7 @@ class WorkerService:
 
         if should_scale_down:
             iterations = 0
-            while iterations < MAX_SCALE_ITERATIONS:
+            while iterations < max_scale_iterations:
                 async with self._lock:
                     current_count = len(self._workers)
                     idle_workers = [w.id for w in self._workers.values() if w.status == WorkerStatus.IDLE]

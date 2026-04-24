@@ -258,7 +258,7 @@ class UnifiedConcurrencyManager:
 
         # Shutdown in a separate thread to avoid blocking async
         def _shutdown() -> None:
-            list(self._io_pools.values()).__class__  # ensure type
+            # list(self._io_pools.values()).__class__  # ensure type  # ensure type
             for p in list(self._io_pools.values()):  # type: ignore[assignment]
                 p.shutdown(wait=True)
             for p in list(self._cpu_pools.values()):  # type: ignore[assignment]
@@ -331,7 +331,7 @@ class UnifiedConcurrencyManager:
                 healthy = False
 
         # ProcessPoolExecutor doesn't have _shutdown attribute
-        for pool in list(self._proc_pools.values()):  # type: ignore[assignment]
+        for _pool in list(self._proc_pools.values()):  # type: ignore[assignment]
             pass  # No shutdown attribute on ProcessPoolExecutor
 
         return {
@@ -370,7 +370,7 @@ def _cleanup_managers() -> None:
                 p.shutdown(wait=False)
             for p in list(manager._proc_pools.values()):  # type: ignore[assignment]
                 p.shutdown(wait=False)
-        except Exception:
+        except (RuntimeError, OSError):
             pass  # Ignore errors during shutdown
 
 

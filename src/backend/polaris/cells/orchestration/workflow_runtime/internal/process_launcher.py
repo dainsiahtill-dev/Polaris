@@ -162,7 +162,7 @@ class ProcessLauncher:
                 f"Failed to launch process: {e}",
                 stage="launch",
                 details={"command": request.command},
-            )
+            ) from e
 
     async def terminate(
         self,

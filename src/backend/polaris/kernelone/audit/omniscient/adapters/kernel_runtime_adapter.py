@@ -320,7 +320,7 @@ class KernelRuntimeAdapter:
 
         # Trigger flush if batch size reached (async, non-blocking)
         if batch_size_reached:
-            asyncio.create_task(self._flush_async())
+            _ = asyncio.create_task(self._flush_async())  # noqa: RUF006
 
         return event_id
 

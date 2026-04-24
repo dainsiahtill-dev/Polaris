@@ -353,6 +353,46 @@ class TestCodexSDKProviderExceptions:
         assert result.error is not None
         assert "Invalid parameter" in result.error
 
+    def test_invoke_connection_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        """Regression test: ConnectionError should be caught and returned as error."""
+        mock_client = MagicMock()
+        mock_client.invoke.side_effect = ConnectionError("Connection refused")
+
+        provider = CodexSDKProvider()
+        provider._sdk_client = mock_client
+        provider._sdk_key = provider._sdk_identity(codex_sdk_config)
+
+        result = provider.invoke("Hello", "gpt-4-codex", codex_sdk_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "Connection error" in result.error
+        assert "Connection refused" in result.error
+
+    def test_invoke_timeout_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        """Regression test: TimeoutError should be caught and returned as error."""
+        mock_client = MagicMock()
+        mock_client.invoke.side_effect = TimeoutError("Request timed out")
+
+        provider = CodexSDKProvider()
+        provider._sdk_client = mock_client
+        provider._sdk_key = provider._sdk_identity(codex_sdk_config)
+
+        result = provider.invoke("Hello", "gpt-4-codex", codex_sdk_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "Request timeout" in result.error
+        assert "Request timed out" in result.error
+
     def test_health_runtime_error(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -371,6 +411,46 @@ class TestCodexSDKProviderExceptions:
         assert result.error is not None
         assert "Health check failed" in result.error
 
+    def test_health_connection_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        """Regression test: ConnectionError in health() should be caught and returned as error."""
+        mock_client = MagicMock()
+        mock_client.health_check.side_effect = ConnectionError("Network unreachable")
+
+        provider = CodexSDKProvider()
+        provider._sdk_client = mock_client
+        provider._sdk_key = provider._sdk_identity(codex_sdk_config)
+
+        result = provider.health(codex_sdk_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "Connection error" in result.error
+        assert "Network unreachable" in result.error
+
+    def test_health_timeout_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        """Regression test: TimeoutError in health() should be caught and returned as error."""
+        mock_client = MagicMock()
+        mock_client.health_check.side_effect = TimeoutError("Health check timed out")
+
+        provider = CodexSDKProvider()
+        provider._sdk_client = mock_client
+        provider._sdk_key = provider._sdk_identity(codex_sdk_config)
+
+        result = provider.health(codex_sdk_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "Connection error" in result.error
+        assert "Health check timed out" in result.error
+
     def test_list_models_runtime_error(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -388,6 +468,46 @@ class TestCodexSDKProviderExceptions:
         assert result.ok is False
         assert result.error is not None
         assert "List models failed" in result.error
+
+    def test_list_models_connection_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        """Regression test: ConnectionError in list_models() should be caught and returned as error."""
+        mock_client = MagicMock()
+        mock_client.list_models.side_effect = ConnectionError("Connection refused")
+
+        provider = CodexSDKProvider()
+        provider._sdk_client = mock_client
+        provider._sdk_key = provider._sdk_identity(codex_sdk_config)
+
+        result = provider.list_models(codex_sdk_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "Connection error" in result.error
+        assert "Connection refused" in result.error
+
+    def test_list_models_timeout_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        """Regression test: TimeoutError in list_models() should be caught and returned as error."""
+        mock_client = MagicMock()
+        mock_client.list_models.side_effect = TimeoutError("Request timed out")
+
+        provider = CodexSDKProvider()
+        provider._sdk_client = mock_client
+        provider._sdk_key = provider._sdk_identity(codex_sdk_config)
+
+        result = provider.list_models(codex_sdk_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "Request timeout" in result.error
+        assert "Request timed out" in result.error
 
     def test_extract_thinking_support_detected(self) -> None:
         response = {"output": "<thinking>Deep thought</thinking>\n\nAnswer here."}

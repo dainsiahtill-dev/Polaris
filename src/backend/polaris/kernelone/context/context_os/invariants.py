@@ -29,7 +29,7 @@ _FORBIDDEN_TRUTH_KEYS = frozenset(
 )
 
 
-class ContextOSInvariantViolation(ValidationError):
+class ContextOSInvariantViolationError(ValidationError):
     """Raised when a persisted Context OS payload violates ownership invariants."""
 
     def __init__(
@@ -90,22 +90,22 @@ def validate_context_os_persisted_projection(
     if payload is None:
         return None
     if not isinstance(payload, Mapping):
-        raise ContextOSInvariantViolation("state_first_context_os must be a mapping payload.")
+        raise ContextOSInvariantViolationError("state_first_context_os must be a mapping payload.")
 
     normalized = dict(payload)
 
     # Check for forbidden keys recursively at all nesting levels
     forbidden = sorted(_find_forbidden_keys_recursive(normalized))
     if forbidden:
-        raise ContextOSInvariantViolation(
+        raise ContextOSInvariantViolationError(
             f"state_first_context_os contains forbidden truth keys: {', '.join(forbidden)}"
         )
 
     mode = str(normalized.get("mode") or "").strip()
     if mode and not mode.startswith("state_first_context_os"):
-        raise ContextOSInvariantViolation("state_first_context_os.mode must use state_first_context_os namespace.")
+        raise ContextOSInvariantViolationError("state_first_context_os.mode must use state_first_context_os namespace.")
 
     return normalized
 
 
-__all__ = ["ContextOSInvariantViolation", "validate_context_os_persisted_projection"]
+__all__ = ["ContextOSInvariantViolationError", "validate_context_os_persisted_projection"]

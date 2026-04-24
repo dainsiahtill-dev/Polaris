@@ -436,7 +436,7 @@ class OmniscientAuditBus:
             loop = asyncio.get_running_loop()
             # Schedule async emit as background task (fire-and-forget)
             # We cannot await the result here without blocking
-            loop.create_task(self.emit(event, priority, **metadata))
+            _ = loop.create_task(self.emit(event, priority, **metadata))  # noqa: RUF006
             # Return empty string since we can't await the result
             # The envelope_id is not available in sync context
             return ""

@@ -127,7 +127,7 @@ class EventWriter:
                 event.duration_ms,
                 event.metadata,
             )
-        except Exception as e:
+        except (RuntimeError, OSError) as e:
             logger.warning("Failed to write ContextEvent: %s", e)
 
     def set_enabled(self, enabled: bool) -> None:

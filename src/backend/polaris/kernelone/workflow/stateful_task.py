@@ -76,7 +76,7 @@ class StatefulTask(ABC):
                     "processed_items": self._processed_items,
                 }
 
-            def load_state(self, state: dict[str, Any]) -> None:
+            def load_state(self, state: dict[str, Any]) -> None:  # noqa: B027
                 self._progress = state.get("progress", 0)
                 self._processed_items = state.get("processed_items", [])
 
@@ -130,7 +130,7 @@ class StatefulTask(ABC):
         """
         return {}
 
-    def load_state(self, state: dict[str, Any]) -> None:
+    def load_state(self, state: dict[str, Any]) -> None:  # noqa: B027
         """Load state from a checkpoint.
 
         Override this method to restore your task's intermediate

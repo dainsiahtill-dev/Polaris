@@ -327,7 +327,7 @@ def _register_uep_sinks(bus: MessageBus) -> None:
 
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_start_sinks())
+        _sink_task = loop.create_task(_start_sinks())  # noqa: RUF006
         logger.info("UEP v2.0 sinks registered and starting")
     except RuntimeError:
         # No running loop; sink start will be triggered later by the caller

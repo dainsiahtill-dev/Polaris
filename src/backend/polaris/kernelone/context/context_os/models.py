@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -1521,7 +1522,7 @@ class SnapshotSummaryView:
 # so the re-export triggers an assignment incompatibility in mypy.
 # We suppress the error per-line to preserve runtime behavior while
 # keeping the file type-check clean.
-try:
+with contextlib.suppress(ImportError):
     from .models_v2 import (  # type: ignore[assignment]  # v2 classes shadow v1 dataclasses intentionally
         ArtifactRecordV2 as ArtifactRecord,
         BudgetPlanV2 as BudgetPlan,
@@ -1540,8 +1541,6 @@ try:
         UserProfileStateV2 as UserProfileState,
         WorkingStateV2 as WorkingState,
     )
-except ImportError:
-    pass
 
 __all__ = [
     "ArtifactRecord",

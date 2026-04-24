@@ -130,8 +130,8 @@ class RoleDataStore:
         if filepath.is_absolute():
             try:
                 filepath.relative_to(self.base_dir)
-            except ValueError:
-                raise PathSecurityError(f"路径 '{filepath}' 不在角色数据目录内")
+            except ValueError as err:
+                raise PathSecurityError(f"路径 '{filepath}' 不在角色数据目录内") from err
         else:
             # 相对路径，默认在data_dir下
             filepath = self.data_dir / filepath
@@ -140,8 +140,8 @@ class RoleDataStore:
         resolved = filepath.resolve()
         try:
             resolved.relative_to(self.base_dir.resolve())
-        except ValueError:
-            raise PathSecurityError(f"路径 '{filepath}' 尝试访问上级目录")
+        except ValueError as err:
+            raise PathSecurityError(f"路径 '{filepath}' 尝试访问上级目录") from err
 
         # 检查扩展名
         if filepath.suffix not in self.policy.allowed_extensions:
@@ -229,8 +229,8 @@ class RoleDataStore:
         """
         try:
             import yaml
-        except ImportError:
-            raise ImportError("PyYAML is required for YAML writing")
+        except ImportError as err:
+            raise ImportError("PyYAML is required for YAML writing") from err
 
         filepath = self._validate_path(filepath)
 
@@ -279,8 +279,8 @@ class RoleDataStore:
         """
         try:
             import yaml
-        except ImportError:
-            raise ImportError("PyYAML is required for YAML reading")
+        except ImportError as err:
+            raise ImportError("PyYAML is required for YAML reading") from err
 
         filepath = self._validate_path(filepath)
         content = self.read_text(filepath)

@@ -300,11 +300,7 @@ def safe_value(
         if allow_methods:
             return obj
         # 安全获取函数名
-        func_name: str
-        if hasattr(obj, "__name__"):
-            func_name = str(obj.__name__)  # type: ignore[union-attr]
-        else:
-            func_name = repr(obj)
+        func_name = str(obj.__name__) if hasattr(obj, "__name__") else repr(obj)
         return {
             "__audit_method__": True,
             "type": type(obj).__name__,

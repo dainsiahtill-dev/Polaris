@@ -292,7 +292,7 @@ class SelfHealingExecutor:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
+            except (RuntimeError, OSError) as e:
                 last_error = e
                 failure_type = self._classify_failure(e)
 
@@ -337,7 +337,7 @@ class SelfHealingExecutor:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except (RuntimeError, OSError):
                 continue
 
         return None

@@ -118,7 +118,7 @@ def _trigger_realtime_update(cache_root: str) -> None:
         logger.debug(f"Failed to trigger realtime update: {e}")
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(REALTIME_SIGNAL_HUB.notify(source="workflow_state_update", root=cache_root))
+        _ = loop.create_task(REALTIME_SIGNAL_HUB.notify(source="workflow_state_update", root=cache_root))  # noqa: RUF006
     except RuntimeError:
         pass
 

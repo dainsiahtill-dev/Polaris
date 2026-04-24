@@ -10,7 +10,7 @@ from polaris.domain.entities import TaskPriority
 
 class SecurityService:
     @staticmethod
-    def is_command_safe(command: str):
+    def is_command_safe(command: str) -> SimpleNamespace:
         return SimpleNamespace(is_safe=True, reason="")
 
 

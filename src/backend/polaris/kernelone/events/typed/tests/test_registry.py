@@ -516,7 +516,7 @@ class TestConcurrentSubscriptions:
             locks.append(lock)
 
         # All locks should be the same instance for same loop
-        assert all(l is locks[0] for l in locks)
+        assert all(lock_item is locks[0] for lock_item in locks)
 
 
 class TestBoundaryConditions:

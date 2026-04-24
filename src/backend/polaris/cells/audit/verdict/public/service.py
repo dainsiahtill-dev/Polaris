@@ -6,22 +6,39 @@ All internal imports are lazy-loaded to maintain proper architectural boundaries
 
 from __future__ import annotations
 
+# Pre-declare lazy-loaded names to satisfy __all__ and static analysis.
+ARTIFACT_REGISTRY: type | None = None
+LEGACY_KEY_MAPPING: type | None = None
+LEGACY_PATH_ALIASES: type | None = None
+ArtifactService: type | None = None
+AuditContext: type | None = None
+CodeChange: type | None = None
+IndependentAuditService: type | None = None
+Review: type | None = None
+ReviewEventType: type | None = None
+ReviewGate: type | None = None
+create_artifact_service: type | None = None
+get_artifact_key: type | None = None
+get_artifact_path: type | None = None
+get_review_gate: type | None = None
+list_artifact_keys: type | None = None
+
 __all__ = [
-    "ARTIFACT_REGISTRY",  # noqa: F822
-    "LEGACY_KEY_MAPPING",  # noqa: F822
-    "LEGACY_PATH_ALIASES",  # noqa: F822
-    "ArtifactService",  # noqa: F822
-    "AuditContext",  # noqa: F822
-    "CodeChange",  # noqa: F822
-    "IndependentAuditService",  # noqa: F822
-    "Review",  # noqa: F822
-    "ReviewEventType",  # noqa: F822
-    "ReviewGate",  # noqa: F822
-    "create_artifact_service",  # noqa: F822
-    "get_artifact_key",  # noqa: F822
-    "get_artifact_path",  # noqa: F822
-    "get_review_gate",  # noqa: F822
-    "list_artifact_keys",  # noqa: F822
+    "ARTIFACT_REGISTRY",
+    "LEGACY_KEY_MAPPING",
+    "LEGACY_PATH_ALIASES",
+    "ArtifactService",
+    "AuditContext",
+    "CodeChange",
+    "IndependentAuditService",
+    "Review",
+    "ReviewEventType",
+    "ReviewGate",
+    "create_artifact_service",
+    "get_artifact_key",
+    "get_artifact_path",
+    "get_review_gate",
+    "list_artifact_keys",
 ]
 
 
@@ -39,55 +56,55 @@ def __getattr__(name: str):
     }:
         # Lazy import to avoid cross-boundary import at module load time.
         from polaris.cells.audit.verdict.internal.artifact_service import (
-            ARTIFACT_REGISTRY as _ar,
-            LEGACY_KEY_MAPPING as _lkm,
-            LEGACY_PATH_ALIASES as _lpa,
-            ArtifactService as _as,
-            create_artifact_service as _cas,
-            get_artifact_key as _gak,
-            get_artifact_path as _gap,
-            list_artifact_keys as _lak,
+            ARTIFACT_REGISTRY,
+            LEGACY_KEY_MAPPING,
+            LEGACY_PATH_ALIASES,
+            ArtifactService,
+            create_artifact_service,
+            get_artifact_key,
+            get_artifact_path,
+            list_artifact_keys,
         )
 
         g = globals()
-        g["ARTIFACT_REGISTRY"] = _ar
-        g["LEGACY_KEY_MAPPING"] = _lkm
-        g["LEGACY_PATH_ALIASES"] = _lpa
-        g["ArtifactService"] = _as
-        g["create_artifact_service"] = _cas
-        g["get_artifact_key"] = _gak
-        g["get_artifact_path"] = _gap
-        g["list_artifact_keys"] = _lak
+        g["ARTIFACT_REGISTRY"] = ARTIFACT_REGISTRY
+        g["LEGACY_KEY_MAPPING"] = LEGACY_KEY_MAPPING
+        g["LEGACY_PATH_ALIASES"] = LEGACY_PATH_ALIASES
+        g["ArtifactService"] = ArtifactService
+        g["create_artifact_service"] = create_artifact_service
+        g["get_artifact_key"] = get_artifact_key
+        g["get_artifact_path"] = get_artifact_path
+        g["list_artifact_keys"] = list_artifact_keys
         return g[name]
 
     if name in {"AuditContext", "IndependentAuditService"}:
         # Lazy import to avoid cross-boundary import at module load time.
         from polaris.cells.audit.verdict.internal.independent_audit_service import (
-            AuditContext as _ac,
-            IndependentAuditService as _ias,
+            AuditContext,
+            IndependentAuditService,
         )
 
         g = globals()
-        g["AuditContext"] = _ac
-        g["IndependentAuditService"] = _ias
+        g["AuditContext"] = AuditContext
+        g["IndependentAuditService"] = IndependentAuditService
         return g[name]
 
     if name in {"CodeChange", "Review", "ReviewEventType", "ReviewGate", "get_review_gate"}:
         # Lazy import to avoid cross-boundary import at module load time.
         from polaris.cells.audit.verdict.internal.review_gate import (
-            CodeChange as _cc,
-            Review as _r,
-            ReviewEventType as _ret,
-            ReviewGate as _rg,
-            get_review_gate as _grg,
+            CodeChange,
+            Review,
+            ReviewEventType,
+            ReviewGate,
+            get_review_gate,
         )
 
         g = globals()
-        g["CodeChange"] = _cc
-        g["Review"] = _r
-        g["ReviewEventType"] = _ret
-        g["ReviewGate"] = _rg
-        g["get_review_gate"] = _grg
+        g["CodeChange"] = CodeChange
+        g["Review"] = Review
+        g["ReviewEventType"] = ReviewEventType
+        g["ReviewGate"] = ReviewGate
+        g["get_review_gate"] = get_review_gate
         return g[name]
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

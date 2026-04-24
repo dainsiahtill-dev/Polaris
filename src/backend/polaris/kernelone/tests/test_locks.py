@@ -337,12 +337,10 @@ def test_unlock_file_closes_handle_even_on_flock_error(tmp_path: Path) -> None:
     # Verify the handle is valid before the test
     assert os.path.exists(path)
 
-    # Simulate _flock raising OSError by patching it
-    with patch.object(adapter, "_unlock_file", wraps=adapter._unlock_file) as wrapped:
-        # The actual _unlock_file should still close the handle even if _flock fails.
-        # We test by calling _unlock_file on a valid fh; it should not raise
-        # and should attempt both unlock and close.
-        adapter._unlock_file(fh)
+    # The actual _unlock_file should still close the handle even if _flock fails.
+    # We test by calling _unlock_file on a valid fh; it should not raise
+    # and should attempt both unlock and close.
+    adapter._unlock_file(fh)
 
     # After _unlock_file, the handle should be closed. Attempting to close again
     # should raise OSError (bad file descriptor) on POSIX, or on Windows

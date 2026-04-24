@@ -11,7 +11,7 @@ from collections.abc import Callable
 logger = logging.getLogger(__name__)
 
 
-class CommandInjectionBlocked(Exception):
+class CommandInjectionBlocked(Exception):  # noqa: N818
     """Raised when a command string cannot be safely parsed and shell=True fallback is blocked."""
 
     def __init__(self, command: str, reason: str = "shlex.parse.failed") -> None:
@@ -46,7 +46,7 @@ def _load_tooling_security() -> tuple[set[str], AllowedCommandFn, BlockedCommand
     """
     try:
         from polaris.cells.director.execution.public.tools import (
-            ALLOWED_EXECUTION_COMMANDS as allowed_commands_pkg,
+            ALLOWED_EXECUTION_COMMANDS as allowed_commands_pkg,  # noqa: N811
             is_command_allowed as command_allowed_pkg,
             is_command_blocked as command_blocked_pkg,
         )

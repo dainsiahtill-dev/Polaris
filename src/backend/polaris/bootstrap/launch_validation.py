@@ -176,7 +176,7 @@ def bootstrap_validation(request: Any) -> ValidationResult:
 
 # BootstrapError is defined in polaris.kernelone.errors for consistency
 # Import here for backwards compatibility
-from polaris.kernelone.errors import BootstrapError  # noqa: F401
+from polaris.kernelone.errors import BootstrapError  # noqa: E402, F401
 
 
 def ensure_utf8_environment() -> None:

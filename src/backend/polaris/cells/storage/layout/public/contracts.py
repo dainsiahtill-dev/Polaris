@@ -85,7 +85,7 @@ class StorageLayoutResultV1:
         object.__setattr__(self, "extras", _to_dict_copy(self.extras))
 
 
-class StorageLayoutErrorV1(RuntimeError):
+class StorageLayoutErrorV1(RuntimeError):  # noqa: N818
     """Raised when ``storage.layout`` contract processing fails."""
 
     def __init__(

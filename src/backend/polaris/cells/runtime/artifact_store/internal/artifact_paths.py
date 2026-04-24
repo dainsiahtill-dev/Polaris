@@ -111,12 +111,12 @@ def resolve_safe_path(workspace_full: str, cache_root_full: str, rel_path: str) 
     """
     try:
         full = resolve_artifact_path(workspace_full, cache_root_full, rel_path)
-    except ValueError:
+    except ValueError as err:
         raise ValidationError(
             "path prefix is not supported",
             field="rel_path",
             value=rel_path,
-        )
+        ) from err
     if not full:
         raise ValidationError("path is required", field="rel_path")
     return full

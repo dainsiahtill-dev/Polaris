@@ -139,7 +139,7 @@ class Policy:
     io: IoPolicy = field(default_factory=IoPolicy)
     factory: FactoryPolicy = field(default_factory=FactoryPolicy)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Ensure nested dataclasses are properly instantiated
         if isinstance(self.repair, dict):
             object.__setattr__(self, "repair", RepairPolicy(**self.repair))

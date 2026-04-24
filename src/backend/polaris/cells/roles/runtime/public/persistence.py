@@ -208,9 +208,9 @@ async def persist_session_turn_state(
             # BUG FIX: Cap the total stored events to prevent unbounded growth.
             # Keep only the most recent MAX_SESSION_TURN_EVENTS (last N events)
             # so long-running sessions don't accumulate megabytes of event data.
-            _MAX_SESSION_TURN_EVENTS = 200
-            if len(deduped_turn_events) > _MAX_SESSION_TURN_EVENTS:
-                deduped_turn_events = deduped_turn_events[-_MAX_SESSION_TURN_EVENTS:]
+            max_session_turn_events = 200
+            if len(deduped_turn_events) > max_session_turn_events:
+                deduped_turn_events = deduped_turn_events[-max_session_turn_events:]
             combined_turn_events = tuple(deduped_turn_events)
             projection = await engine.project(
                 SessionContinuityRequest(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from polaris.cells.context.engine.public.contracts import (
     BuildRoleContextCommandV1,
@@ -20,7 +22,7 @@ class TestBuildRoleContextCommandV1:
 
     def test_is_frozen(self) -> None:
         cmd = BuildRoleContextCommandV1(role_id="pm", objective="x")
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):  # type: ignore[name-defined]
             cmd.role_id = "changed"
 
 

@@ -56,7 +56,7 @@ class EngineRegistry:
             temp_instance = engine_class(workspace="", budget=None)
             strategy = temp_instance.strategy
         except (RuntimeError, ValueError) as e:
-            raise ValueError(f"Cannot instantiate {engine_class}: {e}")
+            raise ValueError(f"Cannot instantiate {engine_class}: {e}") from e
 
         # 如果传入了 workspace，从 kwargs 中提取
         workspace = kwargs.pop("workspace", "")

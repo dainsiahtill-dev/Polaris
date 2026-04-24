@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# noqa: N999 - CLI script with hyphenated name (convention for CLI tools)
 """Polaris Director v2 Integration - Full Architecture Integration.
 
 This module integrates Polaris PM with Director v2 service architecture,

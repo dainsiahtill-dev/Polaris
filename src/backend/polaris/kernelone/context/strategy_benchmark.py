@@ -17,6 +17,7 @@ Fixtures are versioned alongside this module.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -308,7 +309,7 @@ def score_receipt_from_case(
 
     This function normalizes both paths into a Scorecard.
     """
-    from .strategy_contracts import Scorecard as SC
+    from .strategy_contracts import Scorecard as SC  # noqa: N814
 
     # Default scoring based on case properties (offline/synthetic mode)
     quality = 0.85 if case.expected_answer_shape else 0.75
@@ -491,10 +492,8 @@ class StrategyBenchmark:
         else:
             # Try to load any matching receipt for this case
             receipt_data: dict[str, Any] | None = None
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 receipt_data = self._find_receipt(case.case_id, profile_id)
-            except FileNotFoundError:
-                pass  # No receipt: use synthetic scoring
 
             try:
                 scores = score_receipt_from_case(case, profile_id, receipt_data)

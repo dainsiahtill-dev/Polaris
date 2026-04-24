@@ -214,4 +214,4 @@ class Worker:
 
 
 # Re-export from unified kernelone.errors
-from polaris.kernelone.errors import WorkerStateError
+from polaris.kernelone.errors import WorkerStateError  # noqa: E402

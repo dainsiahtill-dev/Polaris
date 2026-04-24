@@ -98,7 +98,7 @@ class BackendLaunchRequest:
         """
         # Import here to avoid circular dependency
         try:
-            from polaris.domain.models.config_snapshot import (
+            from polaris.domain.models.config_snapshot import (  # noqa: F401
                 ConfigValidationResult as ValidationResult,
             )
         except ImportError:
@@ -118,9 +118,9 @@ class BackendLaunchRequest:
                     self.warnings.append(msg)
                     return self
 
-            ValidationResult = SimpleValidationResult  # type: ignore[misc,assignment]
+            validation_result = SimpleValidationResult  # type: ignore[misc,assignment]
 
-        result = ValidationResult()
+        result = validation_result()
 
         # Check port range
         if self.port < 0 or self.port > 65535:

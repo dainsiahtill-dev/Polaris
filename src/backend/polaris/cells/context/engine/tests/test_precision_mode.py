@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from polaris.cells.context.engine.internal.precision_mode import (
     COST_BUDGETS,
@@ -218,7 +220,7 @@ class TestRouteByCostModel:
 class TestCostStrategyDataclass:
     def test_is_frozen(self) -> None:
         strategy = route_by_cost_model("LOCAL", "pm")
-        with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
+        with pytest.raises(dataclasses.FrozenInstanceError):  # type: ignore[name-defined]
             strategy.name = "Tampered"
 
     def test_fields_present(self) -> None:

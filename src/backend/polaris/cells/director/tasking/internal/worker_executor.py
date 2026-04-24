@@ -203,7 +203,7 @@ class WorkerExecutor:
                 output=result.output,
                 error=result.error,
                 duration_ms=duration_ms,
-                evidence=evidence_list,
+                evidence=tuple(evidence_list),
             )
 
         except (
@@ -220,7 +220,7 @@ class WorkerExecutor:
                 output="",
                 error=str(exc),
                 duration_ms=duration_ms,
-                evidence=[],
+                evidence=(),
             )
 
     def _classify_task(self, task: Task) -> str:

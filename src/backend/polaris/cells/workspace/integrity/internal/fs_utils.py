@@ -43,7 +43,7 @@ def validate_workspace(
             )
         )
     except ValueError as exc:
-        raise ValidationError(str(exc), field="path", cause=exc)
+        raise ValidationError(str(exc), field="path", cause=exc) from exc
     if not os.path.isdir(full):
         raise NotFoundError(
             resource_type="workspace",

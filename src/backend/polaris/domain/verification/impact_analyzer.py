@@ -33,7 +33,7 @@ class ImpactResult:
     file_scores: dict[str, int] = field(default_factory=dict)
     recommendations: list[str] = field(default_factory=list)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.score < 0:
             object.__setattr__(self, "score", 0)
         elif self.score > 10:

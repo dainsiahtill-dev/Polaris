@@ -321,8 +321,8 @@ def init_db() -> None:
 
 def get_db():
     """获取数据库会话（用于依赖注入）"""
-    SessionLocal = get_session_local()
-    db = SessionLocal()
+    session_local = get_session_local()
+    db = session_local()
     try:
         yield db
     finally:

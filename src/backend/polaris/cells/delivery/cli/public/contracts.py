@@ -285,7 +285,7 @@ class CommandResultV1:
 # ── Errors ───────────────────────────────────────────────────────────────────
 
 
-class CommandErrorV1(Exception):
+class CommandErrorV1(Exception):  # noqa: N818
     """Structured error raised by CliExecutionService.
 
     Carries a machine-readable ``code`` and optional structured ``details``

@@ -37,7 +37,7 @@ class TokenEstimate:
     total_tokens: int = field(init=False)
     estimated: bool = True  # True if using heuristic, False if from API
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.total_tokens = self.prompt_tokens + self.completion_tokens
 
 
@@ -51,7 +51,7 @@ class BudgetStatus:
     percent_used: float = field(init=False)
     is_exceeded: bool = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.budget_limit is not None and self.budget_limit > 0:
             self.remaining_tokens = max(0, self.budget_limit - self.used_tokens)
             self.percent_used = (self.used_tokens / self.budget_limit) * 100

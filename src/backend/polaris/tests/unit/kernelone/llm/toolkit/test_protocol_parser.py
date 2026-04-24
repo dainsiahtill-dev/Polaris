@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """ProtocolParser 单元测试.
 
 覆盖范围:
@@ -9,13 +8,11 @@
 - 畸形输入处理
 - 空输入处理
 """
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from polaris.kernelone.llm.toolkit.protocol_kernel import (
     EditType,
-    FileOperation,
     ProtocolParser,
 )
 
@@ -25,13 +22,13 @@ class TestProtocolParserPatchFile:
 
     def test_parse_patch_file_with_search_replace(self):
         """测试 PATCH_FILE 格式含 SEARCH/REPLACE."""
-        text = '''PATCH_FILE: src/main.py
+        text = """PATCH_FILE: src/main.py
 <<<<<<< SEARCH
 old line
 =======
 new line
 >>>>>>> REPLACE
-END PATCH_FILE'''
+END PATCH_FILE"""
 
         ops = ProtocolParser.parse(text)
         assert len(ops) == 1
@@ -42,10 +39,10 @@ END PATCH_FILE'''
 
     def test_parse_patch_file_full_content(self):
         """测试 PATCH_FILE 格式含全文件内容."""
-        text = '''PATCH_FILE: src/config.py
+        text = """PATCH_FILE: src/config.py
 # Configuration
 DEBUG = True
-END PATCH_FILE'''
+END PATCH_FILE"""
 
         ops = ProtocolParser.parse(text)
         assert len(ops) == 1
@@ -54,13 +51,13 @@ END PATCH_FILE'''
 
     def test_parse_multiple_patch_files(self):
         """测试多个 PATCH_FILE 块."""
-        text = '''PATCH_FILE: src/a.py
+        text = """PATCH_FILE: src/a.py
 content A
 END PATCH_FILE
 
 PATCH_FILE: src/b.py
 content B
-END PATCH_FILE'''
+END PATCH_FILE"""
 
         ops = ProtocolParser.parse(text)
         assert len(ops) == 2
@@ -73,12 +70,12 @@ class TestProtocolParserSearchReplace:
 
     def test_parse_git_style_search_replace(self):
         """测试 Git 风格 SEARCH/REPLACE."""
-        text = '''src/main.py
+        text = """src/main.py
 <<<<<<< SEARCH
 old function
 =======
 new function
->>>>>>> REPLACE'''
+>>>>>>> REPLACE"""
 
         ops = ProtocolParser.parse(text)
         assert len(ops) >= 1
@@ -90,12 +87,12 @@ new function
         注意: 简单格式需要有明确的文件路径才能被正确解析。
         """
         # 使用 PATCH_FILE 包装的简单格式
-        text = '''PATCH_FILE: src/test.py
+        text = """PATCH_FILE: src/test.py
 SEARCH:
 old line
 REPLACE:
 new line
-END PATCH_FILE'''
+END PATCH_FILE"""
 
         ops = ProtocolParser.parse(text)
         search_replace_ops = [op for op in ops if op.edit_type == EditType.SEARCH_REPLACE]
@@ -140,24 +137,24 @@ class TestProtocolParserEdgeCases:
 
     def test_whitespace_only_search(self):
         """测试仅空白字符的 SEARCH."""
-        text = '''src/file.py
+        text = """src/file.py
 <<<<<<< SEARCH
 
 =======
 new content
->>>>>>> REPLACE'''
+>>>>>>> REPLACE"""
 
         ops = ProtocolParser.parse(text)
         # 空 SEARCH 应被正确处理
 
     def test_path_with_spaces(self):
         """测试带空格的路径."""
-        text = '''src/my file.py
+        text = """src/my file.py
 <<<<<<< SEARCH
 old
 =======
 new
->>>>>>> REPLACE'''
+>>>>>>> REPLACE"""
 
         ops = ProtocolParser.parse(text)
         # 路径中的空格应被正确处理
@@ -168,7 +165,7 @@ class TestProtocolParserDeduplication:
 
     def test_duplicate_operations_removed(self):
         """测试重复操作被去重."""
-        text = '''src/main.py
+        text = """src/main.py
 <<<<<<< SEARCH
 old
 =======
@@ -180,7 +177,7 @@ old
 =======
 new
 >>>>>>> REPLACE
-END PATCH_FILE'''
+END PATCH_FILE"""
 
         ops = ProtocolParser.parse(text)
         # 相同操作应被去重
@@ -193,12 +190,12 @@ class TestProtocolParserPathNormalization:
 
     def test_backslash_normalized(self):
         """测试反斜杠归一化."""
-        text = r'''src\path\file.py
+        text = r"""src\path\file.py
 <<<<<<< SEARCH
 old
 =======
 new
->>>>>>> REPLACE'''
+>>>>>>> REPLACE"""
 
         ops = ProtocolParser.parse(text)
         for op in ops:
@@ -206,12 +203,12 @@ new
 
     def test_leading_dot_slash_removed(self):
         """测试前导 ./ 移除."""
-        text = '''./src/main.py
+        text = """./src/main.py
 <<<<<<< SEARCH
 old
 =======
 new
->>>>>>> REPLACE'''
+>>>>>>> REPLACE"""
 
         ops = ProtocolParser.parse(text)
         for op in ops:

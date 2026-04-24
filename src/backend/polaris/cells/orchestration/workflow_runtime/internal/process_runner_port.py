@@ -53,7 +53,7 @@ class ProcessHandle:
     name: str = ""
     metadata: dict[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.metadata is None:
             object.__setattr__(self, "metadata", {})
 

@@ -81,7 +81,7 @@ class QaAuditResultV1:
             raise ValueError("score must be >= 0")
 
 
-class QaAuditErrorV1(RuntimeError):
+class QaAuditErrorV1(RuntimeError):  # noqa: N818
     """Raised when `qa.audit_verdict` contract processing fails."""
 
     def __init__(

@@ -46,7 +46,7 @@ _DELETED_FROZEN_MODULES: tuple[str, ...] = (
 )
 
 
-class GuardViolation(RuntimeError):
+class GuardViolation(RuntimeError):  # noqa: N818
     """Raised when an architectural constraint is violated."""
 
 

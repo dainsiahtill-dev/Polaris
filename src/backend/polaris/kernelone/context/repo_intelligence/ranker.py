@@ -260,17 +260,17 @@ class RepoIntelligenceRanker:
             return dict.fromkeys(self._all_files, 1.0)
 
         # Build graph
-        G = nx.MultiDiGraph()
+        graph = nx.MultiDiGraph()
 
         # Add all files as nodes
         for fname in self._all_files:
-            G.add_node(fname)
+            graph.add_node(fname)
 
         # Add self-edges for definitions without references
         for name, definers in self._defines.items():
             if name not in self._references:
                 for definer in definers:
-                    G.add_edge(definer, definer, weight=0.1, ident=name)
+                    graph.add_edge(definer, definer, weight=0.1, ident=name)
 
         # Add edges from references to definitions
         idents = set(self._defines.keys()) & set(self._references.keys())
@@ -282,7 +282,7 @@ class RepoIntelligenceRanker:
                 for definer in definers:
                     # Scale down high frequency mentions
                     scaled_count = math.sqrt(count)
-                    G.add_edge(
+                    graph.add_edge(
                         referencer,
                         definer,
                         weight=mul * scaled_count,
@@ -315,7 +315,7 @@ class RepoIntelligenceRanker:
             personalization[fname] = pers
 
         try:
-            ranked = nx.pagerank(G, weight="weight", personalization=personalization)
+            ranked = nx.pagerank(graph, weight="weight", personalization=personalization)
         except (RuntimeError, ValueError) as exc:
             logger.warning(
                 "RepoIntelligenceRanker: pagerank failed: %s, using fallback",

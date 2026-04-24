@@ -91,7 +91,7 @@ class RoleConfig:
     max_files_per_action: int = 3
     max_lines_per_action: int = 500
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Set default capabilities if not provided
         if not self.capabilities:
             object.__setattr__(self, "capabilities", set(DEFAULT_ROLE_CAPABILITIES.get(self.role, set())))

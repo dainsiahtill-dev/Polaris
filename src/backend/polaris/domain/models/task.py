@@ -20,7 +20,7 @@ warnings.warn(
 )
 
 # Re-export from canonical location for backward compat.
-from polaris.domain.entities.task import (
+from polaris.domain.entities.task import (  # noqa: E402
     Task,
     TaskPriority,
     TaskStatus,

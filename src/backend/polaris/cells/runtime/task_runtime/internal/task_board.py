@@ -426,7 +426,7 @@ class TaskBoard:
         lock_file_path.parent.mkdir(parents=True, exist_ok=True)
         lock_file = None
         try:
-            lock_file = open(lock_file_path, "a+", encoding="utf-8")
+            lock_file = open(lock_file_path, "a+", encoding="utf-8")  # noqa: SIM115
             if os.name == "nt":
                 import msvcrt
 

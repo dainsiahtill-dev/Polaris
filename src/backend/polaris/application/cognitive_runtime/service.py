@@ -606,7 +606,7 @@ class CognitiveRuntimeService:
             # Path-boundary validation errors are security-significant and must
             # not be downgraded into "catalog unavailable" soft notes.
             raise
-        except (RuntimeError, ValueError):
+        except RuntimeError:
             # SECURITY FIX (P2-014): Log at warning level for audit trail.
             logger.warning(
                 "Graph catalog unavailable for diff mapping: workspace=%s catalog=%s", workspace, graph_catalog_path

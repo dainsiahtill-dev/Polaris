@@ -467,10 +467,10 @@ class MiniMaxProvider(BaseProvider):
                                 )
 
                             choices = json_data.get("choices", [])
-                            if choices and len(choices) > 0:
+                            if choices:
                                 message = choices[0].get("message", {})
-                                content = message.get("content", "")
-                                reasoning = message.get("reasoning_content", "")
+                                content = message.get("content", "") or ""
+                                reasoning = message.get("reasoning_content", "") or ""
 
                                 if content:
                                     output_parts.append(content)
@@ -486,8 +486,8 @@ class MiniMaxProvider(BaseProvider):
                                 if debug_mode:
                                     logger.debug(
                                         "MiniMax invoke: JSON parse success - content_len=%s, reasoning_len=%s",
-                                        len(content),
-                                        len(reasoning),
+                                        len(content) if content else 0,
+                                        len(reasoning) if reasoning else 0,
                                     )
 
                                 # 将JSON数据也存入full_response用于raw字段
@@ -511,7 +511,7 @@ class MiniMaxProvider(BaseProvider):
                                     full_response.append(chunk_data)
 
                                     choices = chunk_data.get("choices", [])
-                                    if choices and isinstance(choices, list) and len(choices) > 0:
+                                    if choices:
                                         choice = choices[0]
                                         matched = False
 
@@ -651,7 +651,7 @@ class MiniMaxProvider(BaseProvider):
                 thinking = None
                 if isinstance(data, dict):
                     choices = data.get("choices")
-                    if choices and isinstance(choices, list) and len(choices) > 0:
+                    if choices:
                         first_choice = choices[0]
                         if isinstance(first_choice, dict):
                             message = first_choice.get("message", {})
@@ -799,7 +799,7 @@ class MiniMaxProvider(BaseProvider):
                             chunk_data = json.loads(data_str)
                             choices = chunk_data.get("choices", [])
 
-                            if choices and isinstance(choices, list) and len(choices) > 0:
+                            if choices:
                                 choice = choices[0]
 
                                 # Try delta format (OpenAI compatible)

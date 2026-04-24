@@ -9,6 +9,34 @@ from typing import Any
 
 # Lazy import to avoid circular import at module level.
 # DirectorService will be imported inside rebind_director_service when needed.
+from polaris.cells.director.execution.public.contracts import (
+    DirectorExecutionError,
+    DirectorExecutionResultV1,
+    DirectorTaskCompletedEventV1,
+    DirectorTaskStartedEventV1,
+    ExecuteDirectorTaskCommandV1,
+    GetDirectorTaskStatusQueryV1,
+    RetryDirectorTaskCommandV1,
+)
+from polaris.cells.director.execution.public.service import (
+    DirectorConfig,
+    DirectorService,
+    DirectorState,
+    TaskQueueConfig,
+    TaskService,
+    WorkerPoolConfig,
+    WorkerService,
+    extract_defect_ticket,
+    parse_acceptance,
+    write_gate_check,
+)
+from polaris.cells.director.execution.public.tools import (
+    ALLOWED_EXECUTION_COMMANDS,
+    build_tool_cli_args,
+    is_command_allowed,
+    is_command_blocked,
+)
+
 _rebind_director_service: Any = None
 
 logger = logging.getLogger(__name__)
@@ -34,38 +62,6 @@ async def rebind_director_service(workspace: str | Path) -> Any:
     """
     func = _get_rebind_director_service()
     return await func(workspace)
-
-
-from polaris.cells.director.execution.public.contracts import (
-    DirectorExecutionError,
-    DirectorExecutionResultV1,
-    DirectorTaskCompletedEventV1,
-    DirectorTaskStartedEventV1,
-    ExecuteDirectorTaskCommandV1,
-    GetDirectorTaskStatusQueryV1,
-    RetryDirectorTaskCommandV1,
-)
-
-# Import public service types - this import is AFTER rebind_director_service
-# definition to avoid circular import issues
-from polaris.cells.director.execution.public.service import (
-    DirectorConfig,
-    DirectorService,
-    DirectorState,
-    TaskQueueConfig,
-    TaskService,
-    WorkerPoolConfig,
-    WorkerService,
-    extract_defect_ticket,
-    parse_acceptance,
-    write_gate_check,
-)
-from polaris.cells.director.execution.public.tools import (
-    ALLOWED_EXECUTION_COMMANDS,
-    build_tool_cli_args,
-    is_command_allowed,
-    is_command_blocked,
-)
 
 __all__ = [
     "ALLOWED_EXECUTION_COMMANDS",

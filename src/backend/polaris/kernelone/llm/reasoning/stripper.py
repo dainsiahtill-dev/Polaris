@@ -36,17 +36,9 @@ def _build_nested_safe_patterns() -> list[str]:
         # Uses (?:(?!<prefix\b)[\s\S])* to exclude nested opening tags
         # This ensures proper matching even with nested reasoning blocks
         escaped_prefix = re.escape(prefix)
-        if prefix in CHINESE_TAG_PREFIXES:
-            # For Chinese characters, no word boundary needed
-            open_tag = f"<{prefix}(?:\\s[^>]*)?>"
-            # Match content that doesn't contain nested same prefix
-            # Use a pattern that stops at the first closing tag
-        else:
-            # For English prefixes, use word boundary
-            open_tag = f"<{prefix}\\b(?:\\s[^>]*)?>"
-
         # Build the full pattern with non-nested inner content
         # This prevents matching across nested boundaries
+        open_tag = f"<{prefix}(?:\\s[^>]*)?>" if prefix in CHINESE_TAG_PREFIXES else f"<{prefix}\\b(?:\\s[^>]*)?>"
         pattern = (
             rf"{re.escape(open_tag)}(?:(?!<{escaped_prefix}\\b)[^<]|<(?!/?{escaped_prefix}))*</{re.escape(prefix)}>"
         )

@@ -384,7 +384,7 @@ class TruthLogService:
             def _handle_index_error(t):
                 try:
                     t.result()
-                except Exception as e:
+                except (RuntimeError, asyncio.InvalidStateError, asyncio.CancelledError) as e:
                     import logging
 
                     logging.getLogger(__name__).debug(f"Truth log background indexing failed (safe to ignore): {e}")

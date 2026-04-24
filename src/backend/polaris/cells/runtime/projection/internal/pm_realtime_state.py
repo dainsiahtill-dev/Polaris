@@ -125,14 +125,7 @@ class PMRealtimeProvider:
 
     def _map_priority(self, priority: Any) -> int:
         """映射优先级"""
-        p = str(priority).upper()
-        if p == "CRITICAL":
-            return 3
-        elif p == "HIGH":
-            return 2
-        elif p == "MEDIUM":
-            return 1
-        return 0
+        return {"CRITICAL": 3, "HIGH": 2, "MEDIUM": 1}.get(str(priority).upper(), 0)
 
     def _parse_datetime(self, value: Any) -> datetime:
         """解析日期时间"""

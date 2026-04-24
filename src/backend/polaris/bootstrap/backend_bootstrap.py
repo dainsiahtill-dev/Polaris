@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # BootstrapError is defined in polaris.kernelone.errors for consistency
 # Import here for backwards compatibility
-from polaris.kernelone.errors import BootstrapError
+from polaris.kernelone.errors import BootstrapError  # noqa: E402
 
 
 class BackendBootstrapper:
@@ -266,10 +266,7 @@ class BackendBootstrapper:
             return True
         except (RuntimeError, ValueError):
             logger.exception("shutdown error: force=%s", force)
-            if force:
-                # Force shutdown
-                return True
-            return False
+            return force
 
     def add_startup_hook(self, hook: Callable[..., Any]) -> None:
         """Add a hook to run during startup.
@@ -477,7 +474,7 @@ class BackendBootstrapper:
             raise BootstrapError(
                 f"Failed to import FastAPI components: {e}",
                 stage="app_creation",
-            )
+            ) from e
 
     def _select_port(self, preferred_port: int = 0) -> int:
         """Select an available port.

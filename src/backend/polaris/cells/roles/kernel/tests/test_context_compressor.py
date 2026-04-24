@@ -346,7 +346,7 @@ class TestContextCompactionBlueprint:
     def test_blueprint_requirement_1_import(self) -> None:
         """验证: 蓝图要求1 - 导入 RoleContextCompressor"""
         try:
-            from polaris.kernelone.context.compaction import (
+            from polaris.kernelone.context.compaction import (  # noqa: F401
                 CompactSnapshot,
                 RoleContextCompressor,
                 RoleContextIdentity,

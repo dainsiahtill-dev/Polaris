@@ -22,7 +22,7 @@ import uuid
 from typing import Any
 
 from polaris.kernelone.context.chunks import PromptChunkAssembler
-from polaris.kernelone.context.context_os import ContextOSInvariantViolation
+from polaris.kernelone.context.context_os import ContextOSInvariantViolationError
 from polaris.kernelone.context.session_continuity import (
     SessionContinuityEngine,
     SessionContinuityPack,
@@ -348,7 +348,7 @@ class SessionContinuityStrategy:
 
         try:
             projection = await self._engine.project(typed_request)
-        except ContextOSInvariantViolation as exc:
+        except ContextOSInvariantViolationError as exc:
             _logger.warning("SessionContinuityStrategy.project: invalid Context OS projection: %s", exc)
             return {}
         pack = projection.continuity_pack
@@ -386,7 +386,7 @@ class SessionContinuityStrategy:
             return None
         try:
             return await self._engine.project(typed_request)
-        except ContextOSInvariantViolation as exc:
+        except ContextOSInvariantViolationError as exc:
             _logger.warning("SessionContinuityStrategy.project_to_projection: invalid Context OS projection: %s", exc)
             return None
 

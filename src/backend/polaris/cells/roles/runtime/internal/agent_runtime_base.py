@@ -1024,7 +1024,7 @@ class RoleAgent(ABC):
 
             self._emit("on_status_change", self.status)
 
-    def _load_snapshot(self, snapshot: dict[str, Any]) -> None:
+    def _load_snapshot(self, snapshot: dict[str, Any]) -> None:  # noqa: B027
         """Load data from snapshot. Override in subclass."""
         pass
 

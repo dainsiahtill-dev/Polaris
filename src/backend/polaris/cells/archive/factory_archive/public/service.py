@@ -247,7 +247,7 @@ def _run_background(coro: Coroutine[Any, Any, None]) -> None:
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(coro)
+        _ = loop.create_task(coro)  # noqa: RUF006
         return
     except RuntimeError:
         pass

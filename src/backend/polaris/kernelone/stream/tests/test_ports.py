@@ -288,7 +288,7 @@ class TestStreamFromSyncGen:
                 finally:
                     self.cleaned_up = True
 
-            def __iter__(self):
+            def __iter__(self):  # noqa: ANN204
                 return self._gen
 
             def close(self) -> None:

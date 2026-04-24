@@ -405,7 +405,7 @@ class WhitespaceNormalizedReplacer:
 
         # Single line matching
         lines = split_lines(normalize_line_endings(content))
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             normalized_line = WhitespaceNormalizedReplacer._normalize_whitespace(line)
             if normalized_line == normalized_search:
                 yield line

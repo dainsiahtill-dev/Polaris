@@ -218,16 +218,19 @@ class ErrorCorrelator:
 
         # Look upstream for enabling cause if this is CAUSAL type
         fc = _classify_event(error_event)
-        if isinstance(best_rule, EventTypeMatchRule) and best_rule.correlation_type == CorrelationType.CAUSAL:
-            if upstream:
-                # Upgrade to upstream cause if it matches a higher-weight rule
-                for u_event in upstream[:3]:
-                    for rule in self._rules:
-                        if rule.matches(u_event) and rule.weight > best_weight:
-                            fc = _classify_event(u_event)
-                            best_weight = rule.weight
-                            best_rule = rule
-                            break
+        if (
+            isinstance(best_rule, EventTypeMatchRule)
+            and best_rule.correlation_type == CorrelationType.CAUSAL
+            and upstream
+        ):
+            # Upgrade to upstream cause if it matches a higher-weight rule
+            for u_event in upstream[:3]:
+                for rule in self._rules:
+                    if rule.matches(u_event) and rule.weight > best_weight:
+                        fc = _classify_event(u_event)
+                        best_weight = rule.weight
+                        best_rule = rule
+                        break
 
         return fc, best_rule.correlation_type
 

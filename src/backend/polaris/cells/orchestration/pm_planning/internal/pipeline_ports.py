@@ -756,7 +756,7 @@ def _derive_scope_paths_from_target_files(target_files: list[str]) -> list[str]:
         if not f:
             continue
         parts = str(f).replace("\\", "/").split("/")
-        scope = parts[0] if len(parts) >= 2 else parts[0]
+        scope = parts[0]
         if scope and scope not in seen:
             seen.add(scope)
             scopes.append(scope)
@@ -1047,9 +1047,9 @@ def _extract_json_from_llm_output(raw_output: str) -> dict[str, Any] | None:
     try:
         from polaris.kernelone.runtime.shared_types import strip_ansi
     except ImportError:
-
-        def strip_ansi(s):
-            return s  # type: ignore[assignment]
+        # Fallback implementation with matching signature
+        def strip_ansi(text: str) -> str:
+            return text
 
     cleaned = _strip_llm_xml_tags(strip_ansi(raw_output))
     if not cleaned:

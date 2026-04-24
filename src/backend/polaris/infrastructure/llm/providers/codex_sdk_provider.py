@@ -212,6 +212,9 @@ class CodexSDKProvider(BaseProvider):
         except SDKUnavailableError as exc:
             latency_ms = int((time.time() - start) * 1000)
             return HealthResult(ok=False, latency_ms=latency_ms, error=str(exc))
+        except (ConnectionError, TimeoutError) as exc:
+            latency_ms = int((time.time() - start) * 1000)
+            return HealthResult(ok=False, latency_ms=latency_ms, error=f"Connection error: {exc}")
         except (RuntimeError, ValueError) as exc:
             latency_ms = int((time.time() - start) * 1000)
             return HealthResult(ok=False, latency_ms=latency_ms, error=str(exc))
@@ -224,6 +227,10 @@ class CodexSDKProvider(BaseProvider):
             return ModelListResult(ok=True, supported=True, models=model_infos)
         except SDKUnavailableError as exc:
             return ModelListResult(ok=False, supported=False, models=[], error=str(exc))
+        except ConnectionError as exc:
+            return ModelListResult(ok=False, supported=True, models=[], error=f"Connection error: {exc}")
+        except TimeoutError as exc:
+            return ModelListResult(ok=False, supported=True, models=[], error=f"Request timeout: {exc}")
         except (RuntimeError, ValueError) as exc:
             return ModelListResult(ok=False, supported=True, models=[], error=str(exc))
 
@@ -265,6 +272,18 @@ class CodexSDKProvider(BaseProvider):
             latency_ms = int((time.time() - start) * 1000)
             usage = estimate_usage(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=latency_ms, usage=usage, error=str(exc))
+        except ConnectionError as exc:
+            latency_ms = int((time.time() - start) * 1000)
+            usage = estimate_usage(prompt, "")
+            return InvokeResult(
+                ok=False, output="", latency_ms=latency_ms, usage=usage, error=f"Connection error: {exc}"
+            )
+        except TimeoutError as exc:
+            latency_ms = int((time.time() - start) * 1000)
+            usage = estimate_usage(prompt, "")
+            return InvokeResult(
+                ok=False, output="", latency_ms=latency_ms, usage=usage, error=f"Request timeout: {exc}"
+            )
         except (RuntimeError, ValueError) as exc:
             latency_ms = int((time.time() - start) * 1000)
             usage = estimate_usage(prompt, "")

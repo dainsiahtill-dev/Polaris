@@ -188,7 +188,7 @@ class TestBudgetPolicyStallSemantics:
         policy = BudgetPolicy(max_tool_calls=999, max_turns=999, max_stall_cycles=0)
         calls = [_canonical("read_file", {"path": "a.py"})]
 
-        approved, blocked, stop_reason, _violations = policy.evaluate(
+        approved, _blocked, stop_reason, _violations = policy.evaluate(
             calls,
             tool_call_count=1,
             turn_count=1,
@@ -198,14 +198,14 @@ class TestBudgetPolicyStallSemantics:
         assert stop_reason is not None, "stall_count=1 > max=0 → must stop"
         assert "stalled" in stop_reason
         assert len(approved) == 0
-        assert len(blocked) == 1
+        assert len(_blocked) == 1
 
     def test_first_identical_cycle_allowed_when_max_zero(self) -> None:
         """stall_count=0 with max_stall_cycles=0 must be allowed (first identical)."""
         policy = BudgetPolicy(max_tool_calls=999, max_turns=999, max_stall_cycles=0)
         calls = [_canonical("read_file", {"path": "a.py"})]
 
-        approved, blocked, stop_reason, _violations = policy.evaluate(
+        approved, _blocked, stop_reason, _violations = policy.evaluate(
             calls,
             tool_call_count=1,
             turn_count=1,
@@ -214,7 +214,7 @@ class TestBudgetPolicyStallSemantics:
 
         assert stop_reason is None, "stall_count=0 is not > max=0 → must allow"
         assert len(approved) == 1
-        assert len(blocked) == 0
+        assert len(_blocked) == 0
 
     def test_stall_resets_when_signature_differs(self) -> None:
         """Different tool+args produce different cycle signatures → stall resets."""
@@ -708,14 +708,14 @@ class TestExplorationToolPolicy:
 
         # First 3 calls should be approved
         for i in range(3):
-            approved, blocked, violations = policy.evaluate(calls)
+            approved, _blocked, violations = policy.evaluate(calls)
             assert len(approved) == 1, f"Call {i + 1} should be approved"
-            assert len(blocked) == 0, f"Call {i + 1} should not be blocked"
+            assert len(_blocked) == 0, f"Call {i + 1} should not be blocked"
 
         # 4th call should be blocked (cooldown)
-        approved, blocked, violations = policy.evaluate(calls)
+        approved, _blocked, violations = policy.evaluate(calls)
         assert len(approved) == 0, "4th call should be blocked due to cooldown"
-        assert len(blocked) == 1, "4th call should be blocked"
+        assert len(_blocked) == 1, "4th call should be blocked"
         assert "cooldown" in violations[0].reason.lower()
 
     def test_max_calls_per_tool(self) -> None:
@@ -731,7 +731,7 @@ class TestExplorationToolPolicy:
 
         # First 2 calls should be approved
         for i in range(2):
-            approved, blocked, violations = policy.evaluate(calls)
+            approved, _blocked, violations = policy.evaluate(calls)
             assert len(approved) == 1, f"Call {i + 1} should be approved"
 
         # 3rd call should be blocked (max limit)
@@ -752,7 +752,7 @@ class TestExplorationToolPolicy:
 
         # First 2 calls should be approved
         for i in range(2):
-            approved, blocked, violations = policy.evaluate(calls)
+            approved, _blocked, violations = policy.evaluate(calls)
             assert len(approved) == 1, f"Call {i + 1} should be approved"
 
         # 3rd call should be blocked (budget exhausted)
@@ -771,9 +771,9 @@ class TestExplorationToolPolicy:
 
         calls = [CanonicalToolCall(tool="write_file", args={"path": "test.py"})]
 
-        approved, blocked, _violations = policy.evaluate(calls)
+        approved, _blocked, _violations = policy.evaluate(calls)
         assert len(approved) == 1, "Non-exploration tools should pass through"
-        assert len(blocked) == 0
+        assert len(_blocked) == 0
 
     def test_stats_tracking(self) -> None:
         """Test that ExplorationToolPolicy tracks statistics correctly."""

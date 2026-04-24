@@ -22,10 +22,10 @@ class TestPhase2ToolChainIntegration:
     def test_tool_chain_execution(self) -> None:
         """Test executing tool chain plan."""
         # 使用 mock 避免实际执行
-        with patch("polaris.kernelone.llm.toolkit.executor.AgentAccelToolExecutor") as MockExecutor:
+        with patch("polaris.kernelone.llm.toolkit.executor.AgentAccelToolExecutor") as mock_executor_cls:
             mock_executor = Mock()
             mock_executor.execute.return_value = {"ok": True, "result": {}}
-            MockExecutor.return_value = mock_executor
+            mock_executor_cls.return_value = mock_executor
 
             from polaris.kernelone.llm.toolkit.tool_chain_adapter import (
                 AgentAccelToolChainExecutor,

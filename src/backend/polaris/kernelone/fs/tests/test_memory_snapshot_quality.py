@@ -72,9 +72,11 @@ def test_read_memory_snapshot_logs_on_ioerror(tmp_path: Path, caplog: pytest.Log
 
     p = tmp_path / "locked.json"
     p.write_text("{}", encoding="utf-8")
-    with patch("builtins.open", side_effect=OSError("permission denied")):
-        with caplog.at_level(logging.DEBUG, logger="polaris.kernelone.fs.memory_snapshot"):
-            result = read_memory_snapshot(str(p))
+    with (
+        patch("builtins.open", side_effect=OSError("permission denied")),
+        caplog.at_level(logging.DEBUG, logger="polaris.kernelone.fs.memory_snapshot"),
+    ):
+        result = read_memory_snapshot(str(p))
     assert result is None
     assert any("read_memory_snapshot failed" in r.message for r in caplog.records)
 
@@ -98,9 +100,11 @@ def test_write_memory_snapshot_empty_path_is_noop() -> None:
 def test_write_memory_snapshot_logs_on_ioerror(caplog: pytest.LogCaptureFixture) -> None:
     import logging
 
-    with patch("polaris.kernelone.fs.memory_snapshot.write_json_atomic", side_effect=OSError("disk full")):
-        with caplog.at_level(logging.DEBUG, logger="polaris.kernelone.fs.memory_snapshot"):
-            write_memory_snapshot("/some/path.json", {"x": 1})
+    with (
+        patch("polaris.kernelone.fs.memory_snapshot.write_json_atomic", side_effect=OSError("disk full")),
+        caplog.at_level(logging.DEBUG, logger="polaris.kernelone.fs.memory_snapshot"),
+    ):
+        write_memory_snapshot("/some/path.json", {"x": 1})
     assert any("Failed to write memory snapshot" in r.message for r in caplog.records)
 
 
@@ -167,9 +171,11 @@ def test_write_loop_warning_logs_on_ioerror(
     import logging
 
     log_path = str(tmp_path / "warn.log")
-    with patch("builtins.open", side_effect=OSError("no space")):
-        with caplog.at_level(logging.DEBUG, logger="polaris.kernelone.fs.memory_snapshot"):
-            write_loop_warning(log_path, "test message")
+    with (
+        patch("builtins.open", side_effect=OSError("no space")),
+        caplog.at_level(logging.DEBUG, logger="polaris.kernelone.fs.memory_snapshot"),
+    ):
+        write_loop_warning(log_path, "test message")
     # Print still happens even when write fails
     captured = capsys.readouterr()
     assert "test message" in captured.out

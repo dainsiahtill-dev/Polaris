@@ -512,7 +512,7 @@ class StructuredLogger:
         self._running = True
 
         # Start flush task
-        asyncio.create_task(self._flush_loop())
+        _ = asyncio.create_task(self._flush_loop())  # noqa: RUF006
 
     async def stop(self) -> None:
         """Stop logging and flush remaining events."""
@@ -542,7 +542,7 @@ class StructuredLogger:
 
         # Flush if buffer is full
         if len(self._buffer) >= self._max_buffer_size:
-            asyncio.create_task(self._flush())
+            _ = asyncio.create_task(self._flush())  # noqa: RUF006
 
     async def _flush_loop(self) -> None:
         """Periodic flush task."""

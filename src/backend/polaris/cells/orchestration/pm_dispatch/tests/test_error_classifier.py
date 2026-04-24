@@ -294,7 +294,7 @@ class TestRetryExecutorCircuitBreakerIntegration:
         async def dummy() -> str:
             return "should not run"
 
-        with pytest.raises(RuntimeError, match="Circuit breaker.*is OPEN"):
+        with pytest.raises(RuntimeError, match=r"Circuit breaker.*is OPEN"):
             await executor.execute(dummy)
 
     @pytest.mark.asyncio

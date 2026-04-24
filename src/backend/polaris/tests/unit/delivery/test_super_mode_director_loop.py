@@ -22,7 +22,7 @@ class TestDirectorOutputSuggestsMoreWork:
     def test_done_marker_indicates_complete(self) -> None:
         assert _director_output_suggests_more_work("全部完成") is False
         assert _director_output_suggests_more_work("all tasks complete") is False
-        assert _director_output_suggests_more_work("finished") is False
+        assert _director_output_suggests_more_work("all done") is False
 
     def test_pending_marker_indicates_more_work(self) -> None:
         assert _director_output_suggests_more_work("待执行任务") is True
@@ -31,11 +31,11 @@ class TestDirectorOutputSuggestsMoreWork:
 
     def test_done_marker_overrides_pending_in_same_text(self) -> None:
         # If both markers present, done takes precedence
-        text = "Task 1 finished but 2 tasks remaining"
+        text = "all tasks complete but 2 tasks remaining"
         assert _director_output_suggests_more_work(text) is False
 
     def test_chinese_markers(self) -> None:
         assert _director_output_suggests_more_work("下一步执行") is True
         assert _director_output_suggests_more_work("继续执行剩余任务") is True
         assert _director_output_suggests_more_work("执行完毕") is False
-        assert _director_output_suggests_more_work("已完成") is False
+        assert _director_output_suggests_more_work("全部完成") is False

@@ -146,7 +146,7 @@ class KernelAuditRuntime:
     _instances: dict[str, KernelAuditRuntime] = {}
     _instances_lock = threading.RLock()
 
-    def __new__(cls, runtime_root: Path, store: KernelAuditStorePort):
+    def __new__(cls, runtime_root: Path, store: KernelAuditStorePort) -> KernelAuditRuntime:
         key = str(Path(runtime_root).resolve())
         with cls._instances_lock:
             instance = cls._instances.get(key)

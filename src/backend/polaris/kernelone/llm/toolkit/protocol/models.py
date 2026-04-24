@@ -53,7 +53,7 @@ class FileOperation:
     original_format: str = ""  # Original protocol format identifier
     source_line: int = 0  # Line number in original text
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Normalize paths after initialization."""
         # Freeze by modifying through object.__setattr__
         object.__setattr__(self, "path", _normalize_path(str(self.path) if self.path else ""))

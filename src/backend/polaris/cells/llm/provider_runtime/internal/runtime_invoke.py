@@ -191,7 +191,7 @@ def _emit_complete_sync(tracker: LLMCallTracker) -> None:
         try:
             loop = asyncio.get_running_loop()
             # If we're in an async context, schedule the emit as a task
-            loop.create_task(tracker._emit_complete())
+            _ = loop.create_task(tracker._emit_complete())  # noqa: RUF006
         except RuntimeError:
             # No running loop, use new event loop in a thread to avoid blocking
             import concurrent.futures

@@ -617,10 +617,8 @@ class _AsyncioProcessHandle:
                 # proc.kill() returns None on all platforms (not Awaitable).
                 # Just call it and wait for the process to exit.
                 self.proc.kill()
-                try:
+                with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self.proc.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    pass  # Process may already be orphaned; give up
                 self._status = ProcessStatus.CANCELLED
                 return False
         except ProcessLookupError:

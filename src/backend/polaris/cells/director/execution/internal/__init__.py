@@ -20,6 +20,7 @@ implementation has been migrated out of director.execution/internal/.
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 
 # --------------------------------------------------------------------------
@@ -100,12 +101,10 @@ from polaris.cells.director.execution.internal.repair_service import (
 # Delivery group (director.delivery) — Phase 5 pending
 # --------------------------------------------------------------------------
 # Lazy import to avoid ImportError when director_cli is not yet migrated
-try:
+with contextlib.suppress(ImportError):
     from polaris.cells.director.execution.internal.director_cli import (  # type: ignore[attr-defined]
         DirectorCLI,  # type: ignore[attr-defined]
     )
-except ImportError:
-    pass
 
 warnings.warn(
     "polaris.cells.director.execution.internal.* is deprecated and will be removed. "

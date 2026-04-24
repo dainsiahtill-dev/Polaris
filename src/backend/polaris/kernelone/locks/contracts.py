@@ -118,8 +118,12 @@ class FileLockAdapter(LockPort):
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             fh = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
-            _flock(fh, op)
-            return fh
+            try:
+                _flock(fh, op)
+                return fh
+            except OSError:
+                os.close(fh)
+                raise
         except OSError as exc:
             logger.warning("Lock: could not acquire lock on %s: %s", path, exc)
             return None
@@ -271,7 +275,6 @@ class FileLockAdapter(LockPort):
                 return LockReleaseResult(released=True, lock_id=path)
 
             if entry.holder_id == holder_id:
-                self._unlock_file(fh)
                 self._delete_entry(path)
                 self._holder_locks.pop(resource, None)
                 return LockReleaseResult(released=True, lock_id=path)

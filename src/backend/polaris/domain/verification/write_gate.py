@@ -20,7 +20,7 @@ class WriteGateResult:
     reason: str = ""
     extra_files: list[str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.extra_files is None:
             object.__setattr__(self, "extra_files", [])
 

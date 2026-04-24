@@ -340,16 +340,16 @@ class UnifiedLogger:
     def level(self, value: int) -> None:
         self._logger.level = value
 
-    def isEnabledFor(self, level: int) -> bool:
+    def isEnabledFor(self, level: int) -> bool:  # noqa: N802
         return self._logger.isEnabledFor(level)
 
-    def setLevel(self, level: int) -> None:
+    def setLevel(self, level: int) -> None:  # noqa: N802
         self._logger.setLevel(level)
 
-    def addHandler(self, handler: logging.Handler) -> None:
+    def addHandler(self, handler: logging.Handler) -> None:  # noqa: N802
         self._logger.addHandler(handler)
 
-    def removeHandler(self, handler: logging.Handler) -> None:
+    def removeHandler(self, handler: logging.Handler) -> None:  # noqa: N802
         self._logger.removeHandler(handler)
 
 

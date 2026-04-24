@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from typing import Any
+from typing import Any, Self
 
 from polaris.kernelone.llm.toolkit.definitions import create_default_registry
 from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
@@ -242,11 +242,11 @@ class ChiefEngineerToolIntegration:
             with contextlib.suppress(AttributeError):
                 self.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """上下文管理器出口，确保资源释放."""
         self.close()
         return False
@@ -482,11 +482,11 @@ class DirectorToolIntegration:
             with contextlib.suppress(AttributeError):
                 self.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """上下文管理器出口，确保资源释放."""
         self.close()
         return False
@@ -605,11 +605,11 @@ class PMToolIntegration:
             with contextlib.suppress(AttributeError):
                 self.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """上下文管理器出口，确保资源释放."""
         self.close()
         return False
@@ -699,11 +699,11 @@ class ArchitectToolIntegration:
             with contextlib.suppress(AttributeError):
                 self.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """上下文管理器出口，确保资源释放."""
         self.close()
         return False
@@ -793,11 +793,11 @@ class QAToolIntegration:
             with contextlib.suppress(AttributeError):
                 self.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """上下文管理器出口，确保资源释放."""
         self.close()
         return False
@@ -911,11 +911,11 @@ class ScoutToolIntegration:
             with contextlib.suppress(AttributeError):
                 self.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """上下文管理器出口，确保资源释放."""
         self.close()
         return False

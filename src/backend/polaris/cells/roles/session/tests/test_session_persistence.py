@@ -423,7 +423,7 @@ class TestRoleSessionServiceIntegration:
         # Setup in-memory database
         engine = create_engine("sqlite:///:memory:", echo=False)
         Base.metadata.create_all(bind=engine)
-        SessionFactory = sessionmaker(bind=engine)
+        SessionFactory = sessionmaker(bind=engine)  # noqa: N806
 
         # Mock the persistence and event publisher
         mock_persistence = MagicMock(spec=SessionPersistenceService)
@@ -478,7 +478,7 @@ class TestRoleSessionServiceIntegration:
         # Setup in-memory database
         engine = create_engine("sqlite:///:memory:", echo=False)
         Base.metadata.create_all(bind=engine)
-        SessionFactory = sessionmaker(bind=engine)
+        SessionFactory = sessionmaker(bind=engine)  # noqa: N806
 
         mock_persistence = MagicMock(spec=SessionPersistenceService)
         mock_persistence.persist_session.return_value = True
@@ -532,7 +532,7 @@ class TestRoleSessionServiceIntegration:
         # Setup in-memory database
         engine = create_engine("sqlite:///:memory:", echo=False)
         Base.metadata.create_all(bind=engine)
-        SessionFactory = sessionmaker(bind=engine)
+        SessionFactory = sessionmaker(bind=engine)  # noqa: N806
 
         mock_persistence = MagicMock(spec=SessionPersistenceService)
         mock_persistence.persist_session.return_value = True
@@ -584,7 +584,7 @@ class TestRoleSessionServiceIntegration:
         # Setup in-memory database
         engine = create_engine("sqlite:///:memory:", echo=False)
         Base.metadata.create_all(bind=engine)
-        SessionFactory = sessionmaker(bind=engine)
+        SessionFactory = sessionmaker(bind=engine)  # noqa: N806
 
         with patch(
             "polaris.cells.roles.session.internal.role_session_service._get_event_publisher"

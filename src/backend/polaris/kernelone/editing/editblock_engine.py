@@ -302,7 +302,7 @@ def parse_edit_blocks(
 
         # 确定文件名 (优先级: 内嵌 > 附近查找 > 继承/default)
         filename: str | None = None
-        filename = embedded_filename or _find_filename_nearby(lines[max(0, i - 3):i], fence, valid)
+        filename = embedded_filename or _find_filename_nearby(lines[max(0, i - 3) : i], fence, valid)
 
         if not filename and current_filename:
             filename = current_filename

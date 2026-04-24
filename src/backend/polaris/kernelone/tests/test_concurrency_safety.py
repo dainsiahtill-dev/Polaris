@@ -381,7 +381,7 @@ class TestRaceConditionScenarios:
             received_this_iteration = []
 
             async def handler(msg: Message) -> None:
-                received_this_iteration.append(msg)
+                received_this_iteration.append(msg)  # noqa: B023
 
             await bus.subscribe(MessageType.DIRECTOR_START, handler)
             await bus.publish(Message(type=MessageType.DIRECTOR_START, sender=f"iter_{iteration}"))

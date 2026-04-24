@@ -74,6 +74,7 @@ async def test_execute_role_session_persists_transcript_and_context_os(monkeypat
 
         def _session_factory():
             return role_session_service
+
         monkeypatch.setattr(session_service_module, "RoleSessionService", _session_factory)
         monkeypatch.setattr(session_public_module, "RoleSessionService", _session_factory)
 

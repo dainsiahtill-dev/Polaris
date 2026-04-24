@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from polaris.cells.context.engine.public.service import (
@@ -156,11 +156,11 @@ class TestBuildContextWindowContextOSOverlay:
 
     def test_build_context_window_loads_session_override_when_session_id_present(self) -> None:
         class _FakeRoleSessionService:
-            def __enter__(self):
+            def __enter__(self) -> _FakeRoleSessionService:
                 return self
 
-            def __exit__(self, exc_type, exc, tb):
-                return None
+            def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> bool:
+                return False
 
             def get_context_config_dict(self, session_id: str):
                 return _context_override()

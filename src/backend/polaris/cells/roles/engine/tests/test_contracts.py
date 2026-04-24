@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from polaris.cells.roles.engine.public.contracts import (
     ClassifyTaskQueryV1,
@@ -58,7 +60,7 @@ def test_classify_task_query_v1_rejects_empty_role() -> None:
 
 def test_classify_task_query_v1_is_frozen() -> None:
     q = ClassifyTaskQueryV1(task="analyse")
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):  # type: ignore[name-defined]
         q.task = "modified"  # type: ignore[misc]
 
 
@@ -108,7 +110,7 @@ def test_select_engine_command_v1_rejects_empty_preferred_strategy() -> None:
 
 def test_select_engine_command_v1_is_frozen() -> None:
     cmd = SelectEngineCommandV1(workspace="/ws", task="impl")
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):  # type: ignore[name-defined]
         cmd.workspace = "/other"  # type: ignore[misc]
 
 
@@ -148,7 +150,7 @@ def test_register_engine_command_v1_rejects_empty_engine_class() -> None:
 
 def test_register_engine_command_v1_is_frozen() -> None:
     cmd = RegisterEngineCommandV1(strategy="react", engine_class="X")
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):  # type: ignore[name-defined]
         cmd.strategy = "plansolve"  # type: ignore[misc]
 
 
@@ -270,7 +272,7 @@ def test_engine_selection_result_v1_metadata() -> None:
 
 def test_engine_selection_result_v1_is_frozen() -> None:
     res = EngineSelectionResultV1(ok=True, status="ok", strategy="react")
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):  # type: ignore[name-defined]
         res.ok = False  # type: ignore[misc]
 
 
@@ -395,7 +397,7 @@ def test_engine_execution_result_v1_is_frozen() -> None:
         strategy="react",
         final_answer="x",
     )
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):  # type: ignore[name-defined]
         res.final_answer = "y"  # type: ignore[misc]
 
 

@@ -51,22 +51,22 @@ _ALL_CLEAR_REL_PATHS: list[str] = sorted(
 
 _RESET_FILE_REL_PATHS: list[str] = sorted(
     {
-            *_ALL_CLEAR_REL_PATHS,
-            "runtime/contracts/pm_tasks.contract.json",
-            "runtime/state/pm.state.json",
-            "runtime/events/pm.task_history.events.jsonl",
-            "runtime/results/director.result.json",
-            "runtime/status/director.status.json",
-            "runtime/trajectory.json",
-            "runtime/state/assignee_routing.state.json",
-            "runtime/state/assignee_execution.state.json",
-            "runtime/policy/director.policy.json",
-            "runtime/contracts/agents.generated.md",
-            "runtime/contracts/agents.feedback.md",
-            "runtime/control/pm.stop.flag",
-            "runtime/control/director.stop.flag",
-            "runtime/memory/last_state.json",
-        }
+        *_ALL_CLEAR_REL_PATHS,
+        "runtime/contracts/pm_tasks.contract.json",
+        "runtime/state/pm.state.json",
+        "runtime/events/pm.task_history.events.jsonl",
+        "runtime/results/director.result.json",
+        "runtime/status/director.status.json",
+        "runtime/trajectory.json",
+        "runtime/state/assignee_routing.state.json",
+        "runtime/state/assignee_execution.state.json",
+        "runtime/policy/director.policy.json",
+        "runtime/contracts/agents.generated.md",
+        "runtime/contracts/agents.feedback.md",
+        "runtime/control/pm.stop.flag",
+        "runtime/control/director.stop.flag",
+        "runtime/memory/last_state.json",
+    }
 )
 
 _RESET_DIR_REL_PATHS: list[str] = [

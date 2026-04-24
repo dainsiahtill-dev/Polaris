@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# noqa: N999 - CLI script with hyphenated name (convention for CLI tools)
 """PM wrapper for Ollama loop - CLI entry point.
 
 This file delegates to the canonical implementation in the pm/ package.

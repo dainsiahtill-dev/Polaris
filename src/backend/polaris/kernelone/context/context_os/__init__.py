@@ -40,7 +40,7 @@ from .evaluation import (
     validate_attention_runtime_report_schema,
 )
 from .introspection import summarize_context_os_payload
-from .invariants import ContextOSInvariantViolation, validate_context_os_persisted_projection
+from .invariants import ContextOSInvariantViolationError, validate_context_os_persisted_projection
 from .metrics_collector import (
     CognitiveRuntimeMetrics,
     CognitiveRuntimeMetricsCollectionResult,
@@ -105,7 +105,7 @@ __all__ = [
     "CognitiveRuntimeMetricsCollector",
     "ContextDomainAdapter",
     "ContextOSGateFailure",
-    "ContextOSInvariantViolation",
+    "ContextOSInvariantViolationError",
     "ContextOSProjection",
     "ContextOSQualityCase",
     "ContextOSQualityResult",

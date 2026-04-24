@@ -82,7 +82,7 @@ class TaskBlueprintResultV1:
         object.__setattr__(self, "risks", tuple(str(v) for v in self.risks))
 
 
-class ChiefEngineerBlueprintErrorV1(RuntimeError):
+class ChiefEngineerBlueprintErrorV1(RuntimeError):  # noqa: N818
     """Raised when `chief_engineer.blueprint` contract processing fails."""
 
     def __init__(

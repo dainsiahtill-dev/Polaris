@@ -366,7 +366,7 @@ def _handle_repo_map(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
 
                 # Filter by language if specified
                 if languages:
-                    lang_set = {l.lower().lstrip(".") for l in languages}
+                    lang_set = {lang_item.lower().lstrip(".") for lang_item in languages}
                     if not any(entry_name.lower().endswith(f".{lang}") for lang in lang_set):
                         continue
 

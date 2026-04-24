@@ -341,7 +341,7 @@ def capture_exception(
                 return await func(*args, **kwargs)
             except _SYSTEM_EXCEPTIONS:
                 raise
-            except Exception as exc:
+            except (RuntimeError, OSError) as exc:
                 log_msg = message or f"{func_name} failed"
                 logger.log(level, "%s: %s", log_msg, exc, exc_info=True)
                 return None
@@ -352,7 +352,7 @@ def capture_exception(
                 return func(*args, **kwargs)
             except _SYSTEM_EXCEPTIONS:
                 raise
-            except Exception as exc:
+            except (RuntimeError, OSError) as exc:
                 log_msg = message or f"{func_name} failed"
                 logger.log(level, "%s: %s", log_msg, exc, exc_info=True)
                 return None

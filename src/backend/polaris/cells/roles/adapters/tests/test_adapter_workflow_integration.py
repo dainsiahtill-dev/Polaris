@@ -57,7 +57,7 @@ def test_factory_registration_is_idempotent(tmp_path) -> None:
 
     # Calling again must yield the same class (no error)
     adapter2 = create_role_adapter("architect", str(tmp_path))
-    assert type(adapter2) == type(adapter)
+    assert type(adapter2) is type(adapter)
 
 
 def test_unified_orchestration_service_stores_factory(tmp_path) -> None:
@@ -76,7 +76,6 @@ def test_unified_orchestration_service_stores_factory(tmp_path) -> None:
 
 def test_generic_pipeline_source_uses_public_factory() -> None:
 
-    Path(__file__).resolve().parent  # .../roles/adapters/tests/
     source_path = (
         Path(__file__).resolve().parent.parent.parent.parent  # polaris/cells/
         / "orchestration"

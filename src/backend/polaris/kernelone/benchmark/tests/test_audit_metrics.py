@@ -295,7 +295,7 @@ async def test_run_storm_detection_benchmark_pass() -> None:
         window_seconds=1.0,
     )
 
-    assert metrics.detected_level in [l.value for l in StormLevel]
+    assert metrics.detected_level in [level.value for level in StormLevel]
     assert metrics.peak_event_count > 0
     # The benchmark should pass if detector correctly identifies the storm
     assert metrics.passed or not metrics.passed  # Just check it runs

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from polaris.kernelone.context.context_os import (
-    ContextOSInvariantViolation,
+    ContextOSInvariantViolationError,
     validate_context_os_persisted_projection,
 )
 
@@ -31,7 +31,7 @@ def test_validate_context_os_persisted_projection_rejects_raw_truth_keys() -> No
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with pytest.raises(ContextOSInvariantViolation, match="forbidden truth keys"):
+    with pytest.raises(ContextOSInvariantViolationError, match="forbidden truth keys"):
         validate_context_os_persisted_projection(payload)
 
 
@@ -41,7 +41,7 @@ def test_validate_context_os_persisted_projection_rejects_non_state_first_mode()
         "working_state": {},
     }
 
-    with pytest.raises(ContextOSInvariantViolation, match="state_first_context_os"):
+    with pytest.raises(ContextOSInvariantViolationError, match="state_first_context_os"):
         validate_context_os_persisted_projection(payload)
 
 
@@ -59,7 +59,7 @@ class TestDeepForbiddenKeyValidation:
             },
         }
 
-        with pytest.raises(ContextOSInvariantViolation, match="working_state.user_profile.history"):
+        with pytest.raises(ContextOSInvariantViolationError, match=r"working_state.user_profile.history"):
             validate_context_os_persisted_projection(payload)
 
     def test_rejects_nested_forbidden_key_in_list(self) -> None:
@@ -76,7 +76,7 @@ class TestDeepForbiddenKeyValidation:
             ],
         }
 
-        with pytest.raises(ContextOSInvariantViolation) as exc_info:
+        with pytest.raises(ContextOSInvariantViolationError) as exc_info:
             validate_context_os_persisted_projection(payload)
 
         error_message = str(exc_info.value)
@@ -97,7 +97,7 @@ class TestDeepForbiddenKeyValidation:
             },
         }
 
-        with pytest.raises(ContextOSInvariantViolation, match="deep.nested.structure.conversation"):
+        with pytest.raises(ContextOSInvariantViolationError, match=r"deep.nested.structure.conversation"):
             validate_context_os_persisted_projection(payload)
 
     def test_rejects_multiple_nested_forbidden_keys(self) -> None:
@@ -110,7 +110,7 @@ class TestDeepForbiddenKeyValidation:
             },
         }
 
-        with pytest.raises(ContextOSInvariantViolation) as exc_info:
+        with pytest.raises(ContextOSInvariantViolationError) as exc_info:
             validate_context_os_persisted_projection(payload)
 
         error_message = str(exc_info.value)

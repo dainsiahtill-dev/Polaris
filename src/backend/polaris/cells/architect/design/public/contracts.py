@@ -81,7 +81,7 @@ class ArchitectureDesignResultV1:
         )
 
 
-class ArchitectDesignErrorV1(RuntimeError):
+class ArchitectDesignErrorV1(RuntimeError):  # noqa: N818
     """Raised when `architect.design` contract processing fails."""
 
     def __init__(

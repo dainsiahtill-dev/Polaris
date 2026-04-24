@@ -42,7 +42,7 @@ class TestCodeSlice:
             CodeSlice(file_path="a.py", start_line=0, end_line=10, content="")
 
     def test_construction_invalid_range(self) -> None:
-        with pytest.raises(ValueError, match="end_line.*must be.*start_line"):
+        with pytest.raises(ValueError, match=r"end_line.*must be.*start_line"):
             CodeSlice(file_path="a.py", start_line=50, end_line=10, content="")
 
 
@@ -374,7 +374,7 @@ class TestDefaultExplorationPolicy:
         assert policy.infer_phase(["list_directory"]) == ExplorationPhase.SEARCH
 
 
-class Test_neighbor_file_for_slice:
+class TestNeighborFileForSlice:
     def test_no_neighbor(self, tmp_path: Path) -> None:
         sl = CodeSlice(file_path=str(tmp_path / "a.py"), start_line=1, end_line=10, content="")
         result = _neighbor_file_for_slice(sl)

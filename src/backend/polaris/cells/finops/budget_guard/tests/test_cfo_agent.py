@@ -309,7 +309,7 @@ class TestBudgetKFSStore:
 # ── CFOAgent: allocate_budget ──────────────────────────────────────────────────
 
 
-class TestCFOAgent_Allocate:
+class TestCFOAgentAllocate:
     def test_allocate_budget_success(self, cfo_agent: CFOAgent) -> None:
         result = cfo_agent._tool_allocate_budget(
             task_id="task-alloc",
@@ -341,7 +341,7 @@ class TestCFOAgent_Allocate:
 # ── CFOAgent: check_budget ────────────────────────────────────────────────────
 
 
-class TestCFOAgent_CheckBudget:
+class TestCFOAgentCheckBudget:
     def test_check_budget_no_budget_allocated(self, cfo_agent: CFOAgent) -> None:
         result = cfo_agent._tool_check_budget(task_id="unallocated-task", estimated_cost=100)
         assert result["ok"] is True
@@ -385,7 +385,7 @@ class TestCFOAgent_CheckBudget:
 # ── CFOAgent: record_usage ─────────────────────────────────────────────────────
 
 
-class TestCFOAgent_RecordUsage:
+class TestCFOAgentRecordUsage:
     def test_record_usage_success(self, cfo_agent: CFOAgent) -> None:
         # Allocate first
         cfo_agent._tool_allocate_budget(
@@ -440,7 +440,7 @@ class TestCFOAgent_RecordUsage:
 # ── CFOAgent: get_budget_status ────────────────────────────────────────────────
 
 
-class TestCFOAgent_GetBudgetStatus:
+class TestCFOAgentGetBudgetStatus:
     def test_get_status_no_budget(self, cfo_agent: CFOAgent) -> None:
         result = cfo_agent._tool_get_budget_status("ghost")
         assert result["ok"] is True
@@ -458,7 +458,7 @@ class TestCFOAgent_GetBudgetStatus:
 # ── CFOAgent: get_usage_stats ──────────────────────────────────────────────────
 
 
-class TestCFOAgent_GetUsageStats:
+class TestCFOAgentGetUsageStats:
     def test_stats_no_records(self, cfo_agent: CFOAgent) -> None:
         result = cfo_agent._tool_get_usage_stats(task_id="empty-task")
         assert result["ok"] is True
@@ -503,7 +503,7 @@ class TestCFOAgent_GetUsageStats:
 # ── CFOAgent: set_budget_limit ────────────────────────────────────────────────
 
 
-class TestCFOAgent_SetBudgetLimit:
+class TestCFOAgentSetBudgetLimit:
     def test_set_limit_success(self, cfo_agent: CFOAgent) -> None:
         cfo_agent._tool_allocate_budget(
             task_id="task-limit",
@@ -541,7 +541,7 @@ class TestCFOAgent_SetBudgetLimit:
 # ── CFOAgent: set_global_budget ───────────────────────────────────────────────
 
 
-class TestCFOAgent_SetGlobalBudget:
+class TestCFOAgentSetGlobalBudget:
     def test_set_global_budget(self, cfo_agent: CFOAgent) -> None:
         result = cfo_agent._tool_set_global_budget(limit=50000, unit="tokens")
         assert result["ok"] is True

@@ -167,7 +167,7 @@ def broadcast_file_written(
         return False
 
     try:
-        _MessageBus, MessageType = _get_message_bus_imports()
+        _message_bus_cls, _msg_type = _get_message_bus_imports()
 
         import asyncio
 
@@ -193,7 +193,7 @@ def broadcast_file_written(
         try:
             loop = asyncio.get_running_loop()
             # 在运行中的事件循环中，创建任务
-            task = loop.create_task(message_bus.broadcast(MessageType.FILE_WRITTEN, f"worker-{worker_id}", payload))
+            task = loop.create_task(message_bus.broadcast(_msg_type.FILE_WRITTEN, f"worker-{worker_id}", payload))
             _track_broadcast_task(task)
             return True
         except RuntimeError:
@@ -463,9 +463,9 @@ def apply_patch_with_broadcast(
             if line.startswith("+") and not line.startswith("+++"):
                 lines.append(line[1:])
             elif line.startswith("-") and not line.startswith("---"):
-                for i, l in enumerate(lines):
-                    if l == line[1:]:
-                        lines.pop(i)
+                for idx, line_item in enumerate(lines):
+                    if line_item == line[1:]:
+                        lines.pop(idx)
                         break
 
         new_content = "\n".join(lines)

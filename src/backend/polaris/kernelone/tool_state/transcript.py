@@ -110,7 +110,7 @@ class TranscriptLog:
         """Return number of entries in the log."""
         return len(self.entries)
 
-    def __iter__(self):
+    def __iter__(self):  # noqa: ANN204
         """Iterate over entries in the log."""
         return iter(self.entries)
 

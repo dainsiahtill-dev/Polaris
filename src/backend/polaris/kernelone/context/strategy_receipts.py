@@ -74,7 +74,7 @@ class StrategyReceiptEmitter:
         from .strategy_contracts import (
             BudgetDecision,
             ReadEscalation,
-            StrategyReceipt as SR,
+            StrategyReceipt as SR,  # noqa: N817
         )
 
         bundle_id = "kernelone.default.v1"
@@ -173,7 +173,7 @@ class StrategyReceiptEmitter:
             BudgetDecision,
             BudgetDecisionKind,
             ReadEscalation,
-            StrategyReceipt as SR,
+            StrategyReceipt as SR,  # noqa: N817
         )
 
         path = self.run_dir / f"{receipt_id}.json"

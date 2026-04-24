@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from polaris.cells.storage.layout.public.service import get_polaris_root
+from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .utils import utc_now, write_json_atomic
@@ -186,9 +187,6 @@ def _index_read_lock(paths: list[str]) -> Generator[None, None, None]:
 # ---------------------------------------------------------------------------
 # Path resolution helpers (pure path math — no I/O)
 # ---------------------------------------------------------------------------
-
-from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
 
 def _get_default_index_path() -> str:
     """获取默认索引路径"""

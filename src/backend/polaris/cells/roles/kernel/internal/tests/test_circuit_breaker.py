@@ -539,7 +539,6 @@ class TestReadOnlyStagnation:
         """A write operation resets _read_only_streak to 0 in the breaker."""
         breaker = ProgressiveCircuitBreaker(scene="normal")
 
-
         # Accumulate 5 read-only streak
         for i in range(5):
             args = {"path": f"/test/file{i}.py"}

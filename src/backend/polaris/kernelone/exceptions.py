@@ -144,7 +144,20 @@ from polaris.kernelone.events.emit_result import EmitResult
 
 # ============================================================================
 # LLM Exceptions (from llm/exceptions.py)
-# Note: These imports are lazy to avoid circular dependency.
+# Import at module level for __all__ to work correctly
+# ============================================================================
+from polaris.kernelone.llm.exceptions import (
+    JSONParseError,
+    LLMError,
+    LLMTimeoutError,
+    ProviderError,
+    ResponseParseError,
+    ToolParseError,
+)
+
+# ============================================================================
+# LLM Exceptions (lazy loading for backward compatibility)
+# Note: Direct imports above are preferred for new code.
 # Import directly from polaris.kernelone.llm.exceptions when needed.
 # ============================================================================
 

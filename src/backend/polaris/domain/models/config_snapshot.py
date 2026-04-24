@@ -205,7 +205,7 @@ class ConfigSnapshot:
         if value is None:
             return default
         try:
-            if type_ == bool and isinstance(value, str):
+            if type_ is bool and isinstance(value, str):
                 return value.lower() in ("true", "1", "yes", "on")
             return type_(value)
         except (ValueError, TypeError):

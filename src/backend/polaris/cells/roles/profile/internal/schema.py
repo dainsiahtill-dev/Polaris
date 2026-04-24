@@ -368,7 +368,7 @@ class PromptFingerprint:
     # 生成时间
     generated_at: datetime = field(default_factory=_utc_now)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.full_hash:
             content = f"{self.core_hash}:{self.appendix_hash or ''}:{self.profile_fingerprint}"
             self.full_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
@@ -554,7 +554,7 @@ class RoleTurnResult:
     # 元数据
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """初始化执行统计默认值"""
         if not self.execution_stats:
             self.execution_stats = {

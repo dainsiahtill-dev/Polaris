@@ -52,20 +52,20 @@ class TestContractsValidationIntegration:
         validate_tool_step 使用 background_run 特殊逻辑进行超时验证。
         """
         # Valid value within range
-        is_valid, error_code, error_msg = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 50})
+        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 50})
         assert is_valid
         assert error_code is None
 
         # Boundary: minimum value (1) - currently passes due to validator spec mismatch
-        is_valid, error_code, error_msg = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 1})
+        is_valid, _, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 1})
         assert is_valid
 
         # Boundary: maximum value (10000) - currently passes due to validator spec mismatch
-        is_valid, error_code, error_msg = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 10000})
+        is_valid, _error_code, _error_msg = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 10000})
         assert is_valid
 
         # Below minimum (0) - currently passes due to validator spec mismatch
-        is_valid, error_code, error_msg = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 0})
+        is_valid, _error_code, _error_msg = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 0})
         # Note: Range validation not active due to min/max vs minimum/maximum mismatch
         assert is_valid  # Currently passes
 
@@ -102,13 +102,11 @@ class TestContractsValidationIntegration:
         assert error_code is None
 
         # Boundary: minimum (1 second)
-        is_valid, error_code, error_msg = validate_tool_step("background_run", {"command": "echo test", "timeout": 1})
+        is_valid, _, _ = validate_tool_step("background_run", {"command": "echo test", "timeout": 1})
         assert is_valid
 
         # Boundary: maximum (3600 seconds)
-        is_valid, error_code, error_msg = validate_tool_step(
-            "background_run", {"command": "echo test", "timeout": 3600}
-        )
+        is_valid, _, _ = validate_tool_step("background_run", {"command": "echo test", "timeout": 3600})
         assert is_valid
 
         # Below minimum (0)
@@ -138,11 +136,11 @@ class TestContractsValidationIntegration:
         注意: 空字符串被 _has_value() 视为 "missing" 而非触发 min_length 验证。
         """
         # Valid pattern (matches [^\x00]+)
-        is_valid, error_code, error_msg = validate_tool_step("repo_rg", {"pattern": "hello world"})
+        is_valid, _error_code, _error_msg = validate_tool_step("repo_rg", {"pattern": "hello world"})
         assert is_valid
 
         # Empty pattern - treated as min_length violation (empty string has length 0 < min_length)
-        is_valid, error_code, error_msg = validate_tool_step("repo_rg", {"pattern": ""})
+        is_valid, error_code, _error_msg = validate_tool_step("repo_rg", {"pattern": ""})
         assert not is_valid
         assert error_code in (ERROR_REQUIRED_MISSING, "MIN_LENGTH_VIOLATION")
 
@@ -160,16 +158,16 @@ class TestContractsValidationIntegration:
         验证器期望 min/max 但 spec 使用 minimum/maximum。
         """
         # repo_read_around: line must be >= 1
-        is_valid, error_code, error_msg = validate_tool_step("repo_read_around", {"file": "test.py", "line": 1})
+        is_valid, _, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 1})
         assert is_valid
 
         # Note: line=0 currently passes due to validator spec mismatch (min vs minimum)
-        is_valid, error_code, error_msg = validate_tool_step("repo_read_around", {"file": "test.py", "line": 0})
+        is_valid, _error_code, _error_msg = validate_tool_step("repo_read_around", {"file": "test.py", "line": 0})
         # Currently passes - range validation not active
         assert is_valid
 
         # repo_read_around: radius must be 1-100 (currently passes due to spec mismatch)
-        is_valid, error_code, error_msg = validate_tool_step(
+        is_valid, _error_code, _error_msg = validate_tool_step(
             "repo_read_around", {"file": "test.py", "line": 10, "radius": 50}
         )
         assert is_valid
@@ -258,24 +256,24 @@ class TestContractsValidationIntegration:
         注意: 整数参数的 minimum 验证因参数名不匹配而未生效。
         """
         # repo_rg: max_results minimum is 1
-        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 1})
+        is_valid, _, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 1})
         assert is_valid
 
         # max_results=0 currently passes due to validator spec mismatch
-        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 0})
+        is_valid, _, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 0})
         # Currently passes - range validation not active
         assert is_valid
 
         # repo_read_around: line minimum is 1
-        is_valid, error_code, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 1})
+        is_valid, _, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 1})
         assert is_valid
 
         # line=0 currently passes due to validator spec mismatch
-        is_valid, error_code, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 0})
+        is_valid, _error_code, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 0})
         assert is_valid
 
         # repo_read_around: radius minimum is 1
-        is_valid, error_code, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 10, "radius": 1})
+        is_valid, _error_code, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 10, "radius": 1})
         assert is_valid
 
         # radius=0 currently passes due to validator spec mismatch
@@ -289,25 +287,27 @@ class TestContractsValidationIntegration:
         注意: 整数参数的 maximum 验证因参数名不匹配而未生效。
         """
         # repo_rg: max_results maximum is 10000
-        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 10000})
+        is_valid, _, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 10000})
         assert is_valid
 
         # max_results=10001 currently passes due to validator spec mismatch
-        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 10001})
+        is_valid, _, _ = validate_tool_step("repo_rg", {"pattern": "test", "max_results": 10001})
         # Currently passes - range validation not active
         assert is_valid
 
         # repo_rg: context_lines maximum is 100
-        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "context_lines": 100})
+        is_valid, _, _ = validate_tool_step("repo_rg", {"pattern": "test", "context_lines": 100})
         assert is_valid
 
         # context_lines=101 currently passes due to validator spec mismatch
-        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "context_lines": 101})
+        is_valid, _error_code, _ = validate_tool_step("repo_rg", {"pattern": "test", "context_lines": 101})
         # Currently passes - range validation not active
         assert is_valid
 
         # repo_read_around: radius maximum is 100
-        is_valid, error_code, _ = validate_tool_step("repo_read_around", {"file": "test.py", "line": 10, "radius": 100})
+        is_valid, _error_code, _ = validate_tool_step(
+            "repo_read_around", {"file": "test.py", "line": 10, "radius": 100}
+        )
         assert is_valid
 
         # radius=101 currently passes due to validator spec mismatch
@@ -432,7 +432,7 @@ class TestContractsValidationIntegration:
         验证 pattern 参数中包含数字串时仍正确验证。
         """
         # Pattern with numbers is valid
-        is_valid, error_code, _ = validate_tool_step("repo_rg", {"pattern": "test123"})
+        is_valid, _error_code, _ = validate_tool_step("repo_rg", {"pattern": "test123"})
         assert is_valid
 
         # Pattern with special chars (not regex) is valid
@@ -445,12 +445,12 @@ class TestContractsValidationIntegration:
         验证 repo_rg 需要 pattern 参数。
         """
         # Without pattern - should fail
-        is_valid, error_code, error_msg = validate_tool_step("repo_rg", {})
+        is_valid, _error_code, error_msg = validate_tool_step("repo_rg", {})
         assert not is_valid
         assert "missing required argument" in error_msg
 
         # With pattern using alias (query) - should pass after normalization
-        is_valid, _error_code, error_msg = validate_tool_step("repo_rg", {"query": "test"})
+        is_valid, _error_code, _error_msg = validate_tool_step("repo_rg", {"query": "test"})
         assert is_valid
 
     def test_validate_repo_read_slice_required_params(self) -> None:
@@ -459,15 +459,15 @@ class TestContractsValidationIntegration:
         验证 file, start, end 都是必需的。
         """
         # All required params present
-        is_valid, error_code, _ = validate_tool_step("repo_read_slice", {"file": "test.py", "start": 10, "end": 20})
+        is_valid, _, _ = validate_tool_step("repo_read_slice", {"file": "test.py", "start": 10, "end": 20})
         assert is_valid
 
         # Missing file
-        is_valid, error_code, _ = validate_tool_step("repo_read_slice", {"start": 10, "end": 20})
+        is_valid, _, _ = validate_tool_step("repo_read_slice", {"start": 10, "end": 20})
         assert not is_valid
 
         # Missing start
-        is_valid, error_code, _ = validate_tool_step("repo_read_slice", {"file": "test.py", "end": 20})
+        is_valid, _error_code, _ = validate_tool_step("repo_read_slice", {"file": "test.py", "end": 20})
         assert not is_valid
 
         # Missing end

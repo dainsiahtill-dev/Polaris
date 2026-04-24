@@ -371,7 +371,7 @@ class RuntimeOrchestrator:
                 # Handle restart policy for non-persistent modes
                 if handle.definition.run_mode not in (RunMode.LOOP, RunMode.DAEMON, RunMode.CONTINUOUS):
                     # For one-shot modes, wait for completion
-                    asyncio.create_task(self._monitor_service(handle))
+                    _ = asyncio.create_task(self._monitor_service(handle))  # noqa: RUF006
 
             else:
                 handle.state = ServiceState.FAILED

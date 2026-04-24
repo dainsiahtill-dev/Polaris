@@ -214,7 +214,7 @@ class ExplorationStrategy(ExplorationStrategyPort):
         Returns:
             StrategyExpansionDecision with decision, reason, and optional asset_key.
         """
-        from .strategy_contracts import ExpansionDecisionResult as SED
+        from .strategy_contracts import ExpansionDecisionResult as SED  # noqa: N814
 
         budget_remaining_pct: float = budget.headroom / budget.effective_limit if budget.effective_limit > 0 else 0.0
         # candidates_count: how many search results have been discovered

@@ -197,7 +197,7 @@ class PermissionConditionEvaluator:
             elif pattern.startswith("glob:"):
                 glob_pattern = pattern[5:]
                 matched = Path(path).match(glob_pattern)
-            else:
+
                 # Default: simple glob matching
                 matched = Path(path).match(pattern)
 
@@ -226,11 +226,11 @@ class PermissionConditionEvaluator:
         start = condition.start_time or time.min
         end = condition.end_time or time.max
 
-        if start <= end:
-            matched = start <= current_time <= end
-        else:
-            # Handle overnight ranges (e.g., 22:00 - 06:00)
-            matched = current_time >= start or current_time <= end
+        matched = start <= current_time <= end if start <= end else current_time >= start or current_time <= end
+
+
+
+
 
         return ConditionResult(
             matched=matched,
@@ -349,7 +349,7 @@ class PermissionConditionEvaluator:
         if match_mode == "all":
             matched = all(r.matched for r in results)
             reason = "All conditions matched" if matched else "Some conditions failed"
-        else:  # any
+  # any
             matched = any(r.matched for r in results)
             reason = "At least one condition matched" if matched else "No conditions matched"
 

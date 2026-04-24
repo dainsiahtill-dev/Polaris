@@ -64,7 +64,7 @@ def list_ollama_models(project_root: str | None = None) -> list[str]:
         raise ExternalServiceError(
             service="ollama",
             message=f"ollama ps failed: {exc}",
-        )
+        ) from exc
     if result.get("timed_out", False):
         raise DomainTimeoutError(
             message="ollama ps timed out",

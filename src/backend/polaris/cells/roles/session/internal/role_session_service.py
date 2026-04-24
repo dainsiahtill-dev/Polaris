@@ -47,7 +47,7 @@ from polaris.cells.roles.session.public.contracts import (
     SessionType,
 )
 from polaris.kernelone.context.context_os import (
-    ContextOSInvariantViolation,
+    ContextOSInvariantViolationError,
     validate_context_os_persisted_projection,
 )
 from polaris.kernelone.context.context_os.rehydration import rehydrate_persisted_context_os_payload
@@ -156,10 +156,10 @@ class RoleSessionService:
             self._db.close()
             self._db = None
 
-    def __enter__(self):
+    def __enter__(self) -> RoleSessionService:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> bool:
         self.close()
         return False
 
@@ -273,7 +273,7 @@ class RoleSessionService:
             return sanitized
         try:
             validated = validate_context_os_persisted_projection(payload)
-        except ContextOSInvariantViolation as exc:
+        except ContextOSInvariantViolationError as exc:
             raise ValueError(f"invalid state_first_context_os projection: {exc}") from exc
         sanitized["state_first_context_os"] = dict(validated or {})
         return sanitized
@@ -478,7 +478,7 @@ class RoleSessionService:
             )
         try:
             validated = validate_context_os_persisted_projection(snapshot)
-        except ContextOSInvariantViolation as exc:
+        except ContextOSInvariantViolationError as exc:
             logger.warning(
                 "Rejected invalid state_first_context_os projection for session %s: %s",
                 session_id,
@@ -502,7 +502,7 @@ class RoleSessionService:
         else:
             try:
                 validated = validate_context_os_persisted_projection(snapshot)
-            except ContextOSInvariantViolation as exc:
+            except ContextOSInvariantViolationError as exc:
                 raise ValueError(f"invalid state_first_context_os projection: {exc}") from exc
             updated["state_first_context_os"] = dict(validated or {})
         return self.update_session(session_id, context_config=updated)

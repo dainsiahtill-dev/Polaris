@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import timezone
 from typing import cast
 
+import pydantic
 import pytest
 from polaris.kernelone.messages import (
     AgentPart,
@@ -101,7 +102,7 @@ class TestTextPart:
         """Test that text part is immutable."""
         part = TextPart(text="test")
 
-        with pytest.raises(Exception):
+        with pytest.raises((TypeError, pydantic.ValidationError)):
             part.text = "changed"  # type: ignore
 
 

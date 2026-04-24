@@ -385,7 +385,7 @@ def ensure_plan_file(path: str, auto_continue: bool = False) -> bool:
         # cannot be reverse-mapped to logical paths in the inferred workspace.
         absolute_path = os.path.abspath(path)
         if not os.path.isfile(absolute_path):
-            raise FileNotFoundError(f"Plan contract missing: {path}. Please create it explicitly before execution.")
+            raise FileNotFoundError(f"Plan contract missing: {path}. Please create it explicitly before execution.") from None
         try:
             with open(absolute_path, encoding="utf-8") as handle:
                 existing_content = handle.read()

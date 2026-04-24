@@ -53,10 +53,7 @@ def _fix_common_syntax_errors(text: str) -> str:
 
     result = text
     for pattern, replacement in fixes:
-        if callable(replacement):
-            result = re.sub(pattern, replacement, result)
-        else:
-            result = re.sub(pattern, replacement, result)  # type: ignore[call-overload]
+        result = re.sub(pattern, replacement, result)
     return result
 
 
@@ -138,52 +135,50 @@ def find_best_match(
     normalized_content = _normalize_indent(content)
 
     # Only use normalized matching if search has valid structure (non-empty, has content)
-    if normalized_search.strip() and len(normalized_search.strip()) >= 10:
-        # Try exact match on normalized form
-        if normalized_search in normalized_content:
-            # Find the position in normalized content
-            start = normalized_content.index(normalized_search)
-            end = start + len(normalized_search)
+    if normalized_search.strip() and len(normalized_search.strip()) >= 10 and normalized_search in normalized_content:
+        # Find the position in normalized content
+        start = normalized_content.index(normalized_search)
+        end = start + len(normalized_search)
 
-            # Map back to original content using character mapping
-            # This is approximate but safer than line-based mapping
-            content_lines = content.split("\n")
-            normalized_lines = normalized_content.split("\n")
+        # Map back to original content using character mapping
+        # This is approximate but safer than line-based mapping
+        content_lines = content.split("\n")
+        normalized_lines = normalized_content.split("\n")
 
-            # Find which lines in normalized content correspond to the match
-            char_count = 0
-            start_line_idx = 0
-            end_line_idx = 0
+        # Find which lines in normalized content correspond to the match
+        char_count = 0
+        start_line_idx = 0
+        end_line_idx = 0
 
-            for i, line in enumerate(normalized_lines):
-                line_len = len(line) + 1  # +1 for newline
-                if char_count <= start < char_count + line_len:
-                    start_line_idx = i
-                if char_count < end <= char_count + line_len:
-                    end_line_idx = i + 1
-                    break
-                char_count += line_len
+        for i, line in enumerate(normalized_lines):
+            line_len = len(line) + 1  # +1 for newline
+            if char_count <= start < char_count + line_len:
+                start_line_idx = i
+            if char_count < end <= char_count + line_len:
+                end_line_idx = i + 1
+                break
+            char_count += line_len
 
-            # Calculate byte positions in original content
-            start_pos = sum(len(line) + 1 for line in content_lines[:start_line_idx])
-            end_pos = sum(len(line) + 1 for line in content_lines[:end_line_idx]) - 1
+        # Calculate byte positions in original content
+        start_pos = sum(len(line) + 1 for line in content_lines[:start_line_idx])
+        end_pos = sum(len(line) + 1 for line in content_lines[:end_line_idx]) - 1
 
-            matched_text = "\n".join(content_lines[start_line_idx:end_line_idx])
+        matched_text = "\n".join(content_lines[start_line_idx:end_line_idx])
 
-            # SAFETY CHECK: Ensure the matched text has similar structure
-            # (same number of non-empty lines, similar content)
-            original_non_empty = [l.strip() for l in matched_text.split("\n") if l.strip()]
-            search_non_empty = [l.strip() for l in search.split("\n") if l.strip()]
+        # SAFETY CHECK: Ensure the matched text has similar structure
+        # (same number of non-empty lines, similar content)
+        original_non_empty = [line.strip() for line in matched_text.split("\n") if line.strip()]
+        search_non_empty = [line.strip() for line in search.split("\n") if line.strip()]
 
-            if len(original_non_empty) == len(search_non_empty):
-                return {
-                    "matched_text": matched_text,
-                    "start_pos": start_pos,
-                    "end_pos": end_pos,
-                    "similarity": 0.85,
-                    "fixes_applied": [*fixes_applied, "indentation normalization"],
-                    "exact": False,
-                }
+        if len(original_non_empty) == len(search_non_empty):
+            return {
+                "matched_text": matched_text,
+                "start_pos": start_pos,
+                "end_pos": end_pos,
+                "similarity": 0.85,
+                "fixes_applied": [*fixes_applied, "indentation normalization"],
+                "exact": False,
+            }
 
     # NOTE: Sliding window similarity matching is DISABLED because it can match
     # wrong locations in the file and destroy file structure.

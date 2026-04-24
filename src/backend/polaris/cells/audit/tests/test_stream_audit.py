@@ -491,7 +491,7 @@ class TestStreamArchiverRoundtrip:
 
         # Decompress and verify
         raw = gzip.decompress(events_file.read_bytes()).decode("utf-8")
-        lines = [json.loads(l) for l in raw.strip().splitlines() if l.strip()]
+        lines = [json.loads(line) for line in raw.strip().splitlines() if line.strip()]
         assert len(lines) == 2  # header + 1 event
 
     @pytest.mark.asyncio

@@ -551,7 +551,7 @@ class QualityChecker:
 
         try:
             blocks = parse_edit_blocks(content)
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             return False, [f"解析编辑块失败: {e}"]
 
         if not blocks:

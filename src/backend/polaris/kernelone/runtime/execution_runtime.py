@@ -557,7 +557,7 @@ class ExecutionRuntime:
             # call_later callback must return None
             def _schedule_compact() -> None:
                 """Schedule compact after delay. call_later requires () -> None."""
-                asyncio.ensure_future(self._compact_states())
+                _ = asyncio.ensure_future(self._compact_states())  # noqa: RUF006
 
             loop.call_later(0.1, _schedule_compact)
         except RuntimeError:

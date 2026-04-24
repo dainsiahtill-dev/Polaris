@@ -146,13 +146,13 @@ def get_embedding_vector(text: str, model: str = "nomic-embed-text") -> list[flo
 
     try:
         port = get_default_embedding_port()
-    except RuntimeError:
+    except RuntimeError as err:
         raise RuntimeError(
             "get_embedding_vector: KernelEmbeddingPort is not set. "
             "Ensure the bootstrap layer calls "
             "polaris.kernelone.llm.embedding.set_default_embedding_port() "
-            "before invoking this function."
-        )
+            "before invoking this function.",
+        ) from err
 
     try:
         vector = port.get_embedding(

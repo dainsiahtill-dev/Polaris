@@ -123,7 +123,7 @@ class StreamObserver:
             try:
                 result = handler(chunk)
                 if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
+                    _ = asyncio.create_task(result)  # noqa: RUF006
             except (RuntimeError, ValueError) as exc:
                 logger.warning("StreamObserver chunk handler raised: %s", exc)
 
@@ -132,7 +132,7 @@ class StreamObserver:
             try:
                 result = handler()
                 if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
+                    _ = asyncio.create_task(result)  # noqa: RUF006
             except (RuntimeError, ValueError) as exc:
                 logger.warning("StreamObserver done handler raised: %s", exc)
 
@@ -142,7 +142,7 @@ class StreamObserver:
             try:
                 result = handler(exc)
                 if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
+                    _ = asyncio.create_task(result)  # noqa: RUF006
             except (RuntimeError, ValueError) as e:
                 logger.warning("StreamObserver error handler raised: %s", e)
 

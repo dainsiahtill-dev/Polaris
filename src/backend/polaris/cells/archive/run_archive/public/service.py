@@ -34,7 +34,7 @@ def _run_background(coro: Coroutine[Any, Any, None]) -> None:
     """Run a coroutine in background, handling both running loop and no-loop contexts."""
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(coro)
+        _ = loop.create_task(coro)  # noqa: RUF006
         return
     except RuntimeError:
         pass

@@ -519,7 +519,7 @@ class DebugTracer:
             orig = tracer._state.orig_urlopen
             assert orig is not None
             try:
-                response = orig(url, data=data, timeout=timeout, *args, **kwargs)
+                response = orig(url, *args, data=data, timeout=timeout, **kwargs)
             except (RuntimeError, ValueError) as exc:
                 tracer.emit_event(
                     "http.out.error",
@@ -617,7 +617,7 @@ class DebugTracer:
         assert orig_popen is not None and orig_run is not None
 
         class TracedPopen(orig_popen):  # type: ignore[misc,valid-type]
-            def __init__(inner_self, *args: Any, **kwargs: Any) -> None:  # type: ignore[misc]
+            def __init__(inner_self, *args: Any, **kwargs: Any) -> None:  # type: ignore[misc]  # noqa: N805
                 inner_self._hp_trace_id = _trace_id("cli")
                 inner_self._hp_start = time.perf_counter()
                 inner_self._hp_exit_logged = False
@@ -674,7 +674,7 @@ class DebugTracer:
                     pid=getattr(inner_self, "pid", None),
                 )
 
-            def _emit_exit(inner_self, stdout: Any = None, stderr: Any = None) -> None:
+            def _emit_exit(inner_self, stdout: Any = None, stderr: Any = None) -> None:  # noqa: N805
                 if inner_self._hp_exit_logged:
                     return
                 code = super().poll()
@@ -691,18 +691,18 @@ class DebugTracer:
                     stderr_preview=stderr,
                 )
 
-            def wait(inner_self, *args: Any, **kwargs: Any) -> Any:
+            def wait(inner_self, *args: Any, **kwargs: Any) -> Any:  # noqa: N805
                 result = super().wait(*args, **kwargs)
                 inner_self._emit_exit()
                 return result
 
-            def poll(inner_self, *args: Any, **kwargs: Any) -> Any:
+            def poll(inner_self, *args: Any, **kwargs: Any) -> Any:  # noqa: N805
                 result = super().poll(*args, **kwargs)
                 if result is not None:
                     inner_self._emit_exit()
                 return result
 
-            def communicate(inner_self, *args: Any, **kwargs: Any) -> Any:
+            def communicate(inner_self, *args: Any, **kwargs: Any) -> Any:  # noqa: N805
                 stdout, stderr = super().communicate(*args, **kwargs)
                 inner_self._emit_exit(stdout=stdout, stderr=stderr)
                 return stdout, stderr

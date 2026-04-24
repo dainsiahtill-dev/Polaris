@@ -249,12 +249,13 @@ class TestGeminiAPIProviderExceptions:
         monkeypatch: pytest.MonkeyPatch,
         gemini_api_config: dict[str, Any],
     ) -> None:
-        # GeminiProvider.invoke catches RuntimeError/ValueError, not HTTPError.
+        import requests
+
         mock_resp = MagicMock()
         mock_resp.ok = False
         mock_resp.status_code = 401
         mock_resp.text = '{"error": "Unauthorized"}'
-        mock_resp.raise_for_status.side_effect = RuntimeError("401 Client Error: Unauthorized")
+        mock_resp.raise_for_status.side_effect = requests.HTTPError("401 Client Error: Unauthorized")
 
         monkeypatch.setattr(
             "requests.post",
@@ -273,11 +274,13 @@ class TestGeminiAPIProviderExceptions:
         monkeypatch: pytest.MonkeyPatch,
         gemini_api_config: dict[str, Any],
     ) -> None:
+        import requests
+
         mock_resp = MagicMock()
         mock_resp.ok = False
         mock_resp.status_code = 500
         mock_resp.text = '{"error": "Internal Server Error"}'
-        mock_resp.raise_for_status.side_effect = RuntimeError("500 Server Error")
+        mock_resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
 
         monkeypatch.setattr(
             "requests.post",
@@ -291,16 +294,45 @@ class TestGeminiAPIProviderExceptions:
         assert result.error is not None
         assert "500" in result.error or "Server Error" in result.error
 
+    def test_invoke_requests_connection_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        gemini_api_config: dict[str, Any],
+    ) -> None:
+        """requests.ConnectionError must be caught and returned gracefully.
+
+        Regression test for: only RuntimeError/ValueError were caught, letting
+        requests exceptions propagate uncaught.
+        """
+        import requests
+
+        def _mock_post(*_args: Any, **_kwargs: Any) -> Any:
+            raise requests.ConnectionError("Connection refused")
+
+        monkeypatch.setattr(
+            "requests.post",
+            _mock_post,
+        )
+
+        provider = GeminiAPIProvider()
+        result = provider.invoke("Hello", "gemini-1.5-pro", gemini_api_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "Connection" in result.error
+
     def test_health_http_404(
         self,
         monkeypatch: pytest.MonkeyPatch,
         gemini_api_config: dict[str, Any],
     ) -> None:
+        import requests
+
         mock_resp = MagicMock()
         mock_resp.ok = False
         mock_resp.status_code = 404
         mock_resp.text = "Not Found"
-        mock_resp.raise_for_status.side_effect = RuntimeError("404 Client Error: Not Found")
+        mock_resp.raise_for_status.side_effect = requests.HTTPError("404 Client Error: Not Found")
 
         monkeypatch.setattr(
             "requests.get",
@@ -319,11 +351,13 @@ class TestGeminiAPIProviderExceptions:
         monkeypatch: pytest.MonkeyPatch,
         gemini_api_config: dict[str, Any],
     ) -> None:
+        import requests
+
         mock_resp = MagicMock()
         mock_resp.ok = False
         mock_resp.status_code = 503
         mock_resp.text = "Service Unavailable"
-        mock_resp.raise_for_status.side_effect = RuntimeError("503 Server Error")
+        mock_resp.raise_for_status.side_effect = requests.HTTPError("503 Server Error")
 
         monkeypatch.setattr(
             "requests.get",

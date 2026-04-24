@@ -54,7 +54,7 @@ def _get_llm_error() -> type[Exception]:
     """Lazily import LLMError from kernelone.errors to avoid circular import."""
     global _LLM_ERROR_LOADED, _LLM_ERROR
     if not _LLM_ERROR_LOADED:
-        from polaris.kernelone.errors import LLMError as _LE
+        from polaris.kernelone.errors import LLMError as _LE  # noqa: N814
 
         _LLM_ERROR = _LE  # type: ignore[assignment]
         _LLM_ERROR_LOADED = True

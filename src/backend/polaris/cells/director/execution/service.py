@@ -99,7 +99,7 @@ class DirectorConfig:
     role: Role = field(default=Role.DIRECTOR)
     role_config: RoleConfig | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.role_config is None:
             self.role_config = get_role_config(self.role, self.policy.to_dict())
 

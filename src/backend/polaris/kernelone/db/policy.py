@@ -77,7 +77,7 @@ def resolve_sqlite_path(
             )
             resolved = _expand_path(os.path.join(workspace, token))
             if not allow_unmanaged_absolute and not is_managed_storage_path(workspace, resolved):
-                raise DatabasePathError(f"invalid sqlite path: {raw_path}")
+                raise DatabasePathError(f"invalid sqlite path: {raw_path}") from exc
 
     if ensure_parent:
         Path(resolved).parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +114,7 @@ def resolve_lancedb_path(
             )
             resolved = _expand_path(os.path.join(workspace, token))
             if not allow_unmanaged_absolute and not is_managed_storage_path(workspace, resolved):
-                raise DatabasePathError(f"invalid LanceDB path: {raw_path}")
+                raise DatabasePathError(f"invalid LanceDB path: {raw_path}") from exc
 
     if ensure_exists:
         os.makedirs(resolved, exist_ok=True)

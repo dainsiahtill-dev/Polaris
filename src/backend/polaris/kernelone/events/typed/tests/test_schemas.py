@@ -8,6 +8,7 @@ Test coverage:
 
 from datetime import datetime, timezone
 
+import pydantic
 import pytest
 from polaris.kernelone.events.typed.schemas import (
     EventCategory,
@@ -47,12 +48,12 @@ class TestEventBase:
         """Test that events are immutable (frozen)."""
         event = InstanceStarted.create(instance_id="test", instance_type="kernel")
 
-        with pytest.raises(Exception):  # Pydantic FrozenInstanceError
+        with pytest.raises(pydantic.ValidationError):  # Pydantic FrozenInstanceError
             event.event_id = "changed"  # type: ignore
 
     def test_event_extra_fields_rejected(self) -> None:
         """Test that extra fields are forbidden."""
-        with pytest.raises(Exception):  # Pydantic ValidationError
+        with pytest.raises(pydantic.ValidationError):  # Pydantic ValidationError
             InstanceStarted(
                 event_id="test",
                 event_name="instance_started",

@@ -21,7 +21,7 @@ except ImportError:
     FastAPI = object  # type: ignore[misc,assignment]
     HTTPException = Exception  # type: ignore[misc,assignment]
 
-    def Query(*a, **k) -> None:  # type: ignore[misc,no-redef]
+    def Query(*a, **k) -> None:  # type: ignore[misc,no-redef]  # noqa: N802
         return None
 
 
@@ -193,7 +193,7 @@ class RoleFastAPI:
                 return result
             except (RuntimeError, ValueError) as e:
                 logger.error("Role run failed: %s", e)
-                raise HTTPException(status_code=500, detail="internal error")
+                raise HTTPException(status_code=500, detail="internal error") from e
 
         self._app = app
         return app

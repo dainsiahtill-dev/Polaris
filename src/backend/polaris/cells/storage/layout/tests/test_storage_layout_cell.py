@@ -81,11 +81,11 @@ class TestResolveStorageLayoutQueryV1:
         q = ResolveStorageLayoutQueryV1(workspace="  /tmp/foo  ")
         assert q.workspace == "/tmp/foo"
 
-    def test_empty_workspace_raises_ValueError(self) -> None:
+    def test_empty_workspace_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             ResolveStorageLayoutQueryV1(workspace="")
 
-    def test_whitespace_only_raises_ValueError(self) -> None:
+    def test_whitespace_only_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             ResolveStorageLayoutQueryV1(workspace="   ")
 
@@ -456,13 +456,13 @@ class TestResolveStorageLayout:
         assert "workspace_key" in result.extras
         assert "runtime_mode" in result.extras
 
-    def test_empty_workspace_ValueError_from_query_construction(self) -> None:
+    def test_empty_workspace_value_error_from_query_construction(self) -> None:
         # Empty workspace raises ValueError during ResolveStorageLayoutQueryV1
         # construction (__post_init__ validation), BEFORE resolve_storage_layout runs
         with pytest.raises(ValueError, match="non-empty"):
             ResolveStorageLayoutQueryV1(workspace="")
 
-    def test_whitespace_only_workspace_ValueError_from_query_construction(self) -> None:
+    def test_whitespace_only_workspace_value_error_from_query_construction(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             ResolveStorageLayoutQueryV1(workspace="   ")
 
@@ -604,13 +604,13 @@ class TestRefreshStorageLayout:
         r2 = refresh_storage_layout(cmd)
         assert r1.runtime_root == r2.runtime_root
 
-    def test_empty_workspace_raises_ValueError(self) -> None:
+    def test_empty_workspace_raises_value_error(self) -> None:
         # Empty workspace raises ValueError during RefreshStorageLayoutCommandV1
         # construction (__post_init__ validation), BEFORE refresh_storage_layout runs.
         with pytest.raises(ValueError, match="non-empty"):
             RefreshStorageLayoutCommandV1(workspace="", force=True)
 
-    def test_whitespace_only_workspace_raises_ValueError(self) -> None:
+    def test_whitespace_only_workspace_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             RefreshStorageLayoutCommandV1(workspace="   ", force=False)
 

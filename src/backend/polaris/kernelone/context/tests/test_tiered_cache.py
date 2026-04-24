@@ -144,7 +144,7 @@ class TestCacheEntry:
         )
         assert not entry.is_expired()
 
-    def test_expired_withTtl(self) -> None:
+    def test_expired_with_ttl(self) -> None:
         """Entry must expire after TTL elapses."""
         entry = CacheEntry(
             key="test",
@@ -156,7 +156,7 @@ class TestCacheEntry:
         )
         assert entry.is_expired()
 
-    def test_not_expired_beforeTtl(self) -> None:
+    def test_not_expired_before_ttl(self) -> None:
         """Entry must not expire before TTL elapses."""
         entry = CacheEntry(
             key="test",
@@ -736,7 +736,7 @@ class TestModuleExports:
     def test_import_from_context_package(self) -> None:
         """All new types must be importable from polaris.kernelone.context."""
         from polaris.kernelone.context import (
-            TieredAssetCacheManager as TACM,
+            TieredAssetCacheManager as TACM,  # noqa: N817
             TieredCacheTier,
             warming_hint_for_phase,
         )

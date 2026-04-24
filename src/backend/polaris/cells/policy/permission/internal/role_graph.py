@@ -96,7 +96,7 @@ class PermissionRoleGraph:
         Returns:
             bool: 如果存在循环返回 True，否则返回 False
         """
-        WHITE, GRAY, BLACK = 0, 1, 2
+        WHITE, GRAY, BLACK = 0, 1, 2  # noqa: N806
         all_roles = set(self.edges.keys()) | set(self._reverse_edges.keys())
         color = dict.fromkeys(all_roles, WHITE)
 

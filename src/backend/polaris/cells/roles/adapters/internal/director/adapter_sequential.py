@@ -153,7 +153,7 @@ async def execute_sequential(
     )
     engine.set_context(role=role_id, run_id=run_id, task_id=task_id)
 
-    async def _wrap_llmCaller(**kwargs: Any) -> str:
+    async def _wrap_llm_caller(**kwargs: Any) -> str:
         prompt = str(kwargs.get("prompt") or "").strip()
         return await seq_llm_caller(
             workspace,
@@ -163,7 +163,7 @@ async def execute_sequential(
             call_role_llm_with_timeout,
         )
 
-    engine.set_dependencies(llm_caller=_wrap_llmCaller, tool_gateway=None)
+    engine.set_dependencies(llm_caller=_wrap_llm_caller, tool_gateway=None)
     message = build_director_message(task)
     stats = await engine.execute(initial_message=message, profile=profile)
 

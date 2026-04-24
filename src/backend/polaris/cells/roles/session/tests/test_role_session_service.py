@@ -94,7 +94,7 @@ def db_session() -> Generator[DbSession, None, None]:
     """Create an in-memory SQLite database with all tables created."""
     engine = create_engine("sqlite:///:memory:", echo=False)
     Base.metadata.create_all(bind=engine)
-    SessionFactory = sessionmaker(bind=engine)
+    SessionFactory = sessionmaker(bind=engine)  # noqa: N806
     session = SessionFactory()
     try:
         yield session
@@ -573,7 +573,7 @@ class TestCreateWorkflowSession:
         Solution: capture the session ID while still inside the context manager,
         then re-query it with a fresh service for verification.
         """
-        engine, SessionFactory, conv_mod = _install_conversation_singleton()
+        engine, session_factory, conv_mod = _install_conversation_singleton()
 
         # Monkey-patch create_workflow_session so we capture the ID inside its
         # `with cls() as svc:` context before __exit__ closes the session.
@@ -626,7 +626,7 @@ class TestCreateWorkflowSession:
             )
             session_id = captured_id[0]
             # Verify via a service bound to the same engine.
-            svc = RoleSessionService(db=SessionFactory())
+            svc = RoleSessionService(db=session_factory())
             loaded = svc.get_session(session_id)
             assert loaded is not None
             assert loaded.role == "architect"
@@ -644,9 +644,9 @@ class TestCreateWorkflowSession:
 
 class TestFindOrCreateAdHoc:
     def test_find_existing_active_session(self) -> None:
-        engine, SessionFactory, conv_mod = _install_conversation_singleton()
+        engine, _SessionFactory, conv_mod = _install_conversation_singleton()  # noqa: N806
         try:
-            svc = RoleSessionService(db=SessionFactory())
+            svc = RoleSessionService(db=_SessionFactory())
             existing = svc.create_session(
                 role="pm",
                 host_kind="api_server",
@@ -666,9 +666,9 @@ class TestFindOrCreateAdHoc:
 
 class TestCreateAdHocSession:
     def test_always_creates_fresh_session(self) -> None:
-        engine, SessionFactory, conv_mod = _install_conversation_singleton()
+        engine, _SessionFactory, conv_mod = _install_conversation_singleton()  # noqa: N806
         try:
-            svc = RoleSessionService(db=SessionFactory())
+            svc = RoleSessionService(db=_SessionFactory())
             existing = svc.create_session(
                 role="pm",
                 host_kind="api_server",
@@ -690,9 +690,9 @@ class TestCreateAdHocSession:
             engine.dispose()
 
     def test_create_new_when_none_active(self) -> None:
-        engine, SessionFactory, conv_mod = _install_conversation_singleton()
+        engine, _SessionFactory, conv_mod = _install_conversation_singleton()  # noqa: N806
         try:
-            svc = RoleSessionService(db=SessionFactory())
+            svc = RoleSessionService(db=_SessionFactory())
             found = RoleSessionService.find_or_create_ad_hoc(
                 role="pm",
                 workspace="/ws3",
@@ -708,9 +708,9 @@ class TestCreateAdHocSession:
             engine.dispose()
 
     def test_find_or_create_isolated_to_role_and_host(self) -> None:
-        engine, SessionFactory, conv_mod = _install_conversation_singleton()
+        engine, _SessionFactory, conv_mod = _install_conversation_singleton()  # noqa: N806
         try:
-            svc = RoleSessionService(db=SessionFactory())
+            svc = RoleSessionService(db=_SessionFactory())
             found = RoleSessionService.find_or_create_ad_hoc(
                 role="architect",
                 workspace="/ws",
@@ -742,13 +742,13 @@ class TestServiceContextManager:
         assert service._db is None
 
     def test_context_manager_commits(self) -> None:
-        engine, SessionFactory, conv_mod = _install_conversation_singleton()
+        engine, _SessionFactory, conv_mod = _install_conversation_singleton()  # noqa: N806
         try:
-            service = RoleSessionService(db=SessionFactory())
+            service = RoleSessionService(db=_SessionFactory())
             with service as svc:
                 created = svc.create_session(role="pm")
                 assert svc._db is not None
-            service2 = RoleSessionService(db=SessionFactory())
+            service2 = RoleSessionService(db=_SessionFactory())
             sessions = service2.get_sessions(role="pm")
             assert len(sessions) == 1
             assert sessions[0].id == created.id

@@ -62,7 +62,7 @@ def _build_registry() -> dict[str, Callable[[str], BaseRoleAdapter]]:
     try:
         from ..internal.director_adapter import DirectorAdapter
     except (RuntimeError, ValueError):
-        DirectorAdapter = None  # type: ignore[assignment, misc]
+        DirectorAdapter = None  # type: ignore[assignment, misc]  # noqa: N806
     if DirectorAdapter is not None:
         registry["director"] = cast("Callable[[str], BaseRoleAdapter]", DirectorAdapter)
     return registry

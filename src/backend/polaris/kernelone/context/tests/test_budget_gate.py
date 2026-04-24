@@ -56,9 +56,9 @@ class TestContextBudgetGate:
             ContextBudgetGate(model_window=-1)
 
     def test_construct_rejects_invalid_safety_margin(self) -> None:
-        with pytest.raises(ValueError, match="0.0.*1.0"):
+        with pytest.raises(ValueError, match=r"0.0.*1.0"):
             ContextBudgetGate(model_window=128_000, safety_margin=0.0)
-        with pytest.raises(ValueError, match="0.0.*1.0"):
+        with pytest.raises(ValueError, match=r"0.0.*1.0"):
             ContextBudgetGate(model_window=128_000, safety_margin=1.5)
 
     def test_can_add_fits(self) -> None:

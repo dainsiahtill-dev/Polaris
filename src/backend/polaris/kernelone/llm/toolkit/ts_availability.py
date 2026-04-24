@@ -64,7 +64,7 @@ def is_tree_sitter_available() -> TreeSitterAvailability:
 
     def check_with_timeout() -> TreeSitterAvailability:
         try:
-            import tree_sitter_language_pack  # type: ignore[import]
+            import tree_sitter_language_pack  # type: ignore[import]  # noqa: F401
 
             # Attempt to get the Python parser
             from tree_sitter_language_pack import get_parser  # type: ignore[import]
