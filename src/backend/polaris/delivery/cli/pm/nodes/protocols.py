@@ -123,15 +123,12 @@ class RoleContext:
             The result dict or None if not available
         """
         role_lower = role_name.lower()
-        if role_lower == "pm":
-            return self.pm_result
-        elif role_lower == "chiefengineer":
-            return self.chief_engineer_result
-        elif role_lower == "director":
-            return self.director_result
-        elif role_lower == "qa":
-            return self.qa_result
-        return None
+        return {
+            "pm": self.pm_result,
+            "chiefengineer": self.chief_engineer_result,
+            "director": self.director_result,
+            "qa": self.qa_result,
+        }.get(role_lower)
 
     def get_tasks(self) -> list[dict[str, Any]]:
         """Get the current task list from available sources."""

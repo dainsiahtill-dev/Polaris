@@ -72,7 +72,7 @@ class SkillFoundry:
                     ],
                     steps=steps,
                     evidence_refs=list(dict.fromkeys(evidence_refs))[:8],
-                    failure_modes=sorted(list(dict.fromkeys(failure_modes)))[:6],
+                    failure_modes=sorted(dict.fromkeys(failure_modes))[:6],
                     confidence=min(0.95, 0.45 + (len(records) * 0.08)),
                     source_decision_ids=list(dict.fromkeys(source_ids)),
                 )
@@ -84,7 +84,7 @@ class SkillFoundry:
                 ]
                 skill.steps = steps
                 skill.evidence_refs = list(dict.fromkeys(skill.evidence_refs + evidence_refs))[:12]
-                skill.failure_modes = sorted(list(dict.fromkeys(skill.failure_modes + failure_modes)))[:8]
+                skill.failure_modes = sorted(dict.fromkeys(skill.failure_modes + failure_modes))[:8]
                 skill.confidence = min(0.99, max(skill.confidence, 0.45 + (len(records) * 0.08)))
                 skill.source_decision_ids = list(dict.fromkeys(skill.source_decision_ids + source_ids))[:20]
                 skill.version += 1

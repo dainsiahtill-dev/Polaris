@@ -28,7 +28,7 @@ class CriticalThinkingEngine:
     Q6: How can I verify this?
     """
 
-    def __init__(self, llm_invoker: LLMInvoker | None = None):
+    def __init__(self, llm_invoker: LLMInvoker | None = None) -> None:
         self._assumptions: list[Assumption] = []
         self._llm = llm_invoker
 

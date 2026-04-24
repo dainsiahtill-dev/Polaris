@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 class ValidationStatus(Enum):
     """Validation status"""
+
     APPROVED = "approved"
     REJECTED = "rejected"
     NEEDS_REVIEW = "needs_review"  # Borderline case
@@ -32,6 +33,7 @@ class ValidationStatus(Enum):
 
 class ValidationTier(Enum):
     """Validation tier that produced the result"""
+
     L1_SYNTAX = "L1_syntax"
     L1_5_DEPENDENCY = "L1.5_dependency"
     L2_SEMANTIC = "L2_semantic"
@@ -41,6 +43,7 @@ class ValidationTier(Enum):
 @dataclass(frozen=True)
 class ValidationResult:
     """Unified validation result across all tiers"""
+
     status: ValidationStatus
     tier: ValidationTier
     score: float  # 0.0 - 1.0
@@ -53,6 +56,7 @@ class ValidationResult:
 @dataclass
 class ValidationConfig:
     """Configuration for three-layer defense"""
+
     # L1 Configuration
     enabled_l1: bool = True
 
@@ -64,7 +68,7 @@ class ValidationConfig:
 
     # L2 Configuration
     enabled_l2: bool = True
-    l2_threshold_pass: float = 0.95      # [0.95, 1.0] - Pass without L3
+    l2_threshold_pass: float = 0.95  # [0.95, 1.0] - Pass without L3
     l2_threshold_borderline_low: float = 0.80  # [0.80, 0.95) - Borderline
     # [0.00, 0.80) - Fail immediately
 
@@ -75,9 +79,7 @@ class ValidationConfig:
     l3_daily_budget_usd: float = 10.0
     l3_samples: int = 3  # Number of perspective samples
     l3_temperature: float = 0.3  # Prompt Jitter temperature
-    l3_discretize_thresholds: list[float] = field(
-        default_factory=lambda: [0.0, 0.6, 0.75, 0.85, 1.0]
-    )
+    l3_discretize_thresholds: list[float] = field(default_factory=lambda: [0.0, 0.6, 0.75, 0.85, 1.0])
     l3_variance_threshold: float = 0.1  # Max stdev for confidence
 
     # Risk triggers for L3 (always review if matches)
@@ -92,6 +94,7 @@ class ValidationConfig:
 
 class InvariantRule(Protocol):
     """Protocol for L2 semantic invariant rules"""
+
     rule_id: str
     severity: str  # "blocking" | "warning"
 
@@ -107,10 +110,10 @@ class SQLWhereClauseInvariant:
     severity = "blocking"
 
     SQL_BLOCK_PATTERN = re.compile(
-        r'```(?:sql|mysql|postgres|sqlite)?\s*'
-        r'(.*?)'
-        r'```',
-        re.DOTALL | re.IGNORECASE
+        r"```(?:sql|mysql|postgres|sqlite)?\s*"
+        r"(.*?)"
+        r"```",
+        re.DOTALL | re.IGNORECASE,
     )
 
     def validate(self, content: str, context: dict[str, Any]) -> tuple[bool, float, dict]:
@@ -130,21 +133,23 @@ class SQLWhereClauseInvariant:
             sql_clean = self._normalize_sql(sql)
 
             # Check for DDL statements
-            if any(sql_clean.upper().startswith(cmd) for cmd in ['CREATE', 'DROP', 'ALTER', 'INSERT']):
+            if any(sql_clean.upper().startswith(cmd) for cmd in ["CREATE", "DROP", "ALTER", "INSERT"]):
                 valid_count += 1
                 continue
 
             # Check for WHERE or LIMIT
-            has_where = re.search(r'\bWHERE\b', sql_clean, re.IGNORECASE) is not None
-            has_limit = re.search(r'\bLIMIT\b', sql_clean, re.IGNORECASE) is not None
+            has_where = re.search(r"\bWHERE\b", sql_clean, re.IGNORECASE) is not None
+            has_limit = re.search(r"\bLIMIT\b", sql_clean, re.IGNORECASE) is not None
 
             if has_where or has_limit:
                 valid_count += 1
             else:
-                violations.append({
-                    "line": content[:match.start()].count('\n'),
-                    "sql_preview": sql[:100] + "..." if len(sql) > 100 else sql
-                })
+                violations.append(
+                    {
+                        "line": content[: match.start()].count("\n"),
+                        "sql_preview": sql[:100] + "..." if len(sql) > 100 else sql,
+                    }
+                )
 
         if total_count == 0:
             return True, 1.0, {"reason": "No SQL blocks found"}
@@ -152,18 +157,14 @@ class SQLWhereClauseInvariant:
         score = valid_count / total_count
         passed = len(violations) == 0
 
-        return passed, score, {
-            "total_sql_blocks": total_count,
-            "valid_blocks": valid_count,
-            "violations": violations
-        }
+        return passed, score, {"total_sql_blocks": total_count, "valid_blocks": valid_count, "violations": violations}
 
     def _normalize_sql(self, sql: str) -> str:
         """Normalize SQL for analysis"""
         # Remove comments
-        sql = re.sub(r'--.*?$|/\*.*?\*/', '', sql, flags=re.MULTILINE | re.DOTALL)
+        sql = re.sub(r"--.*?$|/\*.*?\*/", "", sql, flags=re.MULTILINE | re.DOTALL)
         # Normalize whitespace
-        sql = re.sub(r'\s+', ' ', sql).strip()
+        sql = re.sub(r"\s+", " ", sql).strip()
         return sql
 
 
@@ -176,11 +177,7 @@ class PythonTestPrefixInvariant:
     def validate(self, content: str, context: dict[str, Any]) -> tuple[bool, float, dict]:
         """Validate Python test function naming"""
         # Extract Python code blocks
-        python_blocks = re.findall(
-            r'```(?:python|py)\s*\n(.*?)\n```',
-            content,
-            re.DOTALL | re.IGNORECASE
-        )
+        python_blocks = re.findall(r"```(?:python|py)\s*\n(.*?)\n```", content, re.DOTALL | re.IGNORECASE)
 
         if not python_blocks:
             return True, 1.0, {"reason": "No Python blocks found"}
@@ -198,10 +195,8 @@ class PythonTestPrefixInvariant:
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
                     # Check if looks like a test function
-                    is_likely_test = (
-                        'test' in node.name.lower() or
-                        any(isinstance(d, (ast.Call, ast.Attribute))
-                            for d in node.decorator_list)
+                    is_likely_test = "test" in node.name.lower() or any(
+                        isinstance(d, (ast.Call, ast.Attribute)) for d in node.decorator_list
                     )
 
                     if not is_likely_test:
@@ -210,16 +205,13 @@ class PythonTestPrefixInvariant:
                     total_functions += 1
 
                     # Check compliance
-                    has_test_prefix = node.name.startswith('test_')
+                    has_test_prefix = node.name.startswith("test_")
                     has_pytest_decorator = self._has_pytest_decorator(node)
 
                     if has_test_prefix or has_pytest_decorator:
                         compliant_functions += 1
                     else:
-                        non_compliant.append({
-                            "name": node.name,
-                            "line": node.lineno
-                        })
+                        non_compliant.append({"name": node.name, "line": node.lineno})
 
         if total_functions == 0:
             return True, 1.0, {"reason": "No test functions found"}
@@ -227,18 +219,18 @@ class PythonTestPrefixInvariant:
         score = compliant_functions / total_functions
         passed = score >= 0.95  # Allow 5% exception rate
 
-        return passed, score, {
-            "total_test_functions": total_functions,
-            "compliant": compliant_functions,
-            "non_compliant": non_compliant
-        }
+        return (
+            passed,
+            score,
+            {"total_test_functions": total_functions, "compliant": compliant_functions, "non_compliant": non_compliant},
+        )
 
     def _has_pytest_decorator(self, node: ast.FunctionDef) -> bool:
         """Check if function has pytest-related decorators"""
         for decorator in node.decorator_list:
             decorator_str = ast.dump(decorator)
             # Check for pytest marks (parametrize, fixture, etc.)
-            if any(marker in decorator_str for marker in ['parametrize', 'fixture', 'mark']):
+            if any(marker in decorator_str for marker in ["parametrize", "fixture", "mark"]):
                 return True
         return False
 
@@ -261,12 +253,7 @@ class LLMJudge:
             return False
         return True
 
-    def evaluate(
-        self,
-        skill_content: str,
-        rubric: str,
-        context: dict[str, Any]
-    ) -> dict[str, Any]:
+    def evaluate(self, skill_content: str, rubric: str, context: dict[str, Any]) -> dict[str, Any]:
         """
         Evaluate skill with Prompt Jitter technique.
 
@@ -279,34 +266,27 @@ class LLMJudge:
             return {
                 "status": "CIRCUIT_BREAKER_OPEN",
                 "recommendation": "HUMAN_REVIEW_REQUIRED",
-                "reason": "Cost limits exceeded"
+                "reason": "Cost limits exceeded",
             }
 
         perspectives = [
             {
                 "role": "Security Auditor",
                 "focus": "security vulnerabilities, input validation, injection risks",
-                "strictness": "very_high"
+                "strictness": "very_high",
             },
             {
                 "role": "Performance Architect",
                 "focus": "algorithmic complexity, resource leaks, scalability issues",
-                "strictness": "high"
+                "strictness": "high",
             },
-            {
-                "role": "QA Engineer",
-                "focus": "edge cases, error handling, boundary conditions",
-                "strictness": "high"
-            }
+            {"role": "QA Engineer", "focus": "edge cases, error handling, boundary conditions", "strictness": "high"},
         ]
 
         samples = []
         for perspective in perspectives:
             score = self._call_llm_with_perspective(
-                skill_content,
-                rubric,
-                perspective,
-                temperature=self.config.l3_temperature
+                skill_content, rubric, perspective, temperature=self.config.l3_temperature
             )
             samples.append(score)
 
@@ -325,7 +305,7 @@ class LLMJudge:
                 "confidence": 1.0 - variance,
                 "raw_scores": samples,
                 "recommendation": "HUMAN_REVIEW_REQUIRED",
-                "reason": f"High variance in perspective scores: {variance:.3f}"
+                "reason": f"High variance in perspective scores: {variance:.3f}",
             }
 
         return {
@@ -333,15 +313,11 @@ class LLMJudge:
             "score": statistics.mean(samples),
             "confidence": 1.0 - variance,
             "raw_scores": samples,
-            "perspectives": [p["role"] for p in perspectives]
+            "perspectives": [p["role"] for p in perspectives],
         }
 
     def _call_llm_with_perspective(
-        self,
-        content: str,
-        rubric: str,
-        perspective: dict[str, str],
-        temperature: float
+        self, content: str, rubric: str, perspective: dict[str, str], temperature: float
     ) -> float:
         """Call LLM with specific perspective.
 
@@ -400,7 +376,7 @@ class SkillValidationFramework:
         Flow:
         L1 (Syntax) → L1.5 (Deps) → L2 (Semantic) → [Borderline?] → L3 (Expert)
         """
-        content = skill_file.read_text(encoding='utf-8')
+        content = skill_file.read_text(encoding="utf-8")
 
         # L1: Syntax Validation
         if self.config.enabled_l1:
@@ -428,11 +404,12 @@ class SkillValidationFramework:
                     passed=False,
                     evidence=l2_result.evidence,
                     failed_rules=l2_result.failed_rules,
-                    remediation_hints=l2_result.remediation_hints
+                    remediation_hints=l2_result.remediation_hints,
                 )
 
-            elif (l2_result.score >= self.config.l2_threshold_pass and
-                  not self._matches_always_review_pattern(skill_file, content)):
+            elif l2_result.score >= self.config.l2_threshold_pass and not self._matches_always_review_pattern(
+                skill_file, content
+            ):
                 # [0.95, 1.00] - Excellent, pass without L3
                 # Unless matches always-review patterns
                 return l2_result
@@ -448,7 +425,7 @@ class SkillValidationFramework:
             tier=ValidationTier.L2_SEMANTIC,
             score=1.0,
             passed=True,
-            evidence={"reason": "Validation tiers disabled or skipped"}
+            evidence={"reason": "Validation tiers disabled or skipped"},
         )
 
     def _validate_l1_syntax(self, content: str) -> ValidationResult:
@@ -456,17 +433,13 @@ class SkillValidationFramework:
         errors = []
 
         # Try to parse Python code blocks
-        python_blocks = re.findall(
-            r'```(?:python|py)\s*\n(.*?)\n```',
-            content,
-            re.DOTALL | re.IGNORECASE
-        )
+        python_blocks = re.findall(r"```(?:python|py)\s*\n(.*?)\n```", content, re.DOTALL | re.IGNORECASE)
 
         for i, block in enumerate(python_blocks):
             try:
                 ast.parse(block)
             except SyntaxError as e:
-                errors.append(f"Block {i+1}: {e}")
+                errors.append(f"Block {i + 1}: {e}")
 
         if errors:
             return ValidationResult(
@@ -476,7 +449,7 @@ class SkillValidationFramework:
                 passed=False,
                 evidence={"syntax_errors": errors},
                 failed_rules=["valid_python_syntax"],
-                remediation_hints=["Fix syntax errors in Python code blocks"]
+                remediation_hints=["Fix syntax errors in Python code blocks"],
             )
 
         return ValidationResult(
@@ -484,14 +457,10 @@ class SkillValidationFramework:
             tier=ValidationTier.L1_SYNTAX,
             score=1.0,
             passed=True,
-            evidence={"blocks_parsed": len(python_blocks)}
+            evidence={"blocks_parsed": len(python_blocks)},
         )
 
-    def _validate_l1_5_dependencies(
-        self,
-        content: str,
-        source_file: str
-    ) -> ValidationResult:
+    def _validate_l1_5_dependencies(self, content: str, source_file: str) -> ValidationResult:
         """L1.5: Dependency validation"""
         dep_results = self.l1_5_engine.verify_dependencies(content, source_file)
 
@@ -505,16 +474,12 @@ class SkillValidationFramework:
                 passed=False,
                 evidence={
                     "hallucinated_imports": [
-                        {
-                            "module": r.node.module_name,
-                            "line": r.node.line_number,
-                            "suggestion": r.suggestion
-                        }
+                        {"module": r.node.module_name, "line": r.node.line_number, "suggestion": r.suggestion}
                         for r in hallucinated
                     ]
                 },
                 failed_rules=["valid_dependencies"],
-                remediation_hints=[r.suggestion for r in hallucinated if r.suggestion]
+                remediation_hints=[r.suggestion for r in hallucinated if r.suggestion],
             )
 
         return ValidationResult(
@@ -522,7 +487,7 @@ class SkillValidationFramework:
             tier=ValidationTier.L1_5_DEPENDENCY,
             score=1.0,
             passed=True,
-            evidence={"dependencies_checked": len(dep_results)}
+            evidence={"dependencies_checked": len(dep_results)},
         )
 
     def _validate_l2_semantic(self, content: str) -> ValidationResult:
@@ -539,7 +504,7 @@ class SkillValidationFramework:
             if not passed:
                 all_passed = False
                 failed_rules.append(rule.rule_id)
-                if hasattr(rule, 'remediation_hint'):
+                if hasattr(rule, "remediation_hint"):
                     all_hints.append(rule.remediation_hint)
 
             # Multiply scores (penalize failures)
@@ -547,8 +512,10 @@ class SkillValidationFramework:
             all_evidence[rule.rule_id] = evidence
 
         status = (
-            ValidationStatus.APPROVED if all_passed
-            else ValidationStatus.NEEDS_REVIEW if total_score >= self.config.l2_threshold_borderline_low
+            ValidationStatus.APPROVED
+            if all_passed
+            else ValidationStatus.NEEDS_REVIEW
+            if total_score >= self.config.l2_threshold_borderline_low
             else ValidationStatus.REJECTED
         )
 
@@ -559,14 +526,10 @@ class SkillValidationFramework:
             passed=all_passed,
             evidence=all_evidence,
             failed_rules=failed_rules,
-            remediation_hints=all_hints
+            remediation_hints=all_hints,
         )
 
-    def _validate_l3_expert(
-        self,
-        content: str,
-        l2_result: ValidationResult
-    ) -> ValidationResult:
+    def _validate_l3_expert(self, content: str, l2_result: ValidationResult) -> ValidationResult:
         """L3: Expert review with LLM Judge"""
         rubric = """
 Evaluate this skill implementation for:
@@ -588,12 +551,9 @@ Score: 0.0 (completely wrong) to 1.0 (perfect)
                 tier=ValidationTier.L2_SEMANTIC,
                 score=l2_result.score,
                 passed=l2_result.passed,
-                evidence={
-                    **l2_result.evidence,
-                    "l3_skipped": "Cost circuit breaker open"
-                },
+                evidence={**l2_result.evidence, "l3_skipped": "Cost circuit breaker open"},
                 failed_rules=l2_result.failed_rules,
-                remediation_hints=l2_result.remediation_hints
+                remediation_hints=l2_result.remediation_hints,
             )
 
         if l3_result.get("status") == "UNCERTAIN":
@@ -604,7 +564,7 @@ Score: 0.0 (completely wrong) to 1.0 (perfect)
                 passed=False,
                 evidence=l3_result,
                 failed_rules=["expert_consensus_uncertain"],
-                remediation_hints=["Human review required due to high variance in expert scores"]
+                remediation_hints=["Human review required due to high variance in expert scores"],
             )
 
         passed = l3_result.get("status") == "PASS"
@@ -616,7 +576,7 @@ Score: 0.0 (completely wrong) to 1.0 (perfect)
             passed=passed,
             evidence=l3_result,
             failed_rules=[] if passed else ["expert_review_failed"],
-            remediation_hints=[] if passed else ["Address issues identified by expert review"]
+            remediation_hints=[] if passed else ["Address issues identified by expert review"],
         )
 
     def _matches_always_review_pattern(self, skill_file: Path, content: str) -> bool:
@@ -660,7 +620,8 @@ def test_user_query():
 
     # Write to temp file and validate
     import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(test_skill)
         temp_path = Path(f.name)
 

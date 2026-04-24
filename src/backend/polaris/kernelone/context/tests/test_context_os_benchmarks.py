@@ -136,7 +136,8 @@ class TestContextOSLossValidator:
         assert result.passed
 
     def test_fail_parse_error(self) -> None:
-        result = self._v([None])  # type: ignore[arg-type]
+        bad_snapshots: list[Any] = [None]  # type: ignore[list-item]
+        result = self._v(bad_snapshots)  # type: ignore[arg-type]
         assert not result.passed
         assert result.violations[0].metric == "context_loss"
 
@@ -266,7 +267,8 @@ class TestContextOSDesynchronizationValidator:
         assert any(v.metric == "tokens_below_turn_count" for v in result.violations)
 
     def test_fail_parse_error(self) -> None:
-        result = self._v([_snapshot(transcript_count=5, tokens=100), None])  # type: ignore[arg-type]
+        bad_snapshots: list[Any] = [_snapshot(transcript_count=5, tokens=100), None]  # type: ignore[list-item]
+        result = self._v(bad_snapshots)  # type: ignore[arg-type]
         assert not result.passed
         assert any(v.metric == "parse_error" for v in result.violations)
 

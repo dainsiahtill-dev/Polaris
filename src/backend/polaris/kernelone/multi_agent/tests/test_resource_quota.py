@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 from polaris.kernelone.multi_agent.resource_quota import (
     AgentQuota,
@@ -207,10 +209,8 @@ class TestResourceQuotaManager:
         await manager.release("agent-1")
 
         # Attempt allocation that will be denied
-        try:
+        with contextlib.suppress(QuotaExceededError):
             await manager.allocate("agent-3", {"cpu": 10.0, "memory_mb": 256})
-        except QuotaExceededError:
-            pass
 
         stats = await manager.get_stats()
         assert stats.total_allocated == 2
@@ -270,10 +270,8 @@ class TestConcurrentAgentLimits:
         # Rapid cycle
         for i in range(20):
             agent_id = f"agent-{i % 10}"
-            try:
+            with contextlib.suppress(QuotaNotFoundError):
                 await manager.release(agent_id)
-            except QuotaNotFoundError:
-                pass
             await manager.allocate(agent_id)
 
         stats = await manager.get_stats()

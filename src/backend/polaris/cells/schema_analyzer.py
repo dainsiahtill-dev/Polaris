@@ -42,7 +42,7 @@ PUBLIC_CONTRACT_REQUIRED = ["modules"]
 PUBLIC_CONTRACT_OPTIONAL = ["commands", "queries", "events", "results", "errors"]
 
 # Verification sub-fields
-VERIFICATION_REQUIRED = []
+VERIFICATION_REQUIRED: list[str] = []
 VERIFICATION_OPTIONAL = ["tests", "smoke_commands", "gaps"]
 
 
@@ -95,12 +95,10 @@ def analyze_cell(cell_path: Path) -> dict[str, Any]:
         for field in VERIFICATION_OPTIONAL:
             if field not in v:
                 warnings.append(f"Missing 'verification.{field}'")
-        if "gaps" in v and isinstance(v["gaps"], list):
-            if len(v["gaps"]) == 0:
-                warnings.append("'verification.gaps' is empty - no migration plan")
-        if "tests" in v and isinstance(v["tests"], list):
-            if len(v["tests"]) == 0:
-                warnings.append("'verification.tests' is empty - no test coverage")
+        if "gaps" in v and isinstance(v["gaps"], list) and len(v["gaps"]) == 0:
+            warnings.append("'verification.gaps' is empty - no migration plan")
+        if "tests" in v and isinstance(v["tests"], list) and len(v["tests"]) == 0:
+            warnings.append("'verification.tests' is empty - no test coverage")
         if "smoke_commands" not in v:
             warnings.append("'verification.smoke_commands' missing - no smoke test defined")
 
@@ -188,17 +186,11 @@ def main():
         cell_id = r["id"]
         for issue in r["issues"]:
             # Extract issue type
-            if "Missing" in issue:
-                key = issue.split(":")[0].strip()
-            else:
-                key = issue.split("'")[1] if "'" in issue else issue
+            key = issue.split(":")[0].strip() if "Missing" in issue else issue.split("'")[1] if "'" in issue else issue
             issue_categories[key].append(cell_id)
 
         for warn in r["warnings"]:
-            if "Missing" in warn:
-                key = warn.split(":")[0].strip()
-            else:
-                key = warn.split("'")[1] if "'" in warn else warn
+            key = warn.split(":")[0].strip() if "Missing" in warn else warn.split("'")[1] if "'" in warn else warn
             warning_categories[key].append(cell_id)
 
     # Issue distribution

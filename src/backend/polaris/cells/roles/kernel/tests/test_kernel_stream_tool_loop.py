@@ -183,7 +183,9 @@ def test_stream_continues_after_tool_results_with_transcript_context(monkeypatch
     assert len(stream_contexts) == 1
     assert stream_contexts[0]["message"] == "帮我阅读并总结代码"
     # Current turn user message should not be duplicated in history.
-    assert ("user", "帮我阅读并总结代码") not in stream_contexts[0]["history"]
+    history = stream_contexts[0]["history"]
+    assert isinstance(history, list)
+    assert ("user", "帮我阅读并总结代码") not in history
     assert len(call_contexts) == 1
     assert call_contexts[0]["message"] == "帮我阅读并总结代码"
     call_history = call_contexts[0]["history"]

@@ -23,7 +23,7 @@ from polaris.kernelone.context.context_os.models_v2 import (
 class MockPlugin(ContextOSHooksSpec):
     """Mock plugin for testing hooks."""
 
-    def __init__(self, name: str = "MockPlugin"):
+    def __init__(self, name: str = "MockPlugin") -> None:
         self.name = name
         self.calls: list[dict[str, Any]] = []
         self.return_value: dict[str, Any] | None = {"test": "result"}
@@ -305,7 +305,7 @@ class TestPluginImplementation:
         class MultiHookPlugin(ContextOSHooksSpec):
             """Test plugin implementing multiple hooks."""
 
-            def __init__(self):
+            def __init__(self) -> None:
                 self.calls = []
 
             @hookimpl
@@ -341,7 +341,7 @@ class TestPluginImplementation:
         class OptionalReturnPlugin(ContextOSHooksSpec):
             """Test plugin with optional returns."""
 
-            def __init__(self):
+            def __init__(self) -> None:
                 self.calls = []
 
             @hookimpl

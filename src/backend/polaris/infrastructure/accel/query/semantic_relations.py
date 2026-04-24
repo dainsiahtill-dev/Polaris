@@ -5,10 +5,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.$]{1,127}")
-
-
 from ..utils import normalize_path_str as _normalize_path
+
+_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.$]{1,127}")
 
 
 def _normalize_module_name(name: str) -> str:

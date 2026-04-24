@@ -63,7 +63,6 @@ def _make_envelope(
     """Build a realistic TurnOutcomeEnvelope for testing."""
     from types import SimpleNamespace
 
-
     return SimpleNamespace(
         turn_result=TurnResult(
             turn_id=TurnId(event.turn_id),
@@ -112,9 +111,7 @@ class TestAnalysisOnlyPath:
                     status="success",
                     visible_content="",
                     batch_receipt={
-                        "results": [
-                            {"tool_name": "repo_tree", "status": "success", "result": {"entries": []}}
-                        ]
+                        "results": [{"tool_name": "repo_tree", "status": "success", "result": {"entries": []}}]
                     },
                 ),
             ],
@@ -213,9 +210,7 @@ class TestWritePath:
                     status="success",
                     visible_content="",
                     batch_receipt={
-                        "results": [
-                            {"tool_name": "repo_tree", "status": "success", "result": {"entries": []}}
-                        ]
+                        "results": [{"tool_name": "repo_tree", "status": "success", "result": {"entries": []}}]
                     },
                 ),
             ],
@@ -225,9 +220,7 @@ class TestWritePath:
                     status="success",
                     visible_content="Split complete.",
                     batch_receipt={
-                        "results": [
-                            {"tool_name": "write_file", "status": "success", "result": {"path": "routes.py"}}
-                        ]
+                        "results": [{"tool_name": "write_file", "status": "success", "result": {"path": "routes.py"}}]
                     },
                 ),
             ],
@@ -393,9 +386,7 @@ class TestContextSwitch:
                     status="success",
                     visible_content="Split done.",
                     batch_receipt={
-                        "results": [
-                            {"tool_name": "write_file", "status": "success", "result": {"path": "routes.py"}}
-                        ]
+                        "results": [{"tool_name": "write_file", "status": "success", "result": {"path": "routes.py"}}]
                     },
                 ),
             ]

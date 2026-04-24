@@ -35,9 +35,12 @@ class QualityService:
 
             # Run Ruff
             cmd_svc = CommandExecutionService(".")
+            executable = cmd[0]
+            if executable is None:
+                return {"success": False, "reason": "ruff_executable_resolved_to_none"}
             request = CommandRequest(
-                executable=cmd[0],
-                args=cmd[1:],
+                executable=executable,
+                args=[str(a) for a in cmd[1:]],
                 timeout_seconds=30,
             )
             run_result = cmd_svc.run(request)

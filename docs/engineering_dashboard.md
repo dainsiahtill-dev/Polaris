@@ -1,33 +1,42 @@
 # Engineering Metrics Dashboard
 
-> Auto-generated on 2026-04-23 21:53 UTC
+> Auto-generated on 2026-04-23 22:38 UTC
 
 ## Overview
 
 | Metric | Value |
 |--------|-------|
-| Tests Collected | 14907 |
-| Coverage | 65.7% ![Coverage](docs/assets/badges/coverage.svg) |
-| Ruff Errors | 9731 |
-| MyPy Errors | 218 |
+| Tests Collected | N/A (quick mode) |
+| Coverage | N/A (quick mode)  |
+| Ruff Errors | N/A (quick mode) |
+| MyPy Errors | N/A (quick mode) |
 
 ## Fitness Rules Status Distribution
 
 | Status | Count |
 |--------|-------|
-| draft | 20 |
-| enforced | 9 |
+| draft | 14 |
+| enforced | 15 |
 | enforced_non_regressive | 9 |
 | partially_enforced | 1 |
 | seeded | 22 |
 | **Total** | **61** |
 
+## Goal Tracking
+
+| Goal | Current | Target | Gap | ETA |
+|------|---------|--------|-----|-----|
+| Coverage | N/A (quick mode) | 50% | -50.0% | Month 2 |
+| Ruff errors | N/A (quick mode) | 0 | +0 | Month 3 |
+| MyPy errors | N/A (quick mode) | 0 | +0 | Month 2 |
+| Fitness enforced | 15 | 30 | -15 | Month 3 |
+
 ## Coverage Goal Tracking
 
 | Threshold | Status |
 |-----------|--------|
-| >= 50% | Pass |
-| >= 80% | Fail |
+| >= 50% | Unknown |
+| >= 80% | Unknown |
 
 ## CI Jobs
 

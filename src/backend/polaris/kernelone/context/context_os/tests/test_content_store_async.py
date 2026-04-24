@@ -72,7 +72,7 @@ class TestContentStoreAsyncConsistency:
         """写入后读取必须返回相同内容."""
         store = ContentStore()
         content = "hello world"
-        ref = await store.write("key1", content)
+        await store.write("key1", content)
 
         result = await store.read("key1")
         assert result == content

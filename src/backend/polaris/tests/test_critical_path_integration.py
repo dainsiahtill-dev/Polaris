@@ -362,7 +362,7 @@ class TestRoleDialogueFlow:
         ) -> list[RoleMessage]:
             """Execute multi-turn dialogue."""
             responses = []
-            context = []
+            context: list[str] = []
 
             for message in messages:
                 # Build context from previous turns

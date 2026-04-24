@@ -18,9 +18,7 @@ import pytest
 
 # Test imports with skipif for textual
 try:
-    from textual.app import App
-    from textual.containers import Container, Horizontal
-    from textual.widgets import Button, Static, TextArea
+    from textual.app import App  # noqa: F401
 
     TEXTUAL_AVAILABLE = True
 except ImportError:

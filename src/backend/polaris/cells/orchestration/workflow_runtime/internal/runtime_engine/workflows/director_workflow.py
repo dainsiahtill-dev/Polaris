@@ -183,7 +183,7 @@ class DirectorWorkflow(WorkflowQueryState):
                     "pending_count": len(pending),
                     "completed_count": len(completed_ids),
                     "failed_count": len(failed_ids),
-                    "pending_task_ids": sorted(list(pending.keys()))[:20],
+                    "pending_task_ids": sorted(pending.keys())[:20],
                 },
             )
             blocked_by_failed = [task for task in pending.values() if _task_dependencies(task).intersection(failed_ids)]

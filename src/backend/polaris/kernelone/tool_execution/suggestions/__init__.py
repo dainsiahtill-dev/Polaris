@@ -42,13 +42,13 @@ from polaris.kernelone.tool_execution.suggestions.registry import (
 )
 
 __all__ = [
-    "SuggestionBuilder",
-    "build_suggestion",
-    "register_builder",
+    "ExplorationBuilder",
     # Builders
     "FuzzyMatchBuilder",
-    "ExplorationBuilder",
+    "SuggestionBuilder",
+    "build_suggestion",
+    "find_best_match",
     # Fuzzy matcher
     "fuzzy_replace",
-    "find_best_match",
+    "register_builder",
 ]

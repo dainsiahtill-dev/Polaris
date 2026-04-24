@@ -568,7 +568,9 @@ def compile_context_pack(
         is_similar = any(
             _jaccard_similarity(structural_tokens, existing_structural) >= structural_threshold
             or _jaccard_similarity(semantic_tokens, existing_semantic) >= semantic_threshold
-            for existing_structural, existing_semantic in zip(seen_structural_tokens, seen_semantic_tokens)
+            for existing_structural, existing_semantic in zip(
+                seen_structural_tokens, seen_semantic_tokens, strict=False
+            )
         )
         if is_similar:
             similarity_deduped_count += 1

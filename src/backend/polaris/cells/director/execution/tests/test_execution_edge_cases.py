@@ -78,7 +78,7 @@ class TestTaskCancellation:
 
         async def long_running_task():
             try:
-                for i in range(100):
+                for _i in range(100):
                     if task_status["cancelled"]:
                         raise asyncio.CancelledError()
                     await asyncio.sleep(0.01)
@@ -107,9 +107,7 @@ class TestWorkerPool:
         current_workers = 2
 
         def submit_task():
-            if current_workers >= max_workers:
-                return False
-            return True
+            return not current_workers >= max_workers
 
         assert submit_task() is False
 
@@ -119,9 +117,7 @@ class TestWorkerPool:
         current_workers = 1
 
         def submit_task():
-            if current_workers >= max_workers:
-                return False
-            return True
+            return not current_workers >= max_workers
 
         assert submit_task() is True
 

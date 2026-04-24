@@ -66,7 +66,9 @@ class TestLegacySnapshotMigration:
             log.append(entry)
 
         mgr = WorkingStateManager()
-        for key, value in legacy_snapshot["working_state"].items():
+        ws = legacy_snapshot["working_state"]
+        assert isinstance(ws, dict)
+        for key, value in ws.items():
             mgr.update(key, value)
 
         replayed = log.replay()

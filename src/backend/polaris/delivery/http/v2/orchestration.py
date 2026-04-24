@@ -11,9 +11,8 @@ POST /v2/orchestration/runs/{run_id}/signal - 发送控制信号
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from polaris.cells.orchestration.workflow_runtime.public.service import (
@@ -27,6 +26,8 @@ from polaris.cells.orchestration.workflow_runtime.public.service import (
 from polaris.delivery.http.dependencies import require_auth
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/orchestration", tags=["Orchestration"])
 
@@ -127,8 +128,6 @@ async def create_run(request: CreateRunRequest) -> OrchestrationSnapshotResponse
         service = await get_orchestration_service()
 
         # 生成 run_id
-        import uuid
-
         run_id = request.run_id or f"run-{uuid.uuid4().hex[:12]}"
 
         # 构建角色条目
@@ -168,12 +167,12 @@ async def create_run(request: CreateRunRequest) -> OrchestrationSnapshotResponse
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="internal error",
-        )
-    except (RuntimeError, ValueError):
+        ) from e
+    except RuntimeError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 @router.get("/runs/{run_id}", response_model=OrchestrationSnapshotResponse, dependencies=[Depends(require_auth)])
@@ -198,7 +197,7 @@ async def get_run(run_id: str) -> OrchestrationSnapshotResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 @router.get("/runs/{run_id}/tasks", dependencies=[Depends(require_auth)])
@@ -224,7 +223,7 @@ async def get_run_tasks(run_id: str) -> dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 @router.post("/runs/{run_id}/signal", dependencies=[Depends(require_auth)])
@@ -244,11 +243,11 @@ async def signal_run(run_id: str, request: SignalRequestModel) -> OrchestrationS
         # 转换信号
         try:
             signal = OrchestrationSignal(request.signal)
-        except ValueError:
+        except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid signal: {request.signal}",
-            )
+            ) from e
 
         signal_request = SignalRequest(
             signal=signal,
@@ -266,7 +265,7 @@ async def signal_run(run_id: str, request: SignalRequestModel) -> OrchestrationS
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 @router.delete("/runs/{run_id}", dependencies=[Depends(require_auth)])
@@ -282,7 +281,7 @@ async def cancel_run(run_id: str, force: bool = False) -> OrchestrationSnapshotR
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 @router.get("/runs", dependencies=[Depends(require_auth)])
@@ -314,7 +313,7 @@ async def list_runs(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 # ============================================================================

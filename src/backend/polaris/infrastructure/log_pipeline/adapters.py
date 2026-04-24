@@ -20,13 +20,12 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.utils.time_utils import utc_now_str
 
-_logger = logging.getLogger(__name__)
-
-# Import the new writer and context
 from .run_context import (
     resolve_current_run_id,
 )
 from .writer import LogEventWriter, get_writer
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .canonical_event import (

@@ -7,6 +7,7 @@ Run with:
 from __future__ import annotations
 
 import gzip
+from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def temp_runtime(tmp_path: Path) -> Path:
 
 
 @pytest_asyncio.fixture
-async def tier_adapter(temp_runtime: Path) -> StorageTierAdapter:
+async def tier_adapter(temp_runtime: Path) -> AsyncGenerator[StorageTierAdapter, None]:
     """Provide a storage tier adapter."""
     adapter = StorageTierAdapter(
         runtime_root=temp_runtime,

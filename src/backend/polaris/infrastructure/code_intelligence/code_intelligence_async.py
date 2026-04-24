@@ -319,7 +319,9 @@ class AsyncIndexManager:
 
         if background:
             # 在后台启动索引构建
-            asyncio.create_task(self._build_index_async(force_full, progress_callback))
+            _pending = asyncio.create_task(self._build_index_async(force_full, progress_callback))
+            # Intentionally fire-and-forget; task runs in background
+            _pending.add_done_callback(lambda _: None)
             return {"status": "background_started"}
         else:
             # 同步等待构建完成

@@ -19,7 +19,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 from polaris.kernelone.audit.contracts import (
     KernelAuditEvent,
@@ -34,14 +34,14 @@ logger = logging.getLogger(__name__)
 # Backward Compatibility Aliases (P1-AUDIT-001)
 # =============================================================================
 
-# Backward compatibility aliases for external callers
-AuditEventType = KernelAuditEventType  # type: ignore[misc,assignment]
+# Use TypeAlias so mypy treats these as proper type aliases, not variables.
+AuditEventType: TypeAlias = type[KernelAuditEventType]
 """Canonical audit event types. Prefer KernelAuditEventType."""
 
-AuditEvent = KernelAuditEvent  # type: ignore[misc,assignment]
+AuditEvent: TypeAlias = KernelAuditEvent
 """Canonical audit event. Prefer KernelAuditEvent."""
 
-ChainVerificationResult = KernelChainVerificationResult  # type: ignore[misc,assignment]
+ChainVerificationResult: TypeAlias = KernelChainVerificationResult
 """Chain verification result. Prefer KernelChainVerificationResult."""
 
 # Default retention period alias

@@ -56,10 +56,7 @@ class EnhancedErrorClassifier:
             {
                 "error_type": type(error).__name__,
                 "error_message": str(error),
-                "stack_trace": (
-                    getattr(error, "__traceback__", None)
-                    and self._format_traceback(error.__traceback__)
-                )
+                "stack_trace": (getattr(error, "__traceback__", None) and self._format_traceback(error.__traceback__))
                 or "",
                 **context,
             }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import os
 import tempfile
 import time
@@ -66,7 +67,7 @@ class TestCognitiveRuntimeMetrics:
     def test_metrics_are_frozen(self) -> None:
         """Verify metrics dataclass is frozen."""
         metrics = CognitiveRuntimeMetrics()
-        with pytest.raises(Exception):  # frozen dataclass raises FrozenInstanceError
+        with pytest.raises(dataclasses.FrozenInstanceError):  # frozen dataclass raises FrozenInstanceError
             metrics.total_cases = 10  # type: ignore[misc]
 
 

@@ -19,33 +19,36 @@ from pathlib import Path
 
 class DependencyType(Enum):
     """依赖类型分类"""
-    STDLIB = auto()           # Python 标准库
-    THIRD_PARTY = auto()      # PyPI 包
-    INTERNAL = auto()         # 项目内部模块
-    RELATIVE = auto()         # 相对导入
-    TYPE_ONLY = auto()        # TYPE_CHECKING 块中的导入（运行时忽略）
-    UNKNOWN = auto()          # 无法分类
+
+    STDLIB = auto()  # Python 标准库
+    THIRD_PARTY = auto()  # PyPI 包
+    INTERNAL = auto()  # 项目内部模块
+    RELATIVE = auto()  # 相对导入
+    TYPE_ONLY = auto()  # TYPE_CHECKING 块中的导入（运行时忽略）
+    UNKNOWN = auto()  # 无法分类
 
 
 @dataclass(frozen=True)
 class DependencyNode:
     """依赖节点"""
-    module_name: str          # 完整模块名 (e.g., "polaris.cells.factory")
-    import_name: str          # 导入的标识符 (e.g., "VerificationGuard")
+
+    module_name: str  # 完整模块名 (e.g., "polaris.cells.factory")
+    import_name: str  # 导入的标识符 (e.g., "VerificationGuard")
     dependency_type: DependencyType
-    source_file: str          # 来源文件
+    source_file: str  # 来源文件
     line_number: int
     column_offset: int
-    relative_level: int = 0   # 相对导入层级 (0 = 绝对导入)
+    relative_level: int = 0  # 相对导入层级 (0 = 绝对导入)
 
 
 @dataclass(frozen=True)
 class DependencyValidationResult:
     """依赖验证结果"""
+
     node: DependencyNode
     exists: bool
-    version: str | None       # 版本号（如果可检测）
-    issues: list[str]         # 发现的问题
+    version: str | None  # 版本号（如果可检测）
+    issues: list[str]  # 发现的问题
     suggestion: str | None
 
 
@@ -86,13 +89,15 @@ class DependencyVerificationEngine:
         for node in import_nodes:
             # TYPE_ONLY 依赖不需要验证存在性（运行时忽略）
             if node.dependency_type == DependencyType.TYPE_ONLY:
-                results.append(DependencyValidationResult(
-                    node=node,
-                    exists=True,  # TYPE_CHECKING 导入视为存在
-                    version=None,
-                    issues=[],
-                    suggestion=None,
-                ))
+                results.append(
+                    DependencyValidationResult(
+                        node=node,
+                        exists=True,  # TYPE_CHECKING 导入视为存在
+                        version=None,
+                        issues=[],
+                        suggestion=None,
+                    )
+                )
                 continue
 
             result = self._verify_single_dependency(node)
@@ -112,11 +117,7 @@ class DependencyVerificationEngine:
         return nodes
 
     def _extract_from_node(
-        self,
-        node: ast.AST,
-        source_file: str,
-        nodes: list[DependencyNode],
-        in_type_checking: bool = False
+        self, node: ast.AST, source_file: str, nodes: list[DependencyNode], in_type_checking: bool = False
     ) -> None:
         """递归提取导入，处理 TYPE_CHECKING 块"""
         # 检查是否为 TYPE_CHECKING if 块
@@ -131,29 +132,35 @@ class DependencyVerificationEngine:
             for alias in node.names:
                 module_name = alias.name
                 dep_type = DependencyType.TYPE_ONLY if in_type_checking else self._classify_dependency(module_name)
-                nodes.append(DependencyNode(
-                    module_name=module_name,
-                    import_name=alias.asname or alias.name.split('.')[0],
-                    dependency_type=dep_type,
-                    source_file=source_file,
-                    line_number=node.lineno,
-                    column_offset=node.col_offset,
-                ))
+                nodes.append(
+                    DependencyNode(
+                        module_name=module_name,
+                        import_name=alias.asname or alias.name.split(".")[0],
+                        dependency_type=dep_type,
+                        source_file=source_file,
+                        line_number=node.lineno,
+                        column_offset=node.col_offset,
+                    )
+                )
 
         elif isinstance(node, ast.ImportFrom) and node.module:
             module_name = node.module
-            dep_type = DependencyType.TYPE_ONLY if in_type_checking else self._classify_dependency(module_name, node.level)
+            dep_type = (
+                DependencyType.TYPE_ONLY if in_type_checking else self._classify_dependency(module_name, node.level)
+            )
 
             for alias in node.names:
-                nodes.append(DependencyNode(
-                    module_name=module_name,
-                    import_name=alias.asname or alias.name,
-                    dependency_type=dep_type,
-                    source_file=source_file,
-                    line_number=node.lineno,
-                    column_offset=node.col_offset,
-                    relative_level=node.level,
-                ))
+                nodes.append(
+                    DependencyNode(
+                        module_name=module_name,
+                        import_name=alias.asname or alias.name,
+                        dependency_type=dep_type,
+                        source_file=source_file,
+                        line_number=node.lineno,
+                        column_offset=node.col_offset,
+                        relative_level=node.level,
+                    )
+                )
 
         # 递归处理子节点（除非是 TYPE_CHECKING 块，已在上文处理）
         if not isinstance(node, ast.If):
@@ -165,19 +172,17 @@ class DependencyVerificationEngine:
         # 检查条件是否为 TYPE_CHECKING
         if isinstance(node.test, ast.Attribute):
             # typing.TYPE_CHECKING
-            return (isinstance(node.test.value, ast.Name) and
-                    node.test.value.id == 'typing' and
-                    node.test.attr == 'TYPE_CHECKING')
+            return (
+                isinstance(node.test.value, ast.Name)
+                and node.test.value.id == "typing"
+                and node.test.attr == "TYPE_CHECKING"
+            )
         elif isinstance(node.test, ast.Name):
             # from typing import TYPE_CHECKING; if TYPE_CHECKING:
-            return node.test.id == 'TYPE_CHECKING'
+            return node.test.id == "TYPE_CHECKING"
         return False
 
-    def _classify_dependency(
-        self,
-        module_name: str,
-        relative_level: int = 0
-    ) -> DependencyType:
+    def _classify_dependency(self, module_name: str, relative_level: int = 0) -> DependencyType:
         """分类依赖类型"""
         if relative_level > 0:
             return DependencyType.RELATIVE
@@ -194,13 +199,13 @@ class DependencyVerificationEngine:
 
     def _is_stdlib(self, module_name: str) -> bool:
         """检查是否为 Python 标准库模块"""
-        if hasattr(sys, 'stdlib_module_names'):
-            return module_name.split('.')[0] in sys.stdlib_module_names
+        if hasattr(sys, "stdlib_module_names"):
+            return module_name.split(".")[0] in sys.stdlib_module_names
 
         try:
-            spec = __import__('importlib.util').util.find_spec(module_name.split('.')[0])
+            spec = __import__("importlib.util").util.find_spec(module_name.split(".")[0])
             if spec and spec.origin:
-                return 'site-packages' not in spec.origin and 'lib-dynload' not in spec.origin
+                return "site-packages" not in spec.origin and "lib-dynload" not in spec.origin
         except (ImportError, ModuleNotFoundError):
             pass
 
@@ -228,7 +233,7 @@ class DependencyVerificationEngine:
             exists, version = self._check_third_party_package(node)
             if not exists:
                 issues.append(f"Package not installed: {node.module_name}")
-            elif self.allowed_third_party and node.module_name.split('.')[0] not in self.allowed_third_party:
+            elif self.allowed_third_party and node.module_name.split(".")[0] not in self.allowed_third_party:
                 issues.append(f"Package not in allowed list: {node.module_name}")
 
         else:
@@ -272,11 +277,10 @@ class DependencyVerificationEngine:
 
         # 追 module_name（如果存在）
         if node.module_name:
-            for part in node.module_name.split('.'):
+            for part in node.module_name.split("."):
                 target_path = target_path / part
 
-        return (target_path.with_suffix('.py').exists() or
-                (target_path / '__init__.py').exists())
+        return target_path.with_suffix(".py").exists() or (target_path / "__init__.py").exists()
 
     def _get_relative_target_path(self, node: DependencyNode) -> str:
         """生成相对导入的建议路径"""
@@ -286,22 +290,20 @@ class DependencyVerificationEngine:
             target_path = target_path.parent
 
         if node.module_name:
-            for part in node.module_name.split('.'):
+            for part in node.module_name.split("."):
                 target_path = target_path / part
 
         return str(target_path.relative_to(self.project_root)) + ".py"
 
     def _check_internal_module_exists(self, node: DependencyNode) -> bool:
         """检查内部模块是否存在于项目中"""
-        parts = node.module_name.split('.')
+        parts = node.module_name.split(".")
         target_path = self.project_root
 
         for part in parts:
             target_path = target_path / part
 
-        return (target_path.with_suffix('.py').exists() or
-                (target_path / '__init__.py').exists() or
-                target_path.is_dir())
+        return target_path.with_suffix(".py").exists() or (target_path / "__init__.py").exists() or target_path.is_dir()
 
     def _check_third_party_package(self, node: DependencyNode) -> tuple[bool, str | None]:
         """
@@ -313,7 +315,7 @@ class DependencyVerificationEngine:
         if self._installed_packages is None:
             self._installed_packages = self._get_installed_packages()
 
-        base_package = node.module_name.split('.')[0]
+        base_package = node.module_name.split(".")[0]
         version = self._installed_packages.get(base_package)
 
         return (version is not None), version
@@ -327,10 +329,8 @@ class DependencyVerificationEngine:
         """
         try:
             import importlib.metadata
-            return {
-                dist.metadata['Name'].lower(): dist.version
-                for dist in importlib.metadata.distributions()
-            }
+
+            return {dist.metadata["Name"].lower(): dist.version for dist in importlib.metadata.distributions()}
         except (ImportError, OSError, ValueError):
             return {}
 
@@ -343,21 +343,18 @@ class DependencyVerificationEngine:
         import_graph: dict[str, set[str]] = {}
 
         for file_path in files:
-            if file_path.suffix != '.py':
+            if file_path.suffix != ".py":
                 continue
 
-            code = file_path.read_text(encoding='utf-8')
+            code = file_path.read_text(encoding="utf-8")
             nodes = self._extract_imports(code, str(file_path))
 
-            file_module = str(file_path.relative_to(self.project_root))[:-3].replace('/', '.')
+            file_module = str(file_path.relative_to(self.project_root))[:-3].replace("/", ".")
             import_graph[file_module] = set()
 
             for node in nodes:
                 # 关键：排除 TYPE_ONLY 导入（运行时忽略）
-                if node.dependency_type in (
-                    DependencyType.INTERNAL,
-                    DependencyType.RELATIVE
-                ):
+                if node.dependency_type in (DependencyType.INTERNAL, DependencyType.RELATIVE):
                     import_graph[file_module].add(node.module_name)
 
         # 使用 DFS 检测循环
@@ -394,7 +391,7 @@ if __name__ == "__main__":
         internal_modules=["polaris", "kernelone"],
     )
 
-    test_code = '''
+    test_code = """
 import pandas as pd                    # ✅ 第三方包
 import numpy as np                     # ✅ 第三方包
 from polaris.cells.factory import XYZ  # ❌ 内部模块不存在
@@ -403,7 +400,7 @@ from typing import TYPE_CHECKING       # ✅ TYPE_CHECKING
 
 if TYPE_CHECKING:
     from polaris.cells.runtime import Runtime  # ⏭️ 标记为 TYPE_ONLY，不验证
-'''
+"""
 
     results = engine.verify_dependencies(test_code, "test.py")
     for r in results:

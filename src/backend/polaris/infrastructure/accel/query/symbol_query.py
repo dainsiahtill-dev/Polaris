@@ -6,14 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from ..storage.index_cache import load_index_rows
+from ..utils import normalize_path_str as _normalize_path
 from .semantic_relations import build_semantic_relation_graph
 
 _VALID_SYMBOL_KINDS = {"function", "class", "method", "variable", "constant", "property"}
 _VALID_LANGUAGES = {"python", "typescript", "javascript", "jsx", "tsx"}
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-
-from ..utils import normalize_path_str as _normalize_path
 
 
 def _match_score(query: str, symbol: str, qualified_name: str) -> float:

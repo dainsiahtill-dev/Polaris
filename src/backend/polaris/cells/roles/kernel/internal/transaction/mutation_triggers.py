@@ -19,32 +19,34 @@ from typing import Final
 # Mutation 关键词常量
 # ============================================================================
 
-MUTATION_KEYWORDS: Final[frozenset[str]] = frozenset({
-    # 完善类
-    "完善",
-    "完善化",
-    "完善一下",
-    # 修改类
-    "修改",
-    "改动",
-    "改一下",
-    "修改一下",
-    # 优化改进类
-    "优化",
-    "改进",
-    "提升",
-    # 补充添加类
-    "补充",
-    "添加",
-    "增加",
-    # 修复类
-    "修复",
-    "修正",
-    "改正",
-    # 重构类
-    "重构",
-    "重写",
-})
+MUTATION_KEYWORDS: Final[frozenset[str]] = frozenset(
+    {
+        # 完善类
+        "完善",
+        "完善化",
+        "完善一下",
+        # 修改类
+        "修改",
+        "改动",
+        "改一下",
+        "修改一下",
+        # 优化改进类
+        "优化",
+        "改进",
+        "提升",
+        # 补充添加类
+        "补充",
+        "添加",
+        "增加",
+        # 修复类
+        "修复",
+        "修正",
+        "改正",
+        # 重构类
+        "重构",
+        "重写",
+    }
+)
 
 
 # ============================================================================
@@ -54,14 +56,13 @@ MUTATION_KEYWORDS: Final[frozenset[str]] = frozenset({
 # 构建用于部分匹配的正则模式
 # 按长度降序排列，确保长词优先匹配（如"完善一下"优先于"完善"）
 _SORTED_KEYWORDS: Final[list[str]] = sorted(MUTATION_KEYWORDS, key=len, reverse=True)
-_MUTATION_PATTERN: Final[re.Pattern[str]] = re.compile(
-    "|".join(re.escape(kw) for kw in _SORTED_KEYWORDS)
-)
+_MUTATION_PATTERN: Final[re.Pattern[str]] = re.compile("|".join(re.escape(kw) for kw in _SORTED_KEYWORDS))
 
 
 # ============================================================================
 # 核心函数
 # ============================================================================
+
 
 def detect_mutation_intent(text: str) -> bool:
     """检测文本是否包含 mutation 意图。
@@ -123,6 +124,7 @@ def should_enter_materialize_mode(
 # ============================================================================
 # 辅助函数（用于调试和测试）
 # ============================================================================
+
 
 def get_matched_keywords(text: str) -> list[str]:
     """获取文本中匹配的所有 mutation 关键词。

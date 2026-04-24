@@ -26,13 +26,16 @@ def find_workspace_root(start: str | Path) -> Path:
         current = parent
     return Path(start).expanduser().resolve()
 
+
 def get_backend_root() -> Path:
     """Get backend root directory (`src/backend`)."""
     return Path(__file__).resolve().parent
 
+
 def get_project_root() -> Path:
     """Get repository root directory."""
     return get_backend_root().parents[1]
+
 
 def default_system_cache_base() -> Path:
     """Get default system cache directory."""
@@ -45,6 +48,7 @@ def default_system_cache_base() -> Path:
         if cache_base:
             return Path(cache_base) / "polaris"
     return Path.home() / ".cache" / "polaris"
+
 
 def resolve_ramdisk_root(configured_root: str | None = None) -> Path | None:
     """Resolve a usable ramdisk root path."""
@@ -64,11 +68,13 @@ def resolve_ramdisk_root(configured_root: str | None = None) -> Path | None:
 
     return None
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Default Constants - Single Source of Truth
 # ═══════════════════════════════════════════════════════════════════════════════
 DEFAULT_BACKEND_PORT: int = 49977
 DEFAULT_RENDERER_PORT: int = 5173
+
 
 class JSONLConfig(BaseModel):
     """JSONL I/O configuration for Polaris Loop.
@@ -139,15 +145,16 @@ class JSONLConfig(BaseModel):
     def from_env(cls) -> JSONLConfig:
         """Create JSONLConfig from environment variables."""
         return cls(
-            lock_stale_sec=os.environ.get("KERNELONE_JSONL_LOCK_STALE_SEC", 120.0),
-            buffer_enabled=os.environ.get("KERNELONE_JSONL_BUFFERED", "1"),
-            flush_interval_sec=os.environ.get("KERNELONE_JSONL_FLUSH_INTERVAL", 1.0),
-            flush_batch=os.environ.get("KERNELONE_JSONL_FLUSH_BATCH", 50),
-            max_buffer=os.environ.get("KERNELONE_JSONL_MAX_BUFFER", 2000),
-            buffer_ttl_sec=os.environ.get("KERNELONE_JSONL_BUFFER_TTL", 300.0),
-            max_paths=os.environ.get("KERNELONE_JSONL_MAX_PATHS", 100),
-            cleanup_interval_sec=os.environ.get("KERNELONE_JSONL_CLEANUP_INTERVAL", 60.0),
+            lock_stale_sec=float(os.environ.get("KERNELONE_JSONL_LOCK_STALE_SEC", 120.0)),
+            buffer_enabled=_parse_bool(os.environ.get("KERNELONE_JSONL_BUFFERED", "1")),
+            flush_interval_sec=float(os.environ.get("KERNELONE_JSONL_FLUSH_INTERVAL", 1.0)),
+            flush_batch=int(os.environ.get("KERNELONE_JSONL_FLUSH_BATCH", 50)),
+            max_buffer=int(os.environ.get("KERNELONE_JSONL_MAX_BUFFER", 2000)),
+            buffer_ttl_sec=float(os.environ.get("KERNELONE_JSONL_BUFFER_TTL", 300.0)),
+            max_paths=int(os.environ.get("KERNELONE_JSONL_MAX_PATHS", 100)),
+            cleanup_interval_sec=float(os.environ.get("KERNELONE_JSONL_CLEANUP_INTERVAL", 60.0)),
         )
+
 
 class RuntimeConfig(BaseModel):
     """Runtime paths and storage behavior."""
@@ -163,6 +170,7 @@ class RuntimeConfig(BaseModel):
         if value is None:
             return None
         return Path(value).expanduser().resolve()
+
 
 class LoggingConfig(BaseModel):
     """Logging configuration."""
@@ -180,6 +188,7 @@ class LoggingConfig(BaseModel):
             raise ValueError(f"Invalid log level: {value}. Must be one of {valid}")
         return normalized
 
+
 class ServerConfig(BaseModel):
     """Server/network configuration."""
 
@@ -192,6 +201,7 @@ class ServerConfig(BaseModel):
         ],
         description="CORS allowed origins",
     )
+
 
 class SettingsUpdate(BaseModel):
     """Partial settings update payload."""
@@ -277,6 +287,7 @@ class SettingsUpdate(BaseModel):
     nats_reconnect_wait_sec: float | None = None
     nats_max_reconnect_attempts: int | None = None
     nats_stream_name: str | None = None
+
 
 class Settings(BaseModel):
     """Unified Polaris settings."""
@@ -695,6 +706,7 @@ class Settings(BaseModel):
     def apply_update(self, update: SettingsUpdate) -> None:
         """Apply partial update payload."""
         from polaris.cells.policy.workspace_guard.public.service import ensure_workspace_target_allowed
+
         data = update.model_dump(exclude_unset=True)
         target_self_upgrade_mode = bool(data.get("self_upgrade_mode", self.self_upgrade_mode))
         target_workspace_value = data.get("workspace", self.workspace)
@@ -920,6 +932,7 @@ class Settings(BaseModel):
             SELF_UPGRADE_MODE_ENV,
             ensure_workspace_target_allowed,
         )
+
         kwargs: dict[str, Any] = {}
         self_upgrade_mode = _parse_bool(os.environ.get(SELF_UPGRADE_MODE_ENV, "0"))
         kwargs["self_upgrade_mode"] = self_upgrade_mode
@@ -1091,6 +1104,7 @@ class Settings(BaseModel):
 
         return cls(**kwargs)
 
+
 def _parse_value(value: str) -> str | int | bool:
     normalized = value.lower()
     if normalized in ("true", "1", "yes"):
@@ -1101,13 +1115,16 @@ def _parse_value(value: str) -> str | int | bool:
         return int(value)
     return value
 
+
 def _parse_bool(value: str) -> bool:
     return str(value).strip().lower() in ("1", "true", "yes", "on")
+
 
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings.from_env()
+
 
 def reload_settings() -> Settings:
     """Reload settings from environment."""

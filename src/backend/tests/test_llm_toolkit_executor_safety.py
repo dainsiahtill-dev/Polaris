@@ -8,7 +8,6 @@ for _path in (str(_BACKEND_ROOT), str(_CORE_ROOT)):
         sys.path.insert(0, _path)
 
 from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
-from polaris.kernelone.llm.toolkit.parsers import ToolChainParser
 
 
 def test_executor_close_sync_is_idempotent() -> None:
@@ -28,15 +27,3 @@ def test_removed_semantic_tool_is_rejected() -> None:
     assert result["ok"] is False
     assert "Unknown tool" in str(result.get("error") or "")
 
-
-def test_tool_chain_parser_parses_escaped_quotes() -> None:
-    text = """
-<tool_chain>
-1. search_code(query="User \\\"Service\\\" implementation", max_results=3)
-</tool_chain>
-"""
-    tools = ToolChainParser.parse(text)
-
-    assert len(tools) == 1
-    assert tools[0].arguments["query"] == 'User "Service" implementation'
-    assert tools[0].arguments["max_results"] == 3

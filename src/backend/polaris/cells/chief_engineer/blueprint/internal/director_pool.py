@@ -51,8 +51,8 @@ class DirectorPhase(str, Enum):
     VALIDATE = "validate"
     IMPLEMENT = "implement"
     # Phase 2 Extension: Two-phase review states (Superpowers essence)
-    SPEC_REVIEW = "spec_review"          # Spec compliance review
-    QUALITY_REVIEW = "quality_review"    # Code quality review
+    SPEC_REVIEW = "spec_review"  # Spec compliance review
+    QUALITY_REVIEW = "quality_review"  # Code quality review
     VERIFY = "verify"
     REPORT = "report"
 
@@ -73,10 +73,10 @@ class DirectorStatus:
     last_heartbeat_ms: int = 0
     capabilities: list[str] = field(default_factory=list)
     # Phase 2 Extension: Two-phase review metrics (Superpowers essence)
-    review_status: str | None = None           # "pending" | "in_spec_review" | "in_quality_review" | "approved"
-    spec_compliance_score: float = 0.0         # 0.0-1.0, spec compliance rating
-    code_quality_score: float = 0.0            # 0.0-1.0, code quality rating
-    review_iterations: int = 0                 # Number of review-fix cycles
+    review_status: str | None = None  # "pending" | "in_spec_review" | "in_quality_review" | "approved"
+    spec_compliance_score: float = 0.0  # 0.0-1.0, spec compliance rating
+    code_quality_score: float = 0.0  # 0.0-1.0, code quality rating
+    review_iterations: int = 0  # Number of review-fix cycles
 
 
 @dataclass
@@ -414,11 +414,7 @@ class DirectorPool:
             raise ValueError(f"Director {director_id} not found")
 
         # Determine review phase
-        review_phase = (
-            DirectorPhase.SPEC_REVIEW
-            if review_type == "spec"
-            else DirectorPhase.QUALITY_REVIEW
-        )
+        review_phase = DirectorPhase.SPEC_REVIEW if review_type == "spec" else DirectorPhase.QUALITY_REVIEW
 
         async with self._lock:
             now = _now_epoch_ms()

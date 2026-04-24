@@ -83,7 +83,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 async def run_pm_console(workspace: str, loop: bool, directive: str | None) -> None:
     """Run PM in console mode."""
-    RunMode, RuntimeOrchestrator, ServiceDefinition, _ = _bootstrap_backend_import_path()
+    RunMode, RuntimeOrchestrator, ServiceDefinition, _ = _bootstrap_backend_import_path()  # noqa: N806
 
     orchestrator = RuntimeOrchestrator()
     service_def = ServiceDefinition(

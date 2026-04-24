@@ -646,7 +646,7 @@ def build_runtime_snapshot_v2(
     snapshot = RuntimeSnapshotV2(
         run_id=run_id,
         phase=phase,
-        roles={k: v for k, v in roles.items()},
+        roles=dict(roles.items()),
         workers=workers,
         tasks=tasks,
         summary=summary,

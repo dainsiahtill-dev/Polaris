@@ -23,12 +23,11 @@ from polaris.domain.services.background_task import (
     BackgroundTask,
     BackgroundTaskService,
 )
+from polaris.domain.services.tool_timeout_service import ToolTier
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-from polaris.domain.services.tool_timeout_service import ToolTier
-
 router = APIRouter(prefix="/services", tags=["Services"])
 
 
@@ -235,7 +234,7 @@ async def mark_todo_done(item_id: str) -> dict[str, bool]:
         return {"ok": True}
     except (RuntimeError, ValueError) as e:
         logger.error("mark_todo_done failed: %s", e)
-        raise HTTPException(status_code=400, detail="internal error")
+        raise HTTPException(status_code=400, detail="internal error") from e
 
 
 # Token Budget endpoints

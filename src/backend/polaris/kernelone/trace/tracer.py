@@ -446,7 +446,6 @@ class UnifiedTracer:
             error_type=type(error).__name__,
             error_message=str(error),
             context=context,
-            exc_info=True,
         )
 
     def get_current_trace(self) -> list[Span]:

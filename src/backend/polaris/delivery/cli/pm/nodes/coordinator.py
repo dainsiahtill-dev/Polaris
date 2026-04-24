@@ -280,7 +280,7 @@ class OrchestrationCoordinator:
             List of role names
         """
         pending = []
-        for name, node in self._nodes.items():
+        for name, _node in self._nodes.items():
             if name in self._state.completed_roles:
                 continue
             if self.can_dispatch(name):

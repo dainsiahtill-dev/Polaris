@@ -26,8 +26,7 @@ def _bootstrap_backend_import_path():
             sys.path.insert(0, backend_root_str)
 
 
-# Facade: 重定向到重构后的模块
-from polaris.delivery.cli.audit.audit.cli import main
-
 if __name__ == "__main__":
+    from polaris.delivery.cli.audit.audit.cli import main
+
     main()

@@ -511,7 +511,7 @@ class TestPhase3ContextOSDirectIntegration:
 
         gateway = object.__new__(RoleContextGateway)
 
-        snapshot = {}
+        snapshot: dict[str, Any] = {}
         result = gateway._format_context_os_snapshot(snapshot)
 
         assert "transcript_events: (empty)" in result

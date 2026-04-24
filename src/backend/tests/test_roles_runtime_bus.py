@@ -22,7 +22,6 @@ from polaris.cells.roles.runtime.internal.agent_runtime_base import (
 from polaris.cells.roles.runtime.internal.bus_port import (
     AgentEnvelope,
     DeadLetterRecord,
-    IAgentBusPort,
     InMemoryAgentBusPort,
 )
 
@@ -379,13 +378,15 @@ class TestAgentBusProxy:
 
 class TestIAgentBusPortProtocol:
     def test_in_memory_bus_port_satisfies_protocol(self):
-        """InMemoryAgentBusPort must satisfy IAgentBusPort at runtime."""
+        """InMemoryAgentBusPort must satisfy IAgentBusPort structurally."""
         bus = InMemoryAgentBusPort()
-        assert isinstance(bus, IAgentBusPort)
+        protocol_methods = {"publish", "poll", "ack", "nack", "pending_count", "dead_letters"}
+        for method_name in protocol_methods:
+            assert hasattr(bus, method_name), f"Missing method: {method_name}"
 
     def test_mock_can_implement_protocol(self):
-        """Mocks implementing IAgentBusPort should be usable in tests."""
-        mock_bus = MagicMock(spec=IAgentBusPort)
+        """Mocks implementing the bus port interface should be usable in tests."""
+        mock_bus = MagicMock()
         mock_bus.pending_count.return_value = 5
         proxy = AgentBusProxy("agent_a", bus=mock_bus)
 

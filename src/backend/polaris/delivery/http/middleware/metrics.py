@@ -130,9 +130,7 @@ class MetricsCollector:
             lines.append("# TYPE polaris_request_errors_total counter")
             for key, metric in self._metrics.items():
                 method, path = key.split(" ", 1)
-                lines.append(
-                    f'polaris_request_errors_total{{method="{method}",path="{path}"}} {metric.error_count}'
-                )
+                lines.append(f'polaris_request_errors_total{{method="{method}",path="{path}"}} {metric.error_count}')
 
             lines.append("\n# HELP polaris_request_duration_ms Request duration in milliseconds")
             lines.append("# TYPE polaris_request_duration_ms histogram")

@@ -97,7 +97,7 @@ def get_events(
     Returns:
         List of audit event dictionaries
     """
-    ctx = AuditContext(workspace=workspace)
+    _ = AuditContext(workspace=workspace)  # side-effect: resolves runtime_root
     _ensure_cli_bindings()
     _, run_audit_command, _ = _bootstrap_backend_import_path()
 
@@ -119,7 +119,7 @@ def get_stats(workspace: str = ".") -> dict[str, Any]:
     Returns:
         Dictionary with audit statistics
     """
-    ctx = AuditContext(workspace=workspace)
+    _ = AuditContext(workspace=workspace)  # side-effect: resolves runtime_root
     _ensure_cli_bindings()
     _, run_audit_command, _ = _bootstrap_backend_import_path()
 
@@ -139,7 +139,7 @@ def triage(workspace: str = ".") -> dict[str, Any]:
     Returns:
         Dictionary with triage results
     """
-    ctx = AuditContext(workspace=workspace)
+    _ = AuditContext(workspace=workspace)  # side-effect: resolves runtime_root
     _ensure_cli_bindings()
     _, run_audit_command, _ = _bootstrap_backend_import_path()
 
@@ -159,7 +159,7 @@ def verify(workspace: str = ".") -> dict[str, Any]:
     Returns:
         Dictionary with verification results
     """
-    ctx = AuditContext(workspace=workspace)
+    _ = AuditContext(workspace=workspace)  # side-effect: resolves runtime_root
     _ensure_cli_bindings()
     _, run_audit_command, _ = _bootstrap_backend_import_path()
 
@@ -185,7 +185,7 @@ def get_corruption_log(
     Returns:
         List of corruption log entries
     """
-    ctx = AuditContext(workspace=workspace)
+    _ = AuditContext(workspace=workspace)  # side-effect: resolves runtime_root
     _ensure_cli_bindings()
     _, run_audit_command, _ = _bootstrap_backend_import_path()
 

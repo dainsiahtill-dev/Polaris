@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from polaris.cells.director.task_consumer.internal.director_consumer import (
@@ -322,13 +323,15 @@ class TestDirectorExecutionConsumerPollOnce:
             worker_id="d1",
             lease_renew_interval_seconds=0.01,
         )
+
+        def _slow_execute(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            time.sleep(0.12)
+            return {"changed_files": [], "duration": 0, "side_effects": []}
+
         with patch.object(
             consumer,
             "_execute_task",
-            side_effect=lambda *_args, **_kwargs: (
-                time.sleep(0.12),
-                {"changed_files": [], "duration": 0, "side_effects": []},
-            )[1],
+            side_effect=_slow_execute,
         ):
             results = consumer.poll_once()
 

@@ -786,11 +786,11 @@ class TaskOrchestrator:
         load_score = max(0, 1.0 - stats.current_load * 0.1) * 0.3
 
         # Time score: faster is better, normalize assuming 60min is average
-        time_score = 0.0
-        if stats.avg_completion_time > 0:
-            time_score = min(1.0, 60.0 / stats.avg_completion_time) * 0.2
-        else:
-            time_score = 0.1  # Unknown, give small score
+        time_score = (
+            min(1.0, 60.0 / stats.avg_completion_time) * 0.2
+            if stats.avg_completion_time > 0
+            else 0.1  # Unknown, give small score
+        )
 
         # Experience score
         exp_score = min(1.0, stats.total_tasks / 10.0) * 0.1

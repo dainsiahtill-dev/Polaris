@@ -34,7 +34,7 @@ class ToolCategory(str, Enum):
     OTHER = "other"
 
 
-class ToolEvent(AuditEvent, frozen=True):
+class ToolEvent(AuditEvent):  # type: ignore[call-arg]  # frozen=True inherited from AuditEvent model_config; mypy flags redundant kwarg
     """Tool/function call audit event.
 
     Captures the full lifecycle of a tool call for:

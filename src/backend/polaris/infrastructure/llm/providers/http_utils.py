@@ -128,7 +128,7 @@ def validate_base_url_for_ssrf(base_url: str, allow_localhost: bool = False) -> 
         # Resolve hostname to IP(s) and check each resolved address
         try:
             addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in addr_info:
+            for _family, _, _, _, sockaddr in addr_info:
                 resolved_ip = sockaddr[0]
                 if isinstance(resolved_ip, str) and _is_blocked_ip(resolved_ip):
                     return False, (

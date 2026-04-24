@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 # 导入 canonical ToolCall (frozen dataclass with to_openai_format)
 from polaris.kernelone.llm.contracts.tool import ToolCall as _CanonicalToolCall
@@ -56,8 +56,9 @@ def _parse_tool_arguments(arguments_str: str) -> tuple[dict[str, Any], str | Non
     return parsed, None
 
 
-# Re-export canonical ToolCall for backward compatibility
-ToolCall = _CanonicalToolCall
+# Re-export canonical ToolCall for backward compatibility.
+# Use TypeAlias so mypy treats this as a proper type alias.
+ToolCall: TypeAlias = _CanonicalToolCall
 
 
 @dataclass

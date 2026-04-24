@@ -41,6 +41,7 @@ __all__ = [
 # Types
 # -------------------------------------------------------------------------------
 
+
 class ConcurrencyPoolConfig(TypedDict, total=False):
     """Configuration for a concurrency pool."""
 
@@ -69,6 +70,7 @@ DEFAULT_PROCESS_WORKERS: Final[int] = int(os.environ.get("KERNELONE_PROCESS_POOL
 # -------------------------------------------------------------------------------
 # Singleton Manager
 # -------------------------------------------------------------------------------
+
 
 class UnifiedConcurrencyManager:
     """Per-event-loop singleton manager for thread/process pools.
@@ -105,6 +107,7 @@ class UnifiedConcurrencyManager:
         """Create or return the singleton for the current event loop."""
         try:
             import asyncio
+
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # No event loop - return a process-wide singleton
@@ -273,6 +276,7 @@ class UnifiedConcurrencyManager:
         Returns:
             A dictionary with pool statistics including worker counts and shutdown status.
         """
+
         def _get_max_workers(p: concurrent.futures.Executor) -> int:
             """Get max_workers from executor, handling ProcessPoolExecutor safely."""
             return getattr(p, "_max_workers", 0) or 0
@@ -386,6 +390,7 @@ def get_concurrency_manager() -> UnifiedConcurrencyManager:
     global _sync_manager
     try:
         import asyncio
+
         loop = asyncio.get_running_loop()
     except RuntimeError:
         # No event loop - use process-wide singleton

@@ -66,7 +66,7 @@ class TestCircuitBreakerClosedToOpen:
             raise ValueError("test error")
 
         # Fail until threshold
-        for i in range(3):
+        for _i in range(3):
             with pytest.raises(ValueError):
                 await cb.call(fail)
 

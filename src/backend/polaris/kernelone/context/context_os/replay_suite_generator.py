@@ -561,7 +561,7 @@ def _generate_deep_dive_switch_case(
 
     # Deep dive on primary topic
     features = ["基础框架", "核心逻辑", "错误处理", "性能优化", "安全检查", "测试覆盖", "文档生成", "部署配置"]
-    for i, feature in enumerate(features[:primary_depth]):
+    for _i, feature in enumerate(features[:primary_depth]):
         conversation.extend(
             [
                 _user(f"添加{feature}"),
@@ -609,7 +609,7 @@ def _generate_interleaved_case(
     """Generate a case with rapid topic interleaving."""
     conversation: list[dict[str, str]] = []
 
-    for i in range(interleaves):
+    for _i in range(interleaves):
         for topic in topics:
             conversation.extend(
                 [
@@ -976,7 +976,7 @@ def create_multi_turn_case(
     conversation: list[dict[str, str]] = []
     attention_roots = 1
 
-    for i, (role, content, status_after) in enumerate(turns):
+    for _i, (role, content, status_after) in enumerate(turns):
         if role == "user":
             conversation.append(_user(content))
         else:

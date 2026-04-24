@@ -465,7 +465,6 @@ class EventRegistry:
                     if isinstance(result, Exception):
                         logger.warning(
                             f"Async event handler error: index={i} error={result}",
-                            exc_info=True,
                         )
                     else:
                         self._handler_invocation_count += 1

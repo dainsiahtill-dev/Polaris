@@ -32,7 +32,7 @@ class ContextOperation(str, Enum):
     CLEAR = "clear"
 
 
-class ContextEvent(AuditEvent, frozen=True):
+class ContextEvent(AuditEvent):  # type: ignore[call-arg]  # frozen=True inherited from AuditEvent model_config
     """Context management audit event.
 
     Tracks context operations for:

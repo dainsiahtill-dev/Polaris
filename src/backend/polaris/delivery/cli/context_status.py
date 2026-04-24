@@ -208,7 +208,9 @@ def render_context_panel(stats: ContextStats, *, compact: bool = False) -> str |
 
         # Detailed panel format
         table = Table.grid(padding=(0, 2), pad_edge=True)
-        table.nobox = True
+        # Rich Table doesn't have nobox attribute; use show_header=False/show_edge=False instead
+        table.show_header = False
+        table.show_edge = False
 
         # Model row
         table.add_row(
@@ -292,9 +294,10 @@ def render_context_panel(stats: ContextStats, *, compact: bool = False) -> str |
         # Capture and return as string
         from io import StringIO
 
-        temp_console = Console(file=StringIO(), force_terminal=True)
+        string_io = StringIO()
+        temp_console = Console(file=string_io, force_terminal=True)
         temp_console.print(panel)
-        return temp_console.file.getvalue()
+        return string_io.getvalue()
 
     except (RuntimeError, ValueError):
         return None

@@ -11,14 +11,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-logger = logging.getLogger(__name__)
-
 from ..utils import utc_now_iso as _utc_now
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .callbacks import VerifyProgressCallback
+logger = logging.getLogger(__name__)
 
 
 def _normalize_positive_int(value: Any, default_value: int) -> int:
@@ -149,7 +148,7 @@ def _write_cache_entries_atomic(cache_path: Path, entries: dict[str, dict[str, A
         "updated_utc": _utc_now(),
         "entries": entries,
     }
-    tmp_file = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
         delete=False,
@@ -157,17 +156,16 @@ def _write_cache_entries_atomic(cache_path: Path, entries: dict[str, dict[str, A
         prefix=f".{cache_path.name}.",
         suffix=".tmp",
         newline="\n",
-    )
-    tmp_path = Path(tmp_file.name)
-    try:
-        with tmp_file:
+    ) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        try:
             tmp_file.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
             tmp_file.flush()
             os.fsync(tmp_file.fileno())
-        os.replace(tmp_path, cache_path)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
+            os.replace(tmp_path, cache_path)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
 
 
 def _is_failure(result: dict[str, Any]) -> bool:

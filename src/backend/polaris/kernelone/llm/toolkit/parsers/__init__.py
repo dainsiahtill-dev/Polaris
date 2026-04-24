@@ -64,10 +64,11 @@ __all__ = [
     "CanonicalToolCallParser",
     # Parser classes
     "NativeFunctionCallingParser",
-    # Unified types (P0-001 + P0-002)
-    "ToolCall",
     # Backward compatibility aliases
     "ParsedToolCall",  # Alias to ToolCall
+    # Unified types (P0-001 + P0-002)
+    "ToolCall",
+    "XMLToolParser",
     # Utilities
     "deduplicate_tool_calls",
     "extract_arguments",
@@ -77,5 +78,4 @@ __all__ = [
     # Core functions
     "parse_tool_calls",
     "parse_value",
-    "XMLToolParser",
 ]

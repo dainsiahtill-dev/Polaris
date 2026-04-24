@@ -135,21 +135,21 @@ def get_code_map(request: Request) -> dict[str, Any] | Response:
         return {"points": [], "mode": "error", "message": "Invalid workspace"}
 
     file_contents: dict[str, str] = {}
-    _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
-    _CODE_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".json"}
-    MAX_FILES = 200
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv"}
+    code_exts = {".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".json"}
+    max_files = 200
 
     try:
         count = 0
         for root, dirs, files in os.walk(workspace):
             # Prune hidden / dependency directories in-place (modifies the walk).
-            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
 
             for file in files:
-                if count >= MAX_FILES:
+                if count >= max_files:
                     break
                 ext = os.path.splitext(file)[1].lower()
-                if ext not in _CODE_EXTS:
+                if ext not in code_exts:
                     continue
 
                 full_path = os.path.join(root, file)
@@ -169,7 +169,7 @@ def get_code_map(request: Request) -> dict[str, Any] | Response:
                 except OSError as e:
                     logger.debug("Failed to read file %s: %s", rel_path, e)
 
-            if count >= MAX_FILES:
+            if count >= max_files:
                 break
     except (RuntimeError, ValueError) as e:
         logger.error("Error scanning files for Code Map: %s", e)

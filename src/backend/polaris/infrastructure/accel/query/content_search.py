@@ -15,6 +15,24 @@ _MAX_FILE_SIZE_BYTES = MAX_SEARCH_FILE_SIZE_BYTES
 _MAX_SNIPPET_CHARS = MAX_SNIPPET_CHARS
 _MAX_LINE_CHARS = MAX_LINE_CHARS
 
+_DEFAULT_EXCLUDED_DIRS: set[str] = {
+    ".git",
+    ".hg",
+    ".svn",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    ".polaris",
+    "dist",
+    "build",
+    ".egg-info",
+    ".tox",
+    ".venv",
+    "venv",
+}
+
 
 def _normalize_patterns(patterns: list[str] | None) -> list[str]:
     if not patterns:

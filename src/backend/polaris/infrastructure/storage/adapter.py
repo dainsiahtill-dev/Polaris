@@ -11,7 +11,6 @@ import logging
 import os
 import tempfile
 import threading
-from abc import ABC
 from typing import TYPE_CHECKING, Any, Protocol
 
 from polaris.kernelone.fs.text_ops import ensure_parent_dir
@@ -30,7 +29,7 @@ class FileLocker(Protocol):
     def release(self) -> None: ...
 
 
-class StorageAdapter(ABC):
+class StorageAdapter:
     """Abstract base class for storage operations.
 
     Provides unified interface for:

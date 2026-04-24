@@ -400,7 +400,7 @@ class MockResumeResult:
 
 
 class MockEngine:
-    def __init__(self, submit_result: MockResumeResult = None) -> None:
+    def __init__(self, submit_result: MockResumeResult | None = None) -> None:
         self.calls: list[tuple[str, str, Any]] = []  # (workflow_name, workflow_id, payload)
         self._result = submit_result or MockResumeResult(submitted=True, status="started")
 

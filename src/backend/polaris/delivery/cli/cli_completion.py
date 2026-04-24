@@ -17,16 +17,25 @@ except ImportError:
 # Optional prompt-toolkit import for enhanced input
 try:
     from prompt_toolkit import PromptSession
-    from prompt_toolkit.filters import is_tty as prompt_toolkit_is_tty
+    from prompt_toolkit.filters import is_tty as prompt_toolkit_is_tty  # type: ignore[attr-defined]
     from prompt_toolkit.lexers import SimpleLexer
     from prompt_toolkit.styles import Style
 
     _PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     _PROMPT_TOOLKIT_AVAILABLE = False
+    PromptSession = None  # type: ignore[misc,assignment]
+    prompt_toolkit_is_tty = None  # type: ignore[misc,assignment]
+    SimpleLexer = None  # type: ignore[misc,assignment]
+    Style = None  # type: ignore[misc,assignment]
 
+# readline is conditionally imported; mypy cannot see its attributes when
+# the import is optional.  All readline usage is already guarded with
+# ``if readline is None: return`` runtime checks.
 if TYPE_CHECKING:
-    pass
+    import readline as _readline_stub
+else:
+    _readline_stub = readline  # type: ignore[assignment]
 
 __all__ = [
     "CLICCompleter",
@@ -82,13 +91,13 @@ def load_history() -> None:
     if not history_path.exists():
         return
     try:
-        readline.read_history_file(str(history_path))
+        _readline_stub.read_history_file(str(history_path))  # type: ignore[attr-defined]
         # Trim to max entries
-        current_len = readline.get_current_history_length()
+        current_len = _readline_stub.get_current_history_length()  # type: ignore[attr-defined]
         if current_len > _MAX_HISTORY_ENTRIES:
             excess = current_len - _MAX_HISTORY_ENTRIES
             for _ in range(excess):
-                readline.remove_history_item(0)
+                _readline_stub.remove_history_item(0)  # type: ignore[attr-defined]
     except OSError:
         pass
 
@@ -99,7 +108,7 @@ def save_history() -> None:
         return
     history_path = get_history_file_path()
     with contextlib.suppress(OSError):
-        readline.write_history_file(str(history_path))
+        _readline_stub.write_history_file(str(history_path))  # type: ignore[attr-defined]
 
 
 class CLICCompleter:
@@ -231,11 +240,11 @@ def _setup_readline_completion(completer: CLICCompleter) -> None:
     if readline is None:
         return
     try:
-        readline.set_completer(completer.complete)
+        _readline_stub.set_completer(completer.complete)  # type: ignore[attr-defined]
         # Enable tab completion
-        readline.parse_and_bind("tab: complete")
+        _readline_stub.parse_and_bind("tab: complete")  # type: ignore[attr-defined]
         # For partial completions
-        readline.parse_and_bind("?: complete")
+        _readline_stub.parse_and_bind("?: complete")  # type: ignore[attr-defined]
     except (RuntimeError, ValueError):
         import logging
 
@@ -249,12 +258,12 @@ def _teardown_readline_completion() -> None:
     if readline is None:
         return
     with contextlib.suppress(Exception):
-        readline.set_completer(None)
+        _readline_stub.set_completer(None)  # type: ignore[attr-defined]
 
 
 def _prompt_toolkit_available() -> bool:
     """Check if prompt-toolkit is available and should be used."""
-    if not _PROMPT_TOOLKIT_AVAILABLE:
+    if not _PROMPT_TOOLKIT_AVAILABLE or prompt_toolkit_is_tty is None:
         return False
     # Only use prompt-toolkit in TTY mode
     try:
@@ -279,7 +288,7 @@ _ROLE_SYMBOLS: dict[str, str] = {
 def _get_prompt_style() -> Style:
     """Get or create the prompt style (lazy initialization)."""
     global _PROMPT_STYLE
-    if _PROMPT_STYLE is None and _PROMPT_TOOLKIT_AVAILABLE:
+    if _PROMPT_STYLE is None and _PROMPT_TOOLKIT_AVAILABLE and Style is not None:
         _PROMPT_STYLE = Style.from_dict(
             {
                 "symbol": "#36m",  # cyan
@@ -309,7 +318,7 @@ def _prompt_toolkit_input(
 ) -> str:
     """Read input using prompt-toolkit with bottom toolbar."""
     try:
-        session = PromptSession(
+        session: PromptSession[str] = PromptSession(
             message=prompt,
             bottom_toolbar=lambda: _build_toolbar(role, session_id),
             style=_get_prompt_style(),

@@ -81,8 +81,8 @@ class ExplorationStrategyPort(Protocol):
         self,
         ctx: ExplorationContext,
         budget: ContextBudget,
-    ) -> ExpansionDecision:
-        """Return APPROVED / DENIED / DEFERRED for the current exploration pass."""
+    ) -> ExpansionDecisionResult:
+        """Return expansion decision result for the current exploration pass."""
         ...
 
     def get_phase(self) -> ExplorationPhase:
@@ -463,32 +463,32 @@ class ResolvedStrategy:
 __all__ = [
     # Result types
     "BudgetDecision",
-    # Enums (imported from exploration_policy.py)
-    "ExpansionDecision",
-    "ExplorationPhase",
     # Dataclasses
     "BudgetDecisionKind",
+    "CacheStrategyPort",
     "CompactionDecision",
     "CompactionResult",
-    "ExpansionDecisionResult",
-    "HistoryMaterialization",
-    "CacheStrategyPort",
     # Protocols
     "CompactionStrategyPort",
     "EvaluationStrategyPort",
+    # Enums (imported from exploration_policy.py)
+    "ExpansionDecision",
+    "ExpansionDecisionResult",
+    "ExplorationPhase",
     "ExplorationStrategyPort",
+    "HistoryMaterialization",
     "HistoryMaterializationStrategyPort",
-    "ReadEscalationStrategyPort",
-    "SessionContinuityStrategyPort",
     # Metadata
     "ProfileMetadata",
     "ReadEscalation",
     "ReadEscalationDecision",
     "ReadEscalationDecisionResult",
+    "ReadEscalationStrategyPort",
     # Core schema
     "ResolvedStrategy",
     "ScoreDiff",
     "Scorecard",
+    "SessionContinuityStrategyPort",
     "StrategyBundle",
     "StrategyProfile",
     "StrategyReceipt",

@@ -26,7 +26,7 @@ class CautiousExecutionPolicy:
         risk_bypass_threshold: float = 0.0,
         risk_fast_think_threshold: float = 1.0,
         uncertainty_full_pipe_threshold: float = 0.6,
-    ):
+    ) -> None:
         self._risk_bypass_threshold = risk_bypass_threshold
         self._risk_fast_think_threshold = risk_fast_think_threshold
         self._uncertainty_threshold = uncertainty_full_pipe_threshold

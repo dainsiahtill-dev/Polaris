@@ -19,6 +19,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Polaris execution/runtime services
+from polaris.cells.director.execution.public.service import (
+    DirectorConfig,
+    DirectorService,
+)
+
+# Polaris domain entities
+from polaris.domain.entities import TaskPriority, TaskStatus
+from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_OPERATION_TIMEOUT_SECONDS
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,16 +43,6 @@ def _bootstrap_backend_import_path() -> None:
 
 
 _bootstrap_backend_import_path()
-
-# Polaris execution/runtime services
-from polaris.cells.director.execution.public.service import (
-    DirectorConfig,
-    DirectorService,
-)
-
-# Polaris domain entities
-from polaris.domain.entities import TaskPriority, TaskStatus
-from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_OPERATION_TIMEOUT_SECONDS
 
 # Polaris infrastructure
 

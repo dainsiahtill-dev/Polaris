@@ -6,11 +6,8 @@ Supports filtering by channel, severity, actor, run_id, and cursor-based paginat
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
-
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -25,6 +22,7 @@ from .canonical_event import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+logger = logging.getLogger(__name__)
 
 
 @dataclass

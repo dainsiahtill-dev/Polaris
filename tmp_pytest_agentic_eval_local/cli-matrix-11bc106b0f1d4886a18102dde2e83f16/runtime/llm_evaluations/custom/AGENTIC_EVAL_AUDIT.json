@@ -1,0 +1,40 @@
+{
+  "status": "PASS",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\tmp_pytest_agentic_eval_local\\cli-matrix-11bc106b0f1d4886a18102dde2e83f16",
+  "generated_at": "2026-04-23T23:03:26.658361+00:00",
+  "benchmark": {
+    "suite": "tool_calling_matrix",
+    "run_id": "run-001",
+    "role_scope": "all",
+    "provider_id": "runtime_binding",
+    "model": "runtime_binding",
+    "transport_mode": "stream"
+  },
+  "score": {
+    "overall_percent": 95.0,
+    "average_score": 0.95,
+    "pass_rate": 1.0,
+    "total_cases": 2,
+    "passed_cases": 2,
+    "failed_cases": 0
+  },
+  "failures": [],
+  "tool_audit": {
+    "total_calls": 2,
+    "by_tool": {
+      "read_file": 2
+    },
+    "critical_failures": 0,
+    "safety_violations": []
+  },
+  "repair_plan": [],
+  "errors": [],
+  "evidence_paths": {
+    "benchmark_artifact": "C:/tmp/AGENTIC_BENCHMARK_REPORT.json",
+    "audit_package": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\tmp_pytest_agentic_eval_local\\cli-matrix-11bc106b0f1d4886a18102dde2e83f16\\runtime\\llm_evaluations\\custom\\AGENTIC_EVAL_AUDIT.json",
+    "case_sandboxes": [
+      "C:/tmp/sandbox/pm_task_contract",
+      "C:/tmp/sandbox/qa_release_verdict"
+    ]
+  }
+}

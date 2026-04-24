@@ -472,18 +472,14 @@ class TestRoleContextCompressorAutoCompact:
 
             # Either both tool messages exist, or both are removed
             tool_indices = [
-                i for i, m in enumerate(result)
-                if m.get("role") == "assistant" and isinstance(m.get("content"), list)
+                i for i, m in enumerate(result) if m.get("role") == "assistant" and isinstance(m.get("content"), list)
             ]
             if tool_indices:
                 # If assistant tool_use exists, its result must also exist
                 has_result = any(
                     m.get("role") == "user"
                     and isinstance(m.get("content"), list)
-                    and any(
-                        isinstance(p, dict) and p.get("tool_use_id") == "tu_1"
-                        for p in (m.get("content") or [])
-                    )
+                    and any(isinstance(p, dict) and p.get("tool_use_id") == "tu_1" for p in (m.get("content") or []))
                     for m in result
                 )
                 assert has_result, "tool_use exists but matching tool_result was removed"
@@ -718,9 +714,7 @@ class TestRoleContextCompressorCompactIfNeeded:
             ]
             identity = RoleContextIdentity(role_id="t1", role_type="dev")
 
-            _result, snapshot = compressor.compact_if_needed(
-                messages, identity, force_compact=True
-            )
+            _result, snapshot = compressor.compact_if_needed(messages, identity, force_compact=True)
 
             # Should have been compacted via layer 3 (llm_compact fallback)
             assert snapshot is not None
@@ -739,9 +733,7 @@ class TestRoleContextCompressorCompactIfNeeded:
             identity = RoleContextIdentity(role_id="t1", role_type="dev")
 
             # Force compaction with low target
-            _result, snapshot = compressor.compact_if_needed(
-                messages, identity, force_compact=True, target_tokens=10
-            )
+            _result, snapshot = compressor.compact_if_needed(messages, identity, force_compact=True, target_tokens=10)
 
             assert snapshot is not None
             assert snapshot.compressed_tokens < snapshot.original_tokens
@@ -812,9 +804,7 @@ class TestBuildContinuitySummaryText:
 
     def test_respects_max_chars(self) -> None:
         """build_continuity_summary_text must respect max_chars limit."""
-        messages = [
-            {"role": "user", "content": f"Message {i}"} for i in range(100)
-        ]
+        messages = [{"role": "user", "content": f"Message {i}"} for i in range(100)]
 
         result = build_continuity_summary_text(messages, max_chars=100)
 

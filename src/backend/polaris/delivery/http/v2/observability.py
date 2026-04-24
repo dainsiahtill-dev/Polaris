@@ -242,8 +242,12 @@ async def observability_websocket(websocket: WebSocket) -> None:
             )
 
     # Add handler - wrap async function in sync wrapper for the bridge
+    _pending_tasks: set[asyncio.Task] = set()
+
     def sync_handler(event: dict[str, Any]) -> None:
-        asyncio.create_task(send_event(event))
+        task = asyncio.create_task(send_event(event))
+        _pending_tasks.add(task)
+        task.add_done_callback(_pending_tasks.discard)
 
     ui_bridge.add_ui_handler(sync_handler)
     await ui_bridge.start()

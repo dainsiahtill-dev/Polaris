@@ -738,8 +738,8 @@ class TurnTransactionController:
         turn_request_id_fallback: str,
     ) -> None:
         """Best-effort append of one turn event into TruthLog."""
-        if is_dataclass(event):
-            payload: Any = asdict(event)
+        if is_dataclass(event) and not isinstance(event, type):
+            payload: Any = asdict(event)  # type: ignore[arg-type]  # is_dataclass narrows to DataclassInstance
         else:
             payload = {"repr": repr(event)}
 

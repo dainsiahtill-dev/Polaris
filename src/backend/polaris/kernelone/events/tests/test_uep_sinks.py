@@ -6,7 +6,9 @@ import asyncio
 import gzip
 import json
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
@@ -17,7 +19,7 @@ class TestJournalSink:
     """Test suite for JournalSink."""
 
     @pytest.fixture
-    def temp_workspace(self) -> str:
+    def temp_workspace(self) -> Generator[str, None, None]:
         """Create a temporary workspace."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Note: Storage layout resolves runtime_root to a system cache
@@ -205,7 +207,7 @@ class TestArchiveSink:
     """Test suite for ArchiveSink."""
 
     @pytest.fixture
-    def temp_workspace(self) -> str:
+    def temp_workspace(self) -> Generator[str, None, None]:
         """Create a temporary workspace with history structure."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Note: Metadata dir is .polaris per bootstrap config.
@@ -233,13 +235,14 @@ class TestArchiveSink:
         session_id = "session-xyz"
 
         # Send multiple stream events
-        events = [
+        events: list[dict[str, Any]] = [
             {"type": "content_chunk", "content": "Hello"},
             {"type": "thinking_chunk", "content": "Let me think"},
             {"type": "tool_call", "tool": "read_file", "args": {}},
         ]
 
         for event in events:
+            event_type = event["type"]
             msg = Message(
                 type=MessageType.RUNTIME_EVENT,
                 sender="test",
@@ -249,7 +252,7 @@ class TestArchiveSink:
                     "run_id": session_id,
                     "turn_id": turn_id,
                     "role": "director",
-                    "event_type": event["type"],
+                    "event_type": event_type,
                     "payload": event,
                     "timestamp": "2026-03-31T12:00:00Z",
                 },
@@ -406,7 +409,7 @@ class TestAuditHashSink:
     """Test suite for AuditHashSink."""
 
     @pytest.fixture
-    def temp_workspace(self) -> str:
+    def temp_workspace(self) -> Generator[str, None, None]:
         """Create a temporary workspace."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Note: Metadata dir is .polaris per bootstrap config.
@@ -500,7 +503,7 @@ class TestSinkIntegration:
     """Integration tests with multiple sinks."""
 
     @pytest.fixture
-    def temp_workspace(self) -> str:
+    def temp_workspace(self) -> Generator[str, None, None]:
         """Create a temporary workspace."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Note: Metadata dir is .polaris per bootstrap config.

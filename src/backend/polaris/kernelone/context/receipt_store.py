@@ -89,6 +89,7 @@ class ReceiptStore:
                 content = self.get(receipt_id)
                 if content is not None:
                     import json
+
                     try:
                         return json.loads(content)
                     except json.JSONDecodeError:
@@ -106,6 +107,7 @@ class ReceiptStore:
             The content hash of the stored receipt.
         """
         import json
+
         receipt_id = f"batch:{batch_idempotency_key}:receipt"
         content = json.dumps(receipt, ensure_ascii=False)
         return self.put(receipt_id, content)

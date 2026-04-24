@@ -329,9 +329,15 @@ def _build_continue_visible_content(
     # 如果当前 turn 没有写工具且处于 VERIFYING/IMPLEMENTING 阶段，强制回到 IMPLEMENTING
     _is_materialize = str(delivery_mode or "").lower() == "materialize_changes"
     _has_write_this_turn = _has_write_tools_in_receipt(batch_receipt)
-    _force_implementing = _is_super_mode and _is_materialize and not _has_write_this_turn and phase in (
-        Phase.VERIFYING,
-        Phase.IMPLEMENTING,
+    _force_implementing = (
+        _is_super_mode
+        and _is_materialize
+        and not _has_write_this_turn
+        and phase
+        in (
+            Phase.VERIFYING,
+            Phase.IMPLEMENTING,
+        )
     )
 
     # 基于 Phase 的约束提示

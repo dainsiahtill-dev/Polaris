@@ -6,10 +6,10 @@ import logging
 import os
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from ..config import resolve_effective_config
 from ..verify.orchestrator import run_verify
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:

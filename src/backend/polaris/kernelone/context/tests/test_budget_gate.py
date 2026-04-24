@@ -249,7 +249,7 @@ class TestContextBudgetGateOverflow:
         gate.record_usage(400)
         # headroom = 500 - 400 = 100
         # 450 > 100, so should fail
-        ok2, reason2 = gate.can_add(450)
+        ok2, _reason2 = gate.can_add(450)
         assert ok2 is False
 
     def test_budget_gate_suggest_compaction_on_overflow(self) -> None:
@@ -267,7 +267,7 @@ class TestContextBudgetGateOverflow:
         # Effective limit: 800
 
         # Adding exactly what fits
-        ok, reason = gate.can_add(800)
+        ok, _reason = gate.can_add(800)
         assert ok is True
 
     def test_budget_gate_negative_tokens_rejected(self) -> None:

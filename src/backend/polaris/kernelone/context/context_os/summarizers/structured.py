@@ -408,7 +408,7 @@ class TreeSitterSummarizer:
         head = lines[:head_lines]
         tail = lines[-tail_lines:] if tail_lines > 0 else []
 
-        return "\n".join(head + ["    // ... (truncated) ..."] + tail)
+        return "\n".join([*head, "    // ... (truncated) ...", *tail])
 
     def estimate_output_tokens(self, input_tokens: int) -> int:
         """估算输出 token 数

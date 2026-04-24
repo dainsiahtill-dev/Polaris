@@ -454,7 +454,7 @@ class DocumentManager:
 
         req_counter = 1
         for i, line in enumerate(lines):
-            for pattern, ptype in patterns:
+            for pattern, _ptype in patterns:
                 match = re.search(pattern, line)
                 if match:
                     title = match.group(1).strip()

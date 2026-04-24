@@ -32,10 +32,7 @@ def evaluate_delta(
     fail_threshold_percent: float = 10.0,
 ) -> DeltaJudgement:
     """Evaluate warning/fail flags for a metric versus baseline."""
-    if baseline == 0:
-        delta_percent = 0.0 if current == 0 else 100.0
-    else:
-        delta_percent = ((current - baseline) / baseline) * 100.0
+    delta_percent = (0.0 if current == 0 else 100.0) if baseline == 0 else (current - baseline) / baseline * 100.0
     warning = delta_percent > warning_threshold_percent
     failed = delta_percent > fail_threshold_percent
     return DeltaJudgement(

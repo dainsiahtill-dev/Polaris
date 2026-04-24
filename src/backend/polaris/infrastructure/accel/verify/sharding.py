@@ -441,7 +441,7 @@ def _select_verify_plan(
     config: dict[str, Any],
     changed_files: list[str] | None,
 ) -> dict[str, Any]:
-    raw_changed_files = [item for item in (changed_files or [])]
+    raw_changed_files = list(changed_files or [])
     changed_files_low = [item.lower() for item in raw_changed_files]
     verify_cfg = config.get("verify", {})
     verify_groups_ordered = [

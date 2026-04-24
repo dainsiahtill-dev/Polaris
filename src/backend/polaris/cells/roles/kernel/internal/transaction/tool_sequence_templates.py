@@ -81,9 +81,7 @@ def build_sequence_template(
         if len(ordered_tool_groups) == 2 and not requires_write:
             first_group = ordered_tool_groups[0]
             second_group = ordered_tool_groups[1]
-            if _group_has_any(first_group, _SEARCH_DISCOVERY_TOOLS) and _group_has_any(
-                second_group, _READ_TOOLS
-            ):
+            if _group_has_any(first_group, _SEARCH_DISCOVERY_TOOLS) and _group_has_any(second_group, _READ_TOOLS):
                 lines.append(
                     "TEMPLATE [Search-Then-Read]: "
                     "Step 1: Use glob/repo_rg to locate target files. "
@@ -96,9 +94,7 @@ def build_sequence_template(
         if len(ordered_tool_groups) == 2 and requires_write:
             first_group = ordered_tool_groups[0]
             second_group = ordered_tool_groups[1]
-            if _group_has_any(first_group, _EDIT_WRITE_TOOLS) and _group_has_any(
-                second_group, _READ_TOOLS
-            ):
+            if _group_has_any(first_group, _EDIT_WRITE_TOOLS) and _group_has_any(second_group, _READ_TOOLS):
                 lines.append(
                     "TEMPLATE [Edit-Then-Verify]: "
                     "Step 1: read_file the target file to confirm exact content. "

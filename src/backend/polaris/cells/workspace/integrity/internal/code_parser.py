@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class CodeParser:
     def __init__(self) -> None:
         self.available = TREE_SITTER_AVAILABLE
-        self.parsers = {}
+        self.parsers: dict[str, Any] = {}
 
     def get_parser(self, lang_name: str) -> Any | None:
         if not self.available:

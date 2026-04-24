@@ -415,7 +415,7 @@ class TimeoutError(InfrastructureError):
         operation: str | None = None,
         **kwargs,
     ) -> None:
-        details = {}
+        details: dict[str, Any] = {}
         if timeout_seconds is not None:
             details["timeout_seconds"] = timeout_seconds
         if operation:
@@ -424,7 +424,7 @@ class TimeoutError(InfrastructureError):
         super().__init__(message, details=details, **kwargs)
 
 
-class LLMError(_LLMErrorCanonical):
+class LLMError(_LLMErrorCanonical):  # type: ignore[misc] # mypy sees _LLMErrorCanonical as Any due to ignore_missing_imports
     """Raised when an LLM operation fails.
 
     Inherits from the canonical llm.exceptions.LLMError, bridging the
@@ -440,7 +440,7 @@ class LLMError(_LLMErrorCanonical):
         model: str | None = None,
         **kwargs,
     ) -> None:
-        details = {}
+        details: dict[str, Any] = {}
         if provider:
             details["provider"] = provider
         if model:

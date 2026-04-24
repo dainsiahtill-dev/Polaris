@@ -1,5 +1,7 @@
 """Tests for blocked task policy engine."""
 
+from typing import Any
+
 import pytest
 from polaris.delivery.cli.pm.blocked_policy import (
     BlockedDecision,
@@ -282,19 +284,19 @@ class TestDegradeSettingsHelpers:
 
     def test_should_not_apply_empty_settings(self) -> None:
         """Test that empty settings are not applied."""
-        pm_state = {"degrade_settings": {}}
+        pm_state: dict[str, Any] = {"degrade_settings": {}}
         should_apply, _settings = should_apply_degrade_settings(pm_state)
         assert should_apply is False
 
     def test_should_not_apply_missing_settings(self) -> None:
         """Test that missing settings are not applied."""
-        pm_state = {}
+        pm_state: dict[str, Any] = {}
         should_apply, _settings = should_apply_degrade_settings(pm_state)
         assert should_apply is False
 
     def test_consume_degrade_settings(self) -> None:
         """Test that consume_degrade_settings removes the settings."""
-        pm_state = {"degrade_settings": {"serial_mode": True}, "other_key": "value"}
+        pm_state: dict[str, Any] = {"degrade_settings": {"serial_mode": True}, "other_key": "value"}
         new_state = consume_degrade_settings(pm_state)
         assert "degrade_settings" not in new_state
         assert new_state["other_key"] == "value"

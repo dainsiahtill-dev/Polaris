@@ -12,9 +12,6 @@ import os
 import time
 import warnings
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
-
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -45,6 +42,8 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from polaris.cells.director.execution.public.service import DirectorService
+
+logger = logging.getLogger(__name__)
 
 
 # DEPRECATED: Backward-compat re-export for tests.
@@ -530,7 +529,7 @@ async def director_run_orchestration(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 @router.get("/runs/{run_id}", response_model=DirectorOrchestrationResponse, dependencies=[Depends(require_auth)])
@@ -561,4 +560,4 @@ async def director_get_orchestration(run_id: str) -> DirectorOrchestrationRespon
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e

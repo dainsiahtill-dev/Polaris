@@ -247,7 +247,7 @@ class PythonCodeValidator:
             )
         ]
 
-        suggestions = []
+        suggestions: list[str] = []
 
         if not error.lineno or error.lineno > len(code.splitlines()):
             return SyntaxValidationResult.failure(errors, suggestions)
@@ -276,7 +276,7 @@ class PythonCodeValidator:
         if "unindent does not match" in error.msg or "unexpected indent" in error.msg:
             # 检查是否整个文件缩进都是错的
             all_indents = []
-            for i, line in enumerate(lines[: error.lineno]):
+            for _i, line in enumerate(lines[: error.lineno]):
                 if line.strip():
                     ind = len(line) - len(line.lstrip())
                     all_indents.append(ind)
@@ -552,7 +552,7 @@ def verify_written_code(
         actual_lines = actual.splitlines()
         diff_lines = []
 
-        for i, (exp, act) in enumerate(zip(expected_lines, actual_lines)):
+        for i, (exp, act) in enumerate(zip(expected_lines, actual_lines, strict=False)):
             if exp != act:
                 diff_lines.append(f"Line {i + 1}: expected {exp!r}, got {act!r}")
 
@@ -742,7 +742,7 @@ def _fix_rust_with_rustfmt(code: str, fixes: list[HallucinationFix]) -> tuple[st
 class MultiLanguageCodeValidator:
     """多语言代码验证器。"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.python_validator = PythonCodeValidator()
         self._validators = {
             ".py": lambda c, f: self.python_validator.validate(c, f),

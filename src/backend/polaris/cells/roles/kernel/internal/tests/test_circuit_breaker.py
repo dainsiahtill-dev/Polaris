@@ -95,7 +95,7 @@ class TestSameToolCircuitBreaker:
 
         levels = []
         for _ in range(6):
-            level, count = breaker.evaluate("read_file", args, result)
+            level, _count = breaker.evaluate("read_file", args, result)
             levels.append(level)
 
         # With dual detection: both no_gain and same_signature increment
@@ -377,7 +377,7 @@ class TestProgressiveBreaker:
 
         levels = []
         for _ in range(7):
-            level, count = breaker.evaluate("read_file", args, result)
+            level, _count = breaker.evaluate("read_file", args, result)
             levels.append(level)
 
         # Both no_gain and same_signature increment together for identical calls.
@@ -409,7 +409,7 @@ class TestProgressiveBreaker:
 
         # New result resets no-gain streak (but NOT same_signature)
         new_result = {"success": True, "result": {"content": "different"}}
-        level, count = breaker.evaluate("read_file", args, new_result)
+        level, _count = breaker.evaluate("read_file", args, new_result)
         # same_sig=2 still contributes to effective count (>= warning=2)
         assert level == CircuitBreakerLevel.WARNING
         assert breaker._consecutive_no_gain == 0
@@ -507,7 +507,7 @@ class TestReadOnlyStagnation:
         for i in range(9):
             args = {"path": files[i % len(files)]}
             result = {"success": True, "result": {"content": f"content_{i}"}}
-            level, count = breaker.evaluate("read_file", args, result, is_read_only=True)
+            level, _count = breaker.evaluate("read_file", args, result, is_read_only=True)
             levels.append(level)
 
         # Normal scene: read_stagnation_threshold=8
@@ -528,7 +528,7 @@ class TestReadOnlyStagnation:
         for i in range(8):
             args = {"path": files[i % len(files)]}
             result = {"success": True, "result": {"content": f"unique_{i}"}}
-            level, count = breaker.evaluate("read_file", args, result, is_read_only=True)
+            level, _count = breaker.evaluate("read_file", args, result, is_read_only=True)
             levels.append(level)
 
         # Quick fix: read_stagnation_threshold=6
@@ -539,8 +539,6 @@ class TestReadOnlyStagnation:
         """A write operation resets _read_only_streak to 0 in the breaker."""
         breaker = ProgressiveCircuitBreaker(scene="normal")
 
-        args_r = {"path": "/test/file.py"}
-        result_r = {"success": True, "result": {"content": "data"}}
 
         # Accumulate 5 read-only streak
         for i in range(5):
@@ -565,7 +563,7 @@ class TestReadOnlyStagnation:
         for i in range(16):
             args = {"path": f"/src/deep/file{i % 5}.py"}
             result = {"success": True, "result": {"content": f"analysis_{i}"}}
-            level, count = breaker.evaluate("read_file", args, result, is_read_only=True)
+            level, _count = breaker.evaluate("read_file", args, result, is_read_only=True)
 
             if i < 14:
                 assert level == CircuitBreakerLevel.OK, f"Should be OK at streak={i + 1}"

@@ -74,7 +74,7 @@ class MetaCognitionEngine:
     - Meta-Level: What systematic biases exist?
     """
 
-    def __init__(self, llm_invoker: LLMInvoker | None = None):
+    def __init__(self, llm_invoker: LLMInvoker | None = None) -> None:
         self._calibration_history: list[ConfidenceCalibrationRecord] = []
         self._reflection_history: list[ReflectionOutput] = []
         self._llm = llm_invoker

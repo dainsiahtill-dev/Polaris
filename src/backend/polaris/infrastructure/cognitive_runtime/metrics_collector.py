@@ -115,7 +115,7 @@ class CognitiveRuntimeMetricsCollector:
                 ensure_parent=False,
             )
             return self._conn
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(
                 "Failed to connect to CognitiveRuntimeSqliteStore: %s",
                 str(exc),
@@ -313,15 +313,15 @@ class CognitiveRuntimeMetricsCollector:
     def _calculate_sqlite_write_p95_ms(self, conn: sqlite3.Connection) -> float:
         """Calculate sqlite_write_p95_ms from write timing metadata.
 
-        Estimates from database pragmas and operation patterns.
-        Returns conservative default (0.0) when no timing data available.
+        Estimates inter-write intervals from receipt `created_at` timestamps.
+        Returns 0.0 when fewer than 2 receipts exist (insufficient data for p95).
         """
         try:
             cursor = conn.execute(
                 """
                 SELECT created_at FROM cognitive_runtime_receipts
                 WHERE workspace = ?
-                ORDER BY created_at DESC
+                ORDER BY created_at ASC
                 LIMIT 100
                 """,
                 (self._workspace,),
@@ -330,7 +330,26 @@ class CognitiveRuntimeMetricsCollector:
             if len(rows) < 2:
                 return 0.0
 
-            return 0.0
+            timestamps: list[float] = []
+            for row in rows:
+                val = row[0]
+                if val is None:
+                    continue
+                try:
+                    ts = float(val)
+                    timestamps.append(ts)
+                except (TypeError, ValueError):
+                    continue
+
+            if len(timestamps) < 2:
+                return 0.0
+
+            intervals_ms: list[float] = []
+            for i in range(1, len(timestamps)):
+                delta = abs(timestamps[i] - timestamps[i - 1]) * 1000.0
+                intervals_ms.append(delta)
+
+            return _p95(intervals_ms)
         except (RuntimeError, ValueError) as exc:
             logger.warning("Failed to calculate write P95: %s", str(exc))
             return 0.0

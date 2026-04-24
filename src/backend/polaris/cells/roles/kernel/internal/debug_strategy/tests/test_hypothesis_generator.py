@@ -49,11 +49,7 @@ class TestHypothesisGenerator:
         assert len(hypotheses) > 0
         descriptions = [h.description for h in hypotheses]
         # TIMING_ERROR模板包含"异步"、"资源"、"竞态"等关键词
-        assert any(
-            kw in d.lower()
-            for d in descriptions
-            for kw in ["异步", "资源", "竞态", "超时", "等待"]
-        )
+        assert any(kw in d.lower() for d in descriptions for kw in ["异步", "资源", "竞态", "超时", "等待"])
 
     def test_generate_hypotheses_max_limit(self, generator: HypothesisGenerator) -> None:
         """测试最大假设数量限制。"""

@@ -74,7 +74,7 @@ class TestStreamThinkingParserJSON:
         parser = StreamThinkingParser()
 
         # Proper nested JSON with correct closing
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"name": "repo_rg", "arguments": {"pattern": "TODO", "nested": {"key": "value"}}}',
             final=True,
         ):
@@ -92,7 +92,7 @@ class TestStreamThinkingParserJSON:
         parser = StreamThinkingParser(allowed_tool_names=["read_file", "write_file"])
 
         # Feed non-allowed tool
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"name": "repo_rg", "arguments": {}}',
             final=True,
         ):
@@ -104,7 +104,7 @@ class TestStreamThinkingParserJSON:
 
         # Now try with allowed tool
         parser.reset()
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"name": "read_file", "arguments": {"path": "test.py"}}',
             final=True,
         ):
@@ -218,7 +218,7 @@ class TestStreamThinkingParserJSON:
         """Test JSON tool call with extra whitespace."""
         parser = StreamThinkingParser()
 
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{  "name"  :  "repo_rg"  ,  "arguments"  :  {}  }',
             final=True,
         ):
@@ -351,7 +351,7 @@ class TestStreamThinkingParserJSON:
         """Test JSON tool call using 'function' key for tool name."""
         parser = StreamThinkingParser()
 
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"function": "read_file", "arguments": {"path": "test.py"}}',
             final=True,
         ):
@@ -366,7 +366,7 @@ class TestStreamThinkingParserJSON:
         """Test JSON tool call using 'action' key for tool name."""
         parser = StreamThinkingParser()
 
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"action": "write", "args": {"path": "out.txt", "content": "data"}}',
             final=True,
         ):
@@ -381,7 +381,7 @@ class TestStreamThinkingParserJSON:
         """Test JSON tool call using 'params' key for arguments."""
         parser = StreamThinkingParser()
 
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"name": "repo_rg", "params": {"pattern": "TODO"}}',
             final=True,
         ):
@@ -396,7 +396,7 @@ class TestStreamThinkingParserJSON:
         """Test JSON tool call using 'parameters' key for arguments."""
         parser = StreamThinkingParser()
 
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"tool": "read", "parameters": {"path": "a.py"}}',
             final=True,
         ):
@@ -412,7 +412,7 @@ class TestStreamThinkingParserJSON:
         parser = StreamThinkingParser()
 
         # First parse
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"name": "tool1", "arguments": {}}',
             final=True,
         ):
@@ -424,7 +424,7 @@ class TestStreamThinkingParserJSON:
         parser.reset()
 
         # Second parse
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"name": "tool2", "arguments": {}}',
             final=True,
         ):
@@ -472,7 +472,7 @@ class TestStreamThinkingParserJSON:
         """Test that XML tool calls are not misidentified as JSON."""
         parser = StreamThinkingParser()
 
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '<tool_call><invoke name="my_tool"><args>{}</args></invoke></tool_call>',
             final=True,
         ):
@@ -492,13 +492,13 @@ class TestStreamThinkingParserJSON:
         parser = StreamThinkingParser()
 
         # Stream the JSON in multiple chunks
-        async for chunk in parser.feed('{"name": "test', False):
+        async for _chunk in parser.feed('{"name": "test', False):
             pass
 
-        async for chunk in parser.feed('", "argumen', False):
+        async for _chunk in parser.feed('", "argumen', False):
             pass
 
-        async for chunk in parser.feed('ts": {}}', final=True):
+        async for _chunk in parser.feed('ts": {}}', final=True):
             pass
 
         calls = parser.get_json_tool_calls()
@@ -510,7 +510,7 @@ class TestStreamThinkingParserJSON:
         """Test multiple JSON tool calls received in one chunk."""
         parser = StreamThinkingParser()
 
-        async for chunk in parser.feed(
+        async for _chunk in parser.feed(
             '{"name": "tool1", "arguments": {}}{"name": "tool2", "arguments": {}}',
             final=True,
         ):

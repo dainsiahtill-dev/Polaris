@@ -597,7 +597,7 @@ class StrategyBenchmark:
         challenger_wins = 0
         ties = 0
 
-        for br, cr in zip(baseline_summary.results, challenger_summary.results):
+        for br, cr in zip(baseline_summary.results, challenger_summary.results, strict=False):
             if cr.scores.overall_score > br.scores.overall_score:
                 challenger_wins += 1
             elif cr.scores.overall_score < br.scores.overall_score:

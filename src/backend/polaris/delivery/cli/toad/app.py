@@ -27,7 +27,7 @@ class ToadApp:
     """Minimal runnable toad surface backed by the canonical role console."""
 
     def __init__(self) -> None:
-        PolarisRoleConsole, _ = _bootstrap_backend_import_path()
+        PolarisRoleConsole, _ = _bootstrap_backend_import_path()  # noqa: N806
         self._console = PolarisRoleConsole
 
 

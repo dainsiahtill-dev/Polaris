@@ -46,7 +46,7 @@ class PMService:
         model: str = "glm-4.7-flash:latest",
         backend: str = "auto",
     ) -> None:
-        ArtifactService, generate_role_response, TaskBoard = _bootstrap_backend_import_path()
+        _ArtifactService, _generate_role_response, TaskBoard = _bootstrap_backend_import_path()  # noqa: N806
         self.workspace = workspace
         self.model = model
         self.backend = backend

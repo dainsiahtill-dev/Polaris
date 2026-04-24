@@ -35,21 +35,21 @@ except ImportError:
     pass
 
 try:
-    from polaris.delivery.cli.pm.nodes.chief_engineer_node import ChiefEngineerNode as _CE
+    from polaris.delivery.cli.pm.nodes.chief_engineer_node import ChiefEngineerNode as _CE  # noqa: N814
 
     ChiefEngineerNode = _CE
 except ImportError:
     pass
 
 try:
-    from polaris.delivery.cli.pm.nodes.director_node import DirectorNode as _DN
+    from polaris.delivery.cli.pm.nodes.director_node import DirectorNode as _DN  # noqa: N814
 
     DirectorNode = _DN
 except ImportError:
     pass
 
 try:
-    from polaris.delivery.cli.pm.nodes.qa_node import QANode as _QA
+    from polaris.delivery.cli.pm.nodes.qa_node import QANode as _QA  # noqa: N814
 
     QANode = _QA
 except ImportError:

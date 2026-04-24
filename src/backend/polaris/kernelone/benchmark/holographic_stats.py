@@ -52,7 +52,7 @@ def percentile(samples: list[float], ratio: float) -> float:
         return 0.0
     ratio = min(max(ratio, 0.0), 1.0)
     sorted_values = sorted(samples)
-    index = int(math.ceil(ratio * len(sorted_values))) - 1
+    index = math.ceil(ratio * len(sorted_values)) - 1
     index = min(max(index, 0), len(sorted_values) - 1)
     return float(sorted_values[index])
 

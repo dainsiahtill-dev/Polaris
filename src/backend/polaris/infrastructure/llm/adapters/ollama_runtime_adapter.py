@@ -47,6 +47,7 @@ class OllamaRuntimeAdapter(KernelOllamaAdapter):
             "prompt": text,
         }
         import requests
+
         response = requests.post(url, json=payload, timeout=timeout_seconds)
 
         if response.status_code == 404:
@@ -73,5 +74,3 @@ class OllamaRuntimeAdapter(KernelOllamaAdapter):
         if not isinstance(vector, list):
             return []
         return [float(item) for item in vector if isinstance(item, (int, float))]
-
-

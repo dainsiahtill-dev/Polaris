@@ -762,14 +762,14 @@ __all__ = [
     # P1-TYPE-003/004: Renamed to Transcript* to avoid conflicts
     "ToolCall",  # Backward compat alias for TranscriptToolCall
     "ToolResult",  # Backward compat alias for TranscriptToolResult
-    "TranscriptToolCall",
-    "TranscriptToolResult",
     # Literal 约束
     "ToolResultStatus",
     "TranscriptAppendRequest",
     "TranscriptDelta",
     # 联合类型
     "TranscriptItem",
+    "TranscriptToolCall",
+    "TranscriptToolResult",
     "UserMessage",
     # 工厂函数
     "from_assistant_message",

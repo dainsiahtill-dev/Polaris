@@ -53,6 +53,7 @@ __all__ = [
     "KERNELONE_VERSION",
     "LOCK_TIMEOUT_DEFAULT_SECONDS",
     "LOCK_TTL_DEFAULT_SECONDS",
+    "AuthCheckerPort",
     # Auth contracts
     "AuthResult",
     "AuthStrength",
@@ -61,7 +62,6 @@ __all__ = [
     "EffectType",
     "Envelope",
     "ErrorCategory",
-    "AuthCheckerPort",
     "KernelError",
     "KernelOneError",
     "LockAcquireResult",

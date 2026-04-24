@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 if TYPE_CHECKING:
     from polaris.kernelone.benchmark.unified_models import UnifiedBenchmarkCase
@@ -42,7 +42,9 @@ if TYPE_CHECKING:
     # Backward compatibility with legacy agentic benchmark models
     from .benchmark_models import AgenticBenchmarkCase as _LegacyAgenticBenchmarkCase
 
-    _BenchmarkCaseType = UnifiedBenchmarkCase | _LegacyAgenticBenchmarkCase
+    _BenchmarkCaseType: TypeAlias = UnifiedBenchmarkCase | _LegacyAgenticBenchmarkCase
+else:
+    _BenchmarkCaseType: TypeAlias = Any
 
 
 class SanitizationStrategy(Enum):

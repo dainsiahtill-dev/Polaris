@@ -181,13 +181,13 @@ __all__ = [
     "MAX_TOOL_READ_LINES",
     "READ_ONLY_TOOLS",
     "WRITE_TOOLS",
-    # Command validation
-    "CommandValidationResult",
-    "CommandWhitelistValidator",
     # Validators
     "ArrayValidator",
     "BaseValidator",
     "BooleanValidator",
+    # Command validation
+    "CommandValidationResult",
+    "CommandWhitelistValidator",
     "IntegerValidator",
     "StringValidator",
     # Models

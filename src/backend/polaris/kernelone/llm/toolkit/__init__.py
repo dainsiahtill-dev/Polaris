@@ -182,7 +182,6 @@ __all__ = [
     "CanonicalToolCallParser",  # 统一解析器入口 (returns list[ToolCall])
     "CompressionResult",
     "ConversationalToolExecutor",
-    "deduplicate_tool_calls",  # P0-002: 新增导出
     "EditType",
     "ErrorCategory",
     # ═══════════════════════════════════════════════════════════════
@@ -236,6 +235,7 @@ __all__ = [
     "create_default_registry",
     "create_tool_chain_prompt",
     "create_tool_request",
+    "deduplicate_tool_calls",  # P0-002: 新增导出
     "execute_tool_call",
     "execute_tool_calls",
     "execute_tool_chain",

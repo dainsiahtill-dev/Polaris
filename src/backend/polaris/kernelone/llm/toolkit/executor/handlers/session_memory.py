@@ -171,6 +171,7 @@ def _handle_get_state(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
         "value": payload,
     }
 
+
 def _handle_update_session_state(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     """Handle update_session_state tool call."""
     session_id, provider = _require_session_memory_context(self)
@@ -179,8 +180,4 @@ def _handle_update_session_state(self: AgentAccelToolExecutor, **kwargs) -> dict
         # The orchestrator can intercept this tool call payload directly from the tool_calls list.
         return {"ok": True, "note": "Session state patch recorded locally"}
 
-    return {
-        "ok": True,
-        "note": "Session state updated successfully",
-        "patched_data": kwargs
-    }
+    return {"ok": True, "note": "Session state updated successfully", "patched_data": kwargs}

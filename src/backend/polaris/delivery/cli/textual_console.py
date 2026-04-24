@@ -17,6 +17,7 @@ Features:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from datetime import datetime
@@ -25,17 +26,11 @@ from typing import TYPE_CHECKING, Any
 
 # Textual 导入
 try:
-    from rich.markdown import Markdown as RichMarkdown
-    from rich.panel import Panel
-    from rich.syntax import Syntax
-    from rich.text import Text as RichText
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
-    from textual.events import Click
-    from textual.geometry import Size
     from textual.reactive import reactive
-    from textual.widgets import Button, Collapsible, Label, LoadingIndicator, Markdown, Rule, Static, TextArea
+    from textual.widgets import Button, Rule, Static, TextArea
 except ImportError as e:
     print(f"[ERROR] Textual/Rich is not installed: {e}")
     print("[ERROR] Install with: pip install textual rich")
@@ -247,19 +242,20 @@ class ResizableInput(Vertical):
 
         # 检查点击是否在手柄区域（考虑手柄的高度）
         handle_region = handle.region
-        if handle_region and event.screen_x is not None and event.screen_y is not None:
-            # 使用 region 重叠检测代替直接坐标比较
-            if (
-                handle_region.x <= event.screen_x < handle_region.x + handle_region.width
-                and handle_region.y <= event.screen_y < handle_region.y + handle_region.height
-            ):
-                self._is_dragging = True
-                self._drag_start_y = event.screen_y
-                textarea = self.query_one("#input-textarea", TextArea)
-                self._start_height = textarea.size.height if textarea else INPUT_DEFAULT_HEIGHT
-                handle.add_class("dragging")
-                self.capture_mouse()
-                event.stop()
+        if (
+            handle_region
+            and event.screen_x is not None
+            and event.screen_y is not None
+            and handle_region.x <= event.screen_x < handle_region.x + handle_region.width
+            and handle_region.y <= event.screen_y < handle_region.y + handle_region.height
+        ):
+            self._is_dragging = True
+            self._drag_start_y = event.screen_y
+            textarea = self.query_one("#input-textarea", TextArea)
+            self._start_height = textarea.size.height if textarea else INPUT_DEFAULT_HEIGHT
+            handle.add_class("dragging")
+            self.capture_mouse()
+            event.stop()
 
     async def _on_mouse_move(self, event: MouseMove) -> None:
         """鼠标移动 - 添加边界检查"""
@@ -277,11 +273,8 @@ class ResizableInput(Vertical):
             handle = self.query_one("#resize-handle", Static)
             if handle:
                 handle.remove_class("dragging")
-            try:
+            with contextlib.suppress(RuntimeError, ValueError):
                 self.release_mouse()
-            except (RuntimeError, ValueError):
-                # 忽略释放鼠标时的异常
-                pass
             event.stop()
 
 
@@ -901,7 +894,7 @@ I'm your AI assistant. How can I help you today?
                 self.set_status("Error")
                 self.set_current_tool(None)
 
-        self.run_worker(respond)
+        self.run_worker(respond)  # type: ignore[arg-type]  # textual run_worker expects Never return type for coroutine, but respond returns None
 
     def _update_stream_message(self, msg_id: str, content: MessageContent) -> None:
         """更新流式消息内容"""
@@ -1536,8 +1529,6 @@ __all__ = [
     "ToolCallInfo",
     "ToolStatus",
     "get_console_css",
-    "get_theme_colors",
-    "get_theme_manager",
     "run_claude_tui",
     "run_textual_console",
 ]

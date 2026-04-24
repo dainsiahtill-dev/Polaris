@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 def example_basic_usage() -> None:
     """基本用法示例"""
-    AuditContext, _, _, _, verify = _bootstrap_backend_import_path()
+    AuditContext, _, _, _, verify = _bootstrap_backend_import_path()  # noqa: N806
     logger.info("=== 基本用法示例 ===\n")
 
     # 1. 自动发现 runtime 目录
@@ -55,7 +55,7 @@ def example_basic_usage() -> None:
 
 def example_triage() -> None:
     """排障包生成示例"""
-    AuditContext, _, _, triage, _ = _bootstrap_backend_import_path()
+    _AuditContext, _, _, triage, _ = _bootstrap_backend_import_path()  # noqa: N806
     logger.info("=== 排障包生成示例 ===\n")
 
     # 指定 run_id 生成排障包

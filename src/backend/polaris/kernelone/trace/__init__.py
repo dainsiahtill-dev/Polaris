@@ -50,9 +50,9 @@ from .tracer import (
 
 __all__ = [
     "ContextManager",
+    "JSONFormatter",
     # Context
     "PolarisContext",
-    "JSONFormatter",
     "Span",
     # Logger
     "UnifiedLogger",

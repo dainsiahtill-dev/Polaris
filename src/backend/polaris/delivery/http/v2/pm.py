@@ -215,11 +215,11 @@ async def pm_run_orchestration(
 
     except HTTPException:
         raise
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError) as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 @router.get("/runs/{run_id}", response_model=PMOrchestrationResponse, dependencies=[Depends(require_auth)])
@@ -260,7 +260,7 @@ async def pm_get_orchestration(run_id: str) -> PMOrchestrationResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",
-        )
+        ) from e
 
 
 # ============================================================================

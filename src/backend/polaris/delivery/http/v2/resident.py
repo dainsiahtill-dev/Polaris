@@ -6,11 +6,11 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from polaris.cells.resident.autonomy.public.service import ResidentMode, get_resident_service
 from polaris.delivery.http.dependencies import require_auth
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
-from polaris.cells.resident.autonomy.public.service import ResidentMode, get_resident_service
 
 router = APIRouter(prefix="/resident", tags=["Resident"])
 

@@ -136,7 +136,7 @@ def list_providers(request: Request) -> dict[str, Any]:
         }
     except (RuntimeError, ValueError) as exc:
         logger.error("list_providers failed: %s", exc)
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from exc
 
 
 @router.get("/llm/providers/{provider_type}/info", dependencies=[Depends(require_auth)])
@@ -161,7 +161,7 @@ def get_provider_info(request: Request, provider_type: str) -> dict[str, Any]:
         raise
     except (RuntimeError, ValueError) as exc:
         logger.error("get_provider_info failed: %s", exc)
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from exc
 
 
 @router.get("/llm/providers/{provider_type}/config", dependencies=[Depends(require_auth)])
@@ -176,7 +176,7 @@ def get_provider_default_config(request: Request, provider_type: str) -> dict[st
         raise
     except (RuntimeError, ValueError) as exc:
         logger.error("get_provider_default_config failed: %s", exc)
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from exc
 
 
 @router.post("/llm/providers/{provider_type}/validate", dependencies=[Depends(require_auth)])
@@ -211,4 +211,4 @@ def health_check_all(request: Request, payload: dict[str, Any]) -> dict[str, Any
         return results
     except (RuntimeError, ValueError) as exc:
         logger.error("health_check_all failed: %s", exc)
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from exc

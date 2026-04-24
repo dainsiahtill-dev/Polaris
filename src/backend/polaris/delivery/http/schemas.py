@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -63,8 +65,6 @@ class DocsInitApplyPayload(BaseModel):
 # ============================================================
 # Audit V2 Schemas (Phase 1 - 架构级审计重构)
 # ============================================================
-
-from typing import Any
 
 
 class AuditEventResponse(BaseModel):

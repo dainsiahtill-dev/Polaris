@@ -26,9 +26,9 @@ from polaris.kernelone.storage import (
 from polaris.kernelone.storage.io_paths import build_cache_root
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
-
 from ._shared import get_state, require_auth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

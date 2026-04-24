@@ -75,7 +75,7 @@ class RealtimeLogSubscription:
         except RuntimeError:
             # Event loop already closed.
             self._mark_dropped(1)
-        except (RuntimeError, ValueError):
+        except ValueError:
             logger.debug("Failed to schedule realtime event enqueue", exc_info=True)
             self._mark_dropped(1)
 

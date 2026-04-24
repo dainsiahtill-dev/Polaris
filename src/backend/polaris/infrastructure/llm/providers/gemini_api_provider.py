@@ -7,9 +7,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import requests
-
-logger = logging.getLogger(__name__)
-
 from polaris.kernelone.llm.providers import (
     BaseProvider,
     ProviderInfo,
@@ -24,6 +21,7 @@ from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+logger = logging.getLogger(__name__)
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> int:
@@ -183,7 +181,7 @@ class GeminiAPIProvider(BaseProvider):
             response.raise_for_status()
             latency_ms = int((time.time() - start) * 1000)
             return HealthResult(ok=True, latency_ms=latency_ms)
-        except (RuntimeError, ValueError) as exc:
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             latency_ms = int((time.time() - start) * 1000)
             return HealthResult(ok=False, latency_ms=latency_ms, error=str(exc))
 
@@ -233,7 +231,7 @@ class GeminiAPIProvider(BaseProvider):
                     models.append(ModelInfo(id=model_id, label=label))
 
             return ModelListResult(ok=True, supported=True, models=models)
-        except (RuntimeError, ValueError) as exc:
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             return ModelListResult(ok=False, supported=True, models=[], error=str(exc))
 
     def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
@@ -292,7 +290,7 @@ class GeminiAPIProvider(BaseProvider):
                 usage = self._usage_from_response(prompt, output, data)
 
                 return InvokeResult(ok=True, output=output.strip(), latency_ms=latency_ms, usage=usage, raw=data)
-            except (RuntimeError, ValueError) as exc:
+            except (requests.RequestException, RuntimeError, ValueError) as exc:
                 attempt += 1
                 if attempt > retries:
                     latency_ms = int((time.time() - start) * 1000)

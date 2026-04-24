@@ -142,11 +142,7 @@ class TestSkeletonOutput:
 
     def test_no_skeleton_for_complete_content(self) -> None:
         enforcer = OutputCompletenessEnforcer()
-        content = (
-            "function one() { return 1; }\n"
-            "function two() { return 2; }\n"
-            "function three() { return 3; }\n"
-        )
+        content = "function one() { return 1; }\nfunction two() { return 2; }\nfunction three() { return 3; }\n"
         violations = enforcer.validate(content)
         assert not any(v.rule.startswith("skeleton_") for v in violations)
 
@@ -191,13 +187,7 @@ class TestEnforcerIntegration:
 
     def test_all_three_categories(self) -> None:
         enforcer = OutputCompletenessEnforcer()
-        content = (
-            "// ...\n"
-            "// TODO\n"
-            "function test() {}\n"
-            "// remaining methods are similar\n"
-            "function end() {}\n"
-        )
+        content = "// ...\n// TODO\nfunction test() {}\n// remaining methods are similar\nfunction end() {}\n"
         violations = enforcer.validate(content)
         rules = {v.rule for v in violations}
         assert "placeholder_ellipsis_comment" in rules

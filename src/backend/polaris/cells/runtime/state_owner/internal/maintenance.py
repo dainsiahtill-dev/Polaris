@@ -50,8 +50,7 @@ _ALL_CLEAR_REL_PATHS: list[str] = sorted(
 )
 
 _RESET_FILE_REL_PATHS: list[str] = sorted(
-    set(
-        [
+    {
             *_ALL_CLEAR_REL_PATHS,
             "runtime/contracts/pm_tasks.contract.json",
             "runtime/state/pm.state.json",
@@ -67,8 +66,7 @@ _RESET_FILE_REL_PATHS: list[str] = sorted(
             "runtime/control/pm.stop.flag",
             "runtime/control/director.stop.flag",
             "runtime/memory/last_state.json",
-        ]
-    )
+        }
 )
 
 _RESET_DIR_REL_PATHS: list[str] = [
@@ -199,7 +197,7 @@ def _clear_rel_paths(
                     failed.append(candidate)
 
     unique_cleared = sorted(set(cleared))
-    unique_failed = sorted(set(path for path in failed if path not in unique_cleared))
+    unique_failed = sorted({path for path in failed if path not in unique_cleared})
     return {
         "cleared_paths": unique_cleared,
         "failed_paths": unique_failed,

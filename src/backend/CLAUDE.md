@@ -112,20 +112,20 @@
 
 ---
 
-## 6. 当前架构现实快照（2026-03-28）
+## 6. 当前架构现实快照（2026-04-24）
 
 > 本节是 `AGENTS.md §15` 的镜像摘要。如有冲突，以 `AGENTS.md` 为准。
 
 ### 6.1 Graph 图谱现状
 
-- `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
-- cells.yaml 声明 Cell：**59 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-04-24）
+- `docs/graph/catalog/cells.yaml` — `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
+- cells.yaml 声明的 Cell：**59 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-04-24）
 - `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**0 / 52**
 - `docs/graph/subgraphs/` 当前仅有：
   - `execution_governance_pipeline.yaml`
   - `storage_archive_pipeline.yaml`
 
-### 6.2 polaris/ 快照（2026-04-24）
+### 6.2 polaris/ 结构现状（`*.py` 快照，2026-04-24）
 
 统计命令：`find polaris -name "*.py" | awk -F/ '{print $2}' | sort | uniq -c`
 
@@ -140,20 +140,18 @@
 - `polaris/config/`: 5
 - **总计**：**2732** 个 Python 文件
 
-### 6.3 测试与主要 gap
+### 6.3 测试与收集现状
 
-- `pytest --collect-only -q`（2026-04-24）：**13511 collected / 62 errors**
+- `pytest --collect-only -q`（2026-04-24）结果：**13511 collected / 62 errors**
 - 真实覆盖率（2026-04-24）：**23.3%**（69360/297487 lines，`pytest --cov=polaris`）
 - 0% 覆盖率模块：390 个（delivery: 155, cells: 103, kernelone: 103, infrastructure: 20, bootstrap: 7, application: 1, domain: 1）
-- Descriptor 覆盖已提升至 **54 / 54**
-- 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 遗留）
-- `KERNELONE_` 与 `KERNELONE_` 仍混用
 
-### 6.4 当前工具入口
+### 6.4 当前主要 gap
 
-- Descriptor 批量刷新：`python -m polaris.cells.context.catalog.internal.descriptor_pack_generator`
-- KernelOne 发布门禁：`python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all`
-- Catalog 治理门禁：`python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only`
+1. Descriptor 覆盖已提升至 **54 / 54**
+2. 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 中 25 个 high 级别遗留）
+3. `fitness-rules.yaml` blocker 尚未全量自动化执行
+4. `KERNELONE_` 与 `KERNELONE_` 仍混用
 
 ### 6.5 未登记 Cell（需补充）
 
@@ -163,16 +161,12 @@
 - `director.planning`
 - `director.tasking`
 
-### 6.6 工具治理铁律（保留锚点）
+### 6.6 环境变量前缀现状（2026-03-28）
 
-1. 工具别名只能基于**功能等价性**
-2. `read_file` 不能作为 `repo_read_head` 的别名
-3. 白名单检查必须在别名归一化之前执行
-4. 禁止通过别名或参数映射绕过角色工具白名单
+- `KERNELONE_`: **769 处 / 165 文件**
+- `KERNELONE_`: **225 处 / 43 文件**
 
----
-
-## 7. CLI 入口点（已更新）
+### 6.7 CLI 入口点（已更新）
 
 - 后端服务：`python src/backend/server.py --host 127.0.0.1 --port 49977`
 - PM CLI：`python -m polaris.delivery.cli.pm.cli`
@@ -183,21 +177,21 @@
 
 ---
 
-## 8. 自动化治理工具
+## 7. 自动化治理工具
 
-### 8.1 Descriptor Pack 批量生成器
+### 7.1 Descriptor Pack 批量生成器
 
 `python -m polaris.cells.context.catalog.internal.descriptor_pack_generator`
 
-### 8.2 KernelOne 发布门禁执行器
+### 7.2 KernelOne 发布门禁执行器
 
 `python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all`
 
-### 8.3 Catalog 治理门禁
+### 7.3 Catalog 治理门禁
 
 `python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only`
 
-### 8.4 当前 CI/CA 门禁矩阵（2026-04-16）
+### 7.4 当前 CI/CA 门禁矩阵（2026-04-16）
 
 关键 gate：
 
@@ -218,11 +212,11 @@
 
 ---
 
-## 9. 最新目标态治理裁决（2026-04-16，非当前事实）
+## 8. 最新目标态治理裁决（2026-04-16，非当前事实）
 
 > 本节是 `AGENTS.md §17` 的镜像摘要，不是当前现实快照。
 
-### 9.1 权威来源
+### 8.1 权威来源
 
 - `../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md`
 - `docs/governance/templates/verification-cards/vc-20260416-transaction-kernel-contextos-tool-refactor.yaml`
@@ -231,7 +225,7 @@
 - `docs/blueprints/AGENT_INSTRUCTION_COMPACTION_BLUEPRINT_20260416.md`
 - `docs/blueprints/AGENT_ENGINEERING_DISCIPLINE_ALIGNMENT_BLUEPRINT_20260416.md`
 
-### 9.2 核心裁决
+### 8.2 核心裁决
 
 1. `TransactionKernel` 是唯一 turn 事务执行内核与唯一 commit point
 2. 一个 turn 内必须满足：`len(TurnDecisions) == 1`、`len(ToolBatches) <= 1`、`hidden_continuation == 0`
@@ -239,14 +233,14 @@
 4. control-plane 字段不得进入 data plane
 5. `ContextHandoffPack` 是 canonical handoff contract，`roles.kernel` 禁止再造第二套 handoff schema
 
-### 9.3 镜像规则
+### 8.3 镜像规则
 
 1. 本文件不是独立权威
 2. 若 `AGENTS.md §15 / §16 / §17 / §18` 更新，必须同步更新本文件
 
 ---
 
-## 10. 认知生命体与工程架构对齐（2026-04-17）
+## 9. 认知生命体与工程架构对齐（2026-04-17）
 
 > **工程注释**：本节使用生物学隐喻作为记忆辅助。
 > 所有隐喻均可在 [TERMINOLOGY.md](../TERMINOLOGY.md) 中找到对应的工程实体。
@@ -254,14 +248,14 @@
 >
 > 本节是 `AGENTS.md §18` 的镜像摘要。如有冲突，以 `AGENTS.md` 为准。
 
-### 10.1 核心命题
+### 9.1 核心命题
 
 **"认知生命体（Cognitive Lifeform）"与"认知运行时（Cognitive Runtime）"是 Polaris 工程架构的灵魂与哲学顶层；**
 **当前工程架构（`RoleSessionOrchestrator` + `TurnTransactionController` + `DevelopmentWorkflowRuntime` + `StreamShadowEngine`）是灵魂唯一可运行、可观测、可进化的实体化落地形态。**
 
 两者是**上下层映射关系**。
 
-### 10.2 概念 ↔ 工程实体映射
+### 9.2 概念 ↔ 工程实体映射
 
 | 抽象概念 | 工程实体 | 工程职责 | 生物学隐喻（记忆辅助） |
 |---------|---------|---------|---------------------|
@@ -273,14 +267,14 @@
 | 物理法则 / 生存约束 | `ContinuationPolicy` + `KernelGuard` | 防止死循环、资源泄漏、幻觉 | 免疫系统/痛觉 |
 | 脑电图 / 对外表达 | `TurnEvent` 流 | 实时向人类/UI 暴露内心活动 | 脑电图 |
 
-### 10.3 四层正交架构
+### 9.3 四层正交架构
 
 1. **角色层（Role）** —— 赋予身份
 2. **会话编排层（`RoleSessionOrchestrator` + `OrchestratorSessionState`）** —— 赋予主控意识与记忆中枢
 3. **专有运行时层（`DevelopmentWorkflowRuntime`）** —— 赋予肌肉记忆与潜意识闭环
 4. **事务内核层（`TurnTransactionController` + `StreamShadowEngine` + `KernelGuard`）** —— 赋予心脏跳动、神经预激与物理法则
 
-### 10.4 关键代码路径
+### 9.4 关键代码路径
 
 - `polaris/cells/roles/runtime/internal/session_orchestrator.py`
 - `polaris/cells/roles/runtime/internal/continuation_policy.py`
@@ -290,7 +284,7 @@
 - `polaris/cells/roles/kernel/internal/stream_shadow_engine.py`
 - `polaris/cells/roles/kernel/public/turn_contracts.py` / `turn_events.py`
 
-### 10.5 对齐结论
+### 9.5 对齐结论
 
 - **没有工程约束**：认知生命体将变成精神分裂的模型，在无限 Prompt 循环中产生幻觉，最终 Token 爆仓而脑死亡。
 - **没有哲学愿景**：工程代码就只是一堆冷冰冰的 if-else，失去了统一的叙事与演进目标。

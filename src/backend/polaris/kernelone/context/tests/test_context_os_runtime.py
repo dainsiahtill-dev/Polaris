@@ -252,9 +252,7 @@ class TestStateFirstContextOSLifecycle:
 
     def test_context_manager_entry_exit(self) -> None:
         """Test sync context manager __enter__ and __exit__."""
-        policy = StateFirstContextOSPolicy(
-            attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True)
-        )
+        policy = StateFirstContextOSPolicy(attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True))
         context_os = StateFirstContextOS(policy=policy)
 
         # Access classifier to trigger creation
@@ -270,9 +268,7 @@ class TestStateFirstContextOSLifecycle:
 
     def test_context_manager_with_dialog_act_classifier(self) -> None:
         """Test context manager when dialog_act_classifier is enabled."""
-        policy = StateFirstContextOSPolicy(
-            attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True)
-        )
+        policy = StateFirstContextOSPolicy(attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True))
         context_os = StateFirstContextOS(policy=policy)
 
         # Access classifier to trigger creation
@@ -289,9 +285,7 @@ class TestStateFirstContextOSLifecycle:
     @pytest.mark.asyncio
     async def test_cleanup_releases_resources(self) -> None:
         """Test async cleanup() releases DialogActClassifier and other resources."""
-        policy = StateFirstContextOSPolicy(
-            attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True)
-        )
+        policy = StateFirstContextOSPolicy(attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True))
         context_os = StateFirstContextOS(policy=policy)
 
         # Access classifier to trigger creation
@@ -321,9 +315,7 @@ class TestStateFirstContextOSLifecycle:
     @pytest.mark.asyncio
     async def test_close_calls_cleanup(self) -> None:
         """Test async close() calls cleanup() to release resources."""
-        policy = StateFirstContextOSPolicy(
-            attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True)
-        )
+        policy = StateFirstContextOSPolicy(attention_runtime=AttentionRuntimePolicy(enable_dialog_act=True))
         context_os = StateFirstContextOS(policy=policy)
 
         # Access classifier to trigger creation

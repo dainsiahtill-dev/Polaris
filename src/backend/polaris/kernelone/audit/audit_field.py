@@ -365,7 +365,7 @@ class TypeSafeList(list):
     def safe_map(self, fn: Any, default: Any = None) -> list[Any]:
         """安全映射，忽略错误元素"""
         result: list[Any] = []
-        for i, item in enumerate(self):
+        for _i, item in enumerate(self):
             try:
                 result.append(fn(item))
             except (RuntimeError, ValueError):  # Defensive: user's function may raise, we skip failed elements

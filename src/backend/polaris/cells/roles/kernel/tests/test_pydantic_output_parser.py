@@ -45,9 +45,9 @@ class TestGenericRoleResponse:
     def test_is_frozen_dataclass(self) -> None:
         """GenericRoleResponse is a frozen dataclass."""
         assert is_dataclass(GenericRoleResponse)
-        response = GenericRoleResponse(content="test")
+        response = GenericRoleResponse(content="test")  # type: ignore[operator,call-arg]  # mypy sees GenericRoleResponse as DataclassInstance due to is_dataclass check above
         with pytest.raises((TypeError, AttributeError)):  # frozen dataclass raises these
-            response.content = "mutated"  # type: ignore[misc]
+            response.content = "mutated"  # type: ignore[misc,union-attr]
 
     def test_to_dict_returns_dict(self) -> None:
         """to_dict returns a dictionary representation."""

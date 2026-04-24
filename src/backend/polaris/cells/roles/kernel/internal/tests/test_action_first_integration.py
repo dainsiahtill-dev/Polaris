@@ -55,7 +55,7 @@ class TestActionFirstBenchmark:
         )
 
         policy = RetryPolicy()
-        history = []
+        history: list[dict[str, str]] = []
 
         # Simulate tool error
         error = ToolError("read_file", "File not found: test.py", {"path": "test.py"})

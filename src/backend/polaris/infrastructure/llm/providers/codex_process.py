@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 # Try to import PTY support for real-time terminal output
 try:
-    import pty
+    import pty  # noqa: F401
 
     HAS_PTY = True
 except ImportError:
@@ -289,8 +289,10 @@ def _run_cli_pty_fallback(
     output_chunks: list[str] = []
 
     def read_output() -> None:
+        stdout = process.stdout
+        assert stdout is not None
         while True:
-            chunk = process.stdout.read(1)
+            chunk = stdout.read(1)
             if not chunk:
                 break
             output_chunks.append(chunk)

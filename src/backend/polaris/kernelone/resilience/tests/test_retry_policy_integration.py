@@ -292,9 +292,7 @@ class TestExecuteWithRetryBackoffIntegration:
             return original_compute(p, attempt)
 
         with (
-            patch(
-                "polaris.kernelone.resilience.retry_policy.compute_delay", mock_compute
-            ),
+            patch("polaris.kernelone.resilience.retry_policy.compute_delay", mock_compute),
             patch.object(asyncio, "sleep"),
             pytest.raises(asyncio.TimeoutError),
         ):

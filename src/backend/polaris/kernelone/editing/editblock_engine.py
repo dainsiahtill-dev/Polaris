@@ -64,7 +64,7 @@ class EditBlock:
         replace_text: str,
         start_line: int = 0,
         end_line: int = 0,
-    ):
+    ) -> None:
         self.filepath = filepath
         self.search_text = search_text
         self.replace_text = replace_text
@@ -204,18 +204,12 @@ def _extract_filename_from_header(line: str) -> str | None:
 
 def _match_divider(line: str) -> bool:
     """匹配分隔行 ===="""
-    for pattern in DIVIDER_PATTERNS:
-        if re.match(pattern, line.strip()):
-            return True
-    return False
+    return any(re.match(pattern, line.strip()) for pattern in DIVIDER_PATTERNS)
 
 
 def _match_updated(line: str) -> bool:
     """匹配替换结束行 >>>> REPLACE"""
-    for pattern in UPDATED_PATTERNS:
-        if re.match(pattern, line.strip()):
-            return True
-    return False
+    return any(re.match(pattern, line.strip()) for pattern in UPDATED_PATTERNS)
 
 
 def _match_head(line: str) -> tuple[bool, str | None]:
@@ -308,10 +302,7 @@ def parse_edit_blocks(
 
         # 确定文件名 (优先级: 内嵌 > 附近查找 > 继承/default)
         filename: str | None = None
-        if embedded_filename:
-            filename = embedded_filename
-        else:
-            filename = _find_filename_nearby(lines[max(0, i - 3) : i], fence, valid)
+        filename = embedded_filename or _find_filename_nearby(lines[max(0, i - 3):i], fence, valid)
 
         if not filename and current_filename:
             filename = current_filename

@@ -9,11 +9,8 @@ from polaris.cells.runtime.task_market.internal.models import (
     TERMINAL_STATUSES,
 )
 from polaris.cells.runtime.task_market.internal.store import (
-    TaskMarketJSONStore,
+    TaskMarketStoreProtocol,
     get_store,
-)
-from polaris.cells.runtime.task_market.internal.store_sqlite import (
-    TaskMarketSQLiteStore,
 )
 
 
@@ -22,7 +19,7 @@ class TaskMarketProjection:
 
     def __init__(self, workspace: str) -> None:
         self._workspace = workspace
-        self._store: TaskMarketJSONStore | TaskMarketSQLiteStore = get_store(workspace)
+        self._store: TaskMarketStoreProtocol = get_store(workspace)
 
     def get_queue_depth_by_stage(self) -> dict[str, int]:
         """Return count of items per stage (queue stages only)."""

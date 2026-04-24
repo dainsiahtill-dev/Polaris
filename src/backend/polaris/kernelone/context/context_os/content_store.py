@@ -90,6 +90,8 @@ class ContentStore:
         # Use single threading.Lock for both sync and async paths
         # to prevent deadlock from mixed lock types (see llm/engine/executor.py)
         self._lock = threading.Lock()
+        # Async lock for async-safe write/read API (initialized lazily)
+        self._async_lock: asyncio.Lock | None = None
 
     # ------------------------------------------------------------------
     # Sync core methods (used by both sync and async paths)
@@ -204,7 +206,7 @@ class ContentStore:
                 )
 
     # ------------------------------------------------------------------
-    # Sync Facade — delegates to async core
+    # Sync Facade — delegates to sync core directly for safety
     # ------------------------------------------------------------------
 
     def intern(self, content: str) -> ContentRef:
@@ -223,11 +225,7 @@ class ContentStore:
         Raises:
             RuntimeError: If a hash collision is detected.
         """
-        try:
-            loop = asyncio.get_running_loop()
-            return asyncio.run_coroutine_threadsafe(self._intern_async(content), loop).result(timeout=5.0)
-        except RuntimeError:
-            return asyncio.run(self._intern_async(content))
+        return self._intern_sync(content)
 
     def get(self, ref: ContentRef) -> str:
         """Retrieve content by ref, returning a placeholder if evicted.
@@ -240,11 +238,7 @@ class ContentStore:
         Returns:
             The original string, or ``"<evicted:{hash}>"`` if no longer stored.
         """
-        try:
-            loop = asyncio.get_running_loop()
-            return asyncio.run_coroutine_threadsafe(self._get_async(ref), loop).result(timeout=5.0)
-        except RuntimeError:
-            return asyncio.run(self._get_async(ref))
+        return self._get_sync(ref)
 
     def get_if_present(self, ref: ContentRef) -> str | None:
         """Retrieve content without affecting miss statistics.
@@ -258,11 +252,7 @@ class ContentStore:
         Returns:
             The original string, or ``None`` if not found.
         """
-        try:
-            loop = asyncio.get_running_loop()
-            return asyncio.run_coroutine_threadsafe(self._get_if_present_async(ref), loop).result(timeout=5.0)
-        except RuntimeError:
-            return asyncio.run(self._get_if_present_async(ref))
+        return self._get_if_present_sync(ref)
 
     def release(self, ref: ContentRef) -> None:
         """Decrement the reference count for a stored entry.
@@ -273,11 +263,7 @@ class ContentStore:
         Args:
             ref: The ContentRef to release.
         """
-        try:
-            loop = asyncio.get_running_loop()
-            asyncio.run_coroutine_threadsafe(self._release_async(ref), loop).result(timeout=5.0)
-        except RuntimeError:
-            asyncio.run(self._release_async(ref))
+        return self._release_sync(ref)
 
     def release_all(self, refs: Iterable[ContentRef]) -> None:
         """Batch-release multiple refs.
@@ -305,7 +291,9 @@ class ContentStore:
         Returns:
             A frozen :class:`ContentRef` handle for the content.
         """
-        ref = await self._intern_async(content)
+        ref = self._intern_sync(content)
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
         async with self._async_lock:
             # Store key -> hash mapping for key-based lookup
             self._key_index[key] = ref.hash
@@ -323,6 +311,8 @@ class ContentStore:
         Returns:
             The original string, or empty string if not found.
         """
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
         async with self._async_lock:
             # First try key index lookup
             h = self._key_index.get(key)
@@ -354,6 +344,8 @@ class ContentStore:
         Returns:
             True if content was deleted, False if not found.
         """
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
         async with self._async_lock:
             # Try key index first
             h = self._key_index.pop(key, None)
@@ -401,7 +393,9 @@ class ContentStore:
         key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
         if key_hash in self._store:
             self._remove_entry(key_hash)
-        ref = await self._intern_async(content)
+        ref = self._intern_sync(content)
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
         async with self._async_lock:
             # Store key -> hash mapping for key-based lookup
             self._key_index[key] = ref.hash
@@ -547,25 +541,24 @@ class RefTracker:
     async def _acquire_async(self, ref: ContentRef) -> ContentRef:
         """Register *ref* as actively held by this tracker (async core)."""
         async with self._async_lock:
-            # Check if hash exists in store via async core
-            content = await self._store._get_if_present_async(ref)
+            # Check if hash exists in store via sync core (safe under lock)
+            content = self._store._get_if_present_sync(ref)
             if content is None:
                 raise ValueError(
                     f"Cannot acquire ref {ref.hash}: hash not found in store. Refs must be interned before acquisition."
                 )
             self._active.add(ref.hash)
-            await self._store._release_async(ref)
+            self._store._release_sync(ref)
             # Increment ref count (release decremented it, so we need to add 2)
-            async with self._store._async_lock:
-                self._store._refs[ref.hash] = self._store._refs.get(ref.hash, 0) + 2
-                self._store._access[ref.hash] = int(time.monotonic())
+            self._store._refs[ref.hash] = self._store._refs.get(ref.hash, 0) + 2
+            self._store._access[ref.hash] = int(time.monotonic())
         return ref
 
     async def _release_async(self, ref: ContentRef) -> None:
         """Release a single ref from this tracker (async core)."""
         async with self._async_lock:
             self._active.discard(ref.hash)
-            await self._store._release_async(ref)
+            self._store._release_sync(ref)
 
     async def _release_all_async(self) -> None:
         """Release all actively tracked refs in one batch (async core)."""
@@ -573,7 +566,7 @@ class RefTracker:
             active_copy = list(self._active)
             for h in active_copy:
                 ref = ContentRef(hash=h, size=0, mime="text/plain")
-                await self._store._release_async(ref)
+                self._store._release_sync(ref)
             self._active.clear()
 
     def acquire(self, ref: ContentRef) -> ContentRef:

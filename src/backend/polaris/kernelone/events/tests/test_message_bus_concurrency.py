@@ -144,7 +144,11 @@ class TestMessageBusConcurrency:
     async def test_dead_letter_queue_under_concurrent_load(self, bus: MessageBus) -> None:
         """Test dead letter queue behavior under concurrent load."""
         await bus.register_actor("small_queue_actor")
-        bus._actor_queues["small_queue_actor"]._maxsize = 5
+        # asyncio.Queue.maxsize is a read-only property; cast to access private attr for test
+        import asyncio
+
+        q: asyncio.Queue[Message] = bus._actor_queues["small_queue_actor"]
+        object.__setattr__(q, "_maxsize", 5)  # type: ignore[attr-defined] # test-only monkey-patch
 
         async def sender() -> None:
             for i in range(20):

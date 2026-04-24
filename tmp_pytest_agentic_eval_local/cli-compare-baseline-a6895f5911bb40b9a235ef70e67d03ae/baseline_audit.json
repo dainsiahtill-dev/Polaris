@@ -1,0 +1,33 @@
+{
+  "status": "FAIL",
+  "benchmark": {
+    "run_id": "baseline-run-001",
+    "suite": "agentic_benchmark"
+  },
+  "score": {
+    "overall_percent": 40.0,
+    "pass_rate": 0.0,
+    "failed_cases": 2
+  },
+  "tool_audit": {
+    "total_calls": 1
+  },
+  "failures": [
+    {
+      "case_id": "pm_task_contract",
+      "failed_checks": [
+        {
+          "code": "validator:pm_plan_json"
+        }
+      ]
+    },
+    {
+      "case_id": "legacy_case",
+      "failed_checks": [
+        {
+          "code": "required_output:phase"
+        }
+      ]
+    }
+  ]
+}

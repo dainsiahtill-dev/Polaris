@@ -333,12 +333,12 @@ class ErrorMatcher:
             if isinstance(content_preview, str) and matcher(content_preview):
                 return True
             # Also check any string values in data
-            for key, value in data.items():
+            for _key, value in data.items():
                 if isinstance(value, str) and matcher(value):
                     return True
                 # Check nested dicts
                 if isinstance(value, dict):
-                    for k, v in value.items():
+                    for _k, v in value.items():
                         if isinstance(v, str) and matcher(v):
                             return True
 

@@ -47,7 +47,8 @@ class LLMEventEmitter:
             )
 
         try:
-            _ = asyncio.create_task(_publish())
+            _task = asyncio.create_task(_publish())
+            _task.add_done_callback(lambda t: t.exception() if t.done() and not t.cancelled() else None)
         except (RuntimeError, ValueError) as exc:
             if isinstance(exc, RuntimeError):
                 logger.debug("UEP lifecycle publish skipped: no running event loop")

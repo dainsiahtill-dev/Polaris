@@ -4,7 +4,7 @@ import contextlib
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from polaris.kernelone.traceability.session_source import SessionSource, SourceChain
@@ -133,7 +133,7 @@ class SuperPipelineContext:
     ce_claims: tuple[SuperClaimedTask, ...] = ()
     director_claims: tuple[SuperClaimedTask, ...] = ()
     blueprint_items: tuple[SuperBlueprintItem, ...] = ()
-    source_chain: SourceChain = SourceChain.root(SessionSource.USER_DIRECT)
+    source_chain: SourceChain = field(default_factory=lambda: SourceChain.root(SessionSource.USER_DIRECT))
 
 
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:

@@ -141,7 +141,7 @@ def append_delta_ops(index_dir: Path, kind: str, ops: list[dict[str, Any]]) -> i
 def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    tmp_file = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
         delete=False,
@@ -149,18 +149,17 @@ def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
         prefix=f".{path.name}.",
         suffix=".tmp",
         newline="\n",
-    )
-    tmp_path = Path(tmp_file.name)
-    try:
-        with tmp_file:
+    ) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        try:
             for row in rows:
                 tmp_file.write(json.dumps(row, ensure_ascii=False) + "\n")
             tmp_file.flush()
             os.fsync(tmp_file.fileno())
-        os.replace(tmp_path, path)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
+            os.replace(tmp_path, path)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
 
 
 def clear_delta_file(index_dir: Path, kind: str) -> None:

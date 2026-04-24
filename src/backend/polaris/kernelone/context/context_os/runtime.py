@@ -356,11 +356,11 @@ class StateFirstContextOS:
                 self._executor = None  # type: ignore[assignment]
 
             # Notify service components to release resources
-            if self._receipt_store is not None and hasattr(self._receipt_store, 'close'):
+            if self._receipt_store is not None and hasattr(self._receipt_store, "close"):
                 await self._receipt_store.close()
-            if self._working_state_manager is not None and hasattr(self._working_state_manager, 'close'):
+            if self._working_state_manager is not None and hasattr(self._working_state_manager, "close"):
                 await self._working_state_manager.close()
-            if self._projection_engine is not None and hasattr(self._projection_engine, 'close'):
+            if self._projection_engine is not None and hasattr(self._projection_engine, "close"):
                 await self._projection_engine.close()
 
             logger.debug("StateFirstContextOS cleanup completed")

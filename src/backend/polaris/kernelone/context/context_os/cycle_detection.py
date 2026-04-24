@@ -147,7 +147,7 @@ class NetworkXCycleDetector:
             if node_id in rec_stack:
                 # 发现循环
                 cycle_start = path.index(node_id)
-                cycle = path[cycle_start:] + [node_id]
+                cycle = [*path[cycle_start:], node_id]
                 cycles.append(cycle)
                 return True
 

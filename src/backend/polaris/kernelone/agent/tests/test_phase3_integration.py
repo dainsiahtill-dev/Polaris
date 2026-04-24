@@ -30,33 +30,47 @@ CausalGraph: type | None = None
 KnowledgeItem: type | None = None
 
 with suppress(ImportError):
-    from polaris.kernelone.agent.self_evaluation import (  # noqa: F401
-        CapabilityAssessment,
-        SelfEvaluator,
+    from polaris.kernelone.agent.self_evaluation import (
+        CapabilityAssessment as _ImportedCapabilityAssessment,
+        SelfEvaluator as _ImportedSelfEvaluator,
     )
 
-with suppress(ImportError):
-    from polaris.kernelone.learning.active_learner import (  # noqa: F401
-        ActiveLearner,
-        ErrorPattern,
-    )
+    CapabilityAssessment = _ImportedCapabilityAssessment  # type: ignore[no-redef]
+    SelfEvaluator = _ImportedSelfEvaluator  # type: ignore[no-redef]
 
 with suppress(ImportError):
-    from polaris.kernelone.reasoning.commonsense import (  # noqa: F401
-        CausalGraph,
-        CommonsenseReasoner,
+    from polaris.kernelone.learning.active_learner import (
+        ActiveLearner as _ImportedActiveLearner,
+        ErrorPattern as _ImportedErrorPattern,
     )
 
-with suppress(ImportError):
-    from polaris.kernelone.tool_creation.code_generator import (  # noqa: F401
-        ToolGenerator,
-    )
+    ActiveLearner = _ImportedActiveLearner  # type: ignore[no-redef]
+    ErrorPattern = _ImportedErrorPattern  # type: ignore[no-redef]
 
 with suppress(ImportError):
-    from polaris.kernelone.memory.long_term import (  # noqa: F401
-        KnowledgeItem,
-        LongTermMemory,
+    from polaris.kernelone.reasoning.commonsense import (
+        CausalGraph as _ImportedCausalGraph,
+        CommonsenseReasoner as _ImportedCommonsenseReasoner,
     )
+
+    CausalGraph = _ImportedCausalGraph  # type: ignore[no-redef]
+    CommonsenseReasoner = _ImportedCommonsenseReasoner  # type: ignore[no-redef]
+
+with suppress(ImportError):
+    from polaris.kernelone.tool_creation.code_generator import (
+        ToolGenerator as _ImportedToolGenerator,
+    )
+
+    ToolGenerator = _ImportedToolGenerator  # type: ignore[no-redef]
+
+with suppress(ImportError):
+    from polaris.kernelone.memory.long_term import (
+        KnowledgeItem as _ImportedKnowledgeItem,
+        LongTermMemory as _ImportedLongTermMemory,
+    )
+
+    KnowledgeItem = _ImportedKnowledgeItem  # type: ignore[no-redef]
+    LongTermMemory = _ImportedLongTermMemory  # type: ignore[no-redef]
 
 
 # ============================================================================

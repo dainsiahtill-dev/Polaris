@@ -358,7 +358,9 @@ class ChiefEngineerAgent(RoleAgent):
             "indirect_impact": sorted(indirect_modules),
             "risk_level": risk_level,
             "scope_coverage": round(scope_coverage, 2),
-            "recommendations": self._generate_impact_recommendations(direct_impact, sorted(indirect_modules), risk_level),
+            "recommendations": self._generate_impact_recommendations(
+                direct_impact, sorted(indirect_modules), risk_level
+            ),
         }
 
         # Cache result

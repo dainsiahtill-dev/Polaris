@@ -138,13 +138,13 @@ class QaAuditCompletedEventV1:
 
 
 __all__ = [
+    # Task Market consumer contracts
+    "ClaimQaTaskCommandV1",
     "GetQaVerdictQueryV1",
+    "QaAuditCompletedEventV1",
     "QaAuditError",
     "QaAuditErrorV1",
     "QaAuditResultV1",
     "QaVerdictIssuedEventV1",
     "RunQaAuditCommandV1",
-    # Task Market consumer contracts
-    "ClaimQaTaskCommandV1",
-    "QaAuditCompletedEventV1",
 ]

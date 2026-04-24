@@ -122,10 +122,10 @@ _parse_json_payload = parse_json_payload
 
 
 __all__ = [
-    "safe_json_loads",
-    "parse_json_payload",
-    "format_json",
+    "_parse_json_payload",
     # Backward compatibility
     "_safe_json_loads",
-    "_parse_json_payload",
+    "format_json",
+    "parse_json_payload",
+    "safe_json_loads",
 ]

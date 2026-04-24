@@ -27,15 +27,6 @@ import os
 import warnings
 from typing import Any
 
-# Emit deprecation warning when this module is imported
-warnings.warn(
-    "polaris.infrastructure.compat.io_utils is deprecated. "
-    "Import from canonical KernelOne modules instead. "
-    "See: MIGRATION_DEBT_INVENTORY_20260409.md",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.events import io_events
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -83,7 +74,18 @@ from polaris.kernelone.storage.io_paths import (
 )
 from polaris.kernelone.tool_execution import io_tools
 
+# Emit deprecation warning when this module is imported
+warnings.warn(
+    "polaris.infrastructure.compat.io_utils is deprecated. "
+    "Import from canonical KernelOne modules instead. "
+    "See: MIGRATION_DEBT_INVENTORY_20260409.md",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 logger = logging.getLogger(__name__)
+
+# Re-export compatibility layer (deprecated, migrate to KernelOne)
 
 
 def ensure_process_utf8() -> None:

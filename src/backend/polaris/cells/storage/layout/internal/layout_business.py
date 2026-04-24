@@ -22,6 +22,7 @@ from polaris.kernelone.storage.layout import (
 
 _logger = logging.getLogger(__name__)
 
+
 def _polaris_metadata_dir_name() -> str:
     """Return Polaris's physical workspace metadata directory name.
 
@@ -222,8 +223,6 @@ class PolarisStorageLayout(_BaseStorageLayout):
     business-layer code.
     """
 
-    __slots__ = ()
-
     def __init__(self, workspace: Path | str, runtime_base: Path | str) -> None:
         self._workspace = Path(workspace).resolve()
         self._runtime_base = Path(runtime_base).resolve()
@@ -257,7 +256,6 @@ class PolarisStorageLayout(_BaseStorageLayout):
     def resolve_polaris_roots(self, ramdisk_root: str | None = None) -> _PolarisStorageRootsImpl:
         """Return Polaris-specific roots resolved from this layout's workspace."""
         return resolve_polaris_roots(str(self._workspace), ramdisk_root=ramdisk_root)
-
 
 
 __all__ = [

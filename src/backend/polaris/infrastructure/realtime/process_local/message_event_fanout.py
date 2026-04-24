@@ -548,7 +548,7 @@ def _cleanup_runtime_fanout() -> None:
                 loop.close()
         except (RuntimeError, ValueError) as exc:
             logger.debug("event loop cleanup failed (best-effort): %s", exc)
-    except (RuntimeError, ValueError) as exc:
+    except ValueError as exc:
         logger.debug("outer fanout cleanup failed (best-effort): %s", exc)
 
 

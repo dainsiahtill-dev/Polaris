@@ -266,7 +266,7 @@ class TestExecutorManagerConcurrency:
 
         assert not errors, f"Executor creation errors: {errors}"
         # Should have 10 unique executors (one per unique workspace)
-        unique = set(id(e) for e in executors)
+        unique = {id(e) for e in executors}
         assert len(unique) == 10
 
 
@@ -306,7 +306,7 @@ class TestAsyncConcurrency:
 
         assert not errors, f"Async executor creation errors: {errors}"
         # Should have 10 unique executors
-        unique = set(id(e) for e in executors)
+        unique = {id(e) for e in executors}
         assert len(unique) == 10
 
 

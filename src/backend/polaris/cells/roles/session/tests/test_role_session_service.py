@@ -216,7 +216,7 @@ class TestListSessions:
         assert cast("bool", active[0].role == "pm")
 
     def test_limit_and_offset(self, service: RoleSessionService) -> None:
-        for i in range(5):
+        for _i in range(5):
             service.create_session(role="pm")
         page1 = service.get_sessions(limit=2, offset=0)
         page2 = service.get_sessions(limit=2, offset=2)

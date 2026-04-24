@@ -428,6 +428,43 @@ class TestMiniMaxProviderExceptions:
         assert "1001" in result.error
         assert "Invalid parameter" in result.error
 
+    def test_invoke_missing_base_resp_not_treated_as_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        minimax_config: dict[str, Any],
+    ) -> None:
+        """When response lacks base_resp entirely, it should NOT be treated as an API error.
+
+        Regression test for: base_resp=None causing None != 0 == True, which
+        incorrectly flagged successful responses as errors.
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_resp.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Hello from MiniMax!",
+                        "role": "assistant",
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+        }
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.minimax_provider._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_resp,
+        )
+
+        provider = MiniMaxProvider()
+        result = provider.invoke("Hello", "MiniMax-M2.1", minimax_config)
+
+        assert result.ok is True
+        assert result.output == "Hello from MiniMax!"
+        assert result.error is None
+
     @pytest.mark.asyncio
     async def test_invoke_stream_success(
         self,

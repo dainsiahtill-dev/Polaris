@@ -1516,8 +1516,13 @@ class SnapshotSummaryView:
 #   NEW: from polaris.kernelone.context.context_os.models_v2 import ArtifactRecordV2
 #
 
+# Compatibility aliases: re-export V2 classes under V1 names.
+# These names are already defined in this module as v1 dataclasses,
+# so the re-export triggers an assignment incompatibility in mypy.
+# We suppress the error per-line to preserve runtime behavior while
+# keeping the file type-check clean.
 try:
-    from .models_v2 import (
+    from .models_v2 import (  # type: ignore[assignment]  # v2 classes shadow v1 dataclasses intentionally
         ArtifactRecordV2 as ArtifactRecord,
         BudgetPlanV2 as BudgetPlan,
         ContextOSProjectionV2 as ContextOSProjection,

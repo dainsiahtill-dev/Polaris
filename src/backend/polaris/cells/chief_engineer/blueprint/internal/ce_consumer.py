@@ -286,8 +286,10 @@ class CEConsumer:
         self._async_loop = asyncio.new_event_loop()
 
         def _loop_runner() -> None:
-            asyncio.set_event_loop(self._async_loop)
-            self._async_loop.run_forever()
+            loop = self._async_loop
+            assert loop is not None
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
 
         self._async_thread = threading.Thread(target=_loop_runner, daemon=True)
         self._async_thread.start()

@@ -52,7 +52,7 @@ def main() -> None:
 
     print("1. 添加 DEBUG 消息（默认折叠）")
     print("-" * 50)
-    for i, event in enumerate(debug_events, 1):
+    for _i, event in enumerate(debug_events, 1):
         renderer.print_debug(event, json_render="pretty")
         print()
 

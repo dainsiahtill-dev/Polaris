@@ -278,9 +278,7 @@ def _execute_pending_tool_calls_via_orchestrator(
 _ROLE_QUALITY_SCORE_THRESHOLD = int(os.environ.get("KERNELONE_ROLE_QUALITY_THRESHOLD", "60"))
 # 验证阈值范围
 if not 0 <= _ROLE_QUALITY_SCORE_THRESHOLD <= 100:
-    logger.warning(
-        f"Invalid KERNELONE_ROLE_QUALITY_THRESHOLD value: {_ROLE_QUALITY_SCORE_THRESHOLD}, using default 60"
-    )
+    logger.warning(f"Invalid KERNELONE_ROLE_QUALITY_THRESHOLD value: {_ROLE_QUALITY_SCORE_THRESHOLD}, using default 60")
     _ROLE_QUALITY_SCORE_THRESHOLD = 60
 
 

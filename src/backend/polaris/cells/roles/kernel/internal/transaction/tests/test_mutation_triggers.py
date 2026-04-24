@@ -18,6 +18,7 @@ from polaris.cells.roles.kernel.internal.transaction.mutation_triggers import (
 # 基础功能测试
 # ============================================================================
 
+
 class TestDetectMutationIntent:
     """测试 detect_mutation_intent 函数。"""
 
@@ -162,6 +163,7 @@ class TestDetectMutationIntent:
 # should_enter_materialize_mode 测试
 # ============================================================================
 
+
 class TestShouldEnterMaterializeMode:
     """测试 should_enter_materialize_mode 函数。"""
 
@@ -204,6 +206,7 @@ class TestShouldEnterMaterializeMode:
 # get_matched_keywords 测试
 # ============================================================================
 
+
 class TestGetMatchedKeywords:
     """测试 get_matched_keywords 函数。"""
 
@@ -242,6 +245,7 @@ class TestGetMatchedKeywords:
 # ============================================================================
 # 常量测试
 # ============================================================================
+
 
 class TestConstants:
     """测试模块常量。"""
@@ -284,6 +288,7 @@ class TestConstants:
 # ============================================================================
 # 集成测试
 # ============================================================================
+
 
 class TestIntegration:
     """集成测试场景。"""

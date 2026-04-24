@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,7 +16,7 @@ class MockWorkingMemory:
     """Mock working memory for testing."""
 
     def __init__(self) -> None:
-        self.chunks = []
+        self.chunks: list[Any] = []
         self._reset_turn_count = 0
         self._clear_count = 0
         self.promotion_queue: list[str] = []

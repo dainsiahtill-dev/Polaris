@@ -253,7 +253,7 @@ class TestTranscriptDelta:
         )
         restored = TranscriptDelta.from_dict(original.to_dict())
         assert len(restored.transcript_items) == len(original.transcript_items)
-        for orig, rest in zip(original.transcript_items, restored.transcript_items):
+        for orig, rest in zip(original.transcript_items, restored.transcript_items, strict=False):
             assert type(orig).__name__ == type(rest).__name__
 
     def test_merge(self) -> None:

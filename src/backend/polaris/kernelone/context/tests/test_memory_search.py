@@ -14,6 +14,9 @@ class MockArtifactStub:
 
     def __init__(self, artifact_id: str) -> None:
         self.artifact_id = artifact_id
+        self.peek: str = ""
+        self.keys: list[str] = []
+        self.source_event_ids: list[str] = []
 
     def to_stub(self) -> dict:
         return {"artifact_id": self.artifact_id}

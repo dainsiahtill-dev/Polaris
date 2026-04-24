@@ -206,65 +206,30 @@ class AIExecutor:
                 metadata.setdefault("model", request.model)
 
                 if event.type == StreamEventType.CHUNK:
-                    yield {
-                        "event_type": "chunk",
-                        "content": str(event.chunk or ""),
-                        "metadata": metadata,
-                    }
+                    yield AIStreamEvent.chunk_event(str(event.chunk or ""), meta=metadata)
                 elif event.type == StreamEventType.REASONING_CHUNK:
-                    yield {
-                        "event_type": "reasoning_chunk",
-                        "content": str(event.reasoning or ""),
-                        "metadata": metadata,
-                    }
+                    yield AIStreamEvent.reasoning_event(str(event.reasoning or ""), meta=metadata)
                 elif event.type == StreamEventType.TOOL_CALL:
                     tool_call = dict(event.tool_call or {})
                     metadata.setdefault("tool_call", tool_call)
-                    yield {
-                        "event_type": "tool_call",
-                        "content": "",
-                        "metadata": metadata,
-                    }
+                    yield AIStreamEvent.tool_call_event(tool_call, meta=metadata)
                 elif event.type == StreamEventType.TOOL_RESULT:
                     tool_result = dict(event.tool_result or {})
                     metadata.setdefault("tool_result", tool_result)
-                    yield {
-                        "event_type": "tool_result",
-                        "content": "",
-                        "metadata": metadata,
-                    }
+                    yield AIStreamEvent.tool_result_event(tool_result, meta=metadata)
                 elif event.type == StreamEventType.COMPLETE:
-                    yield {
-                        "event_type": "complete",
-                        "content": "",
-                        "metadata": metadata,
-                    }
+                    yield AIStreamEvent.complete(data=metadata)
                 elif event.type == StreamEventType.ERROR:
-                    yield {
-                        "event_type": "error",
-                        "content": "",
-                        "metadata": {
-                            **metadata,
-                            "error": str(event.error or "provider_stream_failed"),
-                        },
-                    }
+                    yield AIStreamEvent.error_event(str(event.error or "provider_stream_failed"))
                     return
 
         except asyncio.TimeoutError as exc:
             logger.warning("[executor] invoke_stream timeout: %s", exc)
-            yield {
-                "event_type": "error",
-                "content": "",
-                "metadata": {"error": "timeout", "detail": str(exc)},
-            }
+            yield AIStreamEvent.error_event(f"timeout: {exc}")
         except (AttributeError, TypeError, RuntimeError, ConnectionError, TimeoutError) as exc:
             # These are typically programming errors, not transient failures
             logger.exception("[executor] invoke_stream error: %s", exc)
-            yield {
-                "event_type": "error",
-                "content": "",
-                "metadata": {"error": "internal_error", "detail": str(exc)},
-            }
+            yield AIStreamEvent.error_event(f"internal_error: {exc}")
 
     # 兼容别名 (deprecated)
     async def execute(self, request: AIRequest) -> AIResponse:

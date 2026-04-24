@@ -748,7 +748,7 @@ class PermissionService:
                 for expanded_role_id in expanded_roles:
                     permissions.update(self._role_permissions.get(expanded_role_id, set()))
 
-        return sorted(list(permissions))
+        return sorted(permissions)
 
     async def list_roles(self) -> list[dict[str, Any]]:
         """列出所有角色及其权限统计

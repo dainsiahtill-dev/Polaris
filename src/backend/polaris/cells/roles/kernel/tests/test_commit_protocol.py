@@ -258,7 +258,9 @@ class TestCommitProtocol:
         )
         assert snapshot["version"] == 2
         assert snapshot["last_commit_turn_id"] == "t1"
-        assert len(snapshot["transcript_log"]) == 1
+        transcript_log = snapshot.get("transcript_log", [])
+        assert isinstance(transcript_log, list)
+        assert len(transcript_log) == 1
 
     def test_missing_context_override_returns_none(self) -> None:
         """缺少 context_override 返回 None。"""

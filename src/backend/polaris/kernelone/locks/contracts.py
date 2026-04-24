@@ -127,9 +127,13 @@ class FileLockAdapter(LockPort):
     def _unlock_file(self, fh: int) -> None:
         try:
             _flock(fh, _LOCK_UN)
-            os.close(fh)
         except OSError as exc:
             logger.warning("Lock: could not release lock %s: %s", fh, exc)
+        finally:
+            try:
+                os.close(fh)
+            except OSError as exc:
+                logger.warning("Lock: could not close handle %s: %s", fh, exc)
 
     def _read_entry(self, fh: int) -> _LockEntry | None:
         try:

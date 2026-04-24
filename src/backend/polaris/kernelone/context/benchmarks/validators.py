@@ -17,12 +17,13 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import TypeAlias
 
     from polaris.kernelone.benchmark.unified_models import UnifiedBenchmarkCase
     from polaris.kernelone.context.benchmarks.fixtures import BenchmarkCase
     from polaris.kernelone.context.context_os.models import ContextOSSnapshot
 
-    _FixtureCaseType = BenchmarkCase | UnifiedBenchmarkCase
+    _FixtureCaseType: TypeAlias = BenchmarkCase | UnifiedBenchmarkCase
 
 
 # ---------------------------------------------------------------------------

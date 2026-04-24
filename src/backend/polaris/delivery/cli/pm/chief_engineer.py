@@ -677,11 +677,7 @@ def _expand_scope_files(
         if not os.path.isdir(full):
             continue
         for root, dirs, files in os.walk(full):
-            dirs[:] = [
-                d
-                for d in dirs
-                if d not in {".git", "node_modules", "__pycache__", ".venv", "venv", ".polaris"}
-            ]
+            dirs[:] = [d for d in dirs if d not in {".git", "node_modules", "__pycache__", ".venv", "venv", ".polaris"}]
             for name in files:
                 ext = os.path.splitext(name)[1].lower()
                 if ext not in _CODE_EXTENSIONS:
@@ -1195,7 +1191,7 @@ def _plan_module_evolution(
 
     existing_module_names = set(modules.keys())
 
-    for module_name, (short_name, keywords) in new_module_keywords.items():
+    for module_name, (_short_name, keywords) in new_module_keywords.items():
         if any(kw in task_goals for kw in keywords) and not any(
             module_name in em or em in module_name for em in existing_module_names
         ):
@@ -1292,7 +1288,7 @@ def _generate_evolution_roadmap(
     roadmap = []
 
     # 阶段1: 基础设施稳定化（最底层模块）
-    base_modules = [m for m in module_order[:3]]
+    base_modules = list(module_order[:3])
     if base_modules:
         roadmap.append(
             {
@@ -1602,7 +1598,7 @@ def run_chief_engineer_analysis(
             ),
             "module_count": len(modules_payload),
             "file_count": len(files_payload),
-            "architecture_layer_count": len(set(a.get("layer", 0) for a in module_architecture.values())),
+            "architecture_layer_count": len({a.get("layer", 0) for a in module_architecture.values()}),
             "api_contract_count": len(api_contracts),
             "data_flow_count": len(data_flows),
         },

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -598,7 +599,7 @@ class TestBudgetMaxTurnsZeroUnlimited:
 
         # Should not stop due to max_turns with high turn count below limit
         calls = [CanonicalToolCall(tool="test", args={})]
-        approved, blocked, stop_reason, violations = policy.evaluate(
+        approved, _blocked, stop_reason, _violations = policy.evaluate(
             calls,
             tool_call_count=0,
             turn_count=100,  # High turn count but below 9999
@@ -747,7 +748,7 @@ class TestBugFixIntegration:
     """Integration tests for bug fixes working together."""
 
     @pytest.fixture
-    def temp_workspace(self) -> str:
+    def temp_workspace(self) -> Generator[str, None, None]:
         """Create a temporary workspace."""
         with tempfile.TemporaryDirectory() as tmpdir:
             yield tmpdir

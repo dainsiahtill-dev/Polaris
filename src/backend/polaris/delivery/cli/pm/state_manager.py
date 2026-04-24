@@ -594,7 +594,7 @@ class PMStateManager:
             if os.path.exists(subsystem_path):
                 size = 0
                 file_count = 0
-                for root, dirs, files in os.walk(subsystem_path):
+                for root, _dirs, files in os.walk(subsystem_path):
                     for f in files:
                         fp = os.path.join(root, f)
                         try:

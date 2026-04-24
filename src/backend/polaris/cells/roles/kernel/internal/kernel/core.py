@@ -392,9 +392,9 @@ class RoleExecutionKernel:
                     return provider_profile.model_copy(update={"model": model_override})  # type: ignore[union-attr]
                 except (AttributeError, TypeError, ValueError):
                     pass
-            if dataclasses.is_dataclass(provider_profile):
+            if dataclasses.is_dataclass(provider_profile) and not isinstance(provider_profile, type):
                 try:
-                    return dataclasses.replace(provider_profile, model=model_override)
+                    return dataclasses.replace(provider_profile, model=model_override)  # type: ignore[type-var]
                 except (TypeError, ValueError):
                     pass
             try:

@@ -32,11 +32,11 @@ from .runtime_control import (
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "AsyncProcessHandle",
-    "CommandResult",
     # AsyncProcessRunnerPort contract (async streaming)
     "AsyncProcessRunnerPort",
     # CommandExecutorPort contract (sync)
     "CommandExecutorPort",
+    "CommandResult",
     # Process lifecycle
     "ProcessControlPort",
     "ProcessInfo",

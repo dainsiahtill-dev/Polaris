@@ -99,7 +99,7 @@ class MessageItem:
     metadata: dict[str, Any] = field(default_factory=dict)
     avatar: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.content, str):
             self.content = MessageContent(text=self.content)
 

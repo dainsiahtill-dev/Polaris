@@ -9,7 +9,7 @@ class TestErrorContextInjector:
     """测试错误上下文注入器。"""
 
     def test_inject_error_context(self) -> None:
-        history = []
+        history: list[dict[str, str]] = []
         new_history = ErrorContextInjector.inject_error_context(
             history, "read_file", "File not found", {"path": "test.py"}
         )
@@ -29,7 +29,7 @@ class TestErrorContextInjector:
         assert new_history[1]["content"] == "Hi there"
 
     def test_inject_recovery_hint(self) -> None:
-        history = []
+        history: list[dict[str, str]] = []
         hint = "Try using a different file path"
         new_history = ErrorContextInjector.inject_recovery_hint(history, hint)
         assert len(new_history) == 1

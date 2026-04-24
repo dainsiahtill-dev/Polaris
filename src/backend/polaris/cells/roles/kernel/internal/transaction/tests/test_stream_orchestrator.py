@@ -91,9 +91,7 @@ class TestBuildContinueVisibleContent:
 
     def test_visible_content_has_system_hint(self):
         # FIX-20250422: 当 modification_contract_status 为 ready 时，提示执行写操作
-        content = _build_continue_visible_content(
-            ["read_file"], modification_contract_status="ready"
-        )
+        content = _build_continue_visible_content(["read_file"], modification_contract_status="ready")
         assert "多回合工作流继续" in content
         # FIX-20250421: 基于 PhaseManager 阶段生成提示语
         assert "CONTENT_GATHERED" in content
@@ -168,15 +166,11 @@ class TestDetectTruncationHeuristics:
         assert result is True
 
     def test_truncated_by_metadata(self):
-        result = _detect_truncation_heuristics(
-            "content", {"truncated": True}
-        )
+        result = _detect_truncation_heuristics("content", {"truncated": True})
         assert result is True
 
     def test_not_truncated_by_metadata(self):
-        result = _detect_truncation_heuristics(
-            "content", {"truncated": False}
-        )
+        result = _detect_truncation_heuristics("content", {"truncated": False})
         assert result is False
 
 
@@ -195,8 +189,7 @@ class TestReadStrategyAdapter:
     def test_analyze_normal_read_file(self):
         adapter = ReadStrategyAdapter()
         result = adapter.analyze_tool_result(
-            "read_file",
-            {"ok": True, "file": "test.py", "content": "small content", "truncated": False}
+            "read_file", {"ok": True, "file": "test.py", "content": "small content", "truncated": False}
         )
         assert result is not None
         assert result.use_slice_mode is False
@@ -204,8 +197,7 @@ class TestReadStrategyAdapter:
     def test_analyze_truncated_read_file(self):
         adapter = ReadStrategyAdapter()
         result = adapter.analyze_tool_result(
-            "read_file",
-            {"ok": True, "file": "test.py", "content": "content...", "truncated": True}
+            "read_file", {"ok": True, "file": "test.py", "content": "content...", "truncated": True}
         )
         assert result is not None
         assert result.use_slice_mode is True
@@ -213,10 +205,7 @@ class TestReadStrategyAdapter:
     def test_analyze_large_read_file(self):
         adapter = ReadStrategyAdapter()
         large_content = "x" * (200 * 1024)
-        result = adapter.analyze_tool_result(
-            "read_file",
-            {"ok": True, "file": "test.py", "content": large_content}
-        )
+        result = adapter.analyze_tool_result("read_file", {"ok": True, "file": "test.py", "content": large_content})
         assert result is not None
         assert result.use_slice_mode is True
 

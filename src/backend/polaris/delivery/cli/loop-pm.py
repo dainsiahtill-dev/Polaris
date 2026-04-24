@@ -7,17 +7,6 @@ This file delegates to the canonical implementation in the pm/ package.
 import sys
 from pathlib import Path
 
-
-def _bootstrap_backend_import_path() -> None:
-    """Ensure backend package path when running file directly."""
-    if __package__:
-        return
-    backend_root = Path(__file__).resolve().parents[3]
-    backend_root_str = str(backend_root)
-    if backend_root_str not in sys.path:
-        sys.path.insert(0, backend_root_str)
-
-
 # Import from pm package (renamed from loop_pm)
 import polaris.delivery.cli.pm.agents as _pm_agents_module
 import polaris.delivery.cli.pm.backend as _pm_backend_module
@@ -63,14 +52,12 @@ from polaris.delivery.cli.pm import (
     normalize_tasks,
     persist_pm_payloads,
     requires_manual_intervention_for_error,
-    resolve_agents_approval_mode,
     run_chief_engineer_analysis,
     run_chief_engineer_task,
     run_director_once,
     run_once as _run_once_impl,
     should_pause_for_manual_intervention,
     split_director_tasks,
-    wait_for_agents_confirmation,
     wait_for_director_result,
 )
 
@@ -122,6 +109,17 @@ except ImportError:
 from polaris.delivery.cli.pm import (
     invoke_pm_backend,
 )
+
+
+def _bootstrap_backend_import_path() -> None:
+    """Ensure backend package path when running file directly."""
+    if __package__:
+        return
+    backend_root = Path(__file__).resolve().parents[3]
+    backend_root_str = str(backend_root)
+    if backend_root_str not in sys.path:
+        sys.path.insert(0, backend_root_str)
+
 
 # Delegation bridges for test monkeypatching on the wrapper module.
 get_anthropomorphic_context = _pm_backend_module.get_anthropomorphic_context
@@ -185,8 +183,8 @@ __all__ = [
     "REQUIRED_MODULE_FILES",
     "SCRIPT_DIR",
     "EngineRuntimeConfig",
-    "PolarisEngine",
     "PmRoleState",
+    "PolarisEngine",
     "SchedulerProtocol",
     "SingleWorkerScheduler",
     "_auto_assign_role",
@@ -194,7 +192,6 @@ __all__ = [
     "_migrate_tasks_in_place",
     "_use_context_engine_v2",
     "apply_task_status_updates",
-    # Agent subprocess and backend helpers (not defined in this file)
     "build_pm_prompt",
     "build_pm_spin_fingerprint",
     "build_resume_payload_from_last_tasks",
@@ -203,7 +200,6 @@ __all__ = [
     "collect_schema_warnings",
     "compute_task_fingerprint",
     "consume_interrupt_task",
-    # DirectorInterface Integration
     "create_director_for_pm",
     "enforce_utf8",
     "execute_non_director_tasks",

@@ -41,7 +41,7 @@ class CognitiveMiddleware:
         self,
         workspace: str | None = None,
         enabled: bool | None = None,
-    ):
+    ) -> None:
         self._workspace = workspace or "."
         self._enabled = self._resolve_enabled(enabled)
         self._orchestrator: CognitiveOrchestrator | None = None

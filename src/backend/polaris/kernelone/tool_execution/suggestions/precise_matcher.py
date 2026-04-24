@@ -181,7 +181,7 @@ def find_best_match(
                     "start_pos": start_pos,
                     "end_pos": end_pos,
                     "similarity": 0.85,
-                    "fixes_applied": fixes_applied + ["indentation normalization"],
+                    "fixes_applied": [*fixes_applied, "indentation normalization"],
                     "exact": False,
                 }
 
@@ -248,7 +248,7 @@ def fuzzy_replace(
         # We need to adjust replacement so its structure matches the matched text
         adjusted_lines = []
 
-        for i, line in enumerate(replacement_lines):
+        for _i, line in enumerate(replacement_lines):
             if not line.strip():
                 # Empty line: keep as-is
                 adjusted_lines.append(line)

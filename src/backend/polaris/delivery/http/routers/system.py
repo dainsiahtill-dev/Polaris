@@ -53,7 +53,7 @@ async def health() -> dict[str, Any]:
         from polaris.infrastructure.di.container import get_container
 
         async def get_pm_status():
-            container = get_container()
+            container = await get_container()
             pm_service = await container.resolve_async(PMService)
             return pm_service.get_status()
 
@@ -74,7 +74,7 @@ async def health() -> dict[str, Any]:
         from polaris.infrastructure.di.container import get_container
 
         async def get_director_status():
-            container = get_container()
+            container = await get_container()
             director_service = await container.resolve_async(DirectorService)
             return await director_service.get_status()
 
@@ -124,7 +124,7 @@ async def update_settings(request: Request, payload: SettingsUpdate) -> dict[str
                 self_upgrade_mode=target_self_upgrade_mode,
             )
         except DomainValidationError as exc:
-            raise HTTPException(status_code=400, detail=exc.message)
+            raise HTTPException(status_code=400, detail=exc.message) from exc
     workspace_root = str(payload.workspace or state.settings.workspace or DEFAULT_WORKSPACE).strip()
     requested_workspace = str(payload.workspace or "").strip()
     resolved_requested = ""

@@ -110,7 +110,7 @@ class DistributedTracer:
             "exception.type": type(exception).__name__,
             "exception.message": str(exception),
         }
-        updated_logs = span.logs + (log_entry,)
+        updated_logs = (*span.logs, log_entry)
         updated_span = Span(
             span_id=span.span_id,
             trace_id=span.trace_id,

@@ -222,8 +222,8 @@ class EvolutionStore:
         self._state = EvolutionState(
             evolution_id=self._state.evolution_id,
             calibration_score=self._state.calibration_score,
-            beliefs=self._state.beliefs + (new_belief,),
-            update_history=self._state.update_history + (record,),
+            beliefs=(*self._state.beliefs, new_belief),
+            update_history=(*self._state.update_history, record),
             knowledge_gaps=self._state.knowledge_gaps,
             version=self._state.version + 1,
         )
@@ -331,7 +331,7 @@ class EvolutionStore:
                 self._state = EvolutionState(
                     evolution_id=self._state.evolution_id,
                     beliefs=tuple(new_beliefs),
-                    update_history=self._state.update_history + (record,),
+                    update_history=(*self._state.update_history, record),
                     calibration_score=self._state.calibration_score,
                     knowledge_gaps=self._state.knowledge_gaps,
                     version=self._state.version + 1,

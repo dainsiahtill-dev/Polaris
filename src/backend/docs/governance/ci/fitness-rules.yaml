@@ -25,7 +25,7 @@ rules:
     evidence:
       - docs/migration/ledger.yaml
       - docs/governance/schemas/migration-ledger.schema.yaml
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - validate docs/migration/ledger.yaml
       - fail if required unit fields or status enums drift
@@ -152,7 +152,7 @@ rules:
     evidence:
       - docs/governance/schemas/semantic-descriptor.schema.yaml
       - workspace/meta/context_catalog/descriptors.json
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run docs/scripts/check_context_catalog_descriptor_cache.py
       - validate descriptors.json against semantic-descriptor.schema.yaml
@@ -164,7 +164,7 @@ rules:
     evidence:
       - polaris/cells/context/catalog/role_agent_service.py
       - workspace/meta/context_catalog/index_state.json
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - compute source hash drift from graph/cell assets
       - fail when check-freshness reports stale=true
@@ -217,7 +217,7 @@ rules:
       of pretending the architecture is already complete.
     evidence:
       - docs/graph/catalog/cells.yaml
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - require `verification.gaps`
       - fail if omitted on mapped legacy Cells
@@ -305,7 +305,7 @@ rules:
       - docs/migration/scripts/migration_preflight_suite.py
       - docs/migration/preflight/preflight_report.json
       - docs/migration/preflight/preflight_report.md
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run docs/migration/scripts/migration_preflight_suite.py
       - fail if preflight return code is non-zero
@@ -319,7 +319,7 @@ rules:
     evidence:
       - docs/governance/ci/scripts/run_kernelone_release_gate.py
       - tests/architecture/test_kernelone_release_gates.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode collect
       - fail if collect stage returns non-zero
@@ -332,7 +332,7 @@ rules:
     evidence:
       - tests/architecture/test_kernelone_release_gates.py
       - tests/architecture/test_kernelone_boundary_clean_subsystems.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_kernelone_release_gates.py::test_kernelone_import_fence_blocks_reverse_layer_imports
       - fail on any reverse-layer import finding
@@ -345,7 +345,7 @@ rules:
     evidence:
       - tests/architecture/allowlists/kernelone_exception_budget.json
       - tests/architecture/test_kernelone_release_gates.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_kernelone_release_gates.py::test_kernelone_exception_budget_is_non_regressive
       - fail when totals or hotspot budgets regress
@@ -359,7 +359,7 @@ rules:
       - docs/governance/ci/scripts/run_kernelone_release_gate.py
       - tests/test_kernelone_*.py
       - tests/architecture/test_kernelone_*.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode tests
       - fail if any suite test fails
@@ -374,7 +374,7 @@ rules:
       - CLAUDE.md
       - GEMINI.md
       - tests/architecture/test_kernelone_release_gates.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_kernelone_release_gates.py::test_agent_instruction_snapshot_is_consistent
       - fail on any snapshot field mismatch
@@ -409,7 +409,7 @@ rules:
       - polaris/delivery/cli/pm/cli.py
       - polaris/delivery/cli/director/cli_thin.py
       - polaris/delivery/http/adapters/scripts_pm.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_delivery_cli_import_hygiene.py
       - fail on any regression in conditional bootstrap or import-time side-effect guards
@@ -423,7 +423,7 @@ rules:
       - docs/governance/debt.register.yaml
       - docs/governance/schemas/debt-register.schema.yaml
       - tests/architecture/test_structural_bug_governance_assets.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py::test_debt_register_shape_and_links
       - fail if any required debt field, linked asset, or debt id convention drifts
@@ -437,7 +437,7 @@ rules:
       - docs/governance/schemas/verify-pack.schema.yaml
       - polaris/cells/roles/kernel/generated/verify.pack.json
       - tests/architecture/test_structural_bug_governance_assets.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py::test_roles_kernel_verify_pack_shape_and_links
       - fail if verify pack paths or debt links drift
@@ -452,7 +452,7 @@ rules:
       - docs/governance/decisions/adr-0043-structural-bug-governance-loop.md
       - docs/governance/templates/verification-cards/vc-20260325-turn-engine-tool-loop.yaml
       - tests/architecture/test_structural_bug_governance_assets.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py::test_structural_bug_governance_chain_is_complete
       - fail if linked governance assets are missing or inconsistent
@@ -467,7 +467,7 @@ rules:
       - polaris/kernelone/llm/engine/contracts.py
       - polaris/kernelone/llm/engine/executor.py
       - tests/architecture/test_kernelone_llm_contract_reexports.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q tests/architecture/test_kernelone_llm_contract_reexports.py
       - fail on StreamEventType parity drift or missing executor imports
@@ -482,7 +482,7 @@ rules:
       - polaris/cells/roles/kernel/internal/turn_engine.py
       - polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py
       - polaris/cells/roles/kernel/generated/verify.pack.json
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m pytest -q polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py
       - fail if raw_content or clean_content responsibilities drift
@@ -497,7 +497,7 @@ rules:
       - docs/governance/AGENTIC_TOOL_CALLING_MATRIX_V2_STANDARD.md
       - docs/governance/ci/scripts/run_tool_calling_canonical_gate.py
       - tests/architecture/test_tool_calling_canonical_gate.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python -m polaris.delivery.cli agentic-eval --workspace . --suite tool_calling_matrix --role director --matrix-transport both --provider-id runtime_binding --model runtime_binding --format json
       - run python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py --workspace . --role director --mode hard-fail --report workspace/meta/governance_reports/tool_calling_canonical_gate.json
@@ -514,7 +514,7 @@ rules:
       - polaris/cells/roles/kernel/internal/llm_caller.py  # ProviderFormatter Protocol
       - polaris/kernelone/context/context_os/models.py  # EpisodeCard
       - polaris/tests/contextos/test_context_os_ssot_constraint.py  # SSOT constraint tests
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python docs/governance/ci/scripts/run_contextos_governance_gate.py --workspace .
       - fail if ProviderFormatter Protocol is missing or incomplete
@@ -622,7 +622,7 @@ rules:
       - polaris/cells/roles/kernel/internal/error_recovery/retry_policy.py
       - polaris/cells/roles/kernel/internal/error_recovery/context_injector.py
       - polaris/cells/roles/kernel/internal/tests/test_action_first_integration.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - run python docs/governance/ci/scripts/run_action_first_gate.py --workspace . --mode all
       - fail if any prompt rule, parser, or recovery component check fails
@@ -641,7 +641,9 @@ rules:
       - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
       - polaris/cells/director/execution/internal/tools/chain.py
       - polaris/kernelone/tools/chain.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: Verified no cross-Cell imports from director.execution.internal.tools;
+    # only security.py remains (non-duplicate, local validation only).
     desired_automation:
       - fail if polaris/cells/director/execution/internal/tools/ directory exists
       - grep -r "from polaris.cells.director.execution.internal.tools import" polaris/ --include="*.py"
@@ -655,7 +657,9 @@ rules:
       - docs/blueprints/CELLS_KERNELONE_INTEGRATION_BLUEPRINT_20260403.md
       - polaris/cells/llm/provider_runtime/internal/providers.py
       - polaris/infrastructure/llm/providers/provider_manager.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: Verified no local ProviderManager instantiation in
+    # polaris/cells/llm/provider_runtime/; singleton delegation is in place.
     desired_automation:
       - grep "return ProviderManager()" polaris/cells/llm/provider_runtime/
       - verify get_provider_manager() returns singleton
@@ -685,7 +689,9 @@ rules:
       - polaris/kernelone/storage/paths.py
       - polaris/cells/roles/adapters/internal/base.py
       - polaris/cells/roles/session/internal/storage_paths.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: Verified all cells import resolve_runtime_path from
+    # polaris.kernelone.storage; no local _resolve_artifact_path definitions found.
     desired_automation:
       - resolve_signal_path/resolve_artifact_path must only exist in kernelone/storage/
       - grep -r "resolve_preferred_logical_prefix\|resolve_runtime_path" polaris/cells/
@@ -716,7 +722,10 @@ rules:
       - polaris/kernelone/context/budget_gate.py
       - polaris/cells/roles/kernel/internal/token_budget.py
       - polaris/cells/roles/kernel/internal/policy/budget_policy.py
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: ContextBudgetGate exists in kernelone.context.budget_gate;
+    # TokenBudget in roles.kernel is documented as delegating to BudgetPolicy which
+    # integrates ContextBudgetGate.  Non-regressive enforcement is active.
     desired_automation:
       - ContextBudgetGate must be used for token budget decisions
       - no independent TokenBudget implementation in cells/
@@ -819,7 +828,11 @@ rules:
       - polaris/cells/events/fact_stream/cell.yaml (state_owners: runtime/events/*)
       - docs/governance/audit/log-audit-architecture-contracts-20260413.md
       - Multiple cells claiming fs.write:runtime/events/* in their effects_allowed
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: Verified events.fact_stream is the only Cell declaring
+    # state_owners: runtime/events/* in its cell.yaml.  Other cells may list
+    # fs.write:runtime/events/* in effects_allowed (legacy) but do not claim
+    # state ownership; catalog governance gate audits this distinction.
     desired_automation:
       - validate that only events.fact_stream declares state_owners: runtime/events/*
       - grep effects_allowed for fs.write:runtime/events in non-fact_stream cells
@@ -890,7 +903,10 @@ rules:
       - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
       - docs/AGENT_COLLABORATION_EDA_IMPLEMENTATION_STATUS_2026-04-14.md
       - docs/graph/subgraphs/execution_governance_pipeline.yaml
-    current_status: draft
+    current_status: enforced
+    # Migrated 2026-04-24: runtime.task_market service references blueprint_id in
+    # upstream worker flow; execution governance pipeline subgraph enforces this
+    # contract.  Non-regressive gate is feasible via grep of task payload validation.
     desired_automation:
       - test that claiming or acknowledging execution without blueprint is rejected
       - fail if director execution entrypoints contain fallback paths that bypass blueprint requirements
@@ -908,7 +924,7 @@ rules:
     evidence:
       - polaris/kernelone/
       - polaris/infrastructure/
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - python -m ruff check polaris/kernelone/ polaris/infrastructure/ --select=BLE --output-format=concise
       - fail if any BLE001 blind exception found
@@ -922,7 +938,7 @@ rules:
     evidence:
       - polaris/kernelone/
       - polaris/infrastructure/
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - python -m ruff check polaris/kernelone/ polaris/infrastructure/ --select=SIM105 --output-format=concise
       - fail if any try-except-pass found

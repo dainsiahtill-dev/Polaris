@@ -31,6 +31,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    TypeAlias,
     TypeVar,
 )
 
@@ -245,7 +246,7 @@ def __getattr__(name: str) -> Any:
 
 
 # For backward compatibility during deprecation period
-ErrorCategory = _CanonicalErrorCategory
+ErrorCategory: TypeAlias = _CanonicalErrorCategory
 
 
 @dataclass(frozen=True)

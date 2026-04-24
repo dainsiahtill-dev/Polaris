@@ -160,8 +160,8 @@ def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     try:
         with open(report_path, encoding="utf-8") as handle:
             data = json.load(handle)
-    except (RuntimeError, ValueError):
-        raise HTTPException(status_code=500, detail="failed to read report")
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=500, detail="failed to read report") from e
     return _normalize_report_payload(data)
 
 
@@ -176,8 +176,8 @@ def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
     try:
         with open(transcript_path, encoding="utf-8") as handle:
             content = handle.read()
-    except (RuntimeError, ValueError):
-        raise HTTPException(status_code=500, detail="failed to read transcript")
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=500, detail="failed to read transcript") from e
     return {"ok": True, "content": content}
 
 

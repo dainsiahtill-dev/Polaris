@@ -4,8 +4,6 @@ import logging
 import time
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from polaris.infrastructure.llm.sdk import CodexSDK, SDKConfig, SDKMessage, SDKUnavailableError
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
 from polaris.kernelone.llm.providers import (
@@ -17,16 +15,20 @@ from polaris.kernelone.llm.providers import (
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
 
+logger = logging.getLogger(__name__)
+
 
 def _normalize_timeout(value: Any, default: int = 60) -> int:
     return normalize_timeout_seconds(value, default=default)
 
 
 def _normalize_retries(value: Any, default: int = DEFAULT_MAX_RETRIES) -> int:
+    if value is None:
+        return default
     try:
         value = int(value)
         return value if value >= 0 else default
-    except (RuntimeError, ValueError):
+    except (TypeError, ValueError):
         return default
 
 

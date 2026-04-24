@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,10 +34,26 @@ from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, M
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds, timeout_seconds_or_none
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 DEFAULT_MODELS_PATH = "/v1/models"
 DEFAULT_CHAT_PATH = "/v1/chat/completions"
+
+# Regex to strip structured tags like <think>, <thinking>, <answer>, etc.
+_STRUCTURAL_TAGS_RE = re.compile(
+    r"<(think|thinking|thought|answer)(\s[^>]*)?>.*?</\1>|</?(think|thinking|thought|answer)(\s[^>]*)?>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_structured_tags(text: str) -> str:
+    """Remove structured tags from text when native reasoning is available."""
+    if not text:
+        return ""
+    cleaned = _STRUCTURAL_TAGS_RE.sub("", text)
+    return cleaned.strip()
 
 
 def _timeout_seconds(config: dict[str, Any], default: int, key: str = "timeout") -> int:
@@ -52,32 +69,6 @@ def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
-
-
-import re
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-# Regex to strip structured tags like <think>, <thinking>, <answer>, etc.
-_STRUCTURAL_TAGS_RE = re.compile(
-    r"<(think|thinking|thought|answer)(\s[^>]*)?>.*?</\1>|</?(think|thinking|thought|answer)(\s[^>]*)?>",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-def _strip_structured_tags(text: str) -> str:
-    """Remove structured tags from text when native reasoning is available.
-
-    When a model provides native reasoning_content, any structured tags
-    (<think>, <thinking>, <answer>, etc.) in the content are duplicates
-    and should be stripped completely.
-    """
-    if not text:
-        return ""
-    # Remove all structural tags and their content
-    cleaned = _STRUCTURAL_TAGS_RE.sub("", text)
-    return cleaned.strip()
 
 
 def _flatten_text(value: Any) -> list[str]:

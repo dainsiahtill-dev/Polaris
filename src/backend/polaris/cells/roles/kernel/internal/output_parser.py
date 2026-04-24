@@ -609,7 +609,7 @@ class OutputParser:
 
         try:
             blocks = parse_edit_blocks(content)
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             logger.debug("Failed to parse edit blocks: %s", e)
             return results
 

@@ -477,7 +477,7 @@ class TagsExtractor:
             return
 
         patterns = _get_fallback_patterns(language)
-        for kind_str, pattern in patterns:
+        for _kind_str, pattern in patterns:
             for match in pattern.finditer(content):
                 name = match.group(1)
                 line_no = content[: match.start()].count("\n")

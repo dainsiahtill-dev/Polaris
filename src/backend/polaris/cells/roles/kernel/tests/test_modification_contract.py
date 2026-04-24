@@ -432,7 +432,9 @@ class TestSuperModeBypass:
     def test_super_mode_continue_bypasses_empty_contract(self) -> None:
         """[SUPER_MODE_DIRECTOR_CONTINUE] in context bypasses EMPTY contract -> READY_TO_WRITE."""
         tc = ModificationContract(status=ModificationContractStatus.EMPTY)
-        context = [{"role": "user", "content": "[SUPER_MODE_DIRECTOR_CONTINUE]\nKeep going\n[/SUPER_MODE_DIRECTOR_CONTINUE]"}]
+        context = [
+            {"role": "user", "content": "[SUPER_MODE_DIRECTOR_CONTINUE]\nKeep going\n[/SUPER_MODE_DIRECTOR_CONTINUE]"}
+        ]
         verdict = evaluate_modification_readiness(
             tc, "content_gathered", "materialize_changes", 2, 3, conversation_context=context
         )
@@ -494,16 +496,16 @@ class TestSuperModeBypass:
             turns_in_phase=1,
             contract_status=ModificationContractStatus.EMPTY,
         )
-        context = [{"role": "user", "content": "[SUPER_MODE_HANDOFF]\nExecute this plan immediately\n[/SUPER_MODE_HANDOFF]"}]
+        context = [
+            {"role": "user", "content": "[SUPER_MODE_HANDOFF]\nExecute this plan immediately\n[/SUPER_MODE_HANDOFF]"}
+        ]
 
         # Should NOT raise — SUPER_MODE bypasses the readiness gate, allowing write tools
         result = await executor.execute_tool_batch(decision, sm, ledger, context, stream=False)
         assert result.get("turn_id") == "turn_sm_1"
 
     @pytest.mark.asyncio
-    async def test_verifying_phase_bypasses_for_super_mode(
-        self, mock_emit_event: Any, mock_guard_assert: Any
-    ) -> None:
+    async def test_verifying_phase_bypasses_for_super_mode(self, mock_emit_event: Any, mock_guard_assert: Any) -> None:
         """ToolBatchExecutor bypasses verifying-phase requirement when SUPER_MODE markers present.
 
         In VERIFYING phase, normally execute_command is required. But SUPER_MODE

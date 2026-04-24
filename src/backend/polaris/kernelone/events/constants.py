@@ -134,38 +134,38 @@ EVENT_TYPE_ERROR = "error"
 
 
 __all__ = [
-    # Core tool event types
-    "EVENT_TYPE_TOOL_CALL",
-    "EVENT_TYPE_TOOL_RESULT",
-    "EVENT_TYPE_TOOL_ERROR",
-    "EVENT_TYPE_TOOL_START",
-    "EVENT_TYPE_TOOL_END",
+    "EVENT_TYPE_COMPLETE",
     # Content events
     "EVENT_TYPE_CONTENT_CHUNK",
-    "EVENT_TYPE_THINKING_CHUNK",
-    "EVENT_TYPE_COMPLETE",
-    # LLM events
-    "EVENT_TYPE_LLM_START",
-    "EVENT_TYPE_LLM_END",
-    "EVENT_TYPE_LLM_ERROR",
-    # LLM call lifecycle events (roles/kernel compatibility)
-    "EVENT_TYPE_LLM_CALL_START",
-    "EVENT_TYPE_LLM_CALL_END",
-    "EVENT_TYPE_LLM_RETRY",
-    # LLM realtime observer event types
-    "EVENT_TYPE_LLM_WAITING",
-    "EVENT_TYPE_LLM_COMPLETED",
-    "EVENT_TYPE_LLM_FAILED",
-    # Session events
-    "EVENT_TYPE_SESSION_START",
-    "EVENT_TYPE_SESSION_END",
-    # Task events (dot notation for hierarchy)
-    "EVENT_TYPE_TASK_CREATED",
-    "EVENT_TYPE_TASK_UPDATED",
-    "EVENT_TYPE_TASK_COMPLETED",
-    "EVENT_TYPE_TASK_FAILED",
+    "EVENT_TYPE_ERROR",
     # Audit events
     "EVENT_TYPE_FINGERPRINT",
+    "EVENT_TYPE_LLM_CALL_END",
+    # LLM call lifecycle events (roles/kernel compatibility)
+    "EVENT_TYPE_LLM_CALL_START",
+    "EVENT_TYPE_LLM_COMPLETED",
+    "EVENT_TYPE_LLM_END",
+    "EVENT_TYPE_LLM_ERROR",
+    "EVENT_TYPE_LLM_FAILED",
+    "EVENT_TYPE_LLM_RETRY",
+    # LLM events
+    "EVENT_TYPE_LLM_START",
+    # LLM realtime observer event types
+    "EVENT_TYPE_LLM_WAITING",
+    "EVENT_TYPE_SESSION_END",
+    # Session events
+    "EVENT_TYPE_SESSION_START",
     "EVENT_TYPE_STATE_SNAPSHOT",
-    "EVENT_TYPE_ERROR",
+    "EVENT_TYPE_TASK_COMPLETED",
+    # Task events (dot notation for hierarchy)
+    "EVENT_TYPE_TASK_CREATED",
+    "EVENT_TYPE_TASK_FAILED",
+    "EVENT_TYPE_TASK_UPDATED",
+    "EVENT_TYPE_THINKING_CHUNK",
+    # Core tool event types
+    "EVENT_TYPE_TOOL_CALL",
+    "EVENT_TYPE_TOOL_END",
+    "EVENT_TYPE_TOOL_ERROR",
+    "EVENT_TYPE_TOOL_RESULT",
+    "EVENT_TYPE_TOOL_START",
 ]

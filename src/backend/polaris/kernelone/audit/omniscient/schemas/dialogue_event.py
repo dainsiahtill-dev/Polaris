@@ -38,7 +38,7 @@ class MessageType(str, Enum):
     HEARTBEAT = "heartbeat"
 
 
-class DialogueEvent(AuditEvent, frozen=True):
+class DialogueEvent(AuditEvent):  # type: ignore[call-arg]  # frozen=True inherited from AuditEvent model_config
     """Role communication audit event.
 
     Tracks inter-role messaging for:

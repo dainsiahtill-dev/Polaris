@@ -35,7 +35,7 @@ def apply_agents(request: Request, payload: AgentsApplyPayload) -> dict[str, Any
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         shutil.copyfile(draft_path, target_path)
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=f"failed to copy AGENTS.md: {exc}")
+        raise HTTPException(status_code=500, detail=f"failed to copy AGENTS.md: {exc}") from exc
     return {"ok": True, "target_path": target_path}
 
 
@@ -61,5 +61,5 @@ def save_agents_feedback(request: Request, payload: AgentsFeedbackPayload) -> di
         with open(feedback_path, "w", encoding="utf-8") as handle:
             handle.write(content)
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=f"failed to save feedback: {exc}")
+        raise HTTPException(status_code=500, detail=f"failed to save feedback: {exc}") from exc
     return {"ok": True, "path": feedback_path, "mtime": format_mtime(feedback_path)}

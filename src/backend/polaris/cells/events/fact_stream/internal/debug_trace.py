@@ -643,23 +643,27 @@ class DebugTracer:
                     )
                     raise
 
-                if inner_self.stdout is not None:  # type: ignore[has-type]
+                # stdout/stderr are set by subprocess.Popen.__init__ but mypy
+                # cannot see them on the dynamically-created TracedPopen class.
+                _stdout: Any = getattr(inner_self, "stdout", None)
+                if _stdout is not None:
                     try:
                         inner_self.stdout = tracer._LoggedStreamProxy(  # type: ignore[has-type]
                             tracer,
-                            inner_self.stdout,
+                            _stdout,
                             inner_self._hp_trace_id,
-                            "stdout",  # type: ignore[has-type]
+                            "stdout",
                         )
                     except (RuntimeError, ValueError) as e:
                         logger.debug(f"Failed to wrap stdout: {e}")
-                if inner_self.stderr is not None:  # type: ignore[has-type]
+                _stderr: Any = getattr(inner_self, "stderr", None)
+                if _stderr is not None:
                     try:
                         inner_self.stderr = tracer._LoggedStreamProxy(  # type: ignore[has-type]
                             tracer,
-                            inner_self.stderr,
+                            _stderr,
                             inner_self._hp_trace_id,
-                            "stderr",  # type: ignore[has-type]
+                            "stderr",
                         )
                     except (RuntimeError, ValueError) as e:
                         logger.debug(f"Failed to wrap stderr: {e}")

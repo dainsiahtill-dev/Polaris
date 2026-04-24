@@ -1,0 +1,1752 @@
+warning: The following rules have been removed and ignoring them has no effect:
+    - ANN101
+    - ANN102
+
+[
+  {
+    "cell": null,
+    "code": "SIM108",
+    "end_location": {
+      "column": 34,
+      "row": 307
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\audit\\audit_field.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 304
+    },
+    "message": "Use ternary operator `func_name = str(obj.__name__) if hasattr(obj, \"__name__\") else repr(obj)` instead of `if`-`else`-block",
+    "noqa_row": 304,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-else-block-instead-of-if-exp"
+  },
+  {
+    "cell": null,
+    "code": "SIM102",
+    "end_location": {
+      "column": 25,
+      "row": 222
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\audit\\error_correlator.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 221
+    },
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "noqa_row": 221,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/collapsible-if"
+  },
+  {
+    "cell": null,
+    "code": "ANN204",
+    "end_location": {
+      "column": 16,
+      "row": 56
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\audit\\gateway.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 56
+    },
+    "message": "Missing return type annotation for special method `__new__`",
+    "noqa_row": 56,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/missing-return-type-special-method"
+  },
+  {
+    "cell": null,
+    "code": "RUF006",
+    "end_location": {
+      "column": 53,
+      "row": 323
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\audit\\omniscient\\adapters\\kernel_runtime_adapter.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 323
+    },
+    "message": "Store a reference to the return value of `asyncio.create_task`",
+    "noqa_row": 323,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/asyncio-dangling-task"
+  },
+  {
+    "cell": null,
+    "code": "RUF006",
+    "end_location": {
+      "column": 69,
+      "row": 439
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\audit\\omniscient\\bus.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 439
+    },
+    "message": "Store a reference to the return value of `loop.create_task`",
+    "noqa_row": 439,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/asyncio-dangling-task"
+  },
+  {
+    "cell": null,
+    "code": "ANN204",
+    "end_location": {
+      "column": 16,
+      "row": 149
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\audit\\runtime.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 149
+    },
+    "message": "Missing return type annotation for special method `__new__`",
+    "noqa_row": 149,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/missing-return-type-special-method"
+  },
+  {
+    "cell": null,
+    "code": "E741",
+    "end_location": {
+      "column": 52,
+      "row": 298
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\benchmark\\tests\\test_audit_metrics.py",
+    "fix": null,
+    "location": {
+      "column": 51,
+      "row": 298
+    },
+    "message": "Ambiguous variable name: `l`",
+    "noqa_row": 298,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/ambiguous-variable-name"
+  },
+  {
+    "cell": null,
+    "code": "B018",
+    "end_location": {
+      "column": 52,
+      "row": 261
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\concurrency\\manager.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 261
+    },
+    "message": "Found useless attribute access. Either assign it to a variable or remove it.",
+    "noqa_row": 261,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/useless-expression"
+  },
+  {
+    "cell": null,
+    "code": "B007",
+    "end_location": {
+      "column": 17,
+      "row": 334
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\concurrency\\manager.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 334
+    },
+    "message": "Loop control variable `pool` not used within loop body",
+    "noqa_row": 334,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-loop-control-variable"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 373
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\concurrency\\manager.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 373
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 373,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "N818",
+    "end_location": {
+      "column": 34,
+      "row": 32
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\context_os\\invariants.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 32
+    },
+    "message": "Exception name `ContextOSInvariantViolation` should be named with an Error suffix",
+    "noqa_row": 32,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name"
+  },
+  {
+    "cell": null,
+    "code": "SIM105",
+    "end_location": {
+      "column": 9,
+      "row": 1544
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\context_os\\models.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1524
+    },
+    "message": "Use `contextlib.suppress(ImportError)` instead of `try`-`except`-`pass`",
+    "noqa_row": 1524,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/suppressible-exception"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 10,
+      "row": 263
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\repo_intelligence\\ranker.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 263
+    },
+    "message": "Variable `G` in function should be lowercase",
+    "noqa_row": 263,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "N814",
+    "end_location": {
+      "column": 52,
+      "row": 311
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\strategy_benchmark.py",
+    "fix": null,
+    "location": {
+      "column": 37,
+      "row": 311
+    },
+    "message": "Camelcase `Scorecard` imported as constant `SC`",
+    "noqa_row": 311,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/camelcase-imported-as-constant"
+  },
+  {
+    "cell": null,
+    "code": "SIM105",
+    "end_location": {
+      "column": 21,
+      "row": 497
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\strategy_benchmark.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 494
+    },
+    "message": "Use `contextlib.suppress(FileNotFoundError)` instead of `try`-`except`-`pass`",
+    "noqa_row": 494,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/suppressible-exception"
+  },
+  {
+    "cell": null,
+    "code": "N814",
+    "end_location": {
+      "column": 71,
+      "row": 217
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\strategy_code_domain.py",
+    "fix": null,
+    "location": {
+      "column": 41,
+      "row": 217
+    },
+    "message": "Camelcase `ExpansionDecisionResult` imported as constant `SED`",
+    "noqa_row": 217,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/camelcase-imported-as-constant"
+  },
+  {
+    "cell": null,
+    "code": "N817",
+    "end_location": {
+      "column": 34,
+      "row": 77
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\strategy_receipts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 77
+    },
+    "message": "CamelCase `StrategyReceipt` imported as acronym `SR`",
+    "noqa_row": 77,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/camelcase-imported-as-acronym"
+  },
+  {
+    "cell": null,
+    "code": "N817",
+    "end_location": {
+      "column": 34,
+      "row": 176
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\strategy_receipts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 176
+    },
+    "message": "CamelCase `StrategyReceipt` imported as acronym `SR`",
+    "noqa_row": 176,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/camelcase-imported-as-acronym"
+  },
+  {
+    "cell": null,
+    "code": "RUF043",
+    "end_location": {
+      "column": 56,
+      "row": 59
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_budget_gate.py",
+    "fix": null,
+    "location": {
+      "column": 46,
+      "row": 59
+    },
+    "message": "Pattern passed to `match=` contains metacharacters but is neither escaped nor raw",
+    "noqa_row": 59,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern"
+  },
+  {
+    "cell": null,
+    "code": "RUF043",
+    "end_location": {
+      "column": 56,
+      "row": 61
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_budget_gate.py",
+    "fix": null,
+    "location": {
+      "column": 46,
+      "row": 61
+    },
+    "message": "Pattern passed to `match=` contains metacharacters but is neither escaped nor raw",
+    "noqa_row": 61,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern"
+  },
+  {
+    "cell": null,
+    "code": "RUF043",
+    "end_location": {
+      "column": 99,
+      "row": 62
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_context_os_invariants.py",
+    "fix": null,
+    "location": {
+      "column": 63,
+      "row": 62
+    },
+    "message": "Pattern passed to `match=` contains metacharacters but is neither escaped nor raw",
+    "noqa_row": 62,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern"
+  },
+  {
+    "cell": null,
+    "code": "RUF043",
+    "end_location": {
+      "column": 99,
+      "row": 100
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_context_os_invariants.py",
+    "fix": null,
+    "location": {
+      "column": 63,
+      "row": 100
+    },
+    "message": "Pattern passed to `match=` contains metacharacters but is neither escaped nor raw",
+    "noqa_row": 100,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern"
+  },
+  {
+    "cell": null,
+    "code": "N802",
+    "end_location": {
+      "column": 29,
+      "row": 147
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_tiered_cache.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 147
+    },
+    "message": "Function name `test_expired_withTtl` should be lowercase",
+    "noqa_row": 147,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-function-name"
+  },
+  {
+    "cell": null,
+    "code": "N802",
+    "end_location": {
+      "column": 35,
+      "row": 159
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_tiered_cache.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 159
+    },
+    "message": "Function name `test_not_expired_beforeTtl` should be lowercase",
+    "noqa_row": 159,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-function-name"
+  },
+  {
+    "cell": null,
+    "code": "N817",
+    "end_location": {
+      "column": 44,
+      "row": 739
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_tiered_cache.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 739
+    },
+    "message": "CamelCase `TieredAssetCacheManager` imported as acronym `TACM`",
+    "noqa_row": 739,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/camelcase-imported-as-acronym"
+  },
+  {
+    "cell": null,
+    "code": "RUF043",
+    "end_location": {
+      "column": 77,
+      "row": 45
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_working_set.py",
+    "fix": null,
+    "location": {
+      "column": 46,
+      "row": 45
+    },
+    "message": "Pattern passed to `match=` contains metacharacters but is neither escaped nor raw",
+    "noqa_row": 45,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern"
+  },
+  {
+    "cell": null,
+    "code": "N801",
+    "end_location": {
+      "column": 35,
+      "row": 377
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\tests\\test_working_set.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 377
+    },
+    "message": "Class name `Test_neighbor_file_for_slice` should use CapWords convention",
+    "noqa_row": 377,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-class-name"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 387
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\context\\truth_log_service.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 387
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 387,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 76,
+      "row": 80
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\db\\policy.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 80
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 80,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 77,
+      "row": 117
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\db\\policy.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 117
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 117,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "B007",
+    "end_location": {
+      "column": 14,
+      "row": 408
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\editing\\replacers\\opencode_replacers.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 408
+    },
+    "message": "Loop control variable `i` not used within loop body",
+    "noqa_row": 408,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-loop-control-variable"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 130
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\events\\context_events.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 130
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 130,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 20,
+      "row": 170
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\events\\file_event_broadcaster.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 170
+    },
+    "message": "Variable `_MessageBus` in function should be lowercase",
+    "noqa_row": 170,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 33,
+      "row": 170
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\events\\file_event_broadcaster.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 170
+    },
+    "message": "Variable `MessageType` in function should be lowercase",
+    "noqa_row": 170,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "E741",
+    "end_location": {
+      "column": 25,
+      "row": 466
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\events\\file_event_broadcaster.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 466
+    },
+    "message": "Ambiguous variable name: `l`",
+    "noqa_row": 466,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/ambiguous-variable-name"
+  },
+  {
+    "cell": null,
+    "code": "E741",
+    "end_location": {
+      "column": 39,
+      "row": 519
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\events\\typed\\tests\\test_registry.py",
+    "fix": null,
+    "location": {
+      "column": 38,
+      "row": 519
+    },
+    "message": "Ambiguous variable name: `l`",
+    "noqa_row": 519,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/ambiguous-variable-name"
+  },
+  {
+    "cell": null,
+    "code": "B017",
+    "end_location": {
+      "column": 38,
+      "row": 50
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\events\\typed\\tests\\test_schemas.py",
+    "fix": null,
+    "location": {
+      "column": 14,
+      "row": 50
+    },
+    "message": "Do not assert blind exception: `Exception`",
+    "noqa_row": 50,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/assert-raises-exception"
+  },
+  {
+    "cell": null,
+    "code": "B017",
+    "end_location": {
+      "column": 38,
+      "row": 55
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\events\\typed\\tests\\test_schemas.py",
+    "fix": null,
+    "location": {
+      "column": 14,
+      "row": 55
+    },
+    "message": "Do not assert blind exception: `Exception`",
+    "noqa_row": 55,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/assert-raises-exception"
+  },
+  {
+    "cell": null,
+    "code": "F822",
+    "end_location": {
+      "column": 21,
+      "row": 280
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\exceptions.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 280
+    },
+    "message": "Undefined name `JSONParseError` in `__all__`",
+    "noqa_row": 280,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-export"
+  },
+  {
+    "cell": null,
+    "code": "F822",
+    "end_location": {
+      "column": 15,
+      "row": 286
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\exceptions.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 286
+    },
+    "message": "Undefined name `LLMError` in `__all__`",
+    "noqa_row": 286,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-export"
+  },
+  {
+    "cell": null,
+    "code": "F822",
+    "end_location": {
+      "column": 22,
+      "row": 288
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\exceptions.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 288
+    },
+    "message": "Undefined name `LLMTimeoutError` in `__all__`",
+    "noqa_row": 288,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-export"
+  },
+  {
+    "cell": null,
+    "code": "F822",
+    "end_location": {
+      "column": 20,
+      "row": 301
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\exceptions.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 301
+    },
+    "message": "Undefined name `ProviderError` in `__all__`",
+    "noqa_row": 301,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-export"
+  },
+  {
+    "cell": null,
+    "code": "F822",
+    "end_location": {
+      "column": 25,
+      "row": 307
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\exceptions.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 307
+    },
+    "message": "Undefined name `ResponseParseError` in `__all__`",
+    "noqa_row": 307,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-export"
+  },
+  {
+    "cell": null,
+    "code": "F822",
+    "end_location": {
+      "column": 21,
+      "row": 324
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\exceptions.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 324
+    },
+    "message": "Undefined name `ToolParseError` in `__all__`",
+    "noqa_row": 324,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-export"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 92,
+      "row": 76
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\fs\\tests\\test_memory_snapshot_quality.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 75
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "noqa_row": 75,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 92,
+      "row": 102
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\fs\\tests\\test_memory_snapshot_quality.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 101
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "noqa_row": 101,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 92,
+      "row": 171
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\fs\\tests\\test_memory_snapshot_quality.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 170
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "noqa_row": 170,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "N814",
+    "end_location": {
+      "column": 61,
+      "row": 57
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\llm\\exceptions.py",
+    "fix": null,
+    "location": {
+      "column": 46,
+      "row": 57
+    },
+    "message": "Camelcase `LLMError` imported as constant `_LE`",
+    "noqa_row": 57,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/camelcase-imported-as-constant"
+  },
+  {
+    "cell": null,
+    "code": "SIM108",
+    "end_location": {
+      "column": 53,
+      "row": 46
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\llm\\reasoning\\stripper.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 39
+    },
+    "message": "Use ternary operator `open_tag = f\"<{prefix}(?:\\\\s[^>]*)?>\" if prefix in CHINESE_TAG_PREFIXES else f\"<{prefix}\\\\b(?:\\\\s[^>]*)?>\"` instead of `if`-`else`-block",
+    "noqa_row": 39,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-else-block-instead-of-if-exp"
+  },
+  {
+    "cell": null,
+    "code": "E741",
+    "end_location": {
+      "column": 60,
+      "row": 369
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\llm\\toolkit\\executor\\handlers\\repo.py",
+    "fix": null,
+    "location": {
+      "column": 59,
+      "row": 369
+    },
+    "message": "Ambiguous variable name: `l`",
+    "noqa_row": 369,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/ambiguous-variable-name"
+  },
+  {
+    "cell": null,
+    "code": "ANN204",
+    "end_location": {
+      "column": 22,
+      "row": 56
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\llm\\toolkit\\protocol\\models.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 56
+    },
+    "message": "Missing return type annotation for special method `__post_init__`",
+    "noqa_row": 56,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/missing-return-type-special-method"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 100,
+      "row": 25
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\llm\\toolkit\\tests\\test_integration.py",
+    "fix": null,
+    "location": {
+      "column": 88,
+      "row": 25
+    },
+    "message": "Variable `MockExecutor` in function should be lowercase",
+    "noqa_row": 25,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 45,
+      "row": 67
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\llm\\toolkit\\ts_availability.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 67
+    },
+    "message": "`tree_sitter_language_pack` imported but unused; consider using `importlib.util.find_spec` to test for availability",
+    "noqa_row": 67,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "B017",
+    "end_location": {
+      "column": 38,
+      "row": 104
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\messages\\tests\\test_part_types.py",
+    "fix": null,
+    "location": {
+      "column": 14,
+      "row": 104
+    },
+    "message": "Do not assert blind exception: `Exception`",
+    "noqa_row": 104,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/assert-raises-exception"
+  },
+  {
+    "cell": null,
+    "code": "SIM105",
+    "end_location": {
+      "column": 25,
+      "row": 623
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\process\\async_contracts.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 620
+    },
+    "message": "Use `contextlib.suppress(asyncio.TimeoutError)` instead of `try`-`except`-`pass`",
+    "noqa_row": 620,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/suppressible-exception"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 295
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\resilience\\self_healing.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 295
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 295,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 340
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\resilience\\self_healing.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 340
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 340,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF006",
+    "end_location": {
+      "column": 62,
+      "row": 560
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\runtime\\execution_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 560
+    },
+    "message": "Store a reference to the return value of `asyncio.ensure_future`",
+    "noqa_row": 560,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/asyncio-dangling-task"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 344
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\shared\\error_handling.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 344
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 344,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 355
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\shared\\error_handling.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 355
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 355,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "N802",
+    "end_location": {
+      "column": 14,
+      "row": 24
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\single_agent\\role_framework\\fastapi.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 24
+    },
+    "message": "Function name `Query` should be lowercase",
+    "noqa_row": 24,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-function-name"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 78,
+      "row": 196
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\single_agent\\role_framework\\fastapi.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 196
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 196,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF006",
+    "end_location": {
+      "column": 48,
+      "row": 126
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\stream\\ports.py",
+    "fix": null,
+    "location": {
+      "column": 21,
+      "row": 126
+    },
+    "message": "Store a reference to the return value of `asyncio.create_task`",
+    "noqa_row": 126,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/asyncio-dangling-task"
+  },
+  {
+    "cell": null,
+    "code": "RUF006",
+    "end_location": {
+      "column": 48,
+      "row": 135
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\stream\\ports.py",
+    "fix": null,
+    "location": {
+      "column": 21,
+      "row": 135
+    },
+    "message": "Store a reference to the return value of `asyncio.create_task`",
+    "noqa_row": 135,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/asyncio-dangling-task"
+  },
+  {
+    "cell": null,
+    "code": "RUF006",
+    "end_location": {
+      "column": 48,
+      "row": 145
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\stream\\ports.py",
+    "fix": null,
+    "location": {
+      "column": 21,
+      "row": 145
+    },
+    "message": "Store a reference to the return value of `asyncio.create_task`",
+    "noqa_row": 145,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/asyncio-dangling-task"
+  },
+  {
+    "cell": null,
+    "code": "ANN204",
+    "end_location": {
+      "column": 25,
+      "row": 291
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\stream\\tests\\test_ports.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 291
+    },
+    "message": "Missing return type annotation for special method `__iter__`",
+    "noqa_row": 291,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/missing-return-type-special-method"
+  },
+  {
+    "cell": null,
+    "code": "B039",
+    "end_location": {
+      "column": 15,
+      "row": 31
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\telemetry\\debug_stream.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 31
+    },
+    "message": "Do not use mutable data structures for `ContextVar` defaults",
+    "noqa_row": 31,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/mutable-contextvar-default"
+  },
+  {
+    "cell": null,
+    "code": "B023",
+    "end_location": {
+      "column": 40,
+      "row": 384
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tests\\test_concurrency_safety.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 384
+    },
+    "message": "Function definition does not bind loop variable `received_this_iteration`",
+    "noqa_row": 384,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/function-uses-loop-variable"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 156
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 156
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 156,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 22,
+      "row": 377
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 377
+    },
+    "message": "Variable `BLOCK_OPENERS` in function should be lowercase",
+    "noqa_row": 377,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "SIM102",
+    "end_location": {
+      "column": 57,
+      "row": 443
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 440
+    },
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "noqa_row": 440,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/collapsible-if"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 519
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 519
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 519,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 536
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 536
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 536,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 592
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 592
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 592,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 629
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 629
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 629,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 661
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 661
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 661,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 700
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 700
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 700,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 737
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\code_validator.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 737
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "noqa_row": 737,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "SIM108",
+    "end_location": {
+      "column": 58,
+      "row": 59
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\suggestions\\precise_matcher.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 56
+    },
+    "message": "Use ternary operator `result = re.sub(pattern, replacement, result) if callable(replacement) else re.sub(pattern, replacement, result)` instead of `if`-`else`-block",
+    "noqa_row": 56,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-else-block-instead-of-if-exp"
+  },
+  {
+    "cell": null,
+    "code": "SIM102",
+    "end_location": {
+      "column": 52,
+      "row": 143
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\suggestions\\precise_matcher.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 141
+    },
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "noqa_row": 141,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/collapsible-if"
+  },
+  {
+    "cell": null,
+    "code": "E741",
+    "end_location": {
+      "column": 50,
+      "row": 175
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\suggestions\\precise_matcher.py",
+    "fix": null,
+    "location": {
+      "column": 49,
+      "row": 175
+    },
+    "message": "Ambiguous variable name: `l`",
+    "noqa_row": 175,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/ambiguous-variable-name"
+  },
+  {
+    "cell": null,
+    "code": "E741",
+    "end_location": {
+      "column": 48,
+      "row": 176
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\suggestions\\precise_matcher.py",
+    "fix": null,
+    "location": {
+      "column": 47,
+      "row": 176
+    },
+    "message": "Ambiguous variable name: `l`",
+    "noqa_row": 176,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/ambiguous-variable-name"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 40,
+      "row": 68
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 31,
+      "row": 68
+    },
+    "message": "Unpacked variable `error_msg` is never used",
+    "noqa_row": 68,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 40,
+      "row": 145
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 31,
+      "row": 145
+    },
+    "message": "Unpacked variable `error_msg` is never used",
+    "noqa_row": 145,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 29,
+      "row": 172
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 19,
+      "row": 172
+    },
+    "message": "Unpacked variable `error_code` is never used",
+    "noqa_row": 172,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 40,
+      "row": 172
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 31,
+      "row": 172
+    },
+    "message": "Unpacked variable `error_msg` is never used",
+    "noqa_row": 172,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 29,
+      "row": 278
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 19,
+      "row": 278
+    },
+    "message": "Unpacked variable `error_code` is never used",
+    "noqa_row": 278,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 29,
+      "row": 310
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 19,
+      "row": 310
+    },
+    "message": "Unpacked variable `error_code` is never used",
+    "noqa_row": 310,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 29,
+      "row": 435
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 19,
+      "row": 435
+    },
+    "message": "Unpacked variable `error_code` is never used",
+    "noqa_row": 435,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 29,
+      "row": 448
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 19,
+      "row": 448
+    },
+    "message": "Unpacked variable `error_code` is never used",
+    "noqa_row": 448,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 29,
+      "row": 470
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_execution\\tests\\test_contracts_validation_integration.py",
+    "fix": null,
+    "location": {
+      "column": 19,
+      "row": 470
+    },
+    "message": "Unpacked variable `error_code` is never used",
+    "noqa_row": 470,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "ANN204",
+    "end_location": {
+      "column": 17,
+      "row": 113
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\tool_state\\transcript.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 113
+    },
+    "message": "Missing return type annotation for special method `__iter__`",
+    "noqa_row": 113,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/missing-return-type-special-method"
+  },
+  {
+    "cell": null,
+    "code": "N802",
+    "end_location": {
+      "column": 21,
+      "row": 343
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\trace\\logger.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 343
+    },
+    "message": "Function name `isEnabledFor` should be lowercase",
+    "noqa_row": 343,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-function-name"
+  },
+  {
+    "cell": null,
+    "code": "N802",
+    "end_location": {
+      "column": 17,
+      "row": 346
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\trace\\logger.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 346
+    },
+    "message": "Function name `setLevel` should be lowercase",
+    "noqa_row": 346,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-function-name"
+  },
+  {
+    "cell": null,
+    "code": "N802",
+    "end_location": {
+      "column": 19,
+      "row": 349
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\trace\\logger.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 349
+    },
+    "message": "Function name `addHandler` should be lowercase",
+    "noqa_row": 349,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-function-name"
+  },
+  {
+    "cell": null,
+    "code": "N802",
+    "end_location": {
+      "column": 22,
+      "row": 352
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\trace\\logger.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 352
+    },
+    "message": "Function name `removeHandler` should be lowercase",
+    "noqa_row": 352,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/invalid-function-name"
+  },
+  {
+    "cell": null,
+    "code": "B027",
+    "end_location": {
+      "column": 12,
+      "row": 142
+    },
+    "filename": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\kernelone\\workflow\\stateful_task.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 133
+    },
+    "message": "`StatefulTask.load_state` is an empty method in an abstract base class, but has no abstract decorator",
+    "noqa_row": 133,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/empty-method-without-abstract-decorator"
+  }
+]

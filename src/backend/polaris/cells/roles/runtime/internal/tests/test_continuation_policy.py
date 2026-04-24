@@ -97,9 +97,7 @@ class TestContinuationPolicyCanContinue:
 
     def test_stagnation_with_speculative_hints_allowed(self, policy, base_state):
         base_state.recent_artifact_hashes = ["abc123", "abc123"]
-        envelope = self._make_envelope(
-            TurnContinuationMode.AUTO_CONTINUE, speculative_hints={"hint": "value"}
-        )
+        envelope = self._make_envelope(TurnContinuationMode.AUTO_CONTINUE, speculative_hints={"hint": "value"})
         can, reason = policy.can_continue(base_state, envelope)
         assert can is True
         assert reason is None
@@ -345,9 +343,7 @@ class TestStagnationIntegration:
         return OrchestratorSessionState(session_id="test-session", goal="test")
 
     def _make_envelope(self, **overrides) -> TurnOutcomeEnvelope:
-        turn_result = TurnResult(
-            turn_id="t1", kind="final_answer", visible_content="", decision={}
-        )
+        turn_result = TurnResult(turn_id="t1", kind="final_answer", visible_content="", decision={})
         defaults = {
             "turn_result": turn_result,
             "continuation_mode": TurnContinuationMode.AUTO_CONTINUE,
@@ -376,9 +372,7 @@ class TestStagnationIntegration:
     def test_speculative_hints_prevent_hash_stagnation(self, policy, base_state):
         """speculative_hints 非空时豁免哈希停滞。"""
         base_state.recent_artifact_hashes = ["hash_A", "hash_A"]
-        envelope = self._make_envelope(
-            speculative_hints={"predicted_approach": "refactoring"}
-        )
+        envelope = self._make_envelope(speculative_hints={"predicted_approach": "refactoring"})
         assert policy._detect_stagnation_v2(base_state, envelope) is False
 
     def test_progress_changes_no_semantic_stagnation(self, policy, base_state):

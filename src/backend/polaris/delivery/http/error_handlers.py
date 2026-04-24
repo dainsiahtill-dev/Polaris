@@ -47,7 +47,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
             exc.status_code,
             request.url.path,
             exc.message,
-            exc_info=True,
+            stack_info=True,
         )
         return JSONResponse(
             status_code=exc.status_code,
@@ -130,7 +130,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
             exc_type,
             request.url.path,
             exc_msg,
-            exc_info=True,
+            stack_info=True,
         )
         return JSONResponse(
             status_code=500,

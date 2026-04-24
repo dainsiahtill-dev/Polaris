@@ -228,10 +228,12 @@ class PydanticOutputParser:
             if is_dataclass(default_schema):
                 validated = default_schema(**fallback_data)
                 return asdict(validated) if is_dataclass(validated) else fallback_data
-            else:
+            elif hasattr(default_schema, "model_validate"):
                 # Pydantic model
-                validated = default_schema.model_validate(fallback_data)  # type: ignore[attr-defined]
+                validated = default_schema.model_validate(fallback_data)
                 return validated.model_dump() if hasattr(validated, "model_dump") else fallback_data
+            else:
+                return fallback_data
         except (RuntimeError, ValueError) as e:
             logger.warning(
                 "Fallback schema validation also failed: %s, returning raw fallback_data",

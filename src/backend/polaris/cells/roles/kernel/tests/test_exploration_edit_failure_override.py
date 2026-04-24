@@ -67,7 +67,7 @@ class TestEditFailureDiagnosticOverride:
         last_tool_failed = {"tool": "glob", "failed": True, "error": "No files found"}
 
         # read_file should still be blocked
-        approved, blocked, violations = policy.evaluate(
+        approved, blocked, _violations = policy.evaluate(
             [read_file_call],
             task_metadata={"last_tool_failed": last_tool_failed},
         )
@@ -105,7 +105,7 @@ class TestEditFailureDiagnosticOverride:
         last_tool_failed = {"tool": "precision_edit", "failed": True, "error": "No matches"}
 
         # ripgrep should NOT be allowed (not a file_read tool)
-        approved, blocked, violations = policy.evaluate(
+        approved, blocked, _violations = policy.evaluate(
             [grep_call],
             task_metadata={"last_tool_failed": last_tool_failed},
         )

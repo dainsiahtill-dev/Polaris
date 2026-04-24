@@ -6,14 +6,11 @@ Provides thread-local and global context tracking.
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
-
 import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 from polaris.kernelone.storage import resolve_storage_roots
 
@@ -35,7 +32,7 @@ class ActiveRunContext:
     task_id: str | None = None
     metadata: dict = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Resolve paths
         self.workspace = os.path.abspath(self.workspace)
         if self.runtime_root:
@@ -173,7 +170,7 @@ class RunContextManager:
 
         return context
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the run context."""
         # Restore old context
         if self.use_thread_local:
@@ -211,7 +208,9 @@ def resolve_current_run_id() -> str:
                 data = json.load(f)
                 return data.get("run_id", "")
     except (RuntimeError, ValueError):
-        logger.debug("DEBUG: run_context.py:{211} {exc} (swallowed)")
+        import logging
+
+        logging.getLogger(__name__).debug("DEBUG: run_context.py:{211} {exc} (swallowed)")
 
     return ""
 

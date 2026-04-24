@@ -59,22 +59,21 @@ from polaris.cells.roles.kernel.internal.policy.layer import (
 )
 
 __all__ = [
-    # 新增导出（向后兼容）
     "EXPLORATION_TOOL_CATEGORIES",
     "TOOL_CATEGORIES",
     "_DEFAULT_PATTERNS",
-    "BudgetPolicyConfig",
-    "ExplorationToolPolicy",
-    "ToolPolicyConfig",
-    # 原有导出
+    # isort: alphabetically
     "ApprovalPolicy",
     "BudgetPolicy",
+    "BudgetPolicyConfig",
     "CanonicalToolCall",
     "EvaluationResult",
+    "ExplorationToolPolicy",
     "PolicyLayer",
     "PolicyResult",
     "PolicyViolation",
     "RedactionPolicy",
     "SandboxPolicy",
     "ToolPolicy",
+    "ToolPolicyConfig",
 ]

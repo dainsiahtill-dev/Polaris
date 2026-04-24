@@ -454,8 +454,8 @@ class TestPerceptionLayerIntegration:
         layer = PerceptionLayer()
 
         # Process multiple messages in same session
-        graph1, _ = await layer.process("Create a new API endpoint", session_id="test_session")
-        graph2, _ = await layer.process("Update the user module", session_id="test_session")
+        _graph1, _ = await layer.process("Create a new API endpoint", session_id="test_session")
+        _graph2, _ = await layer.process("Update the user module", session_id="test_session")
 
         # Verify context was updated
         context = layer._context_modeler.get_session_context("test_session")
@@ -493,10 +493,10 @@ class TestPerceptionLayerIntegration:
         layer = PerceptionLayer()
 
         # First message - no history
-        graph1, uncertainty1 = await layer.process("Read the file at src/main.py", session_id="context_test")
+        graph1, _uncertainty1 = await layer.process("Read the file at src/main.py", session_id="context_test")
 
         # Second message - has history
-        graph2, uncertainty2 = await layer.process("Update the user module", session_id="context_test")
+        graph2, _uncertainty2 = await layer.process("Update the user module", session_id="context_test")
 
         # Both should complete successfully
         assert graph1.session_id == "context_test"

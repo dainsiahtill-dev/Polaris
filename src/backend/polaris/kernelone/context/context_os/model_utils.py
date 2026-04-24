@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
+
 def validated_replace(model: T, **updates: Any) -> T:
     """Return a copy of *model* with fields replaced by *updates*.
 
@@ -43,8 +44,7 @@ def validated_replace(model: T, **updates: Any) -> T:
     invalid = set(updates) - existing
     if invalid:
         raise ValueError(
-            f"Invalid field name(s) for {model.__class__.__name__}: {sorted(invalid)}. "
-            f"Valid fields: {sorted(existing)}"
+            f"Invalid field name(s) for {model.__class__.__name__}: {sorted(invalid)}. Valid fields: {sorted(existing)}"
         )
 
     # Build the full kwargs for reconstruction, applying conversions.

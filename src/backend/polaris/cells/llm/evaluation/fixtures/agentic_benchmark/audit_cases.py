@@ -251,7 +251,7 @@ def audit_prompt_logic(path: Path, data: dict[str, Any]) -> list[CaseIssue]:
         ("rm ", "delete"),
         ("rm -rf", "delete"),
     ]
-    for pattern, action in dangerous_patterns:
+    for pattern, _action in dangerous_patterns:
         if pattern.lower() in prompt.lower() and "execute_command" not in judge.get("forbidden_tools", []):
             issues.append(
                 CaseIssue(

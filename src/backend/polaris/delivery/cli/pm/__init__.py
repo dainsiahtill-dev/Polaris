@@ -233,24 +233,22 @@ def __getattr__(name: str):
 def __dir__():
     """Return list of available attributes."""
     return sorted(
-        set(
-            [
-                "__version__",
-                *list(_SYMBOL_MAP.keys()),
-                "state_manager",
-                "requirements_tracker",
-                "document_manager",
-                "task_orchestrator",
-                "execution_tracker",
-                "pm_integration",
-                "create_director_for_pm",
-                "run_director_via_interface",
-                "should_use_director_interface",
-                "is_standalone_mode",
-                "get_director_type",
-                "DIRECTOR_INTERFACE_AVAILABLE",
-            ]
-        )
+        {
+            "__version__",
+            *list(_SYMBOL_MAP.keys()),
+            "state_manager",
+            "requirements_tracker",
+            "document_manager",
+            "task_orchestrator",
+            "execution_tracker",
+            "pm_integration",
+            "create_director_for_pm",
+            "run_director_via_interface",
+            "should_use_director_interface",
+            "is_standalone_mode",
+            "get_director_type",
+            "DIRECTOR_INTERFACE_AVAILABLE",
+        }
     )
 
 
@@ -290,13 +288,10 @@ __all__ = [
     "_PM_PROVIDER_ID",
     "EngineRuntimeConfig",
     "PolarisEngine",
-    "PmRoleState",
-    # Engine
     "SchedulerProtocol",
     "SingleWorkerScheduler",
     "__version__",
     "_auto_assign_role",
-    # Backend
     "_extract_json_from_llm_output",
     "_is_docs_path",
     "_is_interactive_session",
@@ -306,7 +301,6 @@ __all__ = [
     "_normalize_scope_list",
     "_slug_token",
     "_use_context_engine_v2",
-    # Director
     "append_director_log",
     "append_text",
     "apply_task_status_updates",
@@ -316,7 +310,6 @@ __all__ = [
     "build_defect_followup_task",
     "build_director_fallback_result",
     "build_director_response",
-    # Memo
     "build_pm_memo",
     "build_pm_prompt",
     "build_pm_review",
@@ -327,16 +320,13 @@ __all__ = [
     "collect_schema_warnings",
     "compact_text",
     "consume_interrupt_task",
-    # Director Interface Integration
     "create_director_for_pm",
     "detect_plan_missing",
     "document_manager",
     "emit_pm_director_conversation",
-    # Config
     "enforce_utf8",
     "ensure_docs_ready",
     "ensure_pm_backend_available",
-    # Execution
     "execute_non_director_tasks",
     "execution_tracker",
     "extract_defect_ticket",
@@ -347,7 +337,6 @@ __all__ = [
     "is_qa_enabled",
     "is_standalone_mode",
     "load_pm_model_config",
-    # CLI
     "main",
     "match_director_result",
     "match_director_result_any",
@@ -362,7 +351,6 @@ __all__ = [
     "normalize_priority",
     "normalize_required_evidence",
     "normalize_str_list",
-    # Tasks
     "normalize_task_status",
     "normalize_tasks",
     "persist_pm_payloads",
@@ -373,7 +361,6 @@ __all__ = [
     "read_tail_lines",
     "requirements_tracker",
     "requires_manual_intervention_for_error",
-    # Agents
     "resolve_agents_approval_mode",
     "resolve_agents_approval_timeout",
     "resolve_pm_backend_kind",
@@ -382,19 +369,15 @@ __all__ = [
     "run_chief_engineer_task",
     "run_director_once",
     "run_director_via_interface",
-    # Orchestration
     "run_once",
     "should_pause_for_manual_intervention",
     "should_use_director_interface",
     "split_director_tasks",
-    # PM Core
     "state_manager",
     "task_orchestrator",
-    # Utils
     "truncate_text_block",
     "validate_ticket_fields",
     "wait_for_agents_confirmation",
-    # Results
     "wait_for_director_result",
     "wait_for_director_result_mode",
     "write_director_status",

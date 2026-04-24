@@ -109,6 +109,8 @@ from polaris.kernelone.errors import LockTimeoutError
 __all__ = [
     # Deadlock
     "AsyncDeadlockDetector",
+    # Rate Limiting
+    "ChaosCircuitBreakerError",
     # Decorators
     "ChaosConfig",
     "ChaosContext",
@@ -116,8 +118,6 @@ __all__ = [
     "ChaosProxy",
     "ChaosResult",
     "ChaosScenario",
-    # Rate Limiting
-    "ChaosCircuitBreakerError",
     "CircuitBreaker",
     "CircuitBreakerOpenError",  # Backward compatibility alias
     "CompositeDeadlockDetector",

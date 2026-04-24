@@ -7,7 +7,6 @@ All internal imports are lazy-loaded to maintain proper architectural boundaries
 from __future__ import annotations
 
 __all__ = [
-
     "ARTIFACT_REGISTRY",  # noqa: F822
     "LEGACY_KEY_MAPPING",  # noqa: F822
     "LEGACY_PATH_ALIASES",  # noqa: F822

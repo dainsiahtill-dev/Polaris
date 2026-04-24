@@ -161,7 +161,7 @@ class ThinkingEngine:
     def _create_plan_event(self) -> dict[str, Any]:
         """创建计划进度事件"""
         steps_data = []
-        for i, step in enumerate(self.context.plan_steps):
+        for _i, step in enumerate(self.context.plan_steps):
             steps_data.append(
                 {
                     "step": step.step,

@@ -83,8 +83,8 @@ _has_select: bool = False
 
 if not _is_windows:
     try:
-        import termios as _termios_module  # type: ignore[attr-defined,import-not-found]
-        import tty as _tty_module  # type: ignore[attr-defined,import-not-found]
+        import termios  # noqa: F401  # type: ignore[attr-defined,import-not-found]
+        import tty  # noqa: F401  # type: ignore[attr-defined,import-not-found]
 
         _has_termios = True
     except ImportError:

@@ -109,7 +109,7 @@ def validate_no_hallucinated_paths(text: str, known_paths: list[str] | None = No
     if not known_paths:
         return True, "No known paths to validate against"
 
-    known_set = set(p.lower() for p in known_paths)
+    known_set = {p.lower() for p in known_paths}
     hallucinated = []
 
     for path in found_paths:

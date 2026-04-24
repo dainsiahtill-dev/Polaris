@@ -247,7 +247,7 @@ class FileChangeTracker:
             result = self._cmd_svc.run(request)
             if result.get("ok") and result.get("returncode", -1) == 0:
                 stdout = result.get("stdout", "")
-                return set(line.strip() for line in stdout.strip().split("\n") if line.strip())
+                return {line.strip() for line in stdout.strip().split("\n") if line.strip()}
         except (RuntimeError, ValueError):
             logger.warning(
                 "Failed to fetch deleted files list for workspace %s",
@@ -268,7 +268,7 @@ class FileChangeTracker:
             result = self._cmd_svc.run(request)
             if result.get("ok") and result.get("returncode", -1) == 0:
                 stdout = result.get("stdout", "")
-                return set(line.strip() for line in stdout.strip().split("\n") if line.strip())
+                return {line.strip() for line in stdout.strip().split("\n") if line.strip()}
         except (RuntimeError, ValueError):
             logger.warning(
                 "Failed to fetch new (untracked) files list for workspace %s",
@@ -289,7 +289,7 @@ class FileChangeTracker:
             result = self._cmd_svc.run(request)
             if result.get("ok") and result.get("returncode", -1) == 0:
                 stdout = result.get("stdout", "")
-                return set(line.strip() for line in stdout.strip().split("\n") if line.strip())
+                return {line.strip() for line in stdout.strip().split("\n") if line.strip()}
         except (RuntimeError, ValueError):
             logger.warning(
                 "Failed to fetch tracked files list for workspace %s",

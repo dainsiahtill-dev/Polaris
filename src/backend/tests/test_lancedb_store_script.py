@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def _load_script_module():
-    script_path = Path(__file__).resolve().parents[1] / "lancedb_store.py"
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "lancedb_store.py"
     spec = importlib.util.spec_from_file_location("lancedb_store", script_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Failed to load lancedb_store.py")

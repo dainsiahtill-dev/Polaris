@@ -11,10 +11,28 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import requests
-
-logger = logging.getLogger(__name__)
-
+from polaris.kernelone.llm.providers import (
+    THINKING_PREFIX,
+    BaseProvider,
+    ProviderInfo,
+    ValidationResult,
+)
+from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds, timeout_seconds_or_none
+
+from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
+from .provider_helpers import (
+    CircuitOpenError,
+    _blocking_http_post,
+    _blocking_sleep,
+    get_circuit_breaker,
+    get_stream_session,
+    iter_sse_data_payloads,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 # Regex to strip structured tags like <think>, <thinking>, <answer>, etc.
 _STRUCTURAL_TAGS_RE = re.compile(
@@ -37,29 +55,6 @@ def _strip_structured_tags(text: str) -> str:
     return cleaned.strip()
 
 
-from polaris.kernelone.llm.providers import (
-    THINKING_PREFIX,
-    BaseProvider,
-    ProviderInfo,
-    ValidationResult,
-)
-from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
-
-from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
-from .provider_helpers import (
-    CircuitOpenError,
-    _blocking_http_post,
-    _blocking_sleep,
-    get_circuit_breaker,
-    get_stream_session,
-    iter_sse_data_payloads,
-)
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-
 def _timeout_seconds(config: dict[str, Any], default: int) -> int:
     return normalize_timeout_seconds(config.get("timeout"), default=default)
 
@@ -79,11 +74,7 @@ def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:
 
 def _debug_enabled(config: dict[str, Any]) -> bool:
     local_flag = str(config.get("debug") or "").strip().lower()
-    env_flag = (
-        str(os.environ.get("KERNELONE_MINIMAX_DEBUG") or "")
-        .strip()
-        .lower()
-    )
+    env_flag = str(os.environ.get("KERNELONE_MINIMAX_DEBUG") or "").strip().lower()
     return local_flag in {"1", "true", "yes", "on"} or env_flag in {"1", "true", "yes", "on"}
 
 
@@ -110,6 +101,9 @@ def _redact_for_debug(value: Any, key_hint: str = "") -> Any:
             return f"[REDACTED_TEXT len={len(trimmed)}]"
         return trimmed
     return value
+
+
+logger = logging.getLogger(__name__)
 
 
 class MiniMaxProvider(BaseProvider):
@@ -643,7 +637,7 @@ class MiniMaxProvider(BaseProvider):
                 if debug_mode:
                     logger.debug("MiniMax invoke: response data=%s", json.dumps(data, ensure_ascii=False)[:500])
 
-                base_resp = data.get("base_resp", {})
+                base_resp = data.get("base_resp")
                 if isinstance(base_resp, dict) and base_resp.get("status_code") != 0:
                     return InvokeResult(
                         ok=False,

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -86,7 +87,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 async def run_director(workspace: str, iterations: int, max_workers: int, state: str, command: str | None) -> None:
     """Run director in iterative mode."""
-    DirectorConfig, DirectorService, DirectorState, _ = _bootstrap_backend_import_path()
+    DirectorConfig, DirectorService, DirectorState, _ = _bootstrap_backend_import_path()  # noqa: N806
 
     config = DirectorConfig(
         workspace=workspace,
@@ -110,9 +111,9 @@ async def run_director(workspace: str, iterations: int, max_workers: int, state:
 
 async def run_status(workspace: str) -> None:
     """Run director in status mode."""
-    _, DirectorService, _, _ = _bootstrap_backend_import_path()
+    _, director_service_cls, _, _ = _bootstrap_backend_import_path()
 
-    service = DirectorService(workspace=workspace)
+    service = director_service_cls(workspace=workspace)
     status = await service.get_status()
     logger.info("Director status: %s", status)
 

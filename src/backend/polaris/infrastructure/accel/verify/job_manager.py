@@ -5,7 +5,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
 
@@ -17,7 +17,7 @@ class JobState:
     FAILED = "failed"
     CANCELLED = "cancelled"
 
-    _VALUES = [PENDING, RUNNING, CANCELLING, COMPLETED, FAILED, CANCELLED]
+    _VALUES: ClassVar[list[str]] = [PENDING, RUNNING, CANCELLING, COMPLETED, FAILED, CANCELLED]
 
     @classmethod
     def is_valid(cls, value: str) -> bool:

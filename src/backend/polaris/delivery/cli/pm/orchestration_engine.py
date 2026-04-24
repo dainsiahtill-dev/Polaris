@@ -1187,9 +1187,7 @@ def _run_dispatch_pipeline_with_workflow(
             "pm_iteration": int(iteration or 0),
             "docs_stage": docs_stage if isinstance(docs_stage, dict) else {},
             "director_config": {
-                "type": str(
-                    getattr(args, "director_type", os.environ.get("KERNELONE_DIRECTOR_TYPE", "auto")) or "auto"
-                )
+                "type": str(getattr(args, "director_type", os.environ.get("KERNELONE_DIRECTOR_TYPE", "auto")) or "auto")
                 .strip()
                 .lower(),
                 "script": str(

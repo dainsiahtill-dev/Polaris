@@ -279,7 +279,9 @@ class TestKernelAuditRuntimeEmitEvent:
         first_hash = KernelAuditRuntime._hash_event(mock_store._events[0])
         assert mock_store._events[1].prev_hash == first_hash
 
-    def test_emit_event_normalizes_event_type_string(self, runtime: KernelAuditRuntime, mock_store: MockAuditStore) -> None:
+    def test_emit_event_normalizes_event_type_string(
+        self, runtime: KernelAuditRuntime, mock_store: MockAuditStore
+    ) -> None:
         """Test that string event type is normalized to enum."""
         result = runtime.emit_event(
             event_type="llm_call",  # string, not enum
@@ -351,7 +353,9 @@ class TestKernelAuditRuntimeEmitLlmEvent:
         assert event.data.get("error") == "Rate limit exceeded"
         assert event.action.get("result") == "failure"
 
-    def test_emit_llm_event_calculates_total_tokens(self, runtime: KernelAuditRuntime, mock_store: MockAuditStore) -> None:
+    def test_emit_llm_event_calculates_total_tokens(
+        self, runtime: KernelAuditRuntime, mock_store: MockAuditStore
+    ) -> None:
         """Test that total_tokens is calculated correctly."""
         runtime.emit_llm_event(
             role="director",
@@ -383,7 +387,9 @@ class TestKernelAuditRuntimeEmitDialogue:
         assert event.action.get("name") == "task_request"
         assert event.data.get("message_summary") == "Create a new feature"
 
-    def test_emit_dialogue_truncates_long_summary(self, runtime: KernelAuditRuntime, mock_store: MockAuditStore) -> None:
+    def test_emit_dialogue_truncates_long_summary(
+        self, runtime: KernelAuditRuntime, mock_store: MockAuditStore
+    ) -> None:
         """Test that long message summary is truncated to 500 chars."""
         long_summary = "x" * 1000
         runtime.emit_dialogue(
@@ -655,7 +661,9 @@ class TestKernelAuditRuntimeSignatureVerification:
         assert len(event.signature) == 64
         assert all(c in "0123456789abcdef" for c in event.signature)
 
-    def test_signature_changes_with_different_event(self, runtime: KernelAuditRuntime, mock_store: MockAuditStore) -> None:
+    def test_signature_changes_with_different_event(
+        self, runtime: KernelAuditRuntime, mock_store: MockAuditStore
+    ) -> None:
         """Test that different events produce different signatures."""
         runtime.emit_event(
             event_type=KernelAuditEventType.TASK_START,

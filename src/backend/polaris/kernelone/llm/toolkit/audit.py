@@ -222,9 +222,7 @@ class AuditLogger:
     def __init__(self, workspace: str = "") -> None:
         self.workspace = workspace
         self._sessions: dict[str, SessionAuditLog] = {}
-        self._enabled = (
-            os.environ.get("KERNELONE_PROTOCOL_AUDIT", "true")
-        ).lower() in ("true", "1", "yes")
+        self._enabled = (os.environ.get("KERNELONE_PROTOCOL_AUDIT", "true")).lower() in ("true", "1", "yes")
         metadata_dir = get_workspace_metadata_dir_name()
         self._log_dir = Path(workspace) / metadata_dir / "audit" if workspace else Path(metadata_dir) / "audit"
 

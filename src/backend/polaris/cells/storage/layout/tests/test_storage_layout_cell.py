@@ -216,9 +216,7 @@ class TestPolarisHome:
         assert result.startswith(os.path.expanduser("~"))
         assert "hp-home" in result
 
-    def test_polaris_home_from_kernelone_home(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_polaris_home_from_kernelone_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # When KERNELONE_HOME is set, polaris_home() returns it directly
         kern_home = str(tmp_path / "kern-home")
         monkeypatch.delenv("KERNELONE_HOME", raising=False)
@@ -288,9 +286,7 @@ class TestPolarisStorageLayout:
         assert layout.workspace.resolve() == workspace.resolve()
         assert ".polaris" in layout.workspace_root.parts
 
-    def test_resolve_polaris_roots_returns_correct_types(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_resolve_polaris_roots_returns_correct_types(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # Mock default_ramdisk_root to return "" to avoid Windows X:\ detection
         # that pollutes cross-test _ramdisk_check_cache
         monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
@@ -341,9 +337,7 @@ class TestPolarisStorageLayout:
 
 
 class TestResolvePolarisRoots:
-    def test_config_root_uses_polaris_home_not_kernelone(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_config_root_uses_polaris_home_not_kernelone(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # config_root = polaris_home()/config, which defaults to ~/.polaris/config
         # When KERNELONE_HOME is set, it uses that instead
         hp_home = str(tmp_path / "hp-home")

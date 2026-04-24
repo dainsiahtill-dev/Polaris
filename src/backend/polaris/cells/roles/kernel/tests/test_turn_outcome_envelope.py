@@ -116,7 +116,7 @@ class TestTurnOutcomeSchema:
         # dict-like compatibility
         assert outcome["turn_id"] == TurnId("t1")
         assert outcome.get("outcome_status") == OutcomeStatus.COMPLETED
-        assert "resolution_code" in outcome.keys()
+        assert "resolution_code" in outcome
         d = outcome.to_dict()
         assert d["turn_id"] == "t1"
         assert d["outcome_status"] == "completed"

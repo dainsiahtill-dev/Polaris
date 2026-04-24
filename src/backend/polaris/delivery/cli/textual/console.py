@@ -15,12 +15,9 @@ from typing import TYPE_CHECKING, Any, cast
 try:
     from textual.app import App, ComposeResult
     from textual.containers import Container, ScrollableContainer
-    from textual.events import Click
     from textual.message import Message
     from textual.reactive import reactive
-    from textual.widget import Widget
-    from textual.widgets import Button, Input, Static
-    from textual.worker import Worker
+    from textual.widgets import Input, Static
 except ImportError:
     print("[ERROR] Textual is not installed. Install with: pip install textual")
     print("[ERROR] Or run with --backend plain for basic console.")

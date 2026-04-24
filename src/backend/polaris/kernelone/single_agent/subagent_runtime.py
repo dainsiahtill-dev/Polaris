@@ -38,9 +38,10 @@ class ModelSelectionStrategy(str, Enum):
     Extracted from Superpowers dispatching-parallel-agents skill.
     Allows runtime adaptation of model capability to task requirements.
     """
-    FAST = "fast"           # Low-latency model for simple tasks (regex, pattern matching)
-    STANDARD = "standard"   # Default model for general tasks
-    PREMIUM = "premium"     # High-capability model for complex reasoning
+
+    FAST = "fast"  # Low-latency model for simple tasks (regex, pattern matching)
+    STANDARD = "standard"  # Default model for general tasks
+    PREMIUM = "premium"  # High-capability model for complex reasoning
 
 
 @dataclass
@@ -69,9 +70,7 @@ class SubagentConfig:
     allowed_tools: list[str] | None = None  # None = all
     isolated_workspace: bool = False  # Create temp workspace
     # Phase 2 Extension: Model selection strategy (Superpowers essence)
-    model_strategy: ModelSelectionStrategy = field(
-        default=ModelSelectionStrategy.STANDARD
-    )
+    model_strategy: ModelSelectionStrategy = field(default=ModelSelectionStrategy.STANDARD)
     # Optional: explicit model override (takes precedence over strategy)
     model_override: str | None = None
 
@@ -115,9 +114,7 @@ class SubagentSpawner:
         # Priority 2: strategy-based model selection
         # Model mappings can be configured via environment variables
         strategy_map = {
-            ModelSelectionStrategy.FAST: os.environ.get(
-                "KERNELONE_SUBAGENT_MODEL_FAST", "gpt-4o-mini"
-            ),
+            ModelSelectionStrategy.FAST: os.environ.get("KERNELONE_SUBAGENT_MODEL_FAST", "gpt-4o-mini"),
             ModelSelectionStrategy.STANDARD: os.environ.get(
                 "KERNELONE_SUBAGENT_MODEL_STANDARD", self.model or "gpt-4o"
             ),

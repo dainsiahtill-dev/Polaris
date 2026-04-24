@@ -96,16 +96,16 @@ _utc_now_str = utc_now_str
 
 
 __all__ = [
-    "utc_now",
-    "utc_now_iso",
-    "utc_now_str",
-    "utc_now_iso_compact",
+    "ISO_FORMAT_SUFFIX_Z",
+    "PROCESS_COMMAND_TIMEOUT_SECONDS",
+    "UTC_TZ_SUFFIX",
     "_now",
     # Backward compatibility
     "_utc_now",
     "_utc_now_iso",
     "_utc_now_str",
-    "ISO_FORMAT_SUFFIX_Z",
-    "UTC_TZ_SUFFIX",
-    "PROCESS_COMMAND_TIMEOUT_SECONDS",
+    "utc_now",
+    "utc_now_iso",
+    "utc_now_iso_compact",
+    "utc_now_str",
 ]

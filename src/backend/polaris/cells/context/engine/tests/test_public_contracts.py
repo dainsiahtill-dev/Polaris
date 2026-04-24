@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import NoReturn
-
 import pytest
 from polaris.cells.context.engine.public.contracts import (
     BuildRoleContextCommandV1,
@@ -55,7 +53,7 @@ class TestContextResolvedEventV1:
 
 
 class TestContextEngineError:
-    def test_is_exception(self) -> NoReturn:
+    def test_is_exception(self) -> None:
         err = ContextEngineError("boom")
         with pytest.raises(ContextEngineError):
             raise err

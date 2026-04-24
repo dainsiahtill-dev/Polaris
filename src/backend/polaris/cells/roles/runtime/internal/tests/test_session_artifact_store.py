@@ -92,10 +92,12 @@ class TestSessionArtifactStore:
 
     @pytest.mark.asyncio
     async def test_get_artifact_map_after_persist(self, store, tmp_workspace):
-        await store.persist([
-            {"name": "x.txt", "content": "x", "mime_type": "text/plain", "original_hash": "hash-x"},
-            {"name": "y.txt", "content": "y", "mime_type": "text/plain", "original_hash": "hash-y"},
-        ])
+        await store.persist(
+            [
+                {"name": "x.txt", "content": "x", "mime_type": "text/plain", "original_hash": "hash-x"},
+                {"name": "y.txt", "content": "y", "mime_type": "text/plain", "original_hash": "hash-y"},
+            ]
+        )
         mapping = store.get_artifact_map()
         assert "x.txt" in mapping
         assert "y.txt" in mapping

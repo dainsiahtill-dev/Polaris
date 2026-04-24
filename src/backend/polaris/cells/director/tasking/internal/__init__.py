@@ -48,35 +48,35 @@ from polaris.cells.director.tasking.internal.worker_pool_service import (
 )
 
 __all__ = [
+    # Patch apply
+    "ApplyIntegrity",
+    "ApplyResult",
+    # Worker
+    "CodeGenerationResult",
+    # File apply
+    "FileApplyService",
+    # Repair
+    "RepairContext",
+    "RepairResult",
+    "RepairService",
     # Task lifecycle
     "TaskQueueConfig",
     "TaskService",
     "TaskServiceDeps",
-    # Worker
-    "CodeGenerationResult",
     "WorkerExecutor",
     "WorkerPoolConfig",
     "WorkerService",
+    "apply_all_operations",
+    "apply_operation",
+    "apply_operations_strict",
     # Bootstrap catalog
     "get_generic_bootstrap_files",
     "get_intelligent_bootstrap_files",
     "get_python_bootstrap_files",
     "get_typescript_bootstrap_files",
-    # File apply
-    "FileApplyService",
-    # Patch apply
-    "ApplyIntegrity",
-    "ApplyResult",
-    "apply_all_operations",
-    "apply_operation",
-    "apply_operations_strict",
     "parse_all_operations",
     "parse_delete_operations",
     "parse_full_file_blocks",
     "parse_search_replace_blocks",
     "validate_before_apply",
-    # Repair
-    "RepairContext",
-    "RepairResult",
-    "RepairService",
 ]

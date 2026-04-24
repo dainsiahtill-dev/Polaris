@@ -1,0 +1,218 @@
+{
+  "status": "FAIL",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\tmp_pytest_agentic_eval_local\\cli-compare-baseline-97be0ead31b046a4a127fd1f125bf38e",
+  "generated_at": "2026-04-23T23:02:41.452947+00:00",
+  "benchmark": {
+    "suite": "agentic_benchmark",
+    "run_id": "run-001",
+    "role_scope": "all",
+    "provider_id": "runtime_binding",
+    "model": "runtime_binding",
+    "transport_mode": "stream"
+  },
+  "score": {
+    "overall_percent": 60.0,
+    "average_score": 0.6,
+    "pass_rate": 0.5,
+    "total_cases": 2,
+    "passed_cases": 1,
+    "failed_cases": 1
+  },
+  "failures": [
+    {
+      "case_id": "pm_task_contract",
+      "role": "pm",
+      "title": "PM task contract",
+      "score_percent": 40.0,
+      "threshold_percent": 85.0,
+      "summary": "failed checks: validator:pm_plan_json",
+      "root_cause": {
+        "code": "validator:pm_plan_json",
+        "category": "contract",
+        "critical": false,
+        "message": "pm output contract failed",
+        "evidence": {}
+      },
+      "failed_checks": [
+        {
+          "code": "validator:pm_plan_json",
+          "category": "contract",
+          "critical": false,
+          "message": "pm output contract failed",
+          "evidence": {}
+        }
+      ],
+      "repair_suggestions": [
+        "Enforce strict PM JSON schema (`goal`, `backlog`, `timeline`) and schema-validate before return."
+      ],
+      "expected_contract": {
+        "prompt_preview": "Generate a PM delivery plan in strict JSON.",
+        "tags": [
+          "pm",
+          "contract"
+        ],
+        "judge": {
+          "required_tools": [
+            "read_file"
+          ],
+          "validators": [
+            "pm_plan_json"
+          ]
+        }
+      },
+      "observed_trace": {
+        "tool_call_count": 1,
+        "tool_names": [
+          "read_file"
+        ],
+        "tool_calls_preview": [
+          {
+            "tool": "read_file",
+            "args_preview": "{\"path\": \"README.md\"}",
+            "event_index": 2
+          }
+        ],
+        "output_preview": "[TOOL_CALL] {tool: 'read_file'} [/TOOL_CALL] free-form text",
+        "thinking_preview": "Need to inspect the repo and emit JSON.",
+        "error": "",
+        "duration_ms": 321,
+        "event_count": 3,
+        "event_type_histogram": {
+          "fingerprint": 1,
+          "thinking_chunk": 1,
+          "tool_call": 1
+        },
+        "raw_event_samples": [
+          {
+            "index": 0,
+            "type": "fingerprint",
+            "fingerprint": {
+              "profile_id": "pm_default",
+              "run_id": "run-001"
+            }
+          },
+          {
+            "index": 1,
+            "type": "thinking_chunk",
+            "content_preview": "Need to inspect the repo"
+          },
+          {
+            "index": 2,
+            "type": "tool_call",
+            "tool": "read_file",
+            "args_preview": "{\"path\": \"README.md\"}"
+          }
+        ],
+        "workspace_files_sample": [
+          "README.md",
+          "docs/spec.md"
+        ],
+        "fingerprint": {
+          "profile_id": "pm_default"
+        },
+        "transport_observations": {},
+        "transport_modes": []
+      },
+      "diagnosis": {
+        "missing_required_tools": [],
+        "forbidden_tools_triggered": [],
+        "missing_output_tokens": [],
+        "failed_validators": [
+          "pm_plan_json"
+        ],
+        "textual_tool_protocol_markers": [
+          "[TOOL_CALL]",
+          "[/TOOL_CALL]"
+        ],
+        "has_native_tool_trace": true,
+        "transport_errors": {},
+        "transport_tool_counts": {}
+      },
+      "evidence": {
+        "sandbox_workspace": "C:/tmp/sandbox/pm_task_contract",
+        "raw_event_count": 3,
+        "raw_event_types": {
+          "fingerprint": 1,
+          "thinking_chunk": 1,
+          "tool_call": 1
+        },
+        "tool_call_count": 1,
+        "benchmark_artifact": "C:/tmp/AGENTIC_BENCHMARK_REPORT.json"
+      }
+    }
+  ],
+  "tool_audit": {
+    "total_calls": 2,
+    "by_tool": {
+      "read_file": 2
+    },
+    "critical_failures": 0,
+    "safety_violations": []
+  },
+  "repair_plan": [
+    {
+      "priority": "P1",
+      "action": "Enforce strict PM JSON schema (`goal`, `backlog`, `timeline`) and schema-validate before return.",
+      "case_ids": [
+        "pm_task_contract"
+      ],
+      "check_codes": [
+        "validator:pm_plan_json"
+      ]
+    }
+  ],
+  "errors": [],
+  "evidence_paths": {
+    "benchmark_artifact": "C:/tmp/AGENTIC_BENCHMARK_REPORT.json",
+    "audit_package": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\tmp_pytest_agentic_eval_local\\cli-compare-baseline-97be0ead31b046a4a127fd1f125bf38e\\runtime\\llm_evaluations\\custom\\AGENTIC_EVAL_AUDIT.json",
+    "case_sandboxes": [
+      "C:/tmp/sandbox/pm_task_contract",
+      "C:/tmp/sandbox/qa_release_verdict"
+    ]
+  },
+  "comparison": {
+    "enabled": true,
+    "baseline_ref": "tmp_pytest_agentic_eval_local\\cli-compare-baseline-97be0ead31b046a4a127fd1f125bf38e\\baseline_audit.json",
+    "baseline_path": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\tmp_pytest_agentic_eval_local\\cli-compare-baseline-97be0ead31b046a4a127fd1f125bf38e\\baseline_audit.json",
+    "trend": "improved",
+    "current": {
+      "run_id": "run-001",
+      "suite": "agentic_benchmark",
+      "status": "FAIL",
+      "overall_percent": 60.0,
+      "pass_rate": 0.5,
+      "failed_cases": 1,
+      "tool_calls": 2
+    },
+    "baseline": {
+      "run_id": "baseline-run-001",
+      "suite": "agentic_benchmark",
+      "status": "FAIL",
+      "overall_percent": 40.0,
+      "pass_rate": 0.0,
+      "failed_cases": 2,
+      "tool_calls": 1
+    },
+    "delta": {
+      "overall_percent": 20.0,
+      "pass_rate": 0.5,
+      "failed_cases": -1,
+      "tool_calls": 1
+    },
+    "cases": {
+      "new_failures": [],
+      "resolved_failures": [
+        "legacy_case"
+      ],
+      "persistent_failures": [
+        "pm_task_contract"
+      ]
+    },
+    "checks": {
+      "new_failed_check_codes": [],
+      "resolved_check_codes": [
+        "required_output:phase"
+      ]
+    }
+  }
+}

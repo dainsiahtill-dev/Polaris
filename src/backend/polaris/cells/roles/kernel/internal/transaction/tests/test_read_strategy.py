@@ -43,21 +43,19 @@ class TestShouldUseSliceMode:
         assert "extension" in reason
 
     def test_jsonl_extension_returns_true(self):
-        should_slice, reason = _should_use_slice_mode("data.jsonl")
+        should_slice, _reason = _should_use_slice_mode("data.jsonl")
         assert should_slice is True
 
     def test_csv_extension_returns_true(self):
-        should_slice, reason = _should_use_slice_mode("data.csv")
+        should_slice, _reason = _should_use_slice_mode("data.csv")
         assert should_slice is True
 
     def test_normal_extension_returns_false(self):
-        should_slice, reason = _should_use_slice_mode("script.py")
+        should_slice, _reason = _should_use_slice_mode("script.py")
         assert should_slice is False
 
     def test_custom_threshold(self):
-        should_slice, reason = _should_use_slice_mode(
-            "test.py", content_length=50 * 1024, threshold_bytes=40 * 1024
-        )
+        should_slice, reason = _should_use_slice_mode("test.py", content_length=50 * 1024, threshold_bytes=40 * 1024)
         assert should_slice is True
         assert "exceeds threshold" in reason
 
@@ -71,7 +69,7 @@ class TestIsContentTruncated:
         assert "empty" in reason.lower()
 
     def test_none_content_returns_false(self):
-        is_truncated, reason = is_content_truncated(None)
+        is_truncated, _reason = is_content_truncated(None)
         assert is_truncated is False
 
     def test_content_ending_with_dots(self):
@@ -80,39 +78,33 @@ class TestIsContentTruncated:
         assert "truncation marker" in reason
 
     def test_content_ending_with_truncated_marker(self):
-        is_truncated, reason = is_content_truncated("some content [truncated]")
+        is_truncated, _reason = is_content_truncated("some content [truncated]")
         assert is_truncated is True
 
     def test_content_with_truncated_in_middle(self):
         # When "truncated" is in the middle of content (not near end), it should not be detected
         # Create content where "truncated" is far from the end (>200 chars)
         content = "some [truncated] content here" + "x" * 300
-        is_truncated, reason = is_content_truncated(content)
+        is_truncated, _reason = is_content_truncated(content)
         assert is_truncated is False
 
     def test_metadata_truncated_true(self):
-        is_truncated, reason = is_content_truncated(
-            "some content", result_metadata={"truncated": True}
-        )
+        is_truncated, reason = is_content_truncated("some content", result_metadata={"truncated": True})
         assert is_truncated is True
         assert "metadata indicates" in reason
 
     def test_metadata_truncated_false(self):
-        is_truncated, reason = is_content_truncated(
-            "some content", result_metadata={"truncated": False}
-        )
+        is_truncated, _reason = is_content_truncated("some content", result_metadata={"truncated": False})
         assert is_truncated is False
 
     def test_line_count_mismatch(self):
         content = "line1\nline2\nline3"
-        is_truncated, reason = is_content_truncated(
-            content, result_metadata={"line_count": 100}
-        )
+        is_truncated, reason = is_content_truncated(content, result_metadata={"line_count": 100})
         assert is_truncated is True
         assert "mismatch" in reason
 
     def test_chinese_truncation_marker(self):
-        is_truncated, reason = is_content_truncated("some content [截断]")
+        is_truncated, _reason = is_content_truncated("some content [截断]")
         assert is_truncated is True
 
     def test_truncated_warning_near_end(self):
@@ -155,7 +147,7 @@ class TestCalculateSliceRanges:
 
     def test_target_line_at_boundary(self):
         ranges = calculate_slice_ranges(500, slice_size=200, target_line=1)
-        first_start, first_end = ranges[0]
+        first_start, _first_end = ranges[0]
         assert first_start == 1
 
 
@@ -244,16 +236,12 @@ class TestReadStrategyDataclass:
         assert strategy.reason == ""
 
     def test_custom_values(self):
-        strategy = ReadStrategy(
-            use_slice_mode=True, slice_size_lines=100, reason="test reason"
-        )
+        strategy = ReadStrategy(use_slice_mode=True, slice_size_lines=100, reason="test reason")
         assert strategy.slice_size_lines == 100
         assert strategy.reason == "test reason"
 
     def test_to_dict(self):
-        strategy = ReadStrategy(
-            use_slice_mode=True, slice_size_lines=150, reason="test"
-        )
+        strategy = ReadStrategy(use_slice_mode=True, slice_size_lines=150, reason="test")
         d = strategy.to_dict()
         assert d == {
             "use_slice_mode": True,
@@ -271,33 +259,31 @@ class TestEdgeCases:
     """测试边界情况。"""
 
     def test_very_large_file(self):
-        strategy = determine_optimal_strategy(
-            "huge.log", content="x" * (10 * 1024 * 1024)
-        )
+        strategy = determine_optimal_strategy("huge.log", content="x" * (10 * 1024 * 1024))
         assert strategy.use_slice_mode is True
 
     def test_file_with_only_whitespace(self):
-        is_truncated, reason = is_content_truncated("   \n   \n   ")
+        is_truncated, _reason = is_content_truncated("   \n   \n   ")
         assert is_truncated is False
 
     def test_unicode_content(self):
         content = "中文内容" * 1000 + "..."
-        is_truncated, reason = is_content_truncated(content)
+        is_truncated, _reason = is_content_truncated(content)
         assert is_truncated is True
 
     def test_multiple_truncation_markers(self):
         content = "content... [truncated]"
-        is_truncated, reason = is_content_truncated(content)
+        is_truncated, _reason = is_content_truncated(content)
         assert is_truncated is True
 
     def test_exact_threshold_boundary(self):
         # 正好在阈值边界
         content = "x" * (100 * 1024)
-        should_slice, reason = _should_use_slice_mode("test.py", content_length=len(content))
+        should_slice, _reason = _should_use_slice_mode("test.py", content_length=len(content))
         # 超过阈值才返回 True，所以正好在边界应该返回 False
         assert should_slice is False
 
     def test_one_byte_over_threshold(self):
         content = "x" * (100 * 1024 + 1)
-        should_slice, reason = _should_use_slice_mode("test.py", content_length=len(content))
+        should_slice, _reason = _should_use_slice_mode("test.py", content_length=len(content))
         assert should_slice is True

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from typing import Any
 
 from polaris.kernelone.context.engine.cache import ContextCache
 from polaris.kernelone.context.engine.engine import ContextEngine
@@ -379,7 +380,7 @@ class TestContextEngineRenderPrompt:
         with tempfile.TemporaryDirectory() as tmpdir:
             engine = ContextEngine(project_root=tmpdir)
 
-            items = []
+            items: list[Any] = []
             request = ContextRequest(
                 run_id="run_abc",
                 step=3,

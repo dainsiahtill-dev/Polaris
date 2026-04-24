@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 
 import pytest
 from polaris.kernelone.context.context_os.content_store import (
@@ -112,7 +113,7 @@ class TestRefTrackerReleaseRaceCondition:
 
             errs: list[Exception] = []
 
-            def make_release(t: RefTracker, e: list[Exception]) -> None:
+            def make_release(t: RefTracker, e: list[Exception]) -> Callable[[], None]:
                 def _release() -> None:
                     try:
                         t.release(refs[50])
@@ -121,7 +122,7 @@ class TestRefTrackerReleaseRaceCondition:
 
                 return _release
 
-            def make_release_all(t: RefTracker, e: list[Exception]) -> None:
+            def make_release_all(t: RefTracker, e: list[Exception]) -> Callable[[], None]:
                 def _release_all() -> None:
                     try:
                         t.release_all()

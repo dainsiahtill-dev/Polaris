@@ -82,8 +82,8 @@ def parse_datetime(dt_str: str | None) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid datetime format: {dt_str}. Use ISO8601 format.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime format: {dt_str}. Use ISO8601 format.") from e
 
 
 def parse_line_range(value: str | None) -> tuple[int, int] | None:
@@ -140,11 +140,11 @@ async def get_audit_logs(
     if event_type:
         try:
             event_type_enum = KernelAuditEventType(event_type)
-        except ValueError:
+        except ValueError as e:
             raise HTTPException(
                 status_code=400,
                 detail=(f"Invalid event_type: {event_type}. Valid values: {[e.value for e in KernelAuditEventType]}"),
-            )
+            ) from e
 
     # Get total count for pagination
     all_events = facade.query_logs(
@@ -203,7 +203,7 @@ async def export_audit(
             raise HTTPException(
                 status_code=400,
                 detail="internal error",
-            )
+            ) from e
 
     if format == "csv":
         csv_content = facade.export_csv(
@@ -477,7 +477,7 @@ async def get_failure_hops(
                 )
         except (RuntimeError, ValueError) as e:
             logger.error("Failed to read failure hops for run_id=%s: %s", run_id, e)
-            raise HTTPException(status_code=500, detail="internal error")
+            raise HTTPException(status_code=500, detail="internal error") from e
 
     # Not found - try to generate real-time
     events_path = _resolve_failure_hops_events_path(runtime_root)
@@ -508,7 +508,7 @@ async def get_failure_hops(
         )
     except (RuntimeError, ValueError) as e:
         logger.error("get_failure_hops failed: run_id=%s: %s", run_id, e)
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @router.get("/corruption", dependencies=[Depends(require_auth)])
@@ -524,4 +524,4 @@ async def get_corruption_log(
         return facade.get_corruption_log(workspace=workspace, limit=limit)
     except (RuntimeError, ValueError) as e:
         logger.error("get_corruption_log failed: %s", e)
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e

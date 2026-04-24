@@ -364,7 +364,7 @@ class WorkerService:
                                             output="",
                                             exit_code=wait_result.exit_code or 0,
                                             duration_ms=0,
-                                            evidence=[],
+                                            evidence=(),
                                             error=wait_result.error_message,
                                         )
 

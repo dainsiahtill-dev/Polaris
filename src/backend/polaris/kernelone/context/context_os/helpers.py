@@ -298,10 +298,9 @@ class _StateAccumulator:
             return previous
 
         # v2.1: intern value through ContentStore
-        value_ref = None
         if store is not None:
             with contextlib.suppress(Exception):
-                value_ref = store.intern(normalized)
+                store.intern(normalized)
 
         entry = StateEntry(
             entry_id=f"fact_{len(self._entries) + 1}",

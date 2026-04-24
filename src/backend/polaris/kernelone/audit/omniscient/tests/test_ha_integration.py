@@ -10,6 +10,7 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -21,7 +22,7 @@ from polaris.kernelone.audit.omniscient.high_availability import (
 
 
 @pytest_asyncio.fixture
-async def ha_bus() -> OmniscientAuditBus:
+async def ha_bus() -> AsyncGenerator[OmniscientAuditBus, None]:
     """Provide a bus with HA components wired."""
     batcher = MemoryBoundedBatcher(max_memory_mb=10, batch_size=5)
     circuit_breaker = AuditCircuitBreaker(threshold=3, timeout=1.0)

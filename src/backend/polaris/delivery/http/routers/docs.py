@@ -496,8 +496,8 @@ def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> dict[str
             raise HTTPException(status_code=400, detail=f"invalid docs path: {item.path}")
         try:
             full_path = resolve_artifact_path(workspace_str, cache_root, rel_path)
-        except (RuntimeError, ValueError):
-            raise HTTPException(status_code=400, detail=f"invalid docs path: {item.path}")
+        except (RuntimeError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=f"invalid docs path: {item.path}") from e
         write_text_atomic(full_path, item.content or "")
         created.append(rel_path.replace("\\", "/"))
     # Record init event (best effort, with semantic suppression in emit_event)

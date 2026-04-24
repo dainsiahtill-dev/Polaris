@@ -644,9 +644,7 @@ class RetryConfig:
         import os
 
         # 支持环境变量配置
-        env_val = os.environ.get("KERNELONE_PLATFORM_RETRY_MAX") or os.environ.get(
-            "KERNELONE_PLATFORM_RETRY_MAX", "1"
-        )
+        env_val = os.environ.get("KERNELONE_PLATFORM_RETRY_MAX") or os.environ.get("KERNELONE_PLATFORM_RETRY_MAX", "1")
         platform_retry_max = int(env_val) if env_val else 1
 
         # 兼容旧配置键
@@ -1010,10 +1008,10 @@ __all__ = [
     "CircuitBreakerRegistry",
     # Circuit breaker
     "CircuitState",
-    "NonRetryableError",
     # Manager
     "FallbackExecutionResult",
     "MultiProviderFallbackManager",
+    "NonRetryableError",
     "ProviderEndpoint",
     "ResilienceManager",
     "RetryConfig",

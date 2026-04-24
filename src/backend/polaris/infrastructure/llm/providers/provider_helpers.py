@@ -106,10 +106,7 @@ class _LightweightAiohttpModule:
 
 
 def _should_use_lightweight_stream_session_mode() -> bool:
-    mode = str(
-        os.environ.get("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS")
-        or ""
-    ).strip()
+    mode = str(os.environ.get("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS") or "").strip()
     if mode:
         return mode.lower() in {"1", "true", "yes", "on"}
     return bool(os.environ.get("PYTEST_CURRENT_TEST"))
@@ -898,12 +895,8 @@ def list_models_from_api(
 # Retry configuration for transient network errors (connection reset, timeout, etc.)
 # Uses fixed delay: configured seconds between retries, max configured attempts
 
-_STREAM_RETRY_DELAY_SEC: float = float(
-    os.environ.get("KERNELONE_STREAM_RETRY_DELAY_SEC", "5.0")
-)
-_STREAM_RETRY_MAX_ATTEMPTS: int = int(
-    os.environ.get("KERNELONE_STREAM_RETRY_MAX_ATTEMPTS", "3")
-)
+_STREAM_RETRY_DELAY_SEC: float = float(os.environ.get("KERNELONE_STREAM_RETRY_DELAY_SEC", "5.0"))
+_STREAM_RETRY_MAX_ATTEMPTS: int = int(os.environ.get("KERNELONE_STREAM_RETRY_MAX_ATTEMPTS", "3"))
 
 
 def _is_retryable_network_error(exc: BaseException) -> bool:

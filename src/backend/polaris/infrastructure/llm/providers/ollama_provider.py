@@ -8,9 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import requests
-
-logger = logging.getLogger(__name__)
-
 from polaris.kernelone.llm.provider_contract import AdapterProviderContract
 from polaris.kernelone.llm.providers import (
     BaseProvider,
@@ -25,6 +22,7 @@ from .provider_helpers import get_stream_session, iter_sse_data_payloads
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://120.24.117.59:11434"
 DEFAULT_TAGS_PATH = "/api/tags"
@@ -183,7 +181,7 @@ class OllamaProvider(BaseProvider):
             response.raise_for_status()
             latency_ms = int((time.time() - start) * 1000)
             return HealthResult(ok=True, latency_ms=latency_ms)
-        except (RuntimeError, ValueError) as exc:
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             latency_ms = int((time.time() - start) * 1000)
             return HealthResult(ok=False, latency_ms=latency_ms, error=str(exc))
 
@@ -223,7 +221,7 @@ class OllamaProvider(BaseProvider):
                         models.append(ModelInfo(id=model_id, raw=item))
 
             return ModelListResult(ok=True, supported=True, models=models)
-        except (RuntimeError, ValueError) as exc:
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             return ModelListResult(ok=False, supported=True, models=[], error=str(exc))
 
     def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
@@ -321,7 +319,7 @@ class OllamaProvider(BaseProvider):
 
             usage = _usage_from_response(prompt, output, data, is_compat)
             return InvokeResult(ok=True, output=output.strip(), latency_ms=latency_ms, usage=usage, raw=data)
-        except (RuntimeError, ValueError) as exc:
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             latency_ms = int((time.time() - start) * 1000)
             usage = estimate_usage(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=latency_ms, usage=usage, error=str(exc))

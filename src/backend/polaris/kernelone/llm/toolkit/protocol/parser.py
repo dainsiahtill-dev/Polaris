@@ -361,7 +361,7 @@ class ProtocolParser:
         lines = content.splitlines()
         cleaned_lines = []
 
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             upper = line.strip().upper()
             if upper.startswith("<<<<<<<") or upper.startswith("=======") or upper.startswith(">>>>>>"):
                 continue

@@ -59,7 +59,7 @@ class DependencyScanner:
         r"from\s+polaris\.kernelone\.[^\s]+\.internal",
     )
 
-    def __init__(self, base_path: str = "polaris/cells"):
+    def __init__(self, base_path: str = "polaris/cells") -> None:
         self.base_path = Path(base_path)
         self.result = ScanResult()
 
@@ -88,7 +88,7 @@ class DependencyScanner:
         返回: (是否违规, 违规类型)
         """
         source_cell = self._get_cell_name(file_path)
-        target_cell, target_submodule = self._get_target_cell(import_line)
+        target_cell, _target_submodule = self._get_target_cell(import_line)
 
         # 跳过同一Cell内的导入
         if source_cell == target_cell:

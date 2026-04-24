@@ -381,7 +381,9 @@ class StateEntryV2(BaseModel):
             entry_id=str(payload.get("entry_id") or "").strip() or "unknown",
             path=str(payload.get("path") or "").strip(),
             value=str(payload.get("value") or ""),
-            source_turns=tuple(v for v in (source_turns_raw if isinstance(source_turns_raw, (list, tuple)) else []) if v),
+            source_turns=tuple(
+                v for v in (source_turns_raw if isinstance(source_turns_raw, (list, tuple)) else []) if v
+            ),
             confidence=float(payload.get("confidence", 0.0)),
             updated_at=str(payload.get("updated_at") or "").strip(),
             supersedes=payload.get("supersedes"),
@@ -440,7 +442,9 @@ class WorkingStateV2(BaseModel):
         return cls(
             user_profile=UserProfileStateV2(
                 preferences=tuple(
-                    s for s in (_parse_state_entry(v) for v in user_profile_payload.get("preferences", [])) if s is not None
+                    s
+                    for s in (_parse_state_entry(v) for v in user_profile_payload.get("preferences", []))
+                    if s is not None
                 ),
                 style=tuple(
                     s for s in (_parse_state_entry(v) for v in user_profile_payload.get("style", [])) if s is not None
@@ -454,16 +458,24 @@ class WorkingStateV2(BaseModel):
             task_state=TaskStateViewV2(
                 current_goal=_parse_state_entry(task_state_payload.get("current_goal")),
                 accepted_plan=tuple(
-                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("accepted_plan", [])) if s is not None
+                    s
+                    for s in (_parse_state_entry(v) for v in task_state_payload.get("accepted_plan", []))
+                    if s is not None
                 ),
                 open_loops=tuple(
-                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("open_loops", [])) if s is not None
+                    s
+                    for s in (_parse_state_entry(v) for v in task_state_payload.get("open_loops", []))
+                    if s is not None
                 ),
                 blocked_on=tuple(
-                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("blocked_on", [])) if s is not None
+                    s
+                    for s in (_parse_state_entry(v) for v in task_state_payload.get("blocked_on", []))
+                    if s is not None
                 ),
                 deliverables=tuple(
-                    s for s in (_parse_state_entry(v) for v in task_state_payload.get("deliverables", [])) if s is not None
+                    s
+                    for s in (_parse_state_entry(v) for v in task_state_payload.get("deliverables", []))
+                    if s is not None
                 ),
             ),
             decision_log=tuple(
@@ -520,7 +532,9 @@ class DecisionEntryV2(BaseModel):
         return cls(
             decision_id=str(payload.get("decision_id") or payload.get("entry_id") or "").strip() or "unknown",
             summary=str(payload.get("summary") or payload.get("value") or ""),
-            source_turns=tuple(v for v in (source_turns_raw if isinstance(source_turns_raw, (list, tuple)) else []) if v),
+            source_turns=tuple(
+                v for v in (source_turns_raw if isinstance(source_turns_raw, (list, tuple)) else []) if v
+            ),
             updated_at=str(payload.get("updated_at") or "").strip(),
             kind=str(payload.get("kind") or "decision").strip(),
             supersedes=payload.get("supersedes"),
@@ -682,22 +696,46 @@ class ContextOSSnapshotV2(BaseModel):
             working_state = WorkingStateV2(
                 user_profile=UserProfileStateV2(
                     preferences=tuple(
-                        s for s in (StateEntryV2.from_mapping(v) for v in ws_payload.get("user_profile", {}).get("preferences", [])) if s is not None
+                        s
+                        for s in (
+                            StateEntryV2.from_mapping(v)
+                            for v in ws_payload.get("user_profile", {}).get("preferences", [])
+                        )
+                        if s is not None
                     ),
                     style=tuple(
-                        s for s in (StateEntryV2.from_mapping(v) for v in ws_payload.get("user_profile", {}).get("style", [])) if s is not None
+                        s
+                        for s in (
+                            StateEntryV2.from_mapping(v) for v in ws_payload.get("user_profile", {}).get("style", [])
+                        )
+                        if s is not None
                     ),
                     persistent_facts=tuple(
-                        s for s in (StateEntryV2.from_mapping(v) for v in ws_payload.get("user_profile", {}).get("persistent_facts", [])) if s is not None
+                        s
+                        for s in (
+                            StateEntryV2.from_mapping(v)
+                            for v in ws_payload.get("user_profile", {}).get("persistent_facts", [])
+                        )
+                        if s is not None
                     ),
                 ),
                 task_state=TaskStateViewV2(
-                    current_goal=StateEntryV2.from_mapping(ws_payload.get("task_state", {}).get("current_goal")) if ws_payload.get("task_state", {}).get("current_goal") else None,
+                    current_goal=StateEntryV2.from_mapping(ws_payload.get("task_state", {}).get("current_goal"))
+                    if ws_payload.get("task_state", {}).get("current_goal")
+                    else None,
                     open_loops=tuple(
-                        s for s in (StateEntryV2.from_mapping(v) for v in ws_payload.get("task_state", {}).get("open_loops", [])) if s is not None
+                        s
+                        for s in (
+                            StateEntryV2.from_mapping(v) for v in ws_payload.get("task_state", {}).get("open_loops", [])
+                        )
+                        if s is not None
                     ),
                     blocked_on=tuple(
-                        s for s in (StateEntryV2.from_mapping(v) for v in ws_payload.get("task_state", {}).get("blocked_on", [])) if s is not None
+                        s
+                        for s in (
+                            StateEntryV2.from_mapping(v) for v in ws_payload.get("task_state", {}).get("blocked_on", [])
+                        )
+                        if s is not None
                     ),
                 ),
             )
@@ -802,11 +840,19 @@ class RunCardV2(BaseModel):
         recent_decisions_raw = payload.get("recent_decisions", [])
         return cls(
             current_goal=str(payload.get("current_goal") or "").strip(),
-            hard_constraints=tuple(v for v in (hard_constraints_raw if isinstance(hard_constraints_raw, (list, tuple)) else []) if v),
+            hard_constraints=tuple(
+                v for v in (hard_constraints_raw if isinstance(hard_constraints_raw, (list, tuple)) else []) if v
+            ),
             open_loops=tuple(v for v in (open_loops_raw if isinstance(open_loops_raw, (list, tuple)) else []) if v),
-            active_entities=tuple(v for v in (active_entities_raw if isinstance(active_entities_raw, (list, tuple)) else []) if v),
-            active_artifacts=tuple(v for v in (active_artifacts_raw if isinstance(active_artifacts_raw, (list, tuple)) else []) if v),
-            recent_decisions=tuple(v for v in (recent_decisions_raw if isinstance(recent_decisions_raw, (list, tuple)) else []) if v),
+            active_entities=tuple(
+                v for v in (active_entities_raw if isinstance(active_entities_raw, (list, tuple)) else []) if v
+            ),
+            active_artifacts=tuple(
+                v for v in (active_artifacts_raw if isinstance(active_artifacts_raw, (list, tuple)) else []) if v
+            ),
+            recent_decisions=tuple(
+                v for v in (recent_decisions_raw if isinstance(recent_decisions_raw, (list, tuple)) else []) if v
+            ),
             next_action_hint=str(payload.get("next_action_hint") or "").strip(),
             latest_user_intent=str(payload.get("latest_user_intent") or "").strip(),
             pending_followup_action=str(payload.get("pending_followup_action") or "").strip(),

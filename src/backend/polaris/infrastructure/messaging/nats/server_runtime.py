@@ -11,6 +11,7 @@ import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from polaris.kernelone.fs.text_ops import open_text_log_append
@@ -48,9 +49,7 @@ def resolve_managed_nats_storage_root() -> Path:
 
 
 def resolve_nats_server_executable() -> Path | None:
-    explicit = str(
-        os.environ.get("KERNELONE_NATS_SERVER_BIN") or ""
-    ).strip()
+    explicit = str(os.environ.get("KERNELONE_NATS_SERVER_BIN") or "").strip()
     if explicit:
         candidate = Path(explicit).expanduser().resolve()
         return candidate if candidate.exists() else None
@@ -100,8 +99,8 @@ class ManagedNATSServer:
     stderr_log_path: Path
 
     process: subprocess.Popen[bytes] | None = None
-    _stdout_handle: object | None = None
-    _stderr_handle: object | None = None
+    _stdout_handle: Any | None = None
+    _stderr_handle: Any | None = None
 
     async def ensure_running(self) -> None:
         if self.process and self.process.poll() is None:

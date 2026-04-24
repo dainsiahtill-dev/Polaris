@@ -174,6 +174,34 @@ class TestCodexSDKProviderEdgeCases:
         assert result.normalized_config is not None
         assert result.normalized_config["timeout"] == 60
 
+    def test_validate_config_none_max_retries(self) -> None:
+        """None max_retries should default gracefully instead of raising TypeError.
+
+        Regression test for: int(None) raising TypeError when max_retries is None.
+        """
+        config: dict[str, Any] = {
+            "base_url": "https://api.openai.com/v1",
+            "timeout": 60,
+            "max_retries": None,
+        }
+        result = CodexSDKProvider.validate_config(config)
+        assert result.valid is True
+        assert result.normalized_config is not None
+        assert result.normalized_config["max_retries"] == 3
+
+    def test_normalize_retries_none_returns_default(self) -> None:
+        """Direct test for _normalize_retries(None) returning default."""
+        from polaris.infrastructure.llm.providers.codex_sdk_provider import _normalize_retries
+
+        assert _normalize_retries(None, default=5) == 5
+        assert _normalize_retries(None, default=3) == 3
+
+    def test_normalize_retries_invalid_string_returns_default(self) -> None:
+        """Direct test for _normalize_retries with invalid string."""
+        from polaris.infrastructure.llm.providers.codex_sdk_provider import _normalize_retries
+
+        assert _normalize_retries("not_a_number", default=5) == 5
+
     def test_validate_config_invalid_headers(self) -> None:
         config: dict[str, Any] = {
             "base_url": "https://api.openai.com/v1",

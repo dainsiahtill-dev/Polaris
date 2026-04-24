@@ -6,6 +6,8 @@ of the 11 cognitive event types defined in schemas.py.
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 from polaris.kernelone.events.typed import (
     BeliefChangeEvent,
@@ -33,7 +35,7 @@ from polaris.kernelone.events.typed.registry import (
 
 
 @pytest.fixture(autouse=True)
-def reset_registry() -> None:
+def reset_registry() -> Generator[None, None, None]:
     """Reset the default registry before each test."""
     reset_default_registry()
     yield
@@ -357,7 +359,7 @@ class TestCognitiveEventEmission:
         async def handler(event: ThinkingPhaseEvent) -> None:
             received_events.append(event)
 
-        registry.subscribe("thinking_phase", handler)
+        registry.subscribe("thinking_phase", handler)  # type: ignore[arg-type] # narrow handler type for test
 
         event = ThinkingPhaseEvent.create(
             phase="analysis",
@@ -377,7 +379,7 @@ class TestCognitiveEventEmission:
         async def handler(event: ReflectionEvent) -> None:
             received_events.append(event)
 
-        registry.subscribe("reflection", handler)
+        registry.subscribe("reflection", handler)  # type: ignore[arg-type] # narrow handler type for test
 
         event = ReflectionEvent.create(
             reflection_type="meta_cognition",
@@ -398,18 +400,18 @@ class TestCognitiveEventEmission:
             received_count += 1
 
         # Subscribe to all cognitive events using wildcard
-        registry.subscribe("cognitive.*", count_handler)
-        registry.subscribe("thinking_phase", count_handler)
-        registry.subscribe("reflection", count_handler)
-        registry.subscribe("evolution", count_handler)
-        registry.subscribe("belief_change", count_handler)
-        registry.subscribe("confidence_calibration", count_handler)
-        registry.subscribe("perception_completed", count_handler)
-        registry.subscribe("reasoning_completed", count_handler)
-        registry.subscribe("intent_detected", count_handler)
-        registry.subscribe("critical_thinking", count_handler)
-        registry.subscribe("cautious_execution", count_handler)
-        registry.subscribe("value_alignment", count_handler)
+        registry.subscribe("cognitive.*", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("thinking_phase", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("reflection", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("evolution", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("belief_change", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("confidence_calibration", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("perception_completed", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("reasoning_completed", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("intent_detected", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("critical_thinking", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("cautious_execution", count_handler)  # type: ignore[arg-type]
+        registry.subscribe("value_alignment", count_handler)  # type: ignore[arg-type]
 
         # Emit all 11 cognitive event types
         events = [
@@ -442,7 +444,7 @@ class TestCognitiveEventEmission:
         async def handler(event: ThinkingPhaseEvent) -> None:
             received_events.append(event)
 
-        subscribe("thinking_phase", handler)
+        subscribe("thinking_phase", handler)  # type: ignore[arg-type] # narrow handler type for test
 
         event = ThinkingPhaseEvent.create(phase="default_registry_test")
         await emit_event(event)

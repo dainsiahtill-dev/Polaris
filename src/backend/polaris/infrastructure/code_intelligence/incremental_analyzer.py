@@ -12,8 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from polaris.infrastructure.accel.config import resolve_effective_config
 from polaris.infrastructure.accel.indexers import build_or_update_indexes
 from polaris.infrastructure.db.adapters import SqliteAdapter
@@ -29,6 +27,9 @@ class FileChangeInfo:
     old_checksum: str = ""
     new_checksum: str = ""
     dependencies: list[str] = field(default_factory=list)
+
+
+logger = logging.getLogger(__name__)
 
 
 class IncrementalSemanticAnalyzer:
@@ -240,7 +241,6 @@ class IncrementalSemanticAnalyzer:
             "venv",
             "dist",
             "build",
-            ".polaris",
             ".polaris",  # backward compat
             ".accel",
         }

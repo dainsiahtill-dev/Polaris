@@ -3,11 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..storage.index_cache import load_index_rows
+from ..utils import normalize_path_str as _normalize_path
 
 _VALID_PATTERN_TYPES = {"singleton", "factory", "observer", "decorator", "builder"}
-
-
-from ..utils import normalize_path_str as _normalize_path
 
 if TYPE_CHECKING:
     from pathlib import Path

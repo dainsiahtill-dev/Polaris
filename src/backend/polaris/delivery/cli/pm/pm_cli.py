@@ -6,15 +6,9 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import os
 import sys
 
-logger = logging.getLogger(__name__)
-
-# ── Register all PM management handlers with the delivery.cli Cell ─────────────
-# Deferred to bottom of this file (after cmd_* functions are defined).
-# See cell.yaml verification.gaps: "Management handler registry is not yet wired".
 from polaris.cells.delivery.cli.public.service import register_pm_management_handlers
 from polaris.delivery.cli.pm.pm_integration import get_pm
 from polaris.delivery.cli.pm.requirements_tracker import (

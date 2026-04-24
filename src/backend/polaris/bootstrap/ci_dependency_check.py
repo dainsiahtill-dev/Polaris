@@ -26,7 +26,7 @@ class Violation:
 class DependencyChecker:
     """依赖违规检查器"""
 
-    def __init__(self, base_path: str = "polaris/cells"):
+    def __init__(self, base_path: str = "polaris/cells") -> None:
         self.base_path = Path(base_path)
         self.violations: list[Violation] = []
 

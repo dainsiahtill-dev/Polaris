@@ -430,7 +430,7 @@ class ExecutionTracker:
         stats = self._load_stats()
 
         candidates = []
-        for key, data in stats.get("executors", {}).items():
+        for _key, data in stats.get("executors", {}).items():
             exec_type = AssigneeType(data.get("executor_type", "Director"))
 
             if preferred_type and exec_type != preferred_type:

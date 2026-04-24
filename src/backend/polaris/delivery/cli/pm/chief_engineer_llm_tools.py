@@ -308,11 +308,7 @@ class ChiefEngineerToolEnabledAnalysis:
             import re
 
             json_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", output, re.DOTALL)
-            if json_block:
-                json_str = json_block.group(1)
-            else:
-                # 尝试整个输出作为 JSON
-                json_str = output
+            json_str = json_block.group(1) if json_block else output
 
             construction_plan = json.loads(json_str)
         except (json.JSONDecodeError, AttributeError):

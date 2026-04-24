@@ -150,32 +150,32 @@ DEFAULT_BRIDGE_LOGGING = True
 
 
 __all__ = [
-    # Bus implementation identifiers
-    "BUS_IMPL_MESSAGE_BUS",
-    "BUS_IMPL_EVENT_REGISTRY",
-    "BUS_IMPL_TYPED_ADAPTER",
-    "BUS_IMPL_IN_MEMORY_PORT",
-    "BUS_IMPL_NATS_PORT",
-    "BUS_IMPL_IN_MEMORY_BROKER",
-    "BUS_IMPL_NATS_BROKER",
-    "BUS_IMPL_UEP_PUBLISHER",
-    # Bus categories
-    "BUS_CATEGORY_SYNC",
     "BUS_CATEGORY_ASYNC",
     "BUS_CATEGORY_BRIDGE",
     "BUS_CATEGORY_BROKER",
     "BUS_CATEGORY_EXTERNAL",
+    # Bus categories
+    "BUS_CATEGORY_SYNC",
+    "BUS_IMPL_EVENT_REGISTRY",
+    "BUS_IMPL_IN_MEMORY_BROKER",
+    "BUS_IMPL_IN_MEMORY_PORT",
+    # Bus implementation identifiers
+    "BUS_IMPL_MESSAGE_BUS",
+    "BUS_IMPL_NATS_BROKER",
+    "BUS_IMPL_NATS_PORT",
     "BUS_IMPL_TO_CATEGORY",
-    # Protocol constants
-    "DEFAULT_MAX_QUEUE_SIZE",
-    "DEFAULT_MAX_DEAD_LETTERS",
-    "DEFAULT_MAX_ATTEMPTS",
-    "DEFAULT_POLL_TIMEOUT",
-    "DEFAULT_POLL_INTERVAL",
-    # Event type mappings (re-exported from bus_adapter.py)
-    "TYPED_EVENT_TO_MESSAGE_TYPE",
-    "MESSAGE_TYPE_TO_TYPED_EVENT",
+    "BUS_IMPL_TYPED_ADAPTER",
+    "BUS_IMPL_UEP_PUBLISHER",
+    "DEFAULT_BRIDGE_LOGGING",
     # Bridge configuration
     "DEFAULT_DUAL_WRITE",
-    "DEFAULT_BRIDGE_LOGGING",
+    "DEFAULT_MAX_ATTEMPTS",
+    "DEFAULT_MAX_DEAD_LETTERS",
+    # Protocol constants
+    "DEFAULT_MAX_QUEUE_SIZE",
+    "DEFAULT_POLL_INTERVAL",
+    "DEFAULT_POLL_TIMEOUT",
+    "MESSAGE_TYPE_TO_TYPED_EVENT",
+    # Event type mappings (re-exported from bus_adapter.py)
+    "TYPED_EVENT_TO_MESSAGE_TYPE",
 ]

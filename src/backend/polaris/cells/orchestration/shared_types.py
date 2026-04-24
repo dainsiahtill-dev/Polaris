@@ -21,7 +21,7 @@ import logging
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypeAlias
 
 from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
 
@@ -43,7 +43,7 @@ def __getattr__(name: str):
 
 
 # For type checking and runtime compatibility
-ErrorCategory = _CanonicalErrorCategory
+ErrorCategory: TypeAlias = _CanonicalErrorCategory
 
 
 @dataclass

@@ -30,26 +30,20 @@ from polaris.kernelone.audit.contracts import (
 )
 
 __all__ = [
-    # Canonical types (preferred)
+    "AuditEvent",
+    "AuditEventResult",
+    "AuditEventType",
+    "AuditRole",
+    "AuditStore",
+    "ChainVerificationResult",
+    "EvidenceNotFoundError",
+    "EvidenceStore",
     "KernelAuditEvent",
     "KernelAuditEventType",
     "KernelChainVerificationResult",
-    # Backward compatibility aliases
-    "AuditEvent",
-    "AuditEventType",
-    "ChainVerificationResult",
-    # Legacy enums (for external callers)
-    "AuditEventResult",
-    "AuditRole",
+    "LogStore",
     "ResourceOperation",
     "ResourceType",
-    # Store implementation
-    "AuditStore",
-    # Supporting
-    "EvidenceNotFoundError",
-    "EvidenceStore",
-    "LogStore",
-    # Adapter functions
     "audit_event_to_kernel",
     "create_audit_event",
     "kernel_event_to_audit",

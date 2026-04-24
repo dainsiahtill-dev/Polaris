@@ -35,7 +35,6 @@ from .adapters import (
 
 # Re-export key types
 from .canonical_event import (
-    CANONICAL_LOG_EVENT_V2_GUARD,
     LEGACY_CHANNEL_MAPPING,
     CanonicalLogEventV2,
     LogChannel,

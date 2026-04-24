@@ -124,9 +124,7 @@ class TestShouldRetry:
 
     def test_custom_category_set(self) -> None:
         """Policy with custom transient_categories is respected."""
-        policy = RetryPolicy(
-            transient_categories=frozenset({ErrorCategory.INVALID_INPUT})
-        )
+        policy = RetryPolicy(transient_categories=frozenset({ErrorCategory.INVALID_INPUT}))
         assert should_retry(ValueError("invalid"), policy) is False
         # INVALID_INPUT is in the set, but classify_error returns UNKNOWN for ValueError.
         # This tests the policy boundary: should_retry only checks membership.
@@ -186,9 +184,7 @@ class TestComputeDelay:
             jitter_ratio=0.0,
         )
         for attempt in range(1, 6):
-            assert compute_delay(policy, attempt) == min(
-                2.0 * (2 ** (attempt - 1)), 100.0
-            )
+            assert compute_delay(policy, attempt) == min(2.0 * (2 ** (attempt - 1)), 100.0)
 
     def test_non_zero_jitter(self) -> None:
         """Non-zero jitter adds extra delay bounded by jitter_ratio."""
@@ -250,6 +246,7 @@ class TestExecuteWithRetry:
     @pytest.mark.asyncio
     async def test_success_on_first_try(self, fast_policy: RetryPolicy) -> None:
         """Operation succeeding immediately returns result."""
+
         async def op() -> str:
             return "ok"
 
@@ -275,6 +272,7 @@ class TestExecuteWithRetry:
     @pytest.mark.asyncio
     async def test_non_transient_error_raises_immediately(self, fast_policy: RetryPolicy) -> None:
         """Non-transient errors are not retried."""
+
         async def fail() -> str:
             raise ValueError("permanent")
 
@@ -284,6 +282,7 @@ class TestExecuteWithRetry:
     @pytest.mark.asyncio
     async def test_exhausted_retries_raise_last_error(self, fast_policy: RetryPolicy) -> None:
         """When all attempts are exhausted, the last error is raised."""
+
         async def always_timeout() -> str:
             raise asyncio.TimeoutError("still failing")
 
@@ -293,6 +292,7 @@ class TestExecuteWithRetry:
     @pytest.mark.asyncio
     async def test_cancelled_error_not_retried(self, fast_policy: RetryPolicy) -> None:
         """asyncio.CancelledError is always propagated."""
+
         async def cancel() -> str:
             raise asyncio.CancelledError()
 
@@ -302,6 +302,7 @@ class TestExecuteWithRetry:
     @pytest.mark.asyncio
     async def test_args_and_kwargs_forwarded(self, fast_policy: RetryPolicy) -> None:
         """Positional and keyword arguments are passed through."""
+
         async def op(a: int, b: str, c: bool = False) -> tuple[int, str, bool]:
             return (a, b, c)
 
@@ -334,6 +335,7 @@ class TestExecuteWithRetry:
     @pytest.mark.asyncio
     async def test_single_attempt_no_retry(self, no_retry_policy: RetryPolicy) -> None:
         """Policy with max_attempts=1 never retries."""
+
         async def fail() -> str:
             raise asyncio.TimeoutError("timeout")
 

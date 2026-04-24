@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.internal.event_bus import EventBus
@@ -24,7 +25,7 @@ def test_concurrent_publish_and_subscribe() -> None:
     errors: list[Exception] = []
     error_lock = threading.Lock()
 
-    def capture_error(target: callable) -> callable:  # type: ignore[arg-type]
+    def capture_error(target: Callable[..., Any]) -> Callable[..., Any]:
         def wrapper(*args: Any, **kwargs: Any) -> None:  # type: ignore[arg-type]
             try:
                 target(*args, **kwargs)

@@ -31,7 +31,7 @@ class ThinkingPhaseEngine:
     - Outputs reasoning trace for transparency
     """
 
-    def __init__(self, config: ThinkingPhaseConfig | None = None):
+    def __init__(self, config: ThinkingPhaseConfig | None = None) -> None:
         self._config = config or ThinkingPhaseConfig()
         self._thinking_history: list[ThinkingOutput] = []
 

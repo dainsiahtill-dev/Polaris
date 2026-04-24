@@ -42,20 +42,20 @@ class TestThinkingValidation:
     def test_whitespace_before_thinking_passes(self):
         """Whitespace before <thinking> tag is allowed."""
         content = "   <thinking>分析任务</thinking>"
-        is_valid, error = ToolLoopController._validate_thinking_compliance(content)
+        _is_valid, _error = ToolLoopController._validate_thinking_compliance(content)
         # Note: current implementation strips, so this might pass
         # The important thing is no roleplay content before thinking
 
     def test_nested_thinking_allowed(self):
         """Multiple thinking blocks are allowed (edge case)."""
         content = "<thinking>第一部分</thinking>内容<thinking>第二部分</thinking>"
-        is_valid, error = ToolLoopController._validate_thinking_compliance(content)
+        _is_valid, _error = ToolLoopController._validate_thinking_compliance(content)
         # Should pass - at least has opening and closing tags
 
     def test_empty_thinking_fails(self):
         """Empty thinking block might be considered valid structurally."""
         content = "<thinking></thinking>内容"
-        is_valid, error = ToolLoopController._validate_thinking_compliance(content)
+        is_valid, _error = ToolLoopController._validate_thinking_compliance(content)
         # Structure is valid even if content is empty
         assert is_valid is True
 
@@ -63,13 +63,13 @@ class TestThinkingValidation:
         """Tag detection should be case insensitive."""
         content = "<THINKING>分析任务</THINKING>"
         # Current implementation uses startswith - might not be case insensitive
-        is_valid, error = ToolLoopController._validate_thinking_compliance(content)
+        _is_valid, _error = ToolLoopController._validate_thinking_compliance(content)
         # Implementation detail: may or may not be case sensitive
 
     def test_thinking_with_attributes_passes(self):
         """Thinking tag with attributes (like <thinking:abc>) passes."""
         content = "<thinking:session123>分析任务</thinking>"
-        is_valid, error = ToolLoopController._validate_thinking_compliance(content)
+        is_valid, _error = ToolLoopController._validate_thinking_compliance(content)
         assert is_valid is True  # Should pass - starts with <thinking
 
 
@@ -86,7 +86,7 @@ class TestThinkingViolationTypes:
     def test_detects_prefix_content(self):
         """Correctly identifies content before thinking tag."""
         content = "角色台词<thinking>思考</thinking>"
-        is_valid, error = ToolLoopController._validate_thinking_compliance(content)
+        is_valid, _error = ToolLoopController._validate_thinking_compliance(content)
         assert is_valid is False
         # Should detect content before tag
 

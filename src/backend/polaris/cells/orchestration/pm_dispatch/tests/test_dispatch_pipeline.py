@@ -204,11 +204,11 @@ def test_mainline_publish_emits_pending_design_stage(monkeypatch) -> None:
 def test_mainline_design_alias_publishes_pending_design(monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-design")
 
-    captured: list[object] = []
-
     class _PublishCommand:
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
+
+    captured: list[_PublishCommand] = []
 
     class _FakeService:
         def publish_work_item(self, command) -> object:
@@ -244,11 +244,6 @@ def test_mainline_design_alias_publishes_pending_design(monkeypatch) -> None:
 def test_mainline_publish_submits_change_order_on_revision_drift(monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline")
 
-    captured_publish: list[object] = []
-    register_calls: list[object] = []
-    change_calls: list[object] = []
-    query_calls: list[object] = []
-
     class _PublishCommand:
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
@@ -264,6 +259,11 @@ def test_mainline_publish_submits_change_order_on_revision_drift(monkeypatch) ->
     class _QueryPlanRevisions:
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
+
+    captured_publish: list[_PublishCommand] = []
+    register_calls: list[_RegisterRevisionCommand] = []
+    change_calls: list[_SubmitChangeOrderCommand] = []
+    query_calls: list[_QueryPlanRevisions] = []
 
     class _FakeService:
         def publish_work_item(self, command) -> object:

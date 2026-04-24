@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -21,7 +21,7 @@ from polaris.kernelone.llm.contracts.tool import ToolCall
 
 # Backward compatibility: ParsedToolCall is now an alias to canonical ToolCall
 # The fields are identical: id, name, arguments, raw, source, parse_error
-ParsedToolCall = ToolCall
+ParsedToolCall: TypeAlias = ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +91,7 @@ def resolve_signature_requirement(require_signature: bool | None) -> bool:
     if require_signature is not None:
         return bool(require_signature)
 
-    raw = (
-        str(
-            os.environ.get("KERNELONE_REQUIRE_SIGNED_TOOL_TAGS", "")
-        )
-        .strip()
-        .lower()
-    )
+    raw = str(os.environ.get("KERNELONE_REQUIRE_SIGNED_TOOL_TAGS", "")).strip().lower()
 
     if not raw:
         return False

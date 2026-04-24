@@ -228,112 +228,112 @@ KernelError = KernelOneError
 # ============================================================================
 
 __all__ = [
-    # Root base
-    "KernelOneError",
-    "KernelError",  # Backward compatibility alias
-    # Configuration
-    "ConfigurationError",
-    "ConfigLoadError",
-    "ConfigValidationError",
-    "ConfigMigrationError",
-    # Validation
-    "ValidationError",
-    "PathTraversalError",
-    "WorkflowContractError",
-    "ReservedKeyViolationError",
-    "ConstitutionViolationError",
-    "PathSecurityError",
-    # Execution
-    "ExecutionError",
-    "ToolExecutionError",
-    "ShellDisallowedError",
-    "BudgetExceededError",
-    "ToolAuthorizationError",
-    "ToolError",
-    "CodeGenerationError",
-    "CodeGenerationPolicyViolationError",
-    # Resource
-    "ResourceError",
-    "FileNotFoundError",
-    "StateNotFoundError",
-    "EvidenceNotFoundError",
-    "DatabaseError",
-    "DatabasePathError",
-    "DatabasePolicyError",
-    "DatabaseConnectionError",
-    "DatabaseDriverNotAvailableError",
-    "RoleDataStoreError",
-    # Communication
-    "CommunicationError",
-    "NetworkError",
-    "WebSocketSendError",
-    "TimeoutError",
-    "RateLimitError",
-    "CircuitBreakerOpenError",
-    "AuthenticationError",
-    # State
-    "StateError",
-    "InvalidStateTransitionError",
-    "InvalidTaskStateTransitionError",
-    "WorkerStateError",
-    "TaskStateError",
-    "InvalidToolStateTransitionError",
-    # Cell
-    "CellError",
     # Audit
     "AuditError",
-    "KernelAuditWriteError",
     "AuditFieldError",
-    # Event
-    "EventError",
-    "EventPublishError",
-    "EventSourcingError",
-    "EmitResult",
+    "AuthenticationError",
+    "BackendBootstrapError",
     # Bootstrap
     "BootstrapError",
-    "BackendBootstrapError",
+    "BudgetExceededError",
+    # Cell
+    "CellError",
+    "ChaosCircuitBreakerError",
     # Chaos
     "ChaosError",
     "ChaosInjectionError",
     "ChaosSkippedError",
-    "RateLimitExceededError",
-    "NetworkChaosError",
-    "DeadlockDetectedError",
-    "LockTimeoutError",
-    "ChaosCircuitBreakerError",
-    # Retry/Resilience
-    "RetryableError",
-    "NonRetryableError",
-    # Shadow Replay
-    "ShadowReplayError",
+    "CircuitBreakerOpenError",
+    "CodeGenerationError",
+    "CodeGenerationPolicyViolationError",
+    # Communication
+    "CommunicationError",
+    "ConfigLoadError",
+    "ConfigMigrationError",
+    "ConfigValidationError",
+    # Configuration
+    "ConfigurationError",
+    "ConstitutionViolationError",
+    "ContextCompilationError",
     # Context
     "ContextError",
     "ContextOverflowError",
-    "ContextCompilationError",
-    # Turn Decision
-    "TurnDecisionError",
-    "TurnDecisionDecodeError",
-    # Testing
-    "TestingInfrastructureError",
-    # Permission
-    "PermissionError",
-    "PermissionServiceError",
-    # Workflow Runtime
-    "WorkflowRuntimeError",
-    "WorkflowUnavailableError",
-    "ProcessRunnerError",
-    "LauncherError",
-    "OrchestrationError",
-    # Vision Service
-    "VisionServiceError",
-    "VisionNotAvailableError",
+    "DatabaseConnectionError",
+    "DatabaseDriverNotAvailableError",
+    "DatabaseError",
+    "DatabasePathError",
+    "DatabasePolicyError",
+    "DeadlockDetectedError",
+    "EmitResult",
+    # Event
+    "EventError",
+    "EventPublishError",
+    "EventSourcingError",
+    "EvidenceNotFoundError",
+    # Execution
+    "ExecutionError",
+    "FileNotFoundError",
     "InferenceEngineNotConfiguredError",
+    "InvalidStateTransitionError",
+    "InvalidTaskStateTransitionError",
+    "InvalidToolStateTransitionError",
+    "JSONParseError",
+    "KernelAuditWriteError",
+    "KernelError",  # Backward compatibility alias
+    # Root base
+    "KernelOneError",
     # LLM (from llm/exceptions.py)
     "LLMError",
     "LLMException",  # Semantic alias
     "LLMTimeoutError",
-    "JSONParseError",
-    "ResponseParseError",
-    "ToolParseError",
+    "LauncherError",
+    "LockTimeoutError",
+    "NetworkChaosError",
+    "NetworkError",
+    "NonRetryableError",
+    "OrchestrationError",
+    "PathSecurityError",
+    "PathTraversalError",
+    # Permission
+    "PermissionError",
+    "PermissionServiceError",
+    "ProcessRunnerError",
     "ProviderError",
+    "RateLimitError",
+    "RateLimitExceededError",
+    "ReservedKeyViolationError",
+    # Resource
+    "ResourceError",
+    "ResponseParseError",
+    # Retry/Resilience
+    "RetryableError",
+    "RoleDataStoreError",
+    # Shadow Replay
+    "ShadowReplayError",
+    "ShellDisallowedError",
+    # State
+    "StateError",
+    "StateNotFoundError",
+    "TaskStateError",
+    # Testing
+    "TestingInfrastructureError",
+    "TimeoutError",
+    "ToolAuthorizationError",
+    "ToolError",
+    "ToolExecutionError",
+    "ToolParseError",
+    "TurnDecisionDecodeError",
+    # Turn Decision
+    "TurnDecisionError",
+    # Validation
+    "ValidationError",
+    "VisionNotAvailableError",
+    # Vision Service
+    "VisionServiceError",
+    "WebSocketSendError",
+    "WorkerStateError",
+    "WorkflowContractError",
+    # Workflow Runtime
+    "WorkflowRuntimeError",
+    "WorkflowUnavailableError",
 ]

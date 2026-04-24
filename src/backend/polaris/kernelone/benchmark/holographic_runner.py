@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import itertools
 import json
 import math
 import random
@@ -1329,7 +1330,7 @@ async def _exec_tc_tc_001(case: HolographicCase) -> dict[str, float]:
         if len(semantic_chunks) < 2:
             semantic_similarities.append(1.0)
         else:
-            for left, right in zip(semantic_chunks, semantic_chunks[1:], strict=False):
+            for left, right in itertools.pairwise(semantic_chunks):
                 semantic_similarities.append(_token_similarity(left.text, right.text))
 
     semantic_fn_stats = summarize_samples(semantic_function_rates, warmup_rounds=case.warmup_rounds)

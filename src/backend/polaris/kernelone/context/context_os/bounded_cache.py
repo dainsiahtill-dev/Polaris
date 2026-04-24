@@ -115,10 +115,7 @@ class LRUBoundedCache(Generic[K, V]):
         Continues evicting until both entry count and byte size
         are within their respective limits.
         """
-        while (
-            len(self._cache) > self.max_entries
-            or self._current_bytes > self.max_bytes
-        ):
+        while len(self._cache) > self.max_entries or self._current_bytes > self.max_bytes:
             if not self._cache:
                 break
             # Pop the first (least recently used) item

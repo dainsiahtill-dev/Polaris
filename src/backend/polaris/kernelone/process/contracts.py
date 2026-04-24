@@ -355,9 +355,9 @@ class ProcessInfo:
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
-    "CommandResult",
     # CommandExecutorPort contract
     "CommandExecutorPort",
+    "CommandResult",
     # ProcessControlPort (legacy)
     "ProcessControlPort",
     "ProcessInfo",

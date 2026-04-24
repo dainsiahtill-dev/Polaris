@@ -72,7 +72,8 @@ async def test_execute_role_session_persists_transcript_and_context_os(monkeypat
         import polaris.cells.roles.session.internal.role_session_service as session_service_module
         import polaris.cells.roles.session.public as session_public_module
 
-        _session_factory = lambda: role_session_service
+        def _session_factory():
+            return role_session_service
         monkeypatch.setattr(session_service_module, "RoleSessionService", _session_factory)
         monkeypatch.setattr(session_public_module, "RoleSessionService", _session_factory)
 

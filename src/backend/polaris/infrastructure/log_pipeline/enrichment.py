@@ -12,13 +12,11 @@ enriched events with:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-import time
-
-_logger = logging.getLogger(__name__)
-import contextlib
 import os
+import time
 from dataclasses import dataclass
 
 from polaris.kernelone.constants import DEFAULT_SHORT_TIMEOUT_SECONDS
@@ -28,6 +26,8 @@ from .canonical_event import (
     CanonicalLogEventV2,
     LogEnrichmentV1,
 )
+
+_logger = logging.getLogger(__name__)
 
 # LLM enrichment prompts
 ENRICHMENT_SYSTEM_PROMPT = """You are a log analysis assistant for Polaris.
@@ -239,7 +239,7 @@ For each event, respond with JSON array:
             return response.output
         except (RuntimeError, ValueError) as e:
             # If LLM unavailable, return empty response (events will be retried)
-            raise RuntimeError(f"LLM provider unavailable: {e}")
+            raise RuntimeError(f"LLM provider unavailable: {e}") from e
 
     def _parse_enrichment_response(
         self,

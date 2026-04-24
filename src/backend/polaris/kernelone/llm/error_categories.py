@@ -11,6 +11,7 @@ Note:
 from __future__ import annotations
 
 import warnings
+from typing import TypeAlias
 
 from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
 
@@ -32,7 +33,7 @@ def __getattr__(name: str):
 
 
 # For type checking and runtime compatibility
-ErrorCategory = _CanonicalErrorCategory
+ErrorCategory: TypeAlias = _CanonicalErrorCategory
 
 
 def _category_from_exception(error: Exception) -> ErrorCategory | None:

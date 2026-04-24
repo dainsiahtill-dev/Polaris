@@ -77,10 +77,7 @@ class TestAuditIndexBasicOperations:
         """Test querying events by task_id."""
         index = AuditIndex()
         task_id = "specific-task"
-        events = [
-            self._make_event(event_id=f"e{i}", task_id=task_id)
-            for i in range(3)
-        ]
+        events = [self._make_event(event_id=f"e{i}", task_id=task_id) for i in range(3)]
         # Add some other events
         index.index_event(self._make_event(event_id="other-1", task_id="other-task"))
         for event in events:
@@ -96,10 +93,7 @@ class TestAuditIndexBasicOperations:
         """Test querying events by trace_id."""
         index = AuditIndex()
         trace_id = "specific-trace"
-        events = [
-            self._make_event(event_id=f"trace-e{i}", trace_id=trace_id)
-            for i in range(2)
-        ]
+        events = [self._make_event(event_id=f"trace-e{i}", trace_id=trace_id) for i in range(2)]
         index.index_event(self._make_event(event_id="other-trace", trace_id="other"))
         for event in events:
             index.index_event(event)
@@ -124,9 +118,7 @@ class TestAuditIndexBasicOperations:
         """Test querying events by type with limit."""
         index = AuditIndex()
         for i in range(10):
-            index.index_event(
-                self._make_event(event_id=f"limit-e{i}", event_type=KernelAuditEventType.DIALOGUE)
-            )
+            index.index_event(self._make_event(event_id=f"limit-e{i}", event_type=KernelAuditEventType.DIALOGUE))
 
         results = index.query_by_type(KernelAuditEventType.DIALOGUE, limit=5)
         assert len(results) == 5

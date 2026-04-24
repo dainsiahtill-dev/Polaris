@@ -186,7 +186,7 @@ class SyntaxPolicy:
             if line.startswith("-") and not line.startswith("---"):
                 code_line = line[1:]  # 去掉 '-'
                 # 对删除行只做轻量检查，因为可能是旧代码
-                for pattern_regex, error_desc, suggestion in self._compiled_python:
+                for pattern_regex, _error_desc, _suggestion in self._compiled_python:
                     if pattern_regex.search(code_line):
                         # 仅警告，不阻止（可能是要修复的错误）
                         pass  # 删除行允许有错误，因为就是要替换它

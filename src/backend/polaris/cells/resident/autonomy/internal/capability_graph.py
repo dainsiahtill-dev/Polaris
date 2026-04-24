@@ -77,7 +77,7 @@ class CapabilityGraph:
                 continue
             existing.kind = "hybrid"
             existing.supporting_skill_ids = sorted(
-                list(dict.fromkeys([*existing.supporting_skill_ids, skill.skill_id]))
+                dict.fromkeys([*existing.supporting_skill_ids, skill.skill_id])
             )
             existing.evidence_count += len(skill.evidence_refs)
             existing.score = round(min(1.0, (existing.score + skill.confidence) / 2.0), 4)

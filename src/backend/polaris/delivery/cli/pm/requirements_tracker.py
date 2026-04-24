@@ -324,11 +324,11 @@ class RequirementsTracker:
             return None
 
         # Record changes for each field
-        for field, new_value in updates.items():
-            if field in data and data[field] != new_value:
-                old_value = data[field]
-                data[field] = new_value
-                self._record_change(req_id, field, old_value, new_value, changed_by, reason)
+        for field_name, new_value in updates.items():
+            if field_name in data and data[field_name] != new_value:
+                old_value = data[field_name]
+                data[field_name] = new_value
+                self._record_change(req_id, field_name, old_value, new_value, changed_by, reason)
 
         data["updated_at"] = _now_iso()
         self._save_registry(registry)

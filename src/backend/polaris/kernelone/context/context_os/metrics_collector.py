@@ -204,10 +204,11 @@ class CognitiveRuntimeMetricsCollector:
                 # - Transaction commit overhead
                 # - Possible network I/O in distributed setups
                 #
-                # TODO: Implement真实的receipt写入工作负载benchmark，包括:
-                # - 实际的ContextOSReceipt序列化写入
-                # - 关联的索引更新操作
-                # - 端到端的事务提交测量
+                # TODO: Implement real receipt write workload benchmark, including:
+                # - Actual ContextOSReceipt serialization + write via CognitiveRuntimeSqliteStore
+                # - Associated index update operations
+                # - End-to-end transaction commit measurement
+                # Missing dependency: CognitiveRuntimeSqliteStore write path integration.
                 write_latencies: list[float] = []
                 write_failures = 0
                 num_write_tests = 20  # Run multiple ops for meaningful p95

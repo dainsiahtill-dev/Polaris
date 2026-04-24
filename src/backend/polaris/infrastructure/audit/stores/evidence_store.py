@@ -65,8 +65,8 @@ class EvidenceStore:
         # This catches edge cases like "foo/../bar" that the simple check misses.
         try:
             path.resolve().relative_to(self.evidence_dir.resolve())
-        except ValueError:
-            raise ValueError(f"Invalid task_id: {task_id!r}")
+        except ValueError as e:
+            raise ValueError(f"Invalid task_id: {task_id!r}") from e
 
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -252,8 +252,8 @@ class EvidenceStore:
         # Verify path stays within evidence_dir
         try:
             task_dir.resolve().relative_to(self.evidence_dir.resolve())
-        except ValueError:
-            raise ValueError(f"Invalid task_id: {task_id!r}")
+        except ValueError as e:
+            raise ValueError(f"Invalid task_id: {task_id!r}") from e
         log_file = task_dir / "evidence_log.jsonl"
 
         if not log_file.exists():

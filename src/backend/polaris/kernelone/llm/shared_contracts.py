@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
-from .error_categories import ErrorCategory
+from polaris.kernelone.errors import ErrorCategory
 
 
 class TaskType(str, Enum):
@@ -272,7 +272,7 @@ class AIResponse:
         payload = dict(data or {})
         raw_category = payload.get("error_category")
         category_value: ErrorCategory | None = None
-        if isinstance(raw_category, ErrorCategory):
+        if raw_category is not None and isinstance(raw_category, ErrorCategory):
             category_value = raw_category
         elif isinstance(raw_category, str) and raw_category:
             try:

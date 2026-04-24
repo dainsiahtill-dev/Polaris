@@ -39,7 +39,7 @@ class LLMFinishReason(str, Enum):
     ERROR = "error"  # Error during generation
 
 
-class LLMEvent(AuditEvent, frozen=True):
+class LLMEvent(AuditEvent):  # type: ignore[call-arg]  # frozen=True inherited from AuditEvent model_config
     """LLM interaction audit event.
 
     Captures the full lifecycle of an LLM call for:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
@@ -14,10 +14,8 @@ from polaris.cells.llm.evaluation.public.service import (
 )
 from polaris.delivery.http.routers._shared import get_state, require_auth
 
+from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
 from .sse_utils import create_sse_response, sse_event_generator
-
-if TYPE_CHECKING:
-    from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
 
 
 # 适配器函数，保持与旧接口的兼容性

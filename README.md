@@ -127,7 +127,7 @@ else:
 
 ### 4. 🏛️ Cell 波粒二象性：代码的高维 IR
 
-**代码路径**: `docs/graph/catalog/cells.yaml` (51 Cells)
+**代码路径**: `docs/graph/catalog/cells.yaml` (59 Cells)
 
 ```
 Wave (Discovery)     → 语义检索、聚类、上下文压缩
@@ -478,9 +478,9 @@ npm run dev
 python src/backend/server.py --host 127.0.0.1 --port 49977
 
 # 单独运行角色（类似 Claude Code）
-python -m polaris.delivery.cli.architect.cli --mode interactive --workspace .
-python -m polaris.delivery.cli.chief_engineer.cli --mode interactive --workspace .
-python -m polaris.delivery.cli.director.cli --workspace . --iterations 1
+python -m polaris.cells.architect.design.internal.architect_cli --mode interactive --workspace .
+python -m polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli --mode interactive --workspace .
+python -m polaris.delivery.cli.director.cli_thin --workspace . --iterations 1
 ```
 
 ### 运行测试

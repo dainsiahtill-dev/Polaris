@@ -507,9 +507,7 @@ Summary:"""
         policy = request.policy or {}
         enabled = policy.get("snapshot_context")
         if enabled is None:
-            enabled = str(
-                os.environ.get("KERNELONE_CONTEXT_SNAPSHOT", "1")
-            ).strip().lower() not in (
+            enabled = str(os.environ.get("KERNELONE_CONTEXT_SNAPSHOT", "1")).strip().lower() not in (
                 "0",
                 "false",
                 "no",

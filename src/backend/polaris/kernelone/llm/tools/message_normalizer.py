@@ -164,7 +164,7 @@ class MessageNormalizer:
     ) -> list[dict[str, Any]]:
         """Ensure messages are valid dicts."""
         result: list[dict[str, Any]] = []
-        for i, msg in enumerate(messages):
+        for _i, msg in enumerate(messages):
             if not isinstance(msg, dict):
                 msg = {"role": "user", "content": str(msg)}
             result.append(dict(msg))

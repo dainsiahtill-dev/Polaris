@@ -408,11 +408,7 @@ class AnthropicCompatProvider(BaseProvider):
         # This is critical for proper transcript handling in multi-turn conversations.
         # Adapter.build_request() builds proper messages from ConversationState.transcript.
         adapter_messages = _CONTRACT.extract_messages({"config": config})
-        if adapter_messages:
-            messages = adapter_messages
-        else:
-            # Legacy fallback: build single-turn user message from prompt
-            messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        messages = adapter_messages or [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
 
         payload: dict[str, Any] = {
             "model": model,
@@ -503,11 +499,7 @@ class AnthropicCompatProvider(BaseProvider):
         # FIXED: Use adapter-built messages from config if available.
         # This is critical for proper transcript handling in multi-turn conversations.
         adapter_messages = _CONTRACT.extract_messages({"config": config})
-        if adapter_messages:
-            messages = adapter_messages
-        else:
-            # Legacy fallback: build single-turn user message from prompt
-            messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        messages = adapter_messages or [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
 
         # FIXED: Prefer adapter-provided system prompt from config['system']
         system_prompt = config.get("system") or config.get("system_prompt")

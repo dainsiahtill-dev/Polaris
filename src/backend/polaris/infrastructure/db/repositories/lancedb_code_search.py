@@ -8,11 +8,8 @@ Provides:
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
-
 import hashlib
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -20,6 +17,8 @@ from typing import Any
 from polaris.infrastructure.db.adapters import LanceDbAdapter
 from polaris.kernelone.constants import MAX_FILE_SIZE_BYTES
 from polaris.kernelone.db import KernelDatabase
+
+logger = logging.getLogger(__name__)
 
 # File extensions to index
 INDEXABLE_EXTENSIONS = {

@@ -43,11 +43,8 @@ INPUT_BINDINGS = [
 
 def get_bindings_for_mode(mode: str) -> list[Binding]:
     """获取指定模式的绑定"""
-    if mode == "global":
-        return GLOBAL_BINDINGS
-    elif mode == "messages":
-        return MESSAGE_BINDINGS
-    elif mode == "input":
-        return INPUT_BINDINGS
-    else:
-        return GLOBAL_BINDINGS
+    return {
+        "global": GLOBAL_BINDINGS,
+        "messages": MESSAGE_BINDINGS,
+        "input": INPUT_BINDINGS,
+    }.get(mode, GLOBAL_BINDINGS)

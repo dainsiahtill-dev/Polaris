@@ -209,6 +209,28 @@ def generate_dashboard(
     lines.append(f"| **Total** | **{total_rules}** |")
     lines.append("")
 
+    # Goal tracking table
+    lines.append("## Goal Tracking")
+    lines.append("")
+    lines.append("| Goal | Current | Target | Gap | ETA |")
+    lines.append("|------|---------|--------|-----|-----|")
+
+    coverage_val = coverage if isinstance(coverage, float) else 0.0
+    coverage_str = f"{coverage_val:.1f}%" if isinstance(coverage, float) else str(coverage)
+    lines.append(f"| Coverage | {coverage_str} | 50% | {coverage_val - 50:.1f}% | Month 2 |")
+
+    ruff_val = ruff_errors if isinstance(ruff_errors, int) else 0
+    ruff_str = str(ruff_errors) if isinstance(ruff_errors, int) else str(ruff_errors)
+    lines.append(f"| Ruff errors | {ruff_str} | 0 | {ruff_val - 0:+d} | Month 3 |")
+
+    mypy_val = mypy_errors if isinstance(mypy_errors, int) else 0
+    mypy_str = str(mypy_errors) if isinstance(mypy_errors, int) else str(mypy_errors)
+    lines.append(f"| MyPy errors | {mypy_str} | 0 | {mypy_val - 0:+d} | Month 2 |")
+
+    enforced = fitness_distribution.get("enforced", 0)
+    lines.append(f"| Fitness enforced | {enforced} | 30 | {enforced - 30:+d} | Month 3 |")
+    lines.append("")
+
     # Coverage goal tracking
     lines.append("## Coverage Goal Tracking")
     lines.append("")

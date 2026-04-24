@@ -152,7 +152,7 @@ class WorkflowRoleNode(ABC):
         if request.message:
             accumulated_history.append(("user", request.message))
 
-        for round_num in range(max_rounds):
+        for _round_num in range(max_rounds):
             if not current_result.tool_calls or current_result.is_complete:
                 break
 

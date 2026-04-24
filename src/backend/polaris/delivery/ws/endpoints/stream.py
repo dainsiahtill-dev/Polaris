@@ -97,7 +97,7 @@ async def send_json(
         logger.warning(f"WebSocket runtime error: {e}", extra=error_context)
         raise WebSocketSendError(error_type, str(e), e) from e
 
-    except (RuntimeError, ValueError) as e:
+    except ValueError as e:
         error_type = "unknown_error"
         logger.error(f"WebSocket send error ({type(e).__name__}): {e}", extra=error_context)
         raise WebSocketSendError(error_type, f"Unknown error: {e}", e) from e

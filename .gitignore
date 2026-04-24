@@ -169,3 +169,4 @@ src/backend/.kernelone/*
 
 src/backend/polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/
 src/backend/truthlog_test_runtime/*
+src/backend/*_ruff.json

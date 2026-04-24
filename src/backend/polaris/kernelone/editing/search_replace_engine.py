@@ -191,7 +191,7 @@ def _try_dotdot_ellipsis(content: str, search: str, replace: str) -> str | None:
         return None
 
     # Require same separator lines to keep deterministic behavior.
-    for s_idx, r_idx in zip(dot_search, dot_replace):
+    for s_idx, r_idx in zip(dot_search, dot_replace, strict=False):
         if search_lines[s_idx].strip() != replace_lines[r_idx].strip():
             return None
 
@@ -208,7 +208,7 @@ def _try_dotdot_ellipsis(content: str, search: str, replace: str) -> str | None:
     replace_parts = _split_segments(replace_lines, dot_replace)
 
     current = content
-    for search_part, replace_part in zip(search_parts, replace_parts):
+    for search_part, replace_part in zip(search_parts, replace_parts, strict=False):
         if not search_part and not replace_part:
             continue
         if not search_part and replace_part:

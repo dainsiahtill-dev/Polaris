@@ -450,7 +450,7 @@ def inject_chief_engineer_constraints(
     if all_scope_paths:
         constraints["all_scope_paths"] = list(set(all_scope_paths))[:50]
 
-    unique_modules = list(set(_module_key_from_path(p) for p in all_scope_paths))
+    unique_modules = list({_module_key_from_path(p) for p in all_scope_paths})
     if unique_modules:
         constraints["affected_modules"] = unique_modules[:20]
 

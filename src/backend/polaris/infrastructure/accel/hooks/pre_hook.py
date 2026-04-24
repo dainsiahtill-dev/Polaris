@@ -7,12 +7,12 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-logger = logging.getLogger(__name__)
-
 from ..config import resolve_effective_config
 from ..polaris_paths import resolve_artifact_path
 from ..query.context_compiler import compile_context_pack, write_context_pack
 from ..storage.cache import ensure_project_dirs, project_paths
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:

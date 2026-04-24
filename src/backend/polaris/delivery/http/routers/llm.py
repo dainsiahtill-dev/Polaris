@@ -15,15 +15,15 @@ from polaris.cells.llm.provider_runtime.public.service import get_provider_manag
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.cells.storage.layout.public.service import save_persisted_settings
 from polaris.delivery.http.routers._shared import get_state, require_auth
-
-# Resolve provider_manager from the Cell layer (which delegates to kernelone)
-_provider_manager = get_provider_manager()
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.runtime_config import load_role_config
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Resolve provider_manager from the Cell layer (which delegates to kernelone)
+_provider_manager = get_provider_manager()
 
 
 def _normalize_runtime_role_id(role_id: str) -> str:

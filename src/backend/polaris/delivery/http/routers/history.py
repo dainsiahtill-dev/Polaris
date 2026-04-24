@@ -682,7 +682,7 @@ def v2_history_run_manifest(request: Request, run_id: str) -> dict[str, Any]:
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @router.get("/v2/history/runs/{run_id}/events", dependencies=[Depends(require_auth)])
@@ -699,7 +699,7 @@ def v2_history_run_events(request: Request, run_id: str) -> dict[str, Any]:
         return {"run_id": run_id, "events": events, "count": len(events)}
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get events for run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @router.get("/v2/history/tasks/snapshots", dependencies=[Depends(require_auth)])
@@ -722,7 +722,7 @@ def v2_history_task_snapshots(
         }
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to list task snapshots: {e}")
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @router.get("/v2/history/factory/snapshots", dependencies=[Depends(require_auth)])
@@ -745,7 +745,7 @@ def v2_history_factory_snapshots(
         }
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to list factory snapshots: {e}")
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 # ============================================================================
@@ -772,7 +772,7 @@ def history_run_manifest(request: Request, run_id: str) -> dict[str, Any]:
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @router.get("/history/tasks/{snapshot_id}/manifest", dependencies=[Depends(require_auth)])
@@ -794,7 +794,7 @@ def history_task_snapshot_manifest(request: Request, snapshot_id: str) -> dict[s
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for task snapshot {snapshot_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @router.get("/history/factory/{run_id}/manifest", dependencies=[Depends(require_auth)])
@@ -816,4 +816,4 @@ def history_factory_manifest(request: Request, run_id: str) -> dict[str, Any]:
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for factory run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error")
+        raise HTTPException(status_code=500, detail="internal error") from e

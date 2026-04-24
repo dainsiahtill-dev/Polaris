@@ -435,7 +435,7 @@ class UnifiedOrchestrationService(OrchestrationService):
                 )
 
                 # 处理结果
-                for task, result in zip(batch, results):
+                for task, result in zip(batch, results, strict=False):
                     if isinstance(result, Exception):
                         logger.exception(f"Task {task.task_id} failed: {result}")
                         failed_tasks.add(task.task_id)

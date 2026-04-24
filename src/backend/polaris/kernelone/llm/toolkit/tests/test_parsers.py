@@ -4,6 +4,8 @@ P0-002: All parse methods now return list[ToolCall] (canonical type).
 ParsedToolCall is now an alias to ToolCall from contracts.tool.
 """
 
+from typing import Any
+
 from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.toolkit.parsers import (
     CANONICAL_ARGUMENT_KEYS,
@@ -86,8 +88,8 @@ class TestCanonicalToolCallParser:
 
         # Test fallback: when no canonical key found, filter known non-argument keys
         # If result would be empty, return original data unchanged
-        data = {"foo": "bar", "tool": "test"}  # no canonical keys, no filter keys
-        result = extract_arguments(data)
+        fallback_data: dict[str, Any] = {"foo": "bar", "tool": "test"}  # no canonical keys, no filter keys
+        result = extract_arguments(fallback_data)
         assert result == {"foo": "bar", "tool": "test"}
 
     def test_returns_tool_call_type(self) -> None:

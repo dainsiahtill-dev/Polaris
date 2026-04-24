@@ -126,13 +126,13 @@ __all__ = [
     "get_global_emitter",
     "get_global_llm_cache",
     "get_global_token_budget",
+    "get_kernel_metrics_collector",
     "get_max_retries",
     "is_action_allowed",
     "is_retryable",
-    "set_global_llm_cache",
-    "get_kernel_metrics_collector",
     "reset_metrics_collector_for_test",
     "reset_role_action_registry_for_test",
+    "set_global_llm_cache",
 ]
 
 

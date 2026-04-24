@@ -38,6 +38,7 @@ from .exploration_policy import (
 )
 from .strategy_contracts import (
     CacheStrategyPort,
+    ExpansionDecisionResult,
     ExplorationStrategyPort,
     ReadEscalationDecision,
     ReadEscalationStrategyPort,

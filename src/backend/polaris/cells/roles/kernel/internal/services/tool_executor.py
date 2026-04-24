@@ -22,7 +22,7 @@ import asyncio
 import logging
 import warnings
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
@@ -65,7 +65,7 @@ def __getattr__(name: str):
 
 
 # For type checking and runtime compatibility
-ErrorCategory = _CanonicalErrorCategory
+ErrorCategory: TypeAlias = _CanonicalErrorCategory
 
 
 # ═══════════════════════════════════════════════════════════════════════════
