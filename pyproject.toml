@@ -81,9 +81,9 @@ dev = [
 ]
 
 [project.scripts]
-polaris = "polaris.server:main"
-pm = "polaris.scripts.pm.cli:main"
-director = "polaris.scripts.director.main:main"
+polaris = "polaris.delivery.server:main"
+pm = "polaris.delivery.cli.pm.cli:main"
+director = "polaris.delivery.cli.director.cli_thin:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/backend/polaris"]
