@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
-import importlib.util
 import inspect
 import logging
 import os

@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 pt_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py')
 content = pt_path.read_text(encoding='utf-8')

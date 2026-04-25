@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 path = 'X:/.polaris/projects/l5-context-integrity-e7cab6315853-855668b9e0bf/runtime/events/director.llm.events.jsonl'
 with open(path, encoding='utf-8') as f:

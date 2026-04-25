@@ -98,7 +98,6 @@ class TreeSitterSummarizer:
 
     def _ensure_dependencies(self) -> None:
         """延迟加载 tree-sitter 依赖"""
-        import importlib.util
 
         if importlib.util.find_spec("tree_sitter") is None:
             raise SummarizationError(
@@ -123,15 +122,12 @@ class TreeSitterSummarizer:
 
         try:
             if lang_name == "python":
-                import tree_sitter_python as tspython
 
                 lang = Language(tspython.language())
             elif lang_name == "javascript":
-                import tree_sitter_javascript as tsjs
 
                 lang = Language(tsjs.language())
             elif lang_name == "go":
-                import tree_sitter_go as tsgo
 
                 lang = Language(tsgo.language())
             else:
@@ -430,21 +426,18 @@ class TreeSitterSummarizer:
 
             # Check if at least one language module is available
             try:
-                import tree_sitter_python  # noqa: F401
 
                 return True
             except ImportError:
                 pass
 
             try:
-                import tree_sitter_javascript  # noqa: F401
 
                 return True
             except ImportError:
                 pass
 
             try:
-                import tree_sitter_go  # noqa: F401
 
                 return True
             except ImportError:

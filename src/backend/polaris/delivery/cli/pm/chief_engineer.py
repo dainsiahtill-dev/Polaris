@@ -384,9 +384,6 @@ def _is_valid_target_file(path: str) -> bool:
     # If it has multiple words and contains description indicators, reject
     return not (word_count >= 4 and any(ind in lower for ind in description_indicators))
 
-    # Accept short simple paths (likely directory or simple file references)
-    return True
-
 
 def _language_from_path(path: str) -> str:
     lowered = str(path or "").strip().lower()

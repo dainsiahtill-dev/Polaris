@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from polaris.cells.roles.session.internal.context_memory_service import (
         RoleSessionContextMemoryService,
     )
-    from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
     from polaris.cells.roles.session.public.contracts import (
         IRoleSessionContextMemoryService,
         IRoleSessionService,

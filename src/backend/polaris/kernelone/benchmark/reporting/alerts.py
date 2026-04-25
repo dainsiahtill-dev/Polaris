@@ -448,7 +448,6 @@ class AlertDispatcher:
         report: BenchmarkReport | None,
     ) -> bool:
         """Send alerts to a generic webhook."""
-        import urllib.request
 
         payload = {
             "alerts": [a.to_dict() for a in alerts],
@@ -472,7 +471,6 @@ class AlertDispatcher:
         report: BenchmarkReport | None,
     ) -> bool:
         """Send alerts to Slack."""
-        import urllib.request
 
         formatter = self._formatters.get(AlertChannel.SLACK)
         if not formatter:
@@ -501,7 +499,6 @@ class AlertDispatcher:
         report: BenchmarkReport | None,
     ) -> bool:
         """Send alerts to Microsoft Teams."""
-        import urllib.request
 
         formatter = self._formatters.get(AlertChannel.TEAMS)
         if not formatter:
@@ -529,7 +526,6 @@ class AlertDispatcher:
         Config should be in format: smtp://user:pass@host:port?from=addr&to=addr
         """
         import smtplib
-        import urllib.parse
         from email.message import EmailMessage
 
         parsed = urllib.parse.urlparse(config)

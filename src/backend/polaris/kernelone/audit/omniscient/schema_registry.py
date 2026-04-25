@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from polaris.kernelone.audit.omniscient.schemas.base import AuditEvent
-    from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

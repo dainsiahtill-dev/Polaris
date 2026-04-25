@@ -11,13 +11,15 @@ from polaris.kernelone.fs.text_ops import read_file_safe
 from polaris.kernelone.tool_execution.io_tools import ensure_codex_available
 
 try:
-    from polaris.kernelone.runtime.usage_metrics import TokenUsage, UsageContext, track_usage
-except ImportError:
     from polaris.kernelone.runtime.usage_metrics import (  # type: ignore
         TokenUsage,
         UsageContext,
         track_usage,
     )
+except ImportError:
+    TokenUsage = Any  # type: ignore
+    UsageContext = Any  # type: ignore
+    track_usage = lambda **kwargs: None  # type: ignore
 
 logger = logging.getLogger(__name__)
 

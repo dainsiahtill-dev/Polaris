@@ -651,7 +651,6 @@ class RoleToolGateway:
         Uses canonical is_path_traversal from kernelone.security.dangerous_patterns,
         with URL decoding to handle encoded traversal patterns.
         """
-        import urllib.parse
 
         # 1. URL 编码检测（多种编码格式）
         try:

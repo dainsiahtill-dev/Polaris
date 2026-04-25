@@ -16,7 +16,6 @@ from polaris.cells.factory.cognitive_runtime.public.contracts import (
     ExportHandoffPackCommandV1,
     RehydrateHandoffPackCommandV1,
 )
-from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 
 
@@ -53,11 +52,9 @@ class _MockRequest:
 class TestCanonicalHandoffPackType:
     def test_no_private_handoff_schema_in_roles_kernel(self) -> None:
         """Assert that roles.kernel does not define its own HandoffPack dataclass/model."""
-        import polaris.cells.roles.kernel
 
         # If anyone added a private HandoffPack, it would likely be in public.turn_contracts
         # or a dedicated handoff_pack module. We verify neither exists.
-        from polaris.cells.roles.kernel.public import turn_contracts
 
         for attr in dir(turn_contracts):
             if "handoff" in attr.lower() and attr.lower() != "handoff_workflow":
@@ -254,7 +251,6 @@ class TestTransactionKernelHandoffIntegration:
     @pytest.mark.asyncio
     async def test_transaction_kernel_stream_handoff_emits_completion_event(self) -> None:
         """Stream path should also yield completion when handoff occurs."""
-        from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="director")

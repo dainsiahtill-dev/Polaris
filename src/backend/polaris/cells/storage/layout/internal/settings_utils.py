@@ -6,9 +6,6 @@ from typing import TYPE_CHECKING, Any
 from polaris.cells.policy.workspace_guard.service import SELF_UPGRADE_MODE_ENV
 from polaris.kernelone.fs.text_ops import write_text_atomic
 
-if TYPE_CHECKING:
-    from polaris.bootstrap.config import Settings
-
 from polaris.kernelone.runtime.defaults import DEFAULT_PM_LOG
 from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path
 

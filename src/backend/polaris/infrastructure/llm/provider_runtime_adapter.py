@@ -13,9 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm import KernelLLMRuntimeAdapter, config_store as llm_config
 
-if TYPE_CHECKING:
-    from collections.abc import Coroutine
-
 logger = logging.getLogger(__name__)
 
 

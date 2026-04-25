@@ -1,4 +1,4 @@
-﻿import re
+import re
 from pathlib import Path
 
 backend_root = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend')

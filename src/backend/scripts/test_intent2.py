@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 
 sys.path.insert(0, r'c:\Users\dains\Documents\GitLab\polaris\src\backend')
 from polaris.cells.roles.kernel.internal.transaction.constants import DEBUG_AND_FIX_EN_MARKERS

@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 # 1. Add Conflict Override Protocol
 pt_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/prompt_templates.py')

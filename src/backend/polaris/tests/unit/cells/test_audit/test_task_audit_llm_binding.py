@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
 from polaris.cells.audit.evidence.internal.task_audit_llm_binding import (
     AUDIT_COURT_DEPARTMENT,
     AUDIT_COURT_ROLE_ID,

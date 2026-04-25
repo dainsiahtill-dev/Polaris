@@ -81,6 +81,12 @@ DEPRECATION_SHIM_PATHS: frozenset[str] = frozenset(
         "polaris/kernelone/multi_agent/bus_port.py",
         # ACGA 2.0 migration: KernelOne NATS broker bridges cells runtime bus port
         "polaris/kernelone/multi_agent/neural_syndicate/nats_broker.py",
+        # Expert 3 (Wave 1): KernelOne SLM summarizer bridges cells transaction gateway
+        # ADR-0067-extension: ContextOS 2.0 SLM semantic compression layer
+        "polaris/kernelone/context/context_os/summarizers/slm.py",
+        # Expert 3 (Wave 1): KernelOne alignment port abstracts cells alignment service
+        # ACGA 2.0 Section 6.3: KernelOne defines interface contracts, Cells provide implementations
+        "polaris/kernelone/ports/alignment.py",
     }
 )
 

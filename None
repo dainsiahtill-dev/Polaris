@@ -13,3 +13,5 @@
 {"timestamp": "2026-04-25T14:11:46.717367", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}
 {"timestamp": "2026-04-25T14:14:08.241237", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}
 {"timestamp": "2026-04-25T14:16:33.487904", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}
+{"timestamp": "2026-04-25T16:00:19.390104", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}
+{"timestamp": "2026-04-25T16:09:31.643912", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}

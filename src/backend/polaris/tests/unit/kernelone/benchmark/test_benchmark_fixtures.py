@@ -57,7 +57,7 @@ class TestBenchmarkDecorator:
         async def slow_op() -> None:
             pass
 
-        stats = asyncio.get_event_loop().run_until_complete(slow_op())
+        stats = asyncio.run(slow_op())
         assert isinstance(stats, BenchmarkStats)
         assert stats.iterations == 3
 
@@ -79,7 +79,7 @@ class TestMemoryBenchmarkDecorator:
             pass
 
         with pytest.raises(TypeError, match="async_memory_benchmark"):
-            asyncio.get_event_loop().run_until_complete(alloc())
+            asyncio.run(alloc())
 
 
 class TestAsyncMemoryBenchmarkDecorator:
@@ -89,7 +89,7 @@ class TestAsyncMemoryBenchmarkDecorator:
             data = [0] * 1000
             _ = len(data)
 
-        result = asyncio.get_event_loop().run_until_complete(alloc())
+        result = asyncio.run(alloc())
         assert "memory_peak_mb" in result
 
     def test_sync_function_rejected(self) -> None:
@@ -98,7 +98,7 @@ class TestAsyncMemoryBenchmarkDecorator:
             pass
 
         with pytest.raises(TypeError, match="memory_benchmark"):
-            asyncio.get_event_loop().run_until_complete(alloc())
+            asyncio.run(alloc())
 
 
 class TestThroughputBenchmarkDecorator:
@@ -116,5 +116,5 @@ class TestThroughputBenchmarkDecorator:
         async def process() -> None:
             pass
 
-        stats = process()
+        stats = asyncio.run(process())
         assert isinstance(stats, ThroughputStats)

@@ -18,7 +18,6 @@ ADR-0067-extension: ContextOS 2.0 SLM 语义压缩层
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import logging
 from typing import Any, Protocol
 

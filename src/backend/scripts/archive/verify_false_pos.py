@@ -1,4 +1,4 @@
-﻿# Verify the false positive: '定位' appears inside '不确定位置'
+# Verify the false positive: '定位' appears inside '不确定位置'
 prompt = '读取 helpers.py 文件的内容。注意：不要猜测路径，如果不确定位置，先用工具查找。'
 idx = prompt.find('定位')
 print(f'Index of 定位: {idx}')

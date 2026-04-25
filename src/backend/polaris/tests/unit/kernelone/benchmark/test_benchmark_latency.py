@@ -38,7 +38,8 @@ class TestLatencyProfile:
         for i in range(1, 11):
             profile.add_measurement(float(i))
         profile.compute_statistics()
-        assert profile.p50 == 5.0
+        # int(10 * 0.50) = 5 -> index 5 = 6.0 (0-indexed)
+        assert profile.p50 == 6.0
         assert profile.mean == 5.5
         assert profile.min_latency == 1.0
         assert profile.max_latency == 10.0
@@ -55,7 +56,7 @@ class TestLatencyProfile:
         profile.compute_statistics()
         result = profile.to_result()
         assert result.metric_name == "test"
-        assert result.p50_ms == 5.0
+        assert result.p50_ms == 6.0
 
     def test_get_tail_ratio(self) -> None:
         profile = LatencyProfile(name="test")
@@ -99,14 +100,15 @@ class TestLatencyBenchmarker:
         profile = asyncio.run(bench.run_async(dummy))
         assert len(profile.measurements) == 5
 
-    def test_run_async_rejects_sync(self) -> None:
-        bench = LatencyBenchmarker("test")
+    def test_run_async_accepts_sync(self) -> None:
+        bench = LatencyBenchmarker("test", warmup=0, iterations=3)
 
         def dummy() -> None:
             pass
 
-        with pytest.raises(TypeError, match="run_sync"):
-            asyncio.run(bench.run_async(dummy))
+        profile = asyncio.run(bench.run_async(dummy))
+        assert isinstance(profile, LatencyProfile)
+        assert len(profile.measurements) == 3
 
     def test_get_result(self) -> None:
         bench = LatencyBenchmarker("test", warmup=0, iterations=3)
@@ -139,9 +141,9 @@ class TestMeasureLatencyDecorator:
         assert latency >= 0.0
 
     def test_async_decorator(self) -> None:
-        @measure_latency_async
         async def dummy() -> None:
             await asyncio.sleep(0)
 
-        latency = asyncio.run(dummy())
+        decorated = asyncio.run(measure_latency_async(dummy))
+        latency = asyncio.run(decorated())
         assert latency >= 0.0

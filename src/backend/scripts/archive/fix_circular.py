@@ -1,4 +1,4 @@
-﻿import re
+import re
 from pathlib import Path
 
 config_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/bootstrap/config.py')

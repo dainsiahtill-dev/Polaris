@@ -116,4 +116,4 @@ class TestMemoryProfileDecorator:
             pass
 
         with pytest.raises(TypeError, match="memory_profile"):
-            dummy()
+            asyncio.run(dummy())

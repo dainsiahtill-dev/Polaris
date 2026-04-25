@@ -21,8 +21,9 @@ class TestBenchmarkStats:
     def test_basic_percentiles(self) -> None:
         stats = BenchmarkStats(latencies=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
         stats.compute_statistics()
-        assert stats.p50 == 5.0
-        assert stats.p90 == 9.0
+        # int(n * pct) indexing: n=10, indices 5, 9, 9 -> values 6.0, 10.0, 10.0
+        assert stats.p50 == 6.0
+        assert stats.p90 == 10.0
         assert stats.p99 == 10.0
         assert stats.mean == 5.5
         assert stats.min_latency == 1.0
@@ -36,7 +37,7 @@ class TestBenchmarkStats:
 
 class TestMemoryStats:
     def test_to_dict(self) -> None:
-        stats = MemoryStats(current_bytes=1024 * 1024, peak_bytes=2 * 1024 * 1024, allocations=5)
+        stats = MemoryStats(current_bytes=1024 * 1024, peak_bytes=2 * 1024 * 1024, current_mb=1.0, peak_mb=2.0, allocations=5)
         d = stats.to_dict()
         assert d["current_mb"] == 1.0
         assert d["peak_mb"] == 2.0
@@ -104,4 +105,4 @@ class TestMemoryBenchmarkResult:
         d = result.to_dict()
         assert d["memory_baseline_mb"] == 10.0
         assert d["allocations_count"] == 100
-        assert d["gc_collections"] == [1, 0, 0]
+        assert d["gc_collections"] == (1, 0, 0)

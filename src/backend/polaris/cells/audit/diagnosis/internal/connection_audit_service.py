@@ -28,7 +28,7 @@ def _normalize_details(details: dict[str, Any] | None) -> dict[str, Any]:
         try:
             json.dumps(value, ensure_ascii=False)
             normalized[str(key)] = value
-        except OSError:
+        except (OSError, TypeError):
             normalized[str(key)] = str(value)
     return normalized
 

@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 # 1. Update Tool Spec Registry
 registry_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/tool_execution/tool_spec_registry.py')

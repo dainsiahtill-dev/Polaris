@@ -27,9 +27,6 @@ from polaris.delivery.cli.textual.bindings import GLOBAL_BINDINGS
 from polaris.delivery.cli.textual.models import DebugItem
 from polaris.delivery.cli.textual.styles import get_console_css
 
-if TYPE_CHECKING:
-    from textual.binding import Binding
-
 # =============================================================================
 # 自定义消息
 # =============================================================================

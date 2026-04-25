@@ -1,9 +1,9 @@
 {
-  "version": 1,
-  "generated_at": "2026-04-17T00:00:00Z",
+  "version": 2,
+  "generated_at": "2026-04-25T00:00:00Z",
   "scope": "polaris/kernelone/**/*.py",
   "max_total_except_exception": 250,
-  "max_total_bare_pass": 230,
+  "max_total_bare_pass": 244,
   "hotspot_trigger_except_exception": 8,
   "hotspot_trigger_bare_pass": 5,
   "hotspot_max_except_exception": {

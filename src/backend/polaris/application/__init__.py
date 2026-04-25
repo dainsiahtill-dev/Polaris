@@ -53,6 +53,10 @@ from polaris.application.storage_admin import (
     StorageAdminError,
     StorageAdminService,
 )
+from polaris.application.traceability_admin import (
+    TraceabilityAdminError,
+    TraceabilityAdminService,
+)
 
 # ---------------------------------------------------------------------------
 # Re-exported domain entities for cross-cutting convenience.

@@ -18,7 +18,6 @@ import pytest
 
 # Test imports with skipif for textual
 try:
-    from textual.app import App  # noqa: F401
 
     TEXTUAL_AVAILABLE = True
 except ImportError:

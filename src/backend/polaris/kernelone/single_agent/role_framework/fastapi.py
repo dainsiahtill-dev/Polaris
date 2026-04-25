@@ -13,7 +13,6 @@ from pydantic import BaseModel
 
 # FastAPI imports with fallback
 try:
-    from fastapi import FastAPI, HTTPException, Query
     from fastapi.middleware.cors import CORSMiddleware
 
     FASTAPI_AVAILABLE = True

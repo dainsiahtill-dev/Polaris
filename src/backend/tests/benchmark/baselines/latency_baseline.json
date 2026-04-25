@@ -1,0 +1,101 @@
+{
+  "suite_name": "latency_baseline",
+  "timestamp": "2026-04-25T07:49:32.032334+00:00",
+  "environment": {
+    "platform": "benchmark",
+    "iteration_note": "Warmup + measured iterations per test"
+  },
+  "results": [
+    {
+      "name": "controller_init",
+      "iterations": 100,
+      "total_ms": 1.695,
+      "min_ms": 0.009,
+      "max_ms": 0.582,
+      "mean_ms": 0.017,
+      "p50_ms": 0.011,
+      "p95_ms": 0.014,
+      "p99_ms": 0.039,
+      "stddev_ms": 0.057,
+      "metadata": {}
+    },
+    {
+      "name": "state_machine_transitions",
+      "iterations": 1000,
+      "total_ms": 4.518,
+      "min_ms": 0.003,
+      "max_ms": 0.128,
+      "mean_ms": 0.005,
+      "p50_ms": 0.003,
+      "p95_ms": 0.009,
+      "p99_ms": 0.014,
+      "stddev_ms": 0.005,
+      "metadata": {}
+    },
+    {
+      "name": "ledger_record",
+      "iterations": 1000,
+      "total_ms": 0.272,
+      "min_ms": 0.0,
+      "max_ms": 0.035,
+      "mean_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "p99_ms": 0.0,
+      "stddev_ms": 0.001,
+      "metadata": {}
+    },
+    {
+      "name": "llm_provider_mock_call",
+      "iterations": 100,
+      "total_ms": 0.034,
+      "min_ms": 0.0,
+      "max_ms": 0.006,
+      "mean_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "p99_ms": 0.001,
+      "stddev_ms": 0.001,
+      "metadata": {}
+    },
+    {
+      "name": "context_read",
+      "iterations": 1000,
+      "total_ms": 0.115,
+      "min_ms": 0.0,
+      "max_ms": 0.001,
+      "mean_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "p99_ms": 0.0,
+      "stddev_ms": 0.0,
+      "metadata": {}
+    },
+    {
+      "name": "context_write",
+      "iterations": 1000,
+      "total_ms": 0.2,
+      "min_ms": 0.0,
+      "max_ms": 0.002,
+      "mean_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.001,
+      "p99_ms": 0.001,
+      "stddev_ms": 0.0,
+      "metadata": {}
+    },
+    {
+      "name": "context_serialization",
+      "iterations": 500,
+      "total_ms": 4.277,
+      "min_ms": 0.006,
+      "max_ms": 0.167,
+      "mean_ms": 0.009,
+      "p50_ms": 0.006,
+      "p95_ms": 0.014,
+      "p99_ms": 0.028,
+      "stddev_ms": 0.011,
+      "metadata": {}
+    }
+  ]
+}

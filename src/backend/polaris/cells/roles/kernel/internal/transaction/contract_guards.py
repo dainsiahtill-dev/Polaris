@@ -434,7 +434,6 @@ def _build_read_bootstrap_decision(
     decision_metadata: Any,
     batch_suffix: str,
 ) -> TurnDecision | None:
-    from polaris.cells.roles.kernel.public.turn_contracts import ToolInvocation  # local import to avoid cycles
 
     read_invocations: list[Any] = []
     seen_targets: set[str] = set()

@@ -1,4 +1,4 @@
-﻿import re
+import re
 from pathlib import Path
 
 # 1. Fix Ollama embedding adapter to fallback to /api/embed

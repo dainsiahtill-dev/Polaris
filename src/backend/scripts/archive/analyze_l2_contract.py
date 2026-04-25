@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 path = r'X:\.polaris\projects\l2-path-inference-bacd65b0c497-eee7f83fd6bc\runtime\events\director.llm.events.jsonl'
 with open(path, encoding='utf-8') as f:

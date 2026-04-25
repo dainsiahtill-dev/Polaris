@@ -1,4 +1,4 @@
-﻿
+
 # Look for the case definition
 import os
 

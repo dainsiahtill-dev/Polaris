@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -194,12 +195,16 @@ def test_reflection_generator_logs_exhausted_retries(
         "polaris.kernelone.memory.reflection.invoke_ollama",
         lambda *args, **kwargs: SimpleNamespace(output="not-json", metadata={"error": "boom"}),
     )
-    monkeypatch.setattr("polaris.kernelone.memory.reflection.time.sleep", lambda _seconds: None)
+    # Note: time.sleep is no longer used in reflection.py after async refactor
+    # The retry logic now uses asyncio.sleep which cannot be patched the same way
 
     generator = ReflectionGenerator(model="demo", workspace_root=str(tmp_path))
 
     with caplog.at_level(logging.WARNING):
-        result = generator.generate([_build_memory_item()], current_step=5)
+        # generate() is now async after reflection.py refactor
+        result = asyncio.run(
+            generator.generate([_build_memory_item()], current_step=5)
+        )
 
     assert result == []
     assert "attempt failed" in caplog.text

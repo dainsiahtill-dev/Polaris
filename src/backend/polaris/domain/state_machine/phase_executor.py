@@ -393,7 +393,6 @@ class PhaseExecutor:
 
     def _module_exists(self, module: str) -> bool:
         """Check if a Python module exists in stdlib, site-packages, or workspace."""
-        import importlib.util
 
         token = str(module or "").strip()
         if not token:

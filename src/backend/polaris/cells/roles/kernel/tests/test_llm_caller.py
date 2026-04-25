@@ -38,11 +38,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
 
-if TYPE_CHECKING:
-    from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
-    from polaris.cells.roles.profile.public.service import RoleProfile
-
-
 class MockProfile:
     """Minimal RoleProfile stand-in for testing."""
 

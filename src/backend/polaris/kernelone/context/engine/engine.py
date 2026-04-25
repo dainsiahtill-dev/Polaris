@@ -358,7 +358,6 @@ Generate a concise summary (max 500 tokens) that preserves:
 Summary:"""
 
         try:
-            import concurrent.futures
 
             from polaris.kernelone.llm.engine.executor import AIRequest, TaskType, get_executor_async
 

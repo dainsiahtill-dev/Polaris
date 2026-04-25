@@ -97,9 +97,6 @@ class SumySummarizer:
             return
 
         try:
-            from sumy.nlp.tokenizers import Tokenizer
-            from sumy.parsers.plaintext import PlaintextParser
-            from sumy.summarizers.text_rank import TextRankSummarizer
 
             self._parser_class = PlaintextParser
             self._tokenizer_class = Tokenizer
@@ -264,7 +261,6 @@ class SumySummarizer:
     def is_available(self) -> bool:
         """检查 sumy 是否已安装"""
         try:
-            import sumy  # noqa: F401
 
             return True
         except ImportError:

@@ -1,4 +1,4 @@
-﻿import shutil
+import shutil
 from pathlib import Path
 
 backend_root = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend')
