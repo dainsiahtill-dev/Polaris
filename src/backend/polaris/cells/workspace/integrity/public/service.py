@@ -39,7 +39,6 @@ write_workspace_status: type | None = None
 
 __all__ = [
     "CodeParser",
-    "DirectorCodeIntelMixin",
     "FileChange",
     "FileChangeSnapshot",
     "FileChangeTracker",

@@ -653,7 +653,7 @@ class TestFactoryPipelineLifecycle:
         )
 
         # Completed event
-        completed_event = FactoryRunCompletedEventV1(
+        completed_event = FactoryRunCompletedEventV1(  # noqa: F841
             event_id="evt-002",
             workspace=start_cmd.workspace,
             run_id="run-001",

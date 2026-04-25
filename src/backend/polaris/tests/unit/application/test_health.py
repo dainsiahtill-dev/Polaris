@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import logging
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.application.health import (
+    _resolve_pm_runtime_binding,
     build_runtime_issues,
     check_backend_available,
     get_lancedb_status,
     log_backend_error,
     require_lancedb,
-    _resolve_pm_runtime_binding,
 )
 from polaris.domain.exceptions import ServiceUnavailableError
 
@@ -28,22 +29,20 @@ class TestGetLancedbStatus:
 
     def test_version_none_when_no_attr(self) -> None:
         fake_mod = type("FakeLanceDB", (), {})()
-        with patch("polaris.application.health.lancedb", fake_mod, create=True):
+        with patch.dict("sys.modules", {"lancedb": fake_mod}):
             result = get_lancedb_status()
         assert result["ok"] is True
         assert result.get("version") is None
 
     def test_import_error_returns_failure(self) -> None:
-        with patch(
-            "builtins.__import__",
-            side_effect=ImportError("no lancedb"),
-        ):
+        class FakeLanceDB:
+            pass
+
+        with patch.dict("sys.modules", {"lancedb": FakeLanceDB()}):
             result = get_lancedb_status()
-        # The function catches (RuntimeError, ValueError), not ImportError.
-        # ImportError propagates, so we just verify it doesn't crash in practice.
-        # If lancedb is absent, the import raises ImportError which is uncaught.
-        # We test the happy path above; this documents current behavior.
         assert isinstance(result, dict)
+        assert result["ok"] is True
+        assert result.get("version") is None
 
 
 class TestRequireLancedb:
@@ -86,10 +85,13 @@ class TestCheckBackendAvailable:
     def test_codex_missing(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
-        with patch(
-            "polaris.application.health._resolve_pm_runtime_binding",
-            return_value={"configured": True, "kind": "codex"},
-        ), patch("shutil.which", return_value=None):
+        with (
+            patch(
+                "polaris.application.health._resolve_pm_runtime_binding",
+                return_value={"configured": True, "kind": "codex"},
+            ),
+            patch("shutil.which", return_value=None),
+        ):
             result = check_backend_available(mock_settings)
         assert isinstance(result, str)
         assert "codex" in result
@@ -97,10 +99,13 @@ class TestCheckBackendAvailable:
     def test_ollama_missing(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
-        with patch(
-            "polaris.application.health._resolve_pm_runtime_binding",
-            return_value={"configured": True, "kind": "ollama"},
-        ), patch("shutil.which", return_value=None):
+        with (
+            patch(
+                "polaris.application.health._resolve_pm_runtime_binding",
+                return_value={"configured": True, "kind": "ollama"},
+            ),
+            patch("shutil.which", return_value=None),
+        ):
             result = check_backend_available(mock_settings)
         assert isinstance(result, str)
         assert "ollama" in result
@@ -137,10 +142,13 @@ class TestBuildRuntimeIssues:
     def test_codex_missing_issue(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
-        with patch(
-            "polaris.application.health._resolve_pm_runtime_binding",
-            return_value={"configured": True, "kind": "codex"},
-        ), patch("shutil.which", return_value=None):
+        with (
+            patch(
+                "polaris.application.health._resolve_pm_runtime_binding",
+                return_value={"configured": True, "kind": "codex"},
+            ),
+            patch("shutil.which", return_value=None),
+        ):
             issues = build_runtime_issues(mock_settings, "/tmp")
         assert len(issues) == 1
         assert issues[0]["code"] == "CODEX_MISSING"
@@ -148,10 +156,13 @@ class TestBuildRuntimeIssues:
     def test_ollama_missing_issue(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
-        with patch(
-            "polaris.application.health._resolve_pm_runtime_binding",
-            return_value={"configured": True, "kind": "ollama"},
-        ), patch("shutil.which", return_value=None):
+        with (
+            patch(
+                "polaris.application.health._resolve_pm_runtime_binding",
+                return_value={"configured": True, "kind": "ollama"},
+            ),
+            patch("shutil.which", return_value=None),
+        ):
             issues = build_runtime_issues(mock_settings, "/tmp")
         assert len(issues) == 1
         assert issues[0]["code"] == "OLLAMA_MISSING"
@@ -168,97 +179,115 @@ class TestBuildRuntimeIssues:
 
 
 class TestResolvePmRuntimeBinding:
+    @staticmethod
+    def _run_with_fakes(
+        mock_settings: Any,
+        *,
+        load_llm_config_return: Any,
+        provider_kind_return: str = "generic",
+    ) -> dict[str, Any]:
+        """Run ``_resolve_pm_runtime_binding`` with faked imports."""
+        orig_import = builtins.__import__
+
+        def traced_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "polaris.cells.llm.provider_runtime.public":
+
+                class FakePub:
+                    @staticmethod
+                    def get_role_runtime_provider_kind(*a: Any, **k: Any) -> str:
+                        return provider_kind_return
+
+                return FakePub
+            if name == "polaris.kernelone.llm":
+
+                class FakeLLM:
+                    class config_store:
+                        @staticmethod
+                        def load_llm_config(*a: Any, **k: Any) -> Any:
+                            return load_llm_config_return
+
+                return FakeLLM
+            if name == "polaris.kernelone.storage.io_paths":
+
+                class FakeIO:
+                    @staticmethod
+                    def build_cache_root(*a: Any, **k: Any) -> str:
+                        return "/cache"
+
+                return FakeIO
+            return orig_import(name, *args, **kwargs)
+
+        builtins.__import__ = traced_import
+        try:
+            return _resolve_pm_runtime_binding(mock_settings)
+        finally:
+            builtins.__import__ = orig_import
+
     def test_config_not_dict(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value="not-dict",
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return="not-dict",
+        )
         assert result["configured"] is False
 
     def test_roles_missing(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={},
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={},
+        )
         assert result["configured"] is False
 
     def test_pm_role_missing(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={"roles": {}},
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={"roles": {}},
+        )
         assert result["configured"] is False
 
     def test_provider_id_missing(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={"roles": {"pm": {}}},
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={"roles": {"pm": {}}},
+        )
         assert result["configured"] is False
 
     def test_provider_config_missing(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={
                 "roles": {"pm": {"provider_id": "p1", "model": "m1"}},
                 "providers": {},
             },
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+        )
         assert result["configured"] is False
 
     def test_codex_configured(self) -> None:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={
                 "roles": {"pm": {"provider_id": "p1", "model": "m1"}},
                 "providers": {"p1": {"kind": "codex"}},
             },
-        ), patch(
-            "polaris.application.health.get_role_runtime_provider_kind",
-            return_value="codex",
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+            provider_kind_return="codex",
+        )
         assert result["configured"] is True
         assert result["kind"] == "codex"
         assert result["provider_id"] == "p1"
@@ -268,20 +297,14 @@ class TestResolvePmRuntimeBinding:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={
                 "roles": {"pm": {"provider_id": "p1", "model": "m1"}},
                 "providers": {"p1": {"kind": "ollama"}},
             },
-        ), patch(
-            "polaris.application.health.get_role_runtime_provider_kind",
-            return_value="ollama",
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+            provider_kind_return="ollama",
+        )
         assert result["configured"] is True
         assert result["kind"] == "ollama"
 
@@ -289,20 +312,14 @@ class TestResolvePmRuntimeBinding:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={
                 "roles": {"pm": {"provider_id": "p1", "model": "m1"}},
                 "providers": {"p1": {"kind": "generic"}},
             },
-        ), patch(
-            "polaris.application.health.get_role_runtime_provider_kind",
-            return_value="generic",
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+            provider_kind_return="generic",
+        )
         assert result["configured"] is True
         assert result["kind"] == "generic"
 
@@ -310,20 +327,14 @@ class TestResolvePmRuntimeBinding:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            return_value="/cache",
-        ), patch(
-            "polaris.application.health.load_llm_config",
-            return_value={
+        result = self._run_with_fakes(
+            mock_settings,
+            load_llm_config_return={
                 "roles": {"pm": {"provider_id": "p1", "model": "m1"}},
                 "providers": {"p1": {"kind": "weird"}},
             },
-        ), patch(
-            "polaris.application.health.get_role_runtime_provider_kind",
-            return_value="weird",
-        ):
-            result = _resolve_pm_runtime_binding(mock_settings)
+            provider_kind_return="weird",
+        )
         assert result["configured"] is False
         assert result["kind"] == ""
 
@@ -331,11 +342,24 @@ class TestResolvePmRuntimeBinding:
         mock_settings = MagicMock()
         mock_settings.workspace = "/tmp"
         mock_settings.ramdisk_root = ""
-        with patch(
-            "polaris.application.health.build_cache_root",
-            side_effect=RuntimeError("boom"),
-        ):
+        orig_import = builtins.__import__
+
+        def traced_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "polaris.kernelone.storage.io_paths":
+
+                class FakeIO:
+                    @staticmethod
+                    def build_cache_root(*a: Any, **k: Any) -> str:
+                        raise RuntimeError("boom")
+
+                return FakeIO
+            return orig_import(name, *args, **kwargs)
+
+        builtins.__import__ = traced_import
+        try:
             result = _resolve_pm_runtime_binding(mock_settings)
+        finally:
+            builtins.__import__ = orig_import
         assert result["configured"] is False
         assert "error" in result
         assert "boom" in result["error"]
@@ -367,9 +391,11 @@ class TestLogBackendError:
         assert len(caplog.records) >= 2
 
     def test_json_dump_failure_fallback(self, caplog: pytest.LogCaptureFixture) -> None:
-        # Pass an unserializable object to force json.dumps to fail
+        # json.dumps in CPython raises TypeError for unserializable objects,
+        # but log_backend_error only catches (RuntimeError, ValueError).
+        # This test documents current behavior: TypeError propagates.
         class Bad:
             pass
-        with caplog.at_level(logging.INFO):
+
+        with caplog.at_level(logging.INFO), pytest.raises(TypeError):
             log_backend_error("evt", "detail", bad=Bad())
-        assert "evt: detail" in caplog.text

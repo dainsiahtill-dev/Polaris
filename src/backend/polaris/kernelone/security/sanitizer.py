@@ -181,7 +181,4 @@ class InputSanitizer:
             return False
 
         # Check for hex-encoded dangerous chars
-        if re.search(r"%[0-9a-fA-F]{2}", user_input):
-            return False
-
-        return True
+        return not re.search(r"%[0-9a-fA-F]{2}", user_input)

@@ -16,6 +16,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
+if TYPE_CHECKING:
+    from polaris.cells.roles.profile.public.contracts import RoleProfile
+    from polaris.kernelone.context.contracts import ContextRequest
+
 import pytest
 from polaris.cells.roles.kernel.internal.llm_caller import (
     LLMCaller,
@@ -37,6 +41,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+
 
 class MockProfile:
     """Minimal RoleProfile stand-in for testing."""

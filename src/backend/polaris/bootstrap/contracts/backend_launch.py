@@ -119,7 +119,7 @@ class BackendLaunchRequest:
                     self.warnings.append(msg)
                     return self
 
-            ValidationResult = SimpleValidationResult  # type: ignore[misc,assignment]
+            ValidationResult = SimpleValidationResult  # type: ignore[misc,assignment]  # noqa: N806
 
         result = ValidationResult()
 

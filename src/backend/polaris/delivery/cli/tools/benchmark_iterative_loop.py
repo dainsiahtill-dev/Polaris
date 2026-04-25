@@ -70,7 +70,7 @@ def _load_audit(workspace: str, run_id: str) -> dict[str, Any] | None:
         try:
             with open(audit_path, encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug("Failed to load audit JSON: %s", e)
     return None
 
@@ -136,7 +136,7 @@ def main() -> int:
 
         # Run benchmark
         start = time.time()
-        result = _run_once(workspace, args.role, args.level, args.transport, f"iter_{iteration}")
+        result = _run_once(workspace, args.role, args.level, args.transport, f"iter_{iteration}")  # noqa: F841
         elapsed = time.time() - start
 
         # Discover run_id

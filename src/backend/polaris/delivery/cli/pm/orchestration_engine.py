@@ -22,6 +22,7 @@ import os
 from datetime import datetime
 from typing import Any, cast
 
+from polaris.application.traceability_admin import TraceabilityAdminService
 from polaris.cells.orchestration.pm_dispatch.public import (
     clear_manual_intervention,
     finalize_iteration,
@@ -104,7 +105,6 @@ from polaris.kernelone.storage.io_paths import (
     resolve_workspace_path,
     update_latest_pointer,
 )
-from polaris.application.traceability_admin import TraceabilityAdminService
 from polaris.kernelone.traceability.internal.safety import (
     safe_find_node,
     safe_link,
@@ -166,7 +166,7 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
 
     # Initialize traceability service (bypass observer)
     trace_service = create_traceability_service(workspace_full)
-    trace_admin = TraceabilityAdminService(trace_service=trace_service)
+    trace_admin = TraceabilityAdminService(trace_service=trace_service)  # noqa: F841
 
     # Setup paths
     ramdisk_root = resolve_ramdisk_root(getattr(args, "ramdisk_root", None))

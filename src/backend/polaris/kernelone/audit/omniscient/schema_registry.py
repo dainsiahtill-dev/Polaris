@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from pydantic import BaseModel
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 

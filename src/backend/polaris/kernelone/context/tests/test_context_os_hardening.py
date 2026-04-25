@@ -279,7 +279,7 @@ class TestProjectionEngineNoSideEffects:
 
         # The message content must be identical; only internal weights change
         assert len(messages_before) == len(messages_after)
-        for m_before, m_after in zip(messages_before, messages_after):
+        for m_before, m_after in zip(messages_before, messages_after, strict=True):
             assert m_before["role"] == m_after["role"]
             assert m_before["content"] == m_after["content"]
 

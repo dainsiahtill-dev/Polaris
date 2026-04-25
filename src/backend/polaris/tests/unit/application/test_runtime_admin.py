@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.application.runtime_admin import (
-    IOrchestratorSession,
-    IRoleOrchestratorFactory,
     OrchestratorHandle,
     RuntimeAdminError,
     RuntimeAdminService,
@@ -113,7 +110,7 @@ class TestRuntimeAdminService:
         assert cmd.stream_options is None
 
     def test_build_session_command_with_options(self) -> None:
-        opts = StreamTurnOptions(max_tokens=100)
+        opts = StreamTurnOptions(stream=False, history_limit=50, prompt_appendix=" appendix")
         cmd = RuntimeAdminService.build_session_command(
             role="architect",
             session_id="s2",
@@ -143,23 +140,26 @@ class TestRuntimeAdminService:
 
     def test_resolve_runtime_lazy_import_failure(self) -> None:
         svc = RuntimeAdminService()
-        with patch(
-            "polaris.application.runtime_admin.RoleRuntimeService",
-            side_effect=ImportError("no module"),
+        with (
+            patch(
+                "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+                side_effect=ImportError("no module"),
+            ),
+            pytest.raises(RuntimeAdminError) as exc_info,
         ):
-            with pytest.raises(RuntimeAdminError) as exc_info:
-                svc._resolve_runtime()
+            svc._resolve_runtime()
         assert exc_info.value.code == "runtime_resolution_error"
 
     # -- stream_chat_turn ----------------------------------------------------
 
     async def test_stream_chat_turn_delegates(self) -> None:
+        async def _gen():
+            yield {"e": 1}
+
         fake = MagicMock()
-        fake.stream_chat_turn = AsyncMock(return_value=async_gen([{"e": 1}]))
+        fake.stream_chat_turn = MagicMock(return_value=_gen())
         svc = RuntimeAdminService(runtime=fake)
-        cmd = RuntimeAdminService.build_session_command(
-            role="pm", session_id="s1", workspace="/tmp", user_message="hi"
-        )
+        cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
         events = []
         async for event in svc.stream_chat_turn(cmd):
             events.append(event)
@@ -172,9 +172,7 @@ class TestRuntimeAdminService:
         fake = MagicMock()
         fake.create_transaction_controller.return_value = {"ctrl": 1}
         svc = RuntimeAdminService(runtime=fake)
-        cmd = RuntimeAdminService.build_session_command(
-            role="pm", session_id="s1", workspace="/tmp", user_message="hi"
-        )
+        cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
         result = svc.create_transaction_controller(cmd)
         assert result == {"ctrl": 1}
 
@@ -182,9 +180,7 @@ class TestRuntimeAdminService:
         fake = MagicMock()
         fake.create_transaction_controller = None
         svc = RuntimeAdminService(runtime=fake)
-        cmd = RuntimeAdminService.build_session_command(
-            role="pm", session_id="s1", workspace="/tmp", user_message="hi"
-        )
+        cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
         with pytest.raises(RuntimeAdminError) as exc_info:
             svc.create_transaction_controller(cmd)
         assert exc_info.value.code == "unsupported_runtime_capability"
@@ -193,9 +189,7 @@ class TestRuntimeAdminService:
         fake = MagicMock()
         fake.create_transaction_controller.side_effect = ValueError("boom")
         svc = RuntimeAdminService(runtime=fake)
-        cmd = RuntimeAdminService.build_session_command(
-            role="pm", session_id="s1", workspace="/tmp", user_message="hi"
-        )
+        cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
         with pytest.raises(RuntimeAdminError) as exc_info:
             svc.create_transaction_controller(cmd)
         assert exc_info.value.code == "transaction_controller_creation_error"
@@ -206,11 +200,9 @@ class TestRuntimeAdminService:
         fake_runtime = MagicMock()
         fake_runtime.create_transaction_controller.return_value = {"ctrl": 1}
         svc = RuntimeAdminService(runtime=fake_runtime)
-        cmd = RuntimeAdminService.build_session_command(
-            role="pm", session_id="s1", workspace="/tmp", user_message="hi"
-        )
+        cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
         with patch(
-            "polaris.application.runtime_admin.RoleSessionOrchestrator",
+            "polaris.cells.roles.runtime.internal.session_orchestrator.RoleSessionOrchestrator",
             return_value=FakeOrchestrator(),
         ) as mock_orch:
             handle = svc.create_orchestrator_handle(
@@ -234,25 +226,18 @@ class TestRuntimeAdminService:
         fake_runtime = MagicMock()
         fake_runtime.create_transaction_controller.return_value = {"ctrl": 1}
         svc = RuntimeAdminService(runtime=fake_runtime)
-        cmd = RuntimeAdminService.build_session_command(
-            role="pm", session_id="s1", workspace="/tmp", user_message="hi"
-        )
-        with patch(
-            "polaris.application.runtime_admin.RoleSessionOrchestrator",
-            side_effect=ImportError("no module"),
+        cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
+        with (
+            patch(
+                "polaris.cells.roles.runtime.internal.session_orchestrator.RoleSessionOrchestrator",
+                side_effect=ImportError("no module"),
+            ),
+            pytest.raises(RuntimeAdminError) as exc_info,
         ):
-            with pytest.raises(RuntimeAdminError) as exc_info:
-                svc.create_orchestrator_handle(
-                    session_id="s1",
-                    workspace="/tmp",
-                    role="pm",
-                    command=cmd,
-                )
+            svc.create_orchestrator_handle(
+                session_id="s1",
+                workspace="/tmp",
+                role="pm",
+                command=cmd,
+            )
         assert exc_info.value.code == "orchestrator_instantiation_error"
-
-
-# -- helpers -----------------------------------------------------------------
-
-async def async_gen(items: list[Any]) -> AsyncIterator[Any]:
-    for item in items:
-        yield item

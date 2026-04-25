@@ -20,6 +20,9 @@ from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummarizationError,
     SummaryStrategy,
 )
+from sumy.nlp.tokenizers import Tokenizer  # type: ignore[attr-defined]
+from sumy.parsers.plaintext import PlaintextParser  # type: ignore[attr-defined]
+from sumy.summarizers.text_rank import TextRankSummarizer  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:
     pass
@@ -89,23 +92,12 @@ class SumySummarizer:
         self._parser_class: Any | None = None
 
     def _ensure_dependencies(self) -> None:
-        """延迟加载 sumy 依赖
-
-        避免在导入时就加载 heavy 依赖。
-        """
+        """Ensure sumy classes are assigned for summarization."""
         if self._summarizer is not None:
             return
-
-        try:
-
-            self._parser_class = PlaintextParser
-            self._tokenizer_class = Tokenizer
-            self._summarizer_class = TextRankSummarizer
-        except ImportError as e:
-            raise SummarizationError(
-                f"sumy not installed. Run: pip install sumy[{self.language}]",
-                strategy=self.strategy,
-            ) from e
+        self._parser_class = PlaintextParser
+        self._tokenizer_class = Tokenizer
+        self._summarizer_class = TextRankSummarizer
 
     def summarize(
         self,

@@ -94,6 +94,8 @@ from polaris.cells.roles.runtime.internal.sequential_engine import (
     get_seq_emitter,
     should_enable_sequential,
 )
+
+# Re-export RoleSessionOrchestrator for Cell boundary compliance
 from polaris.cells.roles.runtime.internal.skill_loader import (
     RoleSkillManager,
     SkillLoader,
@@ -112,10 +114,6 @@ from polaris.cells.roles.runtime.internal.worker_pool import (
     WorkerTask,
     create_async_worker_pool,
     create_worker_pool,
-)
-# Re-export RoleSessionOrchestrator for Cell boundary compliance
-from polaris.cells.roles.runtime.internal.session_orchestrator import (
-    RoleSessionOrchestrator,
 )
 
 # Wave 3: CLI runner module extracted to public/cli_runner.py

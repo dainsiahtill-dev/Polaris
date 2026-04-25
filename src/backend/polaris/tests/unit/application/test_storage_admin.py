@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.application.storage_admin import (
     StorageAdminError,
     StorageAdminService,
     StorageEnvironment,
     StorageLayoutSnapshot,
-    StoragePolicySummary,
 )
 
 
@@ -33,44 +30,53 @@ class TestStorageAdminService:
     # -- get_polaris_home ----------------------------------------------------
 
     def test_get_polaris_home_success(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.polaris_home",
-            return_value="/home/polaris",
+        fake_mod = MagicMock()
+        fake_mod.polaris_home.return_value = "/home/polaris"
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.storage.layout.public": fake_mod},
         ):
             assert StorageAdminService.get_polaris_home() == "/home/polaris"
 
     def test_get_polaris_home_failure(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.polaris_home",
-            side_effect=RuntimeError("boom"),
+        fake_mod = MagicMock()
+        fake_mod.polaris_home.side_effect = RuntimeError("boom")
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.cells.storage.layout.public": fake_mod},
+            ),
+            pytest.raises(StorageAdminError) as exc_info,
         ):
-            with pytest.raises(StorageAdminError) as exc_info:
-                StorageAdminService.get_polaris_home()
+            StorageAdminService.get_polaris_home()
         assert exc_info.value.code == "polaris_home_error"
 
     # -- resolve_env ---------------------------------------------------------
 
     def test_resolve_env_success(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.resolve_env_str",
-            return_value="/cache",
+        fake_mod = MagicMock()
+        fake_mod.resolve_env_str.return_value = "/cache"
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone._runtime_config": fake_mod},
         ):
             assert StorageAdminService.resolve_env("runtime_cache_root") == "/cache"
 
     def test_resolve_env_failure_returns_empty(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.resolve_env_str",
-            side_effect=ImportError("no module"),
+        fake_mod = MagicMock()
+        fake_mod.resolve_env_str.side_effect = ImportError("no module")
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone._runtime_config": fake_mod},
         ):
             assert StorageAdminService.resolve_env("runtime_root") == ""
 
     # -- get_storage_environment ---------------------------------------------
 
     def test_get_storage_environment(self) -> None:
-        with patch.object(
-            StorageAdminService, "get_polaris_home", return_value="/home"
-        ), patch.object(
-            StorageAdminService, "resolve_env", side_effect=lambda k: f"val_{k}"
+        with (
+            patch.object(StorageAdminService, "get_polaris_home", return_value="/home"),
+            patch.object(StorageAdminService, "resolve_env", side_effect=lambda k: f"val_{k}"),
         ):
             env = StorageAdminService.get_storage_environment()
         assert isinstance(env, StorageEnvironment)
@@ -82,58 +88,76 @@ class TestStorageAdminService:
     # -- resolve_global_path -------------------------------------------------
 
     def test_resolve_global_path_success(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.resolve_global_path",
-            return_value="/global/config.json",
+        fake_mod = MagicMock()
+        fake_mod.resolve_global_path.return_value = "/global/config.json"
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone.storage": fake_mod},
         ):
             result = StorageAdminService.resolve_global_path("config/settings.json")
         assert result == "/global/config.json"
 
     def test_resolve_global_path_failure(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.resolve_global_path",
-            side_effect=ValueError("bad path"),
+        fake_mod = MagicMock()
+        fake_mod.resolve_global_path.side_effect = ValueError("bad path")
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.kernelone.storage": fake_mod},
+            ),
+            pytest.raises(StorageAdminError) as exc_info,
         ):
-            with pytest.raises(StorageAdminError) as exc_info:
-                StorageAdminService.resolve_global_path("bad")
+            StorageAdminService.resolve_global_path("bad")
         assert exc_info.value.code == "global_path_error"
 
     # -- resolve_workspace_persistent_path -----------------------------------
 
     def test_resolve_workspace_persistent_path_success(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.resolve_workspace_persistent_path",
-            return_value="/ws/brain",
+        fake_mod = MagicMock()
+        fake_mod.resolve_workspace_persistent_path.return_value = "/ws/brain"
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone.storage": fake_mod},
         ):
             result = StorageAdminService.resolve_workspace_persistent_path("/ws", "brain")
         assert result == "/ws/brain"
 
     def test_resolve_workspace_persistent_path_failure(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.resolve_workspace_persistent_path",
-            side_effect=RuntimeError("boom"),
+        fake_mod = MagicMock()
+        fake_mod.resolve_workspace_persistent_path.side_effect = RuntimeError("boom")
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.kernelone.storage": fake_mod},
+            ),
+            pytest.raises(StorageAdminError) as exc_info,
         ):
-            with pytest.raises(StorageAdminError) as exc_info:
-                StorageAdminService.resolve_workspace_persistent_path("/ws", "x")
+            StorageAdminService.resolve_workspace_persistent_path("/ws", "x")
         assert exc_info.value.code == "workspace_path_error"
 
     # -- build_cache_root ----------------------------------------------------
 
     def test_build_cache_root_success(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.build_cache_root",
-            return_value="/cache/ws",
+        fake_mod = MagicMock()
+        fake_mod.build_cache_root.return_value = "/cache/ws"
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone.storage.io_paths": fake_mod},
         ):
             result = StorageAdminService.build_cache_root("/ram", "/ws")
         assert result == "/cache/ws"
 
     def test_build_cache_root_failure(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.build_cache_root",
-            side_effect=ValueError("boom"),
+        fake_mod = MagicMock()
+        fake_mod.build_cache_root.side_effect = ValueError("boom")
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.kernelone.storage.io_paths": fake_mod},
+            ),
+            pytest.raises(StorageAdminError) as exc_info,
         ):
-            with pytest.raises(StorageAdminError) as exc_info:
-                StorageAdminService.build_cache_root("/ram", "/ws")
+            StorageAdminService.build_cache_root("/ram", "/ws")
         assert exc_info.value.code == "cache_root_error"
 
     # -- resolve_storage_roots -----------------------------------------------
@@ -141,28 +165,36 @@ class TestStorageAdminService:
     def test_resolve_storage_roots_success(self) -> None:
         roots = MagicMock()
         roots.workspace_abs = "/ws"
-        with patch(
-            "polaris.application.storage_admin.resolve_storage_roots",
-            return_value=roots,
+        fake_mod = MagicMock()
+        fake_mod.resolve_storage_roots.return_value = roots
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone.storage": fake_mod},
         ):
             result = StorageAdminService.resolve_storage_roots("/ws")
         assert result is roots
 
     def test_resolve_storage_roots_failure(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.resolve_storage_roots",
-            side_effect=ImportError("no module"),
+        fake_mod = MagicMock()
+        fake_mod.resolve_storage_roots.side_effect = ImportError("no module")
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.kernelone.storage": fake_mod},
+            ),
+            pytest.raises(StorageAdminError) as exc_info,
         ):
-            with pytest.raises(StorageAdminError) as exc_info:
-                StorageAdminService.resolve_storage_roots("/ws")
+            StorageAdminService.resolve_storage_roots("/ws")
         assert exc_info.value.code == "storage_roots_error"
 
     # -- list_storage_policies -----------------------------------------------
 
     def test_list_storage_policies_empty(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.STORAGE_POLICY_REGISTRY",
-            [],
+        fake_mod = MagicMock()
+        fake_mod.STORAGE_POLICY_REGISTRY = []
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone.storage": fake_mod},
         ):
             result = StorageAdminService.list_storage_policies()
         assert result == ()
@@ -193,9 +225,11 @@ class TestStorageAdminService:
         policy3.category = cat1
         policy3.lifecycle = lc1
 
-        with patch(
-            "polaris.application.storage_admin.STORAGE_POLICY_REGISTRY",
-            [policy1, policy2, policy3],
+        fake_mod = MagicMock()
+        fake_mod.STORAGE_POLICY_REGISTRY = [policy1, policy2, policy3]
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone.storage": fake_mod},
         ):
             result = StorageAdminService.list_storage_policies()
         assert len(result) == 1
@@ -207,9 +241,11 @@ class TestStorageAdminService:
         assert result[0].archive_on_terminal is False
 
     def test_list_storage_policies_import_failure(self) -> None:
-        with patch(
-            "polaris.application.storage_admin.STORAGE_POLICY_REGISTRY",
-            side_effect=ImportError("no module"),
+        fake_mod = MagicMock()
+        fake_mod.STORAGE_POLICY_REGISTRY.side_effect = ImportError("no module")
+        with patch.dict(
+            "sys.modules",
+            {"polaris.kernelone.storage": fake_mod},
         ):
             result = StorageAdminService.list_storage_policies()
         assert result == ()
@@ -217,14 +253,17 @@ class TestStorageAdminService:
     # -- resolve_well_known_paths --------------------------------------------
 
     def test_resolve_well_known_paths(self) -> None:
-        with patch.object(
-            StorageAdminService,
-            "resolve_global_path",
-            side_effect=lambda p: f"/global/{p}",
-        ), patch.object(
-            StorageAdminService,
-            "resolve_workspace_persistent_path",
-            side_effect=lambda ws, p: f"{ws}/{p}",
+        with (
+            patch.object(
+                StorageAdminService,
+                "resolve_global_path",
+                side_effect=lambda p: f"/global/{p}",
+            ),
+            patch.object(
+                StorageAdminService,
+                "resolve_workspace_persistent_path",
+                side_effect=lambda ws, p: f"{ws}/{p}",
+            ),
         ):
             paths = StorageAdminService.resolve_well_known_paths("/ws")
         assert paths["settings"] == "/global/config/settings.json"
@@ -251,27 +290,32 @@ class TestStorageAdminService:
         roots.runtime_project_root = "/runtime/r1/p1"
         roots.history_root = "/history"
 
-        with patch.object(
-            StorageAdminService,
-            "resolve_storage_roots",
-            return_value=roots,
-        ), patch.object(
-            StorageAdminService,
-            "get_storage_environment",
-            return_value=StorageEnvironment(
-                kernelone_home="/home",
-                runtime_root="/runtime",
-                runtime_cache_root="/cache",
-                state_to_ramdisk="false",
+        with (
+            patch.object(
+                StorageAdminService,
+                "resolve_storage_roots",
+                return_value=roots,
             ),
-        ), patch.object(
-            StorageAdminService,
-            "list_storage_policies",
-            return_value=(),
-        ), patch.object(
-            StorageAdminService,
-            "resolve_well_known_paths",
-            return_value={"brain": "/ws/brain"},
+            patch.object(
+                StorageAdminService,
+                "get_storage_environment",
+                return_value=StorageEnvironment(
+                    kernelone_home="/home",
+                    runtime_root="/runtime",
+                    runtime_cache_root="/cache",
+                    state_to_ramdisk="false",
+                ),
+            ),
+            patch.object(
+                StorageAdminService,
+                "list_storage_policies",
+                return_value=(),
+            ),
+            patch.object(
+                StorageAdminService,
+                "resolve_well_known_paths",
+                return_value={"brain": "/ws/brain"},
+            ),
         ):
             snapshot = StorageAdminService.resolve_full_layout("/ws", ramdisk_root="/ram")
         assert isinstance(snapshot, StorageLayoutSnapshot)
@@ -283,11 +327,14 @@ class TestStorageAdminService:
         assert snapshot.migration_version == 2
 
     def test_resolve_full_layout_failure(self) -> None:
-        with patch.object(
-            StorageAdminService,
-            "resolve_storage_roots",
-            side_effect=RuntimeError("boom"),
+        fake_mod = MagicMock()
+        fake_mod.resolve_storage_roots.side_effect = RuntimeError("boom")
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.kernelone.storage": fake_mod},
+            ),
+            pytest.raises(StorageAdminError) as exc_info,
         ):
-            with pytest.raises(StorageAdminError) as exc_info:
-                StorageAdminService.resolve_full_layout("/ws")
+            StorageAdminService.resolve_full_layout("/ws")
         assert exc_info.value.code == "storage_roots_error"

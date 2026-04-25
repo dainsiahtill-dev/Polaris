@@ -74,7 +74,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "check"] + KERNELONE_DIRS + ["--output-format=concise"]
+    cmd = ["ruff", "check", *KERNELONE_DIRS, "--output-format=concise"]
     return run_command(cmd, "Ruff linter check")
 
 
@@ -84,7 +84,7 @@ def cmd_lint_fix(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "check"] + KERNELONE_DIRS + ["--fix"]
+    cmd = ["ruff", "check", *KERNELONE_DIRS, "--fix"]
     return run_command(cmd, "Ruff linter with auto-fix")
 
 
@@ -94,7 +94,7 @@ def cmd_format(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "format", "--check"] + KERNELONE_DIRS
+    cmd = ["ruff", "format", "--check", *KERNELONE_DIRS]
     return run_command(cmd, "Ruff format check")
 
 
@@ -104,7 +104,7 @@ def cmd_format_fix(args: argparse.Namespace) -> int:
         print("Error: ruff not found. Install with: pip install ruff")
         return 1
 
-    cmd = ["ruff", "format"] + KERNELONE_DIRS
+    cmd = ["ruff", "format", *KERNELONE_DIRS]
     return run_command(cmd, "Ruff formatter")
 
 
@@ -128,7 +128,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         print("Error: pytest not found. Install with: pip install pytest")
         return 1
 
-    cmd = ["pytest"] + TEST_DIRS + ["-v", "--tb=short"]
+    cmd = ["pytest", *TEST_DIRS, "-v", "--tb=short"]
     return run_command(cmd, "Pytest unit tests")
 
 
@@ -139,7 +139,7 @@ def cmd_test_cov(args: argparse.Namespace) -> int:
         return 1
 
     cmd = (
-        ["pytest"] + TEST_DIRS + ["-v", "--tb=short", "--cov=polaris", "--cov-report=term-missing", "--cov-report=html"]
+        ["pytest", *TEST_DIRS, "-v", "--tb=short", "--cov=polaris", "--cov-report=term-missing", "--cov-report=html"]
     )
     return run_command(cmd, "Pytest with coverage")
 

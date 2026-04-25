@@ -8,7 +8,7 @@ try:
     from polaris._env_compat import normalize_env_prefix
 
     normalize_env_prefix()
-except Exception:
+except Exception:  # noqa: BLE001
     # If the compat module is missing or broken, do not block package import.
     # The error will surface naturally when code tries to read unset env vars.
     pass

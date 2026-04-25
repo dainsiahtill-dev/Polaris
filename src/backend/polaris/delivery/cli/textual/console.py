@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 try:
     from textual.app import App, ComposeResult

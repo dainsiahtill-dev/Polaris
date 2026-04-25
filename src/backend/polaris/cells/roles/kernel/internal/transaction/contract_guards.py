@@ -35,6 +35,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
+    ToolInvocation,
     TurnDecision,
     TurnDecisionKind,
 )

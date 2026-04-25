@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from polaris.kernelone.errors import TimeoutError as _CanonicalTimeoutError
+from tree_sitter_language_pack import get_parser  # type: ignore[attr-defined]
 
 
 @dataclass(frozen=True)
@@ -64,9 +65,7 @@ def is_tree_sitter_available() -> TreeSitterAvailability:
 
     def check_with_timeout() -> TreeSitterAvailability:
         try:
-
             # Attempt to get the Python parser
-
             parser = get_parser("python")
             if parser is None:
                 return TreeSitterAvailability(
@@ -78,12 +77,6 @@ def is_tree_sitter_available() -> TreeSitterAvailability:
             return TreeSitterAvailability(
                 available=True,
                 reason=None,
-                checked_at=checked_at,
-            )
-        except ImportError:
-            return TreeSitterAvailability(
-                available=False,
-                reason="import_error",
                 checked_at=checked_at,
             )
         except (RuntimeError, ValueError) as exc:

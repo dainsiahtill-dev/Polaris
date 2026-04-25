@@ -21,6 +21,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, cast
 
+from polaris.cells.roles.kernel.internal.speculation.models import (
+    CancelToken,
+    check_cancel,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     BatchReceipt,

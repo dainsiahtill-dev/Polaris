@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import codecs
+import concurrent.futures
 import os
 import time
 from typing import TYPE_CHECKING, Any

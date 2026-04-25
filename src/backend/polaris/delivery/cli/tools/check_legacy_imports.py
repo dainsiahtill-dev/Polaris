@@ -37,10 +37,7 @@ def is_old_root_import(module_name: str) -> bool:
     """Check if a module name is an old root import."""
     if not module_name:
         return False
-    for pattern in OLD_ROOT_PATTERNS:
-        if module_name == pattern or module_name.startswith(pattern + "."):
-            return True
-    return False
+    return any(module_name == pattern or module_name.startswith(pattern + ".") for pattern in OLD_ROOT_PATTERNS)
 
 
 def find_legacy_imports(base_dir: Path, scan_dir: Path) -> dict[str, list[str]]:

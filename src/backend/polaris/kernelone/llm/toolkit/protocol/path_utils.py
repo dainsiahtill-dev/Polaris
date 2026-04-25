@@ -6,6 +6,7 @@ Contains path validation and security check functions.
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from pathlib import Path
 
 logger = logging.getLogger(__name__)

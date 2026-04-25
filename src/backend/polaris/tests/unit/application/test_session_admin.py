@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.application.session_admin import (
     SessionAdminError,
     SessionAdminService,
     SessionListResult,
-    SessionSummary,
     _close_svc,
     _conversation_to_summary,
 )
@@ -112,12 +109,14 @@ class TestSessionAdminService:
 
     def test_make_service_lazy_import_failure(self) -> None:
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            side_effect=ImportError("no module"),
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.cells.roles.session.internal.role_session_service": None},
+            ),
+            pytest.raises(SessionAdminError) as exc_info,
         ):
-            with pytest.raises(SessionAdminError) as exc_info:
-                svc._make_service()
+            svc._make_service()
         assert exc_info.value.code == "service_resolution_error"
 
     # -- create_session ------------------------------------------------------
@@ -139,10 +138,13 @@ class TestSessionAdminService:
         fake_conv.updated_at = None
         fake_svc.create_session.return_value = fake_conv
 
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService(workspace="/ws")
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             cmd = CreateRoleSessionCommandV1(
                 role="pm",
@@ -168,10 +170,13 @@ class TestSessionAdminService:
     def test_create_session_cell_error(self) -> None:
         fake_svc = MagicMock()
         fake_svc.create_session.side_effect = FakeRoleSessionError("fail", code="create_fail")
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             cmd = CreateRoleSessionCommandV1(
                 role="pm",
@@ -187,10 +192,13 @@ class TestSessionAdminService:
     def test_create_session_unexpected_error(self) -> None:
         fake_svc = MagicMock()
         fake_svc.create_session.side_effect = RuntimeError("boom")
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             cmd = CreateRoleSessionCommandV1(
                 role="pm",
@@ -221,10 +229,14 @@ class TestSessionAdminService:
         fake_conv.created_at = None
         fake_conv.updated_at = None
         fake_svc.get_session.return_value = fake_conv
+
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             summary = svc.get_session("s1")
         assert summary is not None
@@ -233,10 +245,13 @@ class TestSessionAdminService:
     def test_get_session_not_found(self) -> None:
         fake_svc = MagicMock()
         fake_svc.get_session.return_value = None
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             assert svc.get_session("missing") is None
 
@@ -252,13 +267,18 @@ class TestSessionAdminService:
     def test_get_session_cell_error(self) -> None:
         fake_svc = MagicMock()
         fake_svc.get_session.side_effect = FakeRoleSessionError("fail", code="get_fail")
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
+            ),
+            pytest.raises(SessionAdminError) as exc_info,
         ):
-            with pytest.raises(SessionAdminError) as exc_info:
-                svc.get_session("s1")
+            svc.get_session("s1")
         assert exc_info.value.code == "get_fail"
 
     # -- list_sessions -------------------------------------------------------
@@ -279,10 +299,14 @@ class TestSessionAdminService:
         fake_conv.created_at = None
         fake_conv.updated_at = None
         fake_svc.get_sessions.return_value = [fake_conv]
+
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             result = svc.list_sessions(role="pm", limit=10, offset=0)
         assert isinstance(result, SessionListResult)
@@ -302,10 +326,13 @@ class TestSessionAdminService:
     def test_list_sessions_clamps_limit(self) -> None:
         fake_svc = MagicMock()
         fake_svc.get_sessions.return_value = []
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             low = svc.list_sessions(limit=0)
             high = svc.list_sessions(limit=500)
@@ -315,10 +342,13 @@ class TestSessionAdminService:
     def test_list_sessions_clamps_offset(self) -> None:
         fake_svc = MagicMock()
         fake_svc.get_sessions.return_value = []
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             result = svc.list_sessions(offset=-5)
         assert result.offset == 0
@@ -326,13 +356,18 @@ class TestSessionAdminService:
     def test_list_sessions_cell_error(self) -> None:
         fake_svc = MagicMock()
         fake_svc.get_sessions.side_effect = FakeRoleSessionError("fail", code="list_fail")
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with (
+            patch.dict(
+                "sys.modules",
+                {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
+            ),
+            pytest.raises(SessionAdminError) as exc_info,
         ):
-            with pytest.raises(SessionAdminError) as exc_info:
-                svc.list_sessions()
+            svc.list_sessions()
         assert exc_info.value.code == "list_fail"
 
     # -- update_session ------------------------------------------------------
@@ -353,10 +388,14 @@ class TestSessionAdminService:
         fake_conv.created_at = None
         fake_conv.updated_at = None
         fake_svc.update_session.return_value = fake_conv
+
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             cmd = UpdateRoleSessionCommandV1(
                 session_id="s1",
@@ -369,10 +408,13 @@ class TestSessionAdminService:
     def test_update_session_not_found(self) -> None:
         fake_svc = MagicMock()
         fake_svc.update_session.return_value = None
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             cmd = UpdateRoleSessionCommandV1(session_id="missing")
             assert svc.update_session(cmd) is None
@@ -380,10 +422,13 @@ class TestSessionAdminService:
     def test_update_session_cell_error(self) -> None:
         fake_svc = MagicMock()
         fake_svc.update_session.side_effect = FakeRoleSessionError("fail", code="upd_fail")
+        fake_mod = MagicMock()
+        fake_mod.RoleSessionService.return_value = fake_svc
+
         svc = SessionAdminService()
-        with patch(
-            "polaris.application.session_admin.RoleSessionService",
-            return_value=fake_svc,
+        with patch.dict(
+            "sys.modules",
+            {"polaris.cells.roles.session.internal.role_session_service": fake_mod},
         ):
             cmd = UpdateRoleSessionCommandV1(session_id="s1")
             with pytest.raises(SessionAdminError) as exc_info:

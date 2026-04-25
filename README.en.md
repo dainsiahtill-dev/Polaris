@@ -11,18 +11,26 @@ From an architectural point of view:
 - `Cells` are the bounded capability units
 - `TransactionKernel` and `ContextOS` are the core runtime truth chain
 
-## What Polaris Is
+## Project Overview
+
+Polaris is an AI agent governance and runtime platform for complex software delivery.  
+The core problem it tries to solve is not just “how to call more tools from a model”, but something lower-level:
+
+- how an agent turn gets a clear execution boundary
+- how context becomes a runtime system instead of a growing message pile
+- how tool calls and state mutation enter an auditable chain
+- how long-running, multi-role work becomes verifiable end-to-end
 
 Polaris is easiest to understand as two layers:
 
 1. `KernelOne`
-   A reusable runtime substrate for AI agents, closer to an operating-system-style foundation than a utility folder.
+   A platform-neutral runtime substrate for AI agents, responsible for context, execution, side effects, storage layout, events, and runtime contracts.
 2. `Polaris`
-   A governance and delivery layer built on top of `KernelOne`, focused on multi-role collaboration, task execution, auditing, and verification.
+   A governance and delivery layer built on top of `KernelOne`, focused on multi-role collaboration, task orchestration, execution flow, audit, quality gates, and the desktop operator surface.
 
 That makes Polaris closer to an **Agent Runtime + Governance Platform** than to a prompt collection or chat-first coding assistant.
 
-## Current Status
+### Current Status
 
 The repository should currently be read as:
 
@@ -33,7 +41,9 @@ The repository should currently be read as:
 
 This is a large runtime-heavy codebase with a clear architectural direction, not a small finished product.
 
-## Architecture Overview
+## Core Architecture
+
+### Architecture Overview
 
 ![Polaris architecture overview](docs/assets/diagrams/polaris-architecture-overview.svg)
 
@@ -46,7 +56,21 @@ At a high level:
 - `cells/` expose bounded capabilities and public contracts
 - `infrastructure/` binds external systems such as storage, DB, messaging, and telemetry
 
-## Core Concepts
+### Layered Structure
+
+The canonical backend is converging on these layers:
+
+- `bootstrap/`: startup assembly and lifecycle management
+- `delivery/`: HTTP / WebSocket / CLI entrypoints
+- `application/`: use-case orchestration and transaction boundaries
+- `domain/`: business rules and domain models
+- `kernelone/`: the agent runtime substrate
+- `infrastructure/`: DB, messaging, telemetry, and external adapters
+- `cells/`: bounded capabilities and governance units
+
+The point of this structure is not cosmetic cleanliness. It is to separate transport, orchestration, runtime mechanics, business rules, and infrastructure concerns so the system can keep scaling without collapsing into a single coupled codebase.
+
+### Core Concepts
 
 ### 1. KernelOne
 
@@ -86,6 +110,19 @@ Each Cell is expected to define ownership, dependencies, public contracts, and g
 Graph truth:
 
 - [src/backend/docs/graph/catalog/cells.yaml](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/graph/catalog/cells.yaml)
+
+### Runtime Backbone
+
+The real center of Polaris is not the UI. It is the runtime truth chain:
+
+1. Startup and assembly are centralized in [backend_bootstrap.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/bootstrap/backend_bootstrap.py:45).
+2. HTTP assembly goes through [app_factory.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/delivery/http/app_factory.py:91), while realtime runtime streaming goes through [websocket_core.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/delivery/ws/endpoints/websocket_core.py:57).
+3. Multi-turn role orchestration is handled by [session_orchestrator.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/runtime/internal/session_orchestrator.py:448).
+4. Single-turn execution is controlled by [turn_transaction_controller.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py:136), whose purpose is to eliminate hidden continuation loops.
+5. Context construction is centralized in [gateway.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py:77), which routes through `StateFirstContextOS`.
+6. The four context layers are implemented in [truth_log_service.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/truth_log_service.py:321), [working_state_manager.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/working_state_manager.py:11), [receipt_store.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/receipt_store.py:13), and [projection_engine.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/projection_engine.py:86).
+
+That backbone is what makes Polaris more than “a model with tools”. It is an attempt to build a governable agent runtime.
 
 ## Core Advantages
 

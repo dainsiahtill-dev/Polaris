@@ -12,6 +12,7 @@ ADR-0067: ContextOS 2.0 摘要策略选型 - Tier 2 安全摘要层
 
 from __future__ import annotations
 
+import importlib
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -122,12 +123,15 @@ class TreeSitterSummarizer:
 
         try:
             if lang_name == "python":
+                import tree_sitter_python as tspython
 
                 lang = Language(tspython.language())
             elif lang_name == "javascript":
+                import tree_sitter_javascript as tsjs
 
                 lang = Language(tsjs.language())
             elif lang_name == "go":
+                import tree_sitter_go as tsgo
 
                 lang = Language(tsgo.language())
             else:

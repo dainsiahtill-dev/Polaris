@@ -27,9 +27,10 @@ from polaris.cells.audit.diagnosis.internal.toolkit.service import (
     load_journal_events,
     resolve_runtime_root,
 )
-
-discover_journal_run_dirs = _discover_journal_run_dirs
 from polaris.cells.audit.diagnosis.internal.usecases import AuditUseCaseFacade
+
+# Public alias for discover_journal_run_dirs
+discover_journal_run_dirs = _discover_journal_run_dirs
 
 __all__ = [
     "AuditDiagnosisEngine",

@@ -12,7 +12,6 @@ from typing import Any
 
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 
-
 # ---------------------------------------------------------------------------
 # LLM Timeout Resolution
 # ---------------------------------------------------------------------------

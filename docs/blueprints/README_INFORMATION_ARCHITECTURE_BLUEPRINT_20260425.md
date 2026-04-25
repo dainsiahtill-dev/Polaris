@@ -69,11 +69,11 @@ The README should additionally:
 
 ```text
 1. Title + one-sentence positioning
-2. What Polaris is
+2. Project overview
 3. Current status
-4. Core concepts
-5. Core advantages
-6. Architecture overview diagram
+4. Core architecture
+5. Core concepts
+6. Core advantages
 7. Repository layout
 8. Quick start
 9. 30-minute onboarding path

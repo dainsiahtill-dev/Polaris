@@ -120,7 +120,7 @@ class ErrorCorrelator:
     ) -> None:
         self._max_upstream = max_upstream
         self._max_downstream = max_downstream
-        self._rules: list[CorrelationRule] = list(rules) if rules else list(BUILTIN_RULES)
+        self._rules: list[CorrelationRule] = list(rules) if rules is not None else list(BUILTIN_RULES)
 
     def register_rule(self, rule: CorrelationRule) -> None:
         self._rules.append(rule)

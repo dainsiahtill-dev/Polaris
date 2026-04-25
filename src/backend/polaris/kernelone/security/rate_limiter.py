@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import OrderedDict
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -101,10 +102,8 @@ class RateLimiter:
         self._stopped = True
         if self._cleanup_task is not None and not self._cleanup_task.done():
             self._cleanup_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
             self._cleanup_task = None
 
     def stop(self) -> None:

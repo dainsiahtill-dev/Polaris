@@ -19,7 +19,7 @@ try:
 except ImportError:
     TokenUsage = Any  # type: ignore
     UsageContext = Any  # type: ignore
-    track_usage = lambda **kwargs: None  # type: ignore
+    track_usage = lambda **kwargs: None  # type: ignore  # noqa: E731
 
 logger = logging.getLogger(__name__)
 
