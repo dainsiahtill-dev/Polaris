@@ -49,6 +49,7 @@ __all__ = [
     "RolePromptPolicy",
     "RoleRuntimeError",
     "RoleRuntimeService",
+    "RoleSessionOrchestrator",
     "RoleSkillManager",
     "RoleTaskCompletedEventV1",
     "RoleTaskStartedEventV1",

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Coroutine
 
 from polaris.kernelone.llm import KernelLLMRuntimeAdapter, config_store as llm_config
 

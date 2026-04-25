@@ -52,6 +52,7 @@ class AuditGateway:
 
     _instances: dict[str, AuditGateway] = {}
     _instances_lock = threading.Lock()
+    _initialized: bool = False
 
     def __new__(cls, runtime_root: Path, *args, **kwargs) -> AuditGateway:
         key = str(Path(runtime_root).resolve())

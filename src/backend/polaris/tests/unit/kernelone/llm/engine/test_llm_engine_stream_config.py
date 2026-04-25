@@ -83,7 +83,7 @@ class TestStreamConfig:
         cfg = StreamConfig()
         # Regular attribute assignment on frozen dataclass should raise
         with pytest.raises((AttributeError, TypeError, dataclasses.FrozenInstanceError)):
-            cfg.timeout_sec = 10.0
+            cfg.timeout_sec = 10.0  # type: ignore[misc]
 
     def test_from_env_uses_unified_timeout(self) -> None:
         with (

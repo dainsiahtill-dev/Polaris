@@ -241,7 +241,9 @@ class AlertingEngine:
                 cond = rule.condition
 
                 # Handle dynamic storm-level rules
-                if rule.is_dynamic_storm_rule and current_storm_level:
+                if rule.is_dynamic_storm_rule:
+                    if not current_storm_level:
+                        continue
                     storm_match = current_storm_level.lower() in cond.storm_levels
                     if not storm_match:
                         continue
@@ -315,6 +317,11 @@ class AlertingEngine:
         self._alert_history.append(alert)
         if len(self._alert_history) > self._max_history:
             self._alert_history = self._alert_history[-self._max_history :]
+        if len(self._active_alerts) > self._max_history:
+            sorted_alerts = sorted(self._active_alerts.values(), key=lambda a: a.triggered_at)
+            to_remove = len(self._active_alerts) - self._max_history
+            for alert_to_remove in sorted_alerts[:to_remove]:
+                self._active_alerts.pop(alert_to_remove.alert_id, None)
         self._log_alert(alert)
         return alert
 

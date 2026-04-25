@@ -1269,8 +1269,9 @@ class RoleConsoleHost:
             if use_orchestrator:
                 from typing import cast
 
-                from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
+                # Use public service instead of internal import
                 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+                from polaris.cells.roles.runtime.public import RoleSessionOrchestrator
 
                 runtime_service_typed = cast(RoleRuntimeService, self._runtime_service)
                 try:

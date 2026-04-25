@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360" role="img" aria-labelledby="title desc">
+  <title id="title">Polaris Architecture Overview</title>
+  <desc id="desc">Frontend and Electron feed delivery, which calls application, then domain and KernelOne, then cells and infrastructure. Governance and runtime truth span the whole stack.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .title { font: 700 24px 'Segoe UI', Arial, sans-serif; fill: #0f172a; }
+    .subtitle { font: 400 13px 'Segoe UI', Arial, sans-serif; fill: #475569; }
+    .label { font: 700 16px 'Segoe UI', Arial, sans-serif; fill: #0f172a; }
+    .text { font: 400 12px 'Segoe UI', Arial, sans-serif; fill: #334155; }
+    .box { rx: 14; ry: 14; stroke-width: 2; }
+    .blue { fill: #dbeafe; stroke: #3b82f6; }
+    .green { fill: #dcfce7; stroke: #16a34a; }
+    .amber { fill: #fef3c7; stroke: #d97706; }
+    .slate { fill: #e2e8f0; stroke: #64748b; }
+    .violet { fill: #ede9fe; stroke: #7c3aed; }
+    .rose { fill: #ffe4e6; stroke: #e11d48; }
+    .bar { rx: 12; ry: 12; stroke-width: 1.5; }
+    .bar-blue { fill: #e0f2fe; stroke: #0284c7; }
+    .bar-green { fill: #ecfccb; stroke: #65a30d; }
+    .arrow { stroke: #475569; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="980" height="360" />
+
+  <text class="title" x="32" y="40">Polaris Architecture Overview</text>
+  <text class="subtitle" x="32" y="64">Agent runtime substrate below, governed delivery and capability boundaries above.</text>
+
+  <rect class="box slate" x="40" y="105" width="150" height="78" />
+  <text class="label" x="60" y="136">Frontend /</text>
+  <text class="label" x="60" y="158">Electron</text>
+  <text class="text" x="60" y="178">UI, desktop shell,</text>
+  <text class="text" x="60" y="194">human interaction</text>
+
+  <rect class="box blue" x="230" y="105" width="150" height="78" />
+  <text class="label" x="261" y="145">Delivery</text>
+  <text class="text" x="250" y="170">HTTP / WS / CLI</text>
+  <text class="text" x="250" y="186">transport only</text>
+
+  <rect class="box green" x="420" y="105" width="150" height="78" />
+  <text class="label" x="436" y="145">Application</text>
+  <text class="text" x="439" y="170">use-case orchestration</text>
+  <text class="text" x="456" y="186">transaction boundary</text>
+
+  <rect class="box amber" x="610" y="85" width="150" height="58" />
+  <text class="label" x="652" y="118">Domain</text>
+  <text class="text" x="628" y="136">rules, policies, values</text>
+
+  <rect class="box violet" x="610" y="155" width="150" height="58" />
+  <text class="label" x="632" y="188">KernelOne</text>
+  <text class="text" x="629" y="206">runtime substrate</text>
+
+  <rect class="box rose" x="800" y="85" width="150" height="58" />
+  <text class="label" x="844" y="118">Cells</text>
+  <text class="text" x="821" y="136">bounded capabilities</text>
+
+  <rect class="box slate" x="800" y="155" width="150" height="58" />
+  <text class="label" x="827" y="188">Infrastructure</text>
+  <text class="text" x="821" y="206">DB, MQ, telemetry, SDKs</text>
+
+  <path class="arrow" d="M 190 144 L 230 144" />
+  <path class="arrow" d="M 380 144 L 420 144" />
+  <path class="arrow" d="M 570 144 L 610 114" />
+  <path class="arrow" d="M 570 144 L 610 184" />
+  <path class="arrow" d="M 760 114 L 800 114" />
+  <path class="arrow" d="M 760 184 L 800 184" />
+
+  <rect class="bar bar-blue" x="40" y="244" width="910" height="42" />
+  <text class="label" x="58" y="270">Governance Plane</text>
+  <text class="text" x="230" y="270">graph truth, cell manifests, descriptor/context/verify packs, release gates, ADRs, CI blockers</text>
+
+  <rect class="bar bar-green" x="40" y="298" width="910" height="42" />
+  <text class="label" x="58" y="324">Runtime Truth Plane</text>
+  <text class="text" x="244" y="324">TransactionKernel -> ContextOS -> TruthLog / WorkingState / ReceiptStore / ProjectionEngine -> receipts and events</text>
+</svg>

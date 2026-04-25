@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 try:
     from textual.app import App, ComposeResult
+    from textual.binding import Binding
     from textual.containers import Container, ScrollableContainer
     from textual.message import Message
     from textual.reactive import reactive

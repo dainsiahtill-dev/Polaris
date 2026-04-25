@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import time
+import urllib.parse
 import uuid
 from typing import TYPE_CHECKING, Any
 

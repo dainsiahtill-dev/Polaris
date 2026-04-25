@@ -113,6 +113,10 @@ from polaris.cells.roles.runtime.internal.worker_pool import (
     create_async_worker_pool,
     create_worker_pool,
 )
+# Re-export RoleSessionOrchestrator for Cell boundary compliance
+from polaris.cells.roles.runtime.internal.session_orchestrator import (
+    RoleSessionOrchestrator,
+)
 
 # Wave 3: CLI runner module extracted to public/cli_runner.py
 from polaris.cells.roles.runtime.public.cli_runner import CliRunner

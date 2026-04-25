@@ -142,6 +142,7 @@ exclude = [
     "^tools\\.py$",
     "^infrastructure/",
     "^scripts/",
+    ".*/tests/",
 ]
 
 [tool.ruff]

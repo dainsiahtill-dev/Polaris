@@ -61,6 +61,9 @@ The README should additionally:
 1. explain the project's technical advantages in concrete engineering terms
 2. separate current strengths from future direction
 3. keep ambition visible without presenting roadmap items as already completed facts
+4. include a fast architecture visual suitable for GitHub landing-page reading
+5. include a 30-minute guided onboarding path
+6. provide an English README for external readers
 
 ## 5. Planned README Structure
 
@@ -70,12 +73,14 @@ The README should additionally:
 3. Current status
 4. Core concepts
 5. Core advantages
-6. Repository layout
-7. Quick start
-8. Testing and quality gates
-9. Future direction
-10. Where to read next
-11. Optional support/license footer
+6. Architecture overview diagram
+7. Repository layout
+8. Quick start
+9. 30-minute onboarding path
+10. Testing and quality gates
+11. Future direction
+12. Where to read next
+13. Optional support/license footer
 ```
 
 ## 6. Technical Truth Sources
@@ -132,6 +137,15 @@ Use commands that correspond to real scripts and files:
 7. `npm test`
 8. `npm run test:e2e`
 9. `python -m pytest -q tests/architecture/test_kernelone_release_gates.py`
+
+### 7.4 Supporting assets
+
+The README package should include:
+
+1. `README.md` in Chinese as the primary in-repo orientation
+2. `README.en.md` for GitHub and external evaluators
+3. a small SVG architecture overview under `docs/assets/diagrams/`
+4. a concise onboarding path that can be followed in about 30 minutes
 
 ## 8. Acceptance Criteria
 

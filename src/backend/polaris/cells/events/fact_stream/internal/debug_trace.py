@@ -20,6 +20,7 @@ import re
 import subprocess
 import threading
 import time
+import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
