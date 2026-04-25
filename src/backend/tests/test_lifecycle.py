@@ -140,6 +140,7 @@ class TestDirectorLifecycle:
                             run_id=f"run_{worker_id}",
                         )
                 except Exception as e:
+                    # Intentionally catch all exceptions to detect thread safety issues.
                     errors.append(e)
 
             # Create and start threads

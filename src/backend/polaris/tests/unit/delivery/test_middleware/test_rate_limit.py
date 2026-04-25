@@ -8,8 +8,6 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from polaris.delivery.http.middleware.rate_limit import (
     RateLimitEntry,
     RateLimitMiddleware,
@@ -39,7 +37,9 @@ class TestRateLimitStore:
     def setup_method(self) -> None:
         self.store = RateLimitStore(window_seconds=60.0, max_entries=1000)
 
-    def _make_mock_request(self, client_host: str = "127.0.0.1", forwarded: str | None = None, real_ip: str | None = None) -> MagicMock:
+    def _make_mock_request(
+        self, client_host: str = "127.0.0.1", forwarded: str | None = None, real_ip: str | None = None
+    ) -> MagicMock:
         """Create a mock request with specified client info."""
         request = MagicMock()
         request.client.host = client_host
@@ -87,7 +87,7 @@ class TestRateLimitStore:
 
         self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
         self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
-        allowed, retry_after, count = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
+        allowed, _, count = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
 
         assert allowed is True
         assert count == 3
@@ -108,34 +108,47 @@ class TestRateLimitStore:
 
         now = time.time()
         # Manually add old requests
-        self.store._store["127.0.0.1"] = RateLimitEntry(
-            requests=[now - 120, now - 90, now - 60], blocked_until=0.0
-        )
+        self.store._store["127.0.0.1"] = RateLimitEntry(requests=[now - 120, now - 90, now - 60], blocked_until=0.0)
 
-        allowed, retry_after, count = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
+        allowed, _, count = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
 
-        # Old requests should be evicted, count should be 0
+        # Old requests should be evicted, new one added -> count = 1
         assert allowed is True
-        assert count == 0
+        assert count == 1
 
     def test_check_rate_limit_progressive_backoff(self) -> None:
         request = self._make_mock_request()
 
-        # Exceed limit multiple times to trigger progressive backoff
-        for i in range(5):
-            # Reset entry to simulate repeated violations
-            self.store._store["127.0.0.1"] = RateLimitEntry(
-                requests=[time.time() - 1] * 10,
-                blocked_until=0.0,
-                total_violations=i,
-            )
+        # Test progressive backoff: 30s, 60s, 120s, 240s
+        # First violation (total_violations was 0, now becomes 1 -> 30s)
+        self.store._store["127.0.0.1"] = RateLimitEntry(
+            requests=[time.time() - 1] * 10,
+            blocked_until=0.0,
+            total_violations=0,
+        )
+        allowed, retry_after, _ = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
+        assert allowed is False
+        assert 25 <= retry_after <= 35  # ~30s
 
-            allowed, retry_after, _ = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
-            assert allowed is False
+        # Second violation (total_violations was 1, now becomes 2 -> 60s)
+        self.store._store["127.0.0.1"] = RateLimitEntry(
+            requests=[time.time() - 1] * 10,
+            blocked_until=0.0,
+            total_violations=1,
+        )
+        allowed, retry_after, _ = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
+        assert allowed is False
+        assert 50 <= retry_after <= 70  # ~60s
 
-            # First violation: 30s, second: 60s, third: 120s, fourth: 240s
-            expected_min = 30 * (2 ** i)
-            assert retry_after >= expected_min * 0.9  # Allow small variance
+        # Third violation (total_violations was 2, now becomes 3 -> 120s)
+        self.store._store["127.0.0.1"] = RateLimitEntry(
+            requests=[time.time() - 1] * 10,
+            blocked_until=0.0,
+            total_violations=2,
+        )
+        allowed, retry_after, _ = self.store.check_rate_limit(request, max_requests=10, window_seconds=60.0)
+        assert allowed is False
+        assert 100 <= retry_after <= 140  # ~120s
 
     def test_check_rate_limit_blocks_while_blocked(self) -> None:
         request = self._make_mock_request()
@@ -317,7 +330,7 @@ class TestRateLimitAlgorithms:
         request = self._make_request()
         # With burst=20, should allow up to burst even if RPS * window would be smaller
         for i in range(25):
-            allowed, _, count = self.store.check_rate_limit(request, max_requests=20, window_seconds=60.0)
+            allowed, _, _count = self.store.check_rate_limit(request, max_requests=20, window_seconds=60.0)
             if i < 20:
                 assert allowed is True, f"Request {i} should be allowed (burst={20})"
             else:

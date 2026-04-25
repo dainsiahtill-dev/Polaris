@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from polaris.cells.roles.kernel.internal.speculation.budget import BudgetGovernor
 from polaris.cells.roles.kernel.internal.speculation.models import (
     BudgetSnapshot,
@@ -77,20 +76,38 @@ class TestSpecTier:
         policy = _policy(side_effect="pure", cost="medium")
         assert governor._spec_tier(policy) == 1
 
-    def test_high_confidence_only_returns_tier_2(self) -> None:
+    def test_high_confidence_only_shadowed_by_readonly_cheap(self) -> None:
+        """high_confidence_only is shadowed by readonly+cheap (line 61 checked before line 63)."""
         governor = BudgetGovernor()
-        policy = _policy(speculate_mode="high_confidence_only")
+        # readonly + cheap matches line 61 first → returns tier 1
+        policy = _policy(side_effect="readonly", cost="cheap", speculate_mode="high_confidence_only")
+        assert governor._spec_tier(policy) == 1
+
+    def test_high_confidence_only_reaches_tier_2_when_not_readonly_cheap(self) -> None:
+        """high_confidence_only reaches line 63 when not shadowed by readonly+cheap."""
+        governor = BudgetGovernor()
+        policy = _policy(side_effect="mutating", cost="expensive", speculate_mode="high_confidence_only")
         assert governor._spec_tier(policy) == 2
 
-    def test_speculative_allowed_returns_tier_3(self) -> None:
+    def test_speculative_allowed_shadowed_by_readonly_cheap(self) -> None:
+        """speculative_allowed is shadowed by readonly+cheap (line 61 checked before line 65)."""
         governor = BudgetGovernor()
-        policy = _policy(speculate_mode="speculative_allowed")
+        # readonly + cheap matches line 61 first → returns tier 1
+        policy = _policy(side_effect="readonly", cost="cheap", speculate_mode="speculative_allowed")
+        assert governor._spec_tier(policy) == 1
+
+    def test_speculative_allowed_reaches_tier_3_when_not_readonly_cheap(self) -> None:
+        """speculative_allowed reaches line 65 when not shadowed by readonly+cheap."""
+        governor = BudgetGovernor()
+        policy = _policy(side_effect="mutating", cost="expensive", speculate_mode="speculative_allowed")
         assert governor._spec_tier(policy) == 3
 
-    def test_default_fallback_returns_tier_2(self) -> None:
+    def test_dry_run_only_falls_to_default_tier_2(self) -> None:
+        """dry_run_only falls to the default return 2 (not matching any specific branch)."""
         governor = BudgetGovernor()
-        # Any unclassified combination falls back to tier 2
-        policy = _policy(speculate_mode="dry_run_only")
+        # dry_run_only doesn't match forbid/pure_cheap/readonly_cheap/high_confidence/speculative_allowed
+        # falls through to return 2
+        policy = _policy(side_effect="mutating", cost="expensive", speculate_mode="dry_run_only")
         assert governor._spec_tier(policy) == 2
 
 
@@ -167,7 +184,8 @@ class TestAdmit:
 
     def test_tier_exceeds_max_denied(self) -> None:
         governor = BudgetGovernor(mode="safe")  # max tier = 1
-        policy = _policy(speculate_mode="speculative_allowed")  # tier 3
+        # tier 3 (mutating + speculative_allowed) should be denied
+        policy = _policy(side_effect="mutating", cost="expensive", speculate_mode="speculative_allowed")
         snap = _snapshot()
         result = governor.admit(policy, snap)
         assert result["allowed"] is False
@@ -191,35 +209,40 @@ class TestAdmit:
 
     def test_turbo_mode_allows_up_to_8_active(self) -> None:
         governor = BudgetGovernor(mode="turbo")
-        policy = _policy(speculate_mode="speculative_allowed")  # tier 3
+        # tier 3 (mutating + speculative_allowed) with 7 active tasks
+        policy = _policy(side_effect="mutating", cost="expensive", speculate_mode="speculative_allowed")
         snap = _snapshot(active_shadow_tasks=7)
         result = governor.admit(policy, snap)
         assert result["allowed"] is True
 
     def test_safe_mode_allows_only_tier_0_and_1(self) -> None:
         governor = BudgetGovernor(mode="safe")  # max tier = 1
-        # Tier 0 should be allowed
+        # Tier 0 (pure + cheap) should be allowed
         policy_tier0 = _policy(side_effect="pure", cost="cheap")
         snap = _snapshot()
         assert governor.admit(policy_tier0, snap)["allowed"] is True
-        # Tier 1 should be allowed
+        # Tier 1 (readonly + cheap) should be allowed
         policy_tier1 = _policy(side_effect="readonly", cost="cheap")
         assert governor.admit(policy_tier1, snap)["allowed"] is True
-        # Tier 2 should be denied
-        policy_tier2 = _policy(speculate_mode="high_confidence_only")
+        # Tier 2 (mutating + high_confidence) should be denied
+        policy_tier2 = _policy(side_effect="mutating", cost="expensive", speculate_mode="high_confidence_only")
         assert governor.admit(policy_tier2, snap)["allowed"] is False
 
     def test_balanced_mode_allows_up_to_tier_2(self) -> None:
         governor = BudgetGovernor(mode="balanced")
         snap = _snapshot()
-        # Tier 3 (speculative_allowed) should be denied
-        policy_t3 = _policy(speculate_mode="speculative_allowed")
+        # Tier 3 should be denied
+        policy_t3 = _policy(side_effect="mutating", cost="expensive", speculate_mode="speculative_allowed")
         assert governor.admit(policy_t3, snap)["allowed"] is False
+        # Tier 2 should be allowed
+        policy_t2 = _policy(side_effect="mutating", cost="expensive", speculate_mode="high_confidence_only")
+        assert governor.admit(policy_t2, snap)["allowed"] is True
 
     def test_unknown_mode_defaults_to_balanced_max(self) -> None:
         governor = BudgetGovernor(mode="unknown_mode")
         snap = _snapshot()
-        policy_t3 = _policy(speculate_mode="speculative_allowed")
+        # Tier 3 should be denied (balanced max = 2)
+        policy_t3 = _policy(side_effect="mutating", cost="expensive", speculate_mode="speculative_allowed")
         assert governor.admit(policy_t3, snap)["allowed"] is False
 
 

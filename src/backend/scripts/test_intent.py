@@ -1,6 +1,10 @@
 ﻿import sys
+
 sys.path.insert(0, r'c:\Users\dains\Documents\GitLab\polaris\src\backend')
-from polaris.cells.roles.kernel.internal.transaction.intent_classifier import classify_intent_regex, requires_mutation_intent
+from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
+    classify_intent_regex,
+    requires_mutation_intent,
+)
 
 # The L2 benchmark prompt + injected benchmark contract
 full_msg = '''读取 helpers.py 文件的内容。注意：不要猜测路径，如果不确定位置，先用工具查找。

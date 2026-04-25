@@ -1,5 +1,4 @@
-﻿import os
-import re
+﻿import re
 from pathlib import Path
 
 backend_root = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend')
@@ -39,13 +38,13 @@ for file_path in py_files:
         continue
     if str(file_path).endswith('src/backend/config.py'):
         continue
-        
+
     try:
         file_content = Path(file_path).read_text(encoding='utf-8')
         new_content = file_content
         for pattern, replacement in patterns:
             new_content = pattern.sub(replacement, new_content)
-        
+
         if new_content != file_content:
             Path(file_path).write_text(new_content, encoding='utf-8')
             modified_count += 1

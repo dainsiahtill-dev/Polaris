@@ -12,7 +12,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Sequence, cast
 
 from polaris.kernelone.context.context_os import StateFirstContextOS
 from polaris.kernelone.context.context_os.domain_adapters import get_context_domain_adapter
@@ -429,7 +429,7 @@ class RoleContextGateway:
         return {"role": "system", "name": "context_override", "content": content}
 
     def _extract_tool_messages_from_history(
-        self, history: list[tuple[str, str] | dict[str, str]]
+        self, history: Sequence[tuple[str, str] | dict[str, str]]
     ) -> list[dict[str, Any]]:
         """Extract tool messages from history for fallback when state-first mode is inactive.
 
@@ -479,7 +479,8 @@ class RoleContextGateway:
                 )
                 processed.append({"role": "tool", "content": new_content})
             else:
-                processed.append(msg)
+                # Always return a copy to avoid mutation of the original object
+                processed.append({"role": msg.get("role", "tool"), "content": content})
         return processed
 
     def _build_projection_dict(

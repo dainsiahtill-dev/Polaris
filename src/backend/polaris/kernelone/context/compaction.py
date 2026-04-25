@@ -332,7 +332,7 @@ class RoleContextCompressor:
         self,
         workspace: str,
         role_name: str = "ContextCompressor",
-        llm_client: "LLMClient | None" = None,
+        llm_client: LLMClient | None = None,
         model: str = "",
         transcript_service: TranscriptServicePort | None = None,
         config: dict[str, Any] | None = None,

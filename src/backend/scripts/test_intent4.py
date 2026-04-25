@@ -1,4 +1,5 @@
-﻿import sys, re
+﻿import sys
+
 sys.path.insert(0, r'c:\Users\dains\Documents\GitLab\polaris\src\backend')
 from polaris.cells.roles.kernel.internal.transaction.constants import DEBUG_AND_FIX_CN_MARKERS
 
@@ -21,9 +22,9 @@ print(f'Matched DEBUG_AND_FIX_CN_MARKERS in full msg: {hits_cn2}')
 
 # Check ALL signals
 from polaris.cells.roles.kernel.internal.transaction.constants import (
+    ANALYSIS_ONLY_SIGNALS,
     STRONG_MUTATION_CN_MARKERS,
     WEAK_MUTATION_CN_MARKERS,
-    ANALYSIS_ONLY_SIGNALS,
 )
 
 print(f'STRONG_MUTATION matches: {[m for m in STRONG_MUTATION_CN_MARKERS if m in prompt]}')

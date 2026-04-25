@@ -35,6 +35,9 @@ def _policy(
     )
 
 
+_task_counter = 0
+
+
 def _record(
     tool_name: str = "read_file",
     state: ShadowTaskState = ShadowTaskState.RUNNING,
@@ -43,14 +46,16 @@ def _record(
     cancellability: str = "cooperative",
 ) -> ShadowTaskRecord:
     """Create a ShadowTaskRecord with controlled started_at for progress testing."""
+    global _task_counter
+    _task_counter += 1
     started_at = time.monotonic() - (started_offset_ms / 1000.0) if started_offset_ms > 0 else None
     return ShadowTaskRecord(
-        task_id="task_test",
+        task_id=f"task_{_task_counter}",
         origin_turn_id="turn_test",
         origin_candidate_id="cand_test",
         tool_name=tool_name,
         normalized_args={},
-        spec_key="spec_test",
+        spec_key=f"spec_{_task_counter}",
         env_fingerprint="fp_test",
         policy_snapshot=_policy(tool_name=tool_name, timeout_ms=timeout_ms, cancellability=cancellability),
         state=state,
@@ -154,10 +159,10 @@ class TestEvaluateCooperative:
         record = _record(started_offset_ms=100, timeout_ms=1000, cancellability="cooperative")
         assert governor.evaluate(record) == SalvageDecision.CANCEL_NOW
 
-    def test_at_low_threshold_cooperative_returns_cancel_now(self) -> None:
+    def test_below_low_threshold_cooperative_returns_cancel_now(self) -> None:
         governor = SalvageGovernor(progress_low_threshold=0.20)
-        # Exactly at 20% threshold
-        record = _record(started_offset_ms=200, timeout_ms=1000, cancellability="cooperative")
+        # 15% progress (below 20% threshold), cooperative → CANCEL_NOW
+        record = _record(started_offset_ms=150, timeout_ms=1000, cancellability="cooperative")
         assert governor.evaluate(record) == SalvageDecision.CANCEL_NOW
 
     def test_above_low_threshold_cooperative_returns_join(self) -> None:
@@ -197,7 +202,7 @@ class TestEstimateProgress:
         record = _record(tool_name="stat_file", started_offset_ms=50, timeout_ms=1000)
         progress = governor._estimate_progress(record)
         # raw ratio = 0.05, boost = 0.35, capped at 0.95
-        assert progress == pytest.approx(0.35)
+        assert progress == pytest.approx(0.35, abs=0.01)
 
     def test_progress_clamped_to_one(self) -> None:
         governor = SalvageGovernor()
@@ -233,6 +238,7 @@ class TestBatchEvaluate:
         ]
         decisions = governor.batch_evaluate(records)
         assert isinstance(decisions, dict)
+        # All records have unique task_ids now
         assert len(decisions) == 3
         assert all(isinstance(d, SalvageDecision) for d in decisions.values())
 

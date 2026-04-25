@@ -6,9 +6,7 @@ Covers MetricsCollector, MetricsMiddleware, path normalization, and Prometheus e
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from polaris.delivery.http.middleware.metrics import (
     MetricsCollector,
@@ -21,7 +19,7 @@ from polaris.delivery.http.middleware.metrics import (
 class TestHistogramBucket:
     """Tests for HistogramBucket dataclass behavior."""
 
-    def test_HistogramBucket_initialization(self) -> None:
+    def test_histogram_bucket_initialization(self) -> None:
         from polaris.delivery.http.middleware.metrics import HistogramBucket
 
         bucket = HistogramBucket(upper_bound=100.0, count=5)
@@ -32,7 +30,7 @@ class TestHistogramBucket:
 class TestRequestMetrics:
     """Tests for RequestMetrics dataclass."""
 
-    def test_RequestMetrics_defaults(self) -> None:
+    def test_request_metrics_defaults(self) -> None:
         from polaris.delivery.http.middleware.metrics import RequestMetrics
 
         metric = RequestMetrics()
@@ -41,7 +39,7 @@ class TestRequestMetrics:
         assert metric.total_latency_ms == 0.0
         assert len(metric.latency_buckets) == 11  # 10 defined + inf
 
-    def test_RequestMetrics_latency_buckets_have_inf(self) -> None:
+    def test_request_metrics_latency_buckets_have_inf(self) -> None:
         from polaris.delivery.http.middleware.metrics import RequestMetrics
 
         metric = RequestMetrics()
@@ -88,7 +86,7 @@ class TestMetricsCollector:
         assert self.collector._inflight["GET /inflight"] == 2
 
     def test_record_request_decrements_inflight(self) -> None:
-        self.collector.start_request("GET", "/pending", 1)
+        self.collector.start_request("GET", "/pending")
         self.collector.record_request("GET", "/pending", 200, 50.0)
 
         # After record_request, in-flight should be decremented
@@ -115,7 +113,7 @@ class TestMetricsCollector:
         assert "polaris_uptime_seconds" in prom_output
 
     def test_get_prometheus_format_includes_inflight_gauge(self) -> None:
-        self.collector.start_request("GET", "/live", 1)
+        self.collector.start_request("GET", "/live")
         prom_output = self.collector.get_prometheus_format()
 
         assert "# HELP polaris_requests_inflight" in prom_output
@@ -129,7 +127,7 @@ class TestMetricsCollector:
 
     def test_reset_clears_all_metrics(self) -> None:
         self.collector.record_request("GET", "/reset", 200, 50.0)
-        self.collector.start_request("POST", "/reset", 1)
+        self.collector.start_request("POST", "/reset")
 
         self.collector.reset()
 
@@ -150,9 +148,9 @@ class TestMetricsCollector:
 
     def test_latency_buckets_accumulation(self) -> None:
         # Record requests in different bucket ranges
-        self.collector.record_request("GET", "/buckets", 200, 5.0)   # <= 10
+        self.collector.record_request("GET", "/buckets", 200, 5.0)  # <= 10
         self.collector.record_request("GET", "/buckets", 200, 30.0)  # <= 50
-        self.collector.record_request("GET", "/buckets", 200, 150.0) # <= 250
+        self.collector.record_request("GET", "/buckets", 200, 150.0)  # <= 250
 
         metric = self.collector._metrics["GET /buckets"]
         bucket_10 = next(b for b in metric.latency_buckets if b.upper_bound == 10)
@@ -175,7 +173,7 @@ class TestMetricsCollectorThreadSafety:
         requests_per_thread = 100
 
         def record_requests() -> None:
-            for i in range(requests_per_thread):
+            for _i in range(requests_per_thread):
                 collector.record_request("GET", "/concurrent", 200, 1.0)
 
         threads = [threading.Thread(target=record_requests) for _ in range(num_threads)]
@@ -205,8 +203,6 @@ class TestMetricsCollectorThreadSafety:
                 time.sleep(0.001)
 
         recorder = threading.Thread(target=record_loop)
-        resetter = threading.Thread(target=reset_loop)
-
         recorder.start()
         reset_loop()
         stop_event.set()
@@ -240,29 +236,33 @@ class TestMetricsMiddleware:
 
     def test_normalize_path_replaces_uuids(self) -> None:
         middleware = MetricsMiddleware(MagicMock())
-        path = "/users/550e8400-e29b-41d4-a716-446655440000"
-        normalized = middleware._normalize_path(path)
+        request = MagicMock()
+        request.url.path = "/users/550e8400-e29b-41d4-a716-446655440000"
+        normalized = middleware._normalize_path(request)
 
         assert normalized == "/users/{id}"
 
     def test_normalize_path_replaces_numeric_ids(self) -> None:
         middleware = MetricsMiddleware(MagicMock())
-        path = "/users/12345/posts/67890"
-        normalized = middleware._normalize_path(path)
+        request = MagicMock()
+        request.url.path = "/users/12345/posts/67890"
+        normalized = middleware._normalize_path(request)
 
         assert normalized == "/users/{id}/posts/{id}"
 
     def test_normalize_path_preserves_static_paths(self) -> None:
         middleware = MetricsMiddleware(MagicMock())
-        path = "/api/users/list"
-        normalized = middleware._normalize_path(path)
+        request = MagicMock()
+        request.url.path = "/api/users/list"
+        normalized = middleware._normalize_path(request)
 
         assert normalized == "/api/users/list"
 
     def test_normalize_path_handles_mixed_ids(self) -> None:
         middleware = MetricsMiddleware(MagicMock())
-        path = "/users/123e4567-e89b-12d3-a456-426614174000/posts/999"
-        normalized = middleware._normalize_path(path)
+        request = MagicMock()
+        request.url.path = "/users/123e4567-e89b-12d3-a456-426614174000/posts/999"
+        normalized = middleware._normalize_path(request)
 
         assert normalized == "/users/{id}/posts/{id}"
 
@@ -314,7 +314,7 @@ class TestPrometheusFormatEdgeCases:
         prom_output = self.collector.get_prometheus_format()
         # Sum line should not appear when request_count is 0
         lines = prom_output.split("\n")
-        sum_lines = [l for l in lines if "_sum" in l and "polaris_request_duration" in l]
+        sum_lines = [ln for ln in lines if "_sum" in ln and "polaris_request_duration" in ln]
         assert len(sum_lines) == 0
 
     def test_single_request_includes_sum_line(self) -> None:

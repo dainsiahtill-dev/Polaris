@@ -98,7 +98,7 @@ class BackendLaunchRequest:
         """
         # Import here to avoid circular dependency
         try:
-            from polaris.domain.models.config_snapshot import (  # noqa: F401
+            from polaris.domain.models.config_snapshot import (
                 ConfigValidationResult as ValidationResult,
             )
         except ImportError:
@@ -110,12 +110,12 @@ class BackendLaunchRequest:
                     self.errors: list[str] = []
                     self.warnings: list[str] = []
 
-                def add_error(self, msg: str) -> "SimpleValidationResult":
+                def add_error(self, msg: str) -> SimpleValidationResult:
                     self.is_valid = False
                     self.errors.append(msg)
                     return self
 
-                def add_warning(self, msg: str) -> "SimpleValidationResult":
+                def add_warning(self, msg: str) -> SimpleValidationResult:
                     self.warnings.append(msg)
                     return self
 

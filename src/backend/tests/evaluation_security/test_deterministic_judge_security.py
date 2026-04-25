@@ -600,6 +600,9 @@ def run_all_tests() -> tuple[int, int]:
             print(f"PASS: {test.__name__}")
             passed += 1
         except Exception as e:
+            # Intentionally catch all test exceptions (AssertionError, ValueError, etc.)
+            # to count failures. Do NOT catch SystemExit/KeyboardInterrupt so the test
+            # runner can be interrupted normally.
             print(f"FAIL: {test.__name__} - {e}")
             traceback.print_exc()
             failed += 1

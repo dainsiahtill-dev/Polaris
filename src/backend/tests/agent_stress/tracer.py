@@ -454,7 +454,10 @@ class RuntimeTracer:
                 await asyncio.wait_for(self._sync_all(), timeout=self.final_sync_timeout)
             except asyncio.TimeoutError:
                 print(f"[tracer] Final sync timed out after {self.final_sync_timeout:.1f}s; returning partial trace")
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
+                # Catch-all for sync failures (network, parse, etc.) - do not crash the tracer.
                 print(f"[tracer] Final sync failed: {type(e).__name__}: {e}")
 
         return self.current_round
@@ -469,6 +472,7 @@ class RuntimeTracer:
             except asyncio.TimeoutError:
                 print(f"[tracer] Sync timed out after {self.final_sync_timeout:.1f}s")
             except Exception as e:
+                # Catch-all for sync errors - do not crash the trace loop.
                 print(f"[tracer] Sync error: {e}")
 
             with suppress(asyncio.TimeoutError):
@@ -627,7 +631,10 @@ class RuntimeTracer:
                     if t.status in {"failed", "error", "cancelled", "blocked", "timeout"}
                 )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            # Catch-all for sync failures (network, parse, state errors, etc.)
             print(f"[tracer] Failed to sync director tasks: {type(e).__name__}: {e}")
 
     async def _sync_factory_runs(self):
@@ -720,7 +727,10 @@ class RuntimeTracer:
                 self._factory_rate_limit_backoff = self.factory_sync_interval
                 self._next_factory_sync_at = time.monotonic() + self.factory_sync_interval
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            # Catch-all for sync failures (network, parse, state errors).
             print(f"[tracer] Failed to sync factory runs: {type(e).__name__}: {e}")
 
     async def _sync_specific_factory_run(self, run_id: str):
@@ -777,7 +787,10 @@ class RuntimeTracer:
             self._factory_rate_limit_backoff = self.factory_sync_interval
             self._next_factory_sync_at = time.monotonic() + self.factory_sync_interval
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            # Catch-all for sync failures (network, parse, state errors).
             print(f"[tracer] Failed to sync specific factory run {run_id}: {type(e).__name__}: {e}")
 
     async def _sync_factory_events(self, run: FactoryRun):
@@ -792,7 +805,10 @@ class RuntimeTracer:
                 if isinstance(events, list):
                     run.events = events
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            # Catch-all for event sync failures (network, parse, state errors).
             print(f"[tracer] Failed to sync factory events for {run.run_id}: {type(e).__name__}: {e}")
 
     async def _sync_qa_conclusions(self):
@@ -867,7 +883,10 @@ class RuntimeTracer:
             self._qa_rate_limit_backoff = self.qa_sync_interval
             self._next_qa_sync_at = time.monotonic() + self.qa_sync_interval
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            # Catch-all for QA sync failures (network, parse, state errors).
             print(f"[tracer] Failed to sync QA conclusions: {type(e).__name__}: {e}")
 
     def get_task_dag(self) -> dict[str, Any]:

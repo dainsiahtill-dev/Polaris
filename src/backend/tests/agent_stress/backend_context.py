@@ -68,7 +68,9 @@ def _read_json_utf8(path: Path) -> dict[str, Any]:
             return {}
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except (ValueError, OSError):
+        # ValueError: corrupted JSON content
+        # OSError: file read error (encoding, permission, etc.)
         return {}
 
 

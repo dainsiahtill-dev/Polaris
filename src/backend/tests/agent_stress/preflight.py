@@ -215,7 +215,8 @@ class BackendPreflightProbe:
                 parsed = response.json()
                 if isinstance(parsed, dict):
                     payload = parsed
-            except Exception:
+            except json.JSONDecodeError:
+                # Response body is not valid JSON, payload stays None
                 payload = None
             return {
                 "ok": ok,
@@ -224,7 +225,9 @@ class BackendPreflightProbe:
                 "error": None if ok else f"HTTP {status_code}",
                 "payload": payload,
             }
-        except Exception as exc:
+        except httpx.HTTPError as exc:
+            # httpx.HTTPError covers connection errors, timeouts, HTTP protocol errors.
+            # We intentionally do NOT catch CancelledError so it propagates.
             return {
                 "ok": False,
                 "reachable": False,

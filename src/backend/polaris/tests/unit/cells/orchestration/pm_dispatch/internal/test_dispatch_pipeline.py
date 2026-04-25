@@ -143,9 +143,15 @@ class TestExtractTaskDependencies:
         result = dispatch_pipeline._extract_task_dependencies(task)
         assert result == ("T-1",)
 
-def test_empty_dependency_list(self) -> None:
+    def test_empty_dependency_list(self) -> None:
         task: dict[str, list[str]] = {"depends_on": []}
-        result = dispatch_pipeline._extract_task_dependencies(task
+        result = dispatch_pipeline._extract_task_dependencies(task)
+        assert result == ()
+
+    def test_no_dependencies(self) -> None:
+        task: dict[str, list[str]] = {}
+        result = dispatch_pipeline._extract_task_dependencies(task)
+        assert result == ()
 
     def test_whitespace_trimming(self) -> None:
         task = {"depends_on": ["  T-1  ", "T-2 ", " T-3"]}
@@ -304,7 +310,7 @@ class TestTasksTouchDocsOnly:
         assert result is True
 
     def test_handles_missing_keys(self) -> None:
-        tasks = [{}]
+        tasks: list[dict[str, str]] = [{}]
         result = dispatch_pipeline._tasks_touch_docs_only(tasks)
         assert result is False
 
@@ -392,13 +398,13 @@ class TestRecordDispatchStatusToShangshuling:
         )
         assert result == 0
 
-    def test_with_mocked_port_done_status(self) -> None:
+    def test_records_done_status(self) -> None:
         """Test recording done status."""
         mock_port = MagicMock()
         mock_port.record_shangshuling_task_completion.return_value = True
 
-        status_updates = {"T-1": "done", "T-2": "failed", "T-3": "blocked"}
-        failure_info = {"T-2": {"error": "failed"}}
+        status_updates = {"T-1": "done"}
+        failure_info: dict[str, dict[str, str]] = {}
 
         result = dispatch_pipeline.record_dispatch_status_to_shangshuling(
             workspace_full="/workspace",
@@ -407,14 +413,15 @@ class TestRecordDispatchStatusToShangshuling:
             shangshuling_port=mock_port,
         )
 
-        # Only "done" status is recorded (not "failed" or "blocked")
         assert result == 1
         mock_port.record_shangshuling_task_completion.assert_called_once()
         call_args = mock_port.record_shangshuling_task_completion.call_args
-        assert call_args[0][1] == "T-1"  # task_id
+        # First positional arg is workspace_full, task_id/success/metadata are keyword args
+        assert call_args[0][0] == "/workspace"  # workspace_full
+        assert call_args[1]["task_id"] == "T-1"
         assert call_args[1]["success"] is True
 
-    def test_with_mocked_port_failed_status(self) -> None:
+    def test_records_failed_status(self) -> None:
         """Test recording failed status."""
         mock_port = MagicMock()
         mock_port.record_shangshuling_task_completion.return_value = True
@@ -433,6 +440,65 @@ class TestRecordDispatchStatusToShangshuling:
         assert result == 1
         call_args = mock_port.record_shangshuling_task_completion.call_args
         assert call_args[1]["success"] is False
+
+    def test_records_blocked_status(self) -> None:
+        """Test recording blocked status (maps to failed)."""
+        mock_port = MagicMock()
+        mock_port.record_shangshuling_task_completion.return_value = True
+
+        status_updates = {"T-1": "blocked"}
+        failure_info: dict[str, dict[str, str]] = {}
+
+        result = dispatch_pipeline.record_dispatch_status_to_shangshuling(
+            workspace_full="/workspace",
+            status_updates=status_updates,
+            failure_info=failure_info,
+            shangshuling_port=mock_port,
+        )
+
+        # "blocked" status is recorded (as failure)
+        assert result == 1
+        call_args = mock_port.record_shangshuling_task_completion.call_args
+        assert call_args[1]["success"] is False
+
+    def test_records_multiple_terminal_statuses(self) -> None:
+        """Test that done, failed, and blocked are all recorded."""
+        mock_port = MagicMock()
+        mock_port.record_shangshuling_task_completion.return_value = True
+
+        # All three terminal statuses
+        status_updates = {"T-1": "done", "T-2": "failed", "T-3": "blocked"}
+        failure_info: dict[str, dict[str, str]] = {}
+
+        result = dispatch_pipeline.record_dispatch_status_to_shangshuling(
+            workspace_full="/workspace",
+            status_updates=status_updates,
+            failure_info=failure_info,
+            shangshuling_port=mock_port,
+        )
+
+        # All three should be recorded
+        assert result == 3
+        assert mock_port.record_shangshuling_task_completion.call_count == 3
+
+    def test_skips_non_terminal_statuses(self) -> None:
+        """Test that non-terminal statuses (todo, in_progress) are skipped."""
+        mock_port = MagicMock()
+        mock_port.record_shangshuling_task_completion.return_value = True
+
+        status_updates = {"T-1": "todo", "T-2": "in_progress", "T-3": "review"}
+        failure_info: dict[str, dict[str, str]] = {}
+
+        result = dispatch_pipeline.record_dispatch_status_to_shangshuling(
+            workspace_full="/workspace",
+            status_updates=status_updates,
+            failure_info=failure_info,
+            shangshuling_port=mock_port,
+        )
+
+        # None should be recorded
+        assert result == 0
+        mock_port.record_shangshuling_task_completion.assert_not_called()
 
     def test_port_error_swallowed(self) -> None:
         """On port error, should continue and return count of successful records."""

@@ -1,11 +1,17 @@
 ﻿import sys
+
 sys.path.insert(0, r'c:\Users\dains\Documents\GitLab\polaris\src\backend')
 
 import importlib
+
 import polaris.cells.roles.kernel.internal.transaction.intent_classifier as m
+
 importlib.reload(m)
 
-from polaris.cells.roles.kernel.internal.transaction.intent_classifier import classify_intent_regex, requires_mutation_intent
+from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
+    classify_intent_regex,
+    requires_mutation_intent,
+)
 
 tests = [
     # (prompt, expected_intent, expected_requires_mutation)

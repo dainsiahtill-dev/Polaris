@@ -1,7 +1,8 @@
 ﻿import json
+
 path = r'X:\.polaris\projects\l3-file-edit-sequence-14fa457f9d07-9251434a1e84\runtime\events\director.llm.events.jsonl'
 try:
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding='utf-8') as f:
         print(f"--- Parsing {path} ---")
         for i, line in enumerate(f):
             data = json.loads(line)

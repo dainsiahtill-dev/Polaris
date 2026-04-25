@@ -364,7 +364,9 @@ class RoleAvailabilityProbe:
                 error="Timeout",
                 latency_ms=int((time.time() - start_time) * 1000),
             )
-        except Exception as e:
+        except httpx.HTTPError as e:
+            # httpx.HTTPError: network-level errors (connection, protocol, etc.)
+            # We intentionally do NOT catch CancelledError so it propagates.
             return RoleProbeResult(
                 role=role,
                 status=ProbeStatus.UNHEALTHY,
@@ -394,7 +396,14 @@ class RoleAvailabilityProbe:
             if not reply:
                 return False, "Generation reply is empty", latency_ms
             return True, "", latency_ms
-        except Exception as exc:
+        except asyncio.CancelledError:
+            raise
+        except json.JSONDecodeError:
+            # Generation returned non-JSON response body
+            latency_ms = int((time.time() - started) * 1000)
+            return False, "Generation returned non-JSON response", latency_ms
+        except httpx.HTTPError as exc:
+            # httpx.HTTPError: network errors (connection, protocol, HTTP status, etc.)
             latency_ms = int((time.time() - started) * 1000)
             return False, f"Generation check error: {type(exc).__name__}: {exc}", latency_ms
 
@@ -431,7 +440,8 @@ class RoleAvailabilityProbe:
         if raw:
             try:
                 value = int(raw)
-            except Exception:
+            except ValueError:
+                # ValueError: invalid integer string
                 value = DEFAULT_GENERATION_CHECK_ATTEMPTS
         else:
             value = DEFAULT_GENERATION_CHECK_ATTEMPTS
@@ -442,7 +452,8 @@ class RoleAvailabilityProbe:
         if raw:
             try:
                 value = float(raw)
-            except Exception:
+            except ValueError:
+                # ValueError: invalid float string
                 value = float(self.probe_timeout or DEFAULT_GENERATION_TIMEOUT_SECONDS)
         else:
             value = float(self.probe_timeout or DEFAULT_GENERATION_TIMEOUT_SECONDS)
@@ -461,8 +472,11 @@ class RoleAvailabilityProbe:
                 return response.json()
             else:
                 return {"error": f"HTTP {response.status_code}"}
-        except Exception as e:
+        except httpx.HTTPError as e:
             return {"error": str(e)}
+        except Exception as e:
+            # Unexpected error - catch-all to prevent crashes in health probe
+            return {"error": f"Unexpected: {type(e).__name__}: {e}"}
 
 
 def _build_backend_context_payload(session: Any) -> dict[str, Any]:

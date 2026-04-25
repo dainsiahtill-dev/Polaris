@@ -5,10 +5,7 @@ Covers RequestLoggingMiddleware, header masking, and log formatting.
 
 from __future__ import annotations
 
-import time
 from unittest.mock import MagicMock
-
-import pytest
 
 from polaris.delivery.http.middleware.logging import (
     RequestLoggingMiddleware,
@@ -98,7 +95,9 @@ class TestRequestLoggingMiddleware:
     def test_get_client_ip_from_real_ip_header(self) -> None:
         middleware = RequestLoggingMiddleware(MagicMock())
         request = MagicMock()
-        request.headers.get.side_effect = lambda k: "10.0.0.5" if k == "X-Forwarded-For" else ("10.0.0.5" if k == "X-Real-IP" else None)
+        request.headers.get.side_effect = lambda k: (
+            "10.0.0.5" if k == "X-Forwarded-For" else ("10.0.0.5" if k == "X-Real-IP" else None)
+        )
         request.client = None
 
         ip = middleware._get_client_ip(request)

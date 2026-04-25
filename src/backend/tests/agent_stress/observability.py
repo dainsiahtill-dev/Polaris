@@ -230,7 +230,10 @@ class ObservabilityCollector:
             warning = f"snapshot timeout after {self.snapshot_timeout:.1f}s (factory_run_id={self._factory_run_id})"
             self._append_with_limit(self.collection_warnings, warning, MAX_COLLECTION_WARNINGS)
             snapshot["capture_timeout"] = warning
-        except Exception as e:
+        except (RuntimeError, httpx.HTTPError) as e:
+            # RuntimeError: async gather failure
+            # httpx.HTTPError: network errors from httpx calls
+            # We intentionally do NOT catch asyncio.CancelledError here.
             warning = f"snapshot capture error: {type(e).__name__}: {e}"
             self._append_with_limit(self.collection_warnings, warning, MAX_COLLECTION_WARNINGS)
             snapshot["capture_error"] = str(e)
@@ -284,7 +287,10 @@ class ObservabilityCollector:
                 "status_code": response.status_code,
                 "payload": payload,
             }
-        except Exception as exc:
+        except httpx.HTTPError as exc:
+            # httpx.HTTPError covers all HTTP-level errors (connection,
+            # timeout, protocol errors, etc.). We intentionally do NOT catch
+            # CancelledError so it propagates to the caller.
             message = f"{path} -> {type(exc).__name__}: {exc}"
             self._append_with_limit(self.collection_warnings, message, MAX_COLLECTION_WARNINGS)
             return {
@@ -352,7 +358,12 @@ class ObservabilityCollector:
             groups = await asyncio.gather(
                 *(fetch_task_events(task) for task in tasks_to_probe if isinstance(task, dict))
             )
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:
+            # asyncio.gather raises ExceptionGroup (multiple failures) or Exception (single failure).
+            # BaseException excludes SystemExit/KeyboardInterrupt while catching all relevant
+            # task-result exceptions. CancelledError is handled separately above.
             snapshot["llm_capture_error"] = f"{type(e).__name__}: {e}"
             return
 
@@ -461,7 +472,9 @@ class ObservabilityCollector:
                 self._seen_tool_events.add(event_key)
                 try:
                     duration_ms = int(payload.get("duration_ms") or event.get("duration_ms") or 0)
-                except Exception:
+                except (ValueError, TypeError):
+                    # ValueError: string to int conversion error
+                    # TypeError: None or non-int passed to int()
                     duration_ms = 0
                 exec_record = ToolExecution(
                     tool_name=str(payload.get("tool_name") or payload.get("tool") or event.get("tool_name") or kind),

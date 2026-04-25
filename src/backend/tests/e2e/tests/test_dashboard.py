@@ -2,7 +2,8 @@ from __future__ import annotations
 
 try:
     import pages  # type: ignore  # noqa: F401
-except Exception:
+except ImportError:
+    # ImportError: pages module (Playwright) not installed
     import pytest
 
     pytest.skip("e2e dashboard tests require Playwright pages module", allow_module_level=True)

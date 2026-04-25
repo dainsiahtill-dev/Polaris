@@ -54,8 +54,7 @@ BACKEND_ROOT = DOCS_DIR.parent  # src/backend
 # Add scripts directory to path for imports
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from fitness_rule_checker import FitnessRuleChecker, FitnessCheckResult
-
+from fitness_rule_checker import FitnessCheckResult, FitnessRuleChecker
 
 # ---------------------------------------------------------------------------
 # Semantic search implementations analysis
@@ -272,7 +271,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
 
         try:
             content = file_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
+        except (OSError, UnicodeDecodeError):
             return sites
 
         # Check for known graph-constrained entrypoints
@@ -424,9 +423,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
                 result.compliant_sites.append(site)
             else:
                 # Determine if we can make a definitive judgment
-                if site.imports_graph_service or site.uses_catalog_cache:
-                    result.compliant_sites.append(site)
-                elif site.is_graph_constrained:
+                if site.imports_graph_service or site.uses_catalog_cache or site.is_graph_constrained:
                     result.compliant_sites.append(site)
                 else:
                     # Undetermined - could be violation

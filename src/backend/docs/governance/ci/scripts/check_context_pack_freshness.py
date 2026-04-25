@@ -21,8 +21,8 @@ _REPO_ROOT = _SCRIPT_DIR.parent.parent.parent.parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 from fitness_rule_checker import (
-    FitnessRuleChecker,
     FitnessCheckResult,
+    FitnessRuleChecker,
 )
 
 # Freshness threshold: 7 days in seconds
@@ -77,7 +77,7 @@ class ContextPackFreshnessChecker(FitnessRuleChecker):
         """
         issues = []
         try:
-            with open(pack_path, "r", encoding="utf-8") as f:
+            with open(pack_path, encoding="utf-8") as f:
                 pack_data = json.load(f)
 
             # Check for required fields
@@ -113,7 +113,7 @@ class ContextPackFreshnessChecker(FitnessRuleChecker):
         try:
             import yaml
 
-            with open(cells_yaml_path, "r", encoding="utf-8") as f:
+            with open(cells_yaml_path, encoding="utf-8") as f:
                 catalog_data = yaml.safe_load(f)
         except Exception as e:
             result.passed = False

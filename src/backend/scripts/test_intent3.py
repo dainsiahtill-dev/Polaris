@@ -1,4 +1,5 @@
-﻿import sys, re
+﻿import sys
+
 sys.path.insert(0, r'c:\Users\dains\Documents\GitLab\polaris\src\backend')
 from polaris.cells.roles.kernel.internal.transaction.constants import _EN_DEBUG_FIX_RE
 
@@ -17,5 +18,5 @@ lowered = full_msg.lower()
 match = _EN_DEBUG_FIX_RE.search(lowered)
 print(f'_EN_DEBUG_FIX_RE match: {match}')
 if match:
-    print(f'  Matched: {repr(match.group())} at pos {match.start()}')
-    print(f'  Context: {repr(lowered[max(0,match.start()-20):match.end()+20])}')
+    print(f'  Matched: {match.group()!r} at pos {match.start()}')
+    print(f'  Context: {lowered[max(0,match.start()-20):match.end()+20]!r}')

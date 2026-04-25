@@ -1,7 +1,7 @@
-﻿import json
-
+﻿
 # Look for the case definition
 import os
+
 fixture_path = r'c:\Users\dains\Documents\GitLab\polaris\src\backend\polaris\cells\llm\evaluation\fixtures\tool_calling_matrix\cases\l3_file_edit_sequence.json'
 if os.path.exists(fixture_path):
     print(open(fixture_path, encoding='utf-8').read())

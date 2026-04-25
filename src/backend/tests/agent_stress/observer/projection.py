@@ -84,7 +84,9 @@ class RuntimeProjection:
         """安全转换为非负整数。"""
         try:
             return max(0, int(value))
-        except Exception:
+        except (ValueError, TypeError):
+            # ValueError: invalid string for int conversion
+            # TypeError: wrong type passed to int()
             return max(0, int(default))
 
     @staticmethod
@@ -519,7 +521,9 @@ class RuntimeProjection:
             if text.startswith("{") or text.startswith("["):
                 try:
                     parsed = json.loads(text)
-                except Exception:
+                except (ValueError, json.JSONDecodeError):
+                    # ValueError: invalid JSON structure
+                    # json.JSONDecodeError: actual decode failure
                     parsed = None
                 if parsed is not None:
                     return cls._extract_snapshot_task_rows(parsed)
@@ -752,7 +756,9 @@ class RuntimeProjection:
                 "failed": cls._coerce_non_negative_int(match.group("failed")),
                 "blocked": cls._coerce_non_negative_int(match.group("blocked")),
             }
-        except Exception:
+        except (IndexError, TypeError):
+            # IndexError: group name doesn't exist in regex
+            # TypeError: wrong type passed to group()
             return None
 
     def _push_taskboard_from_text(
@@ -818,7 +824,8 @@ class RuntimeProjection:
             return ""
         try:
             return str(Path(raw).resolve())
-        except Exception:
+        except OSError:
+            # OSError: path resolution failed (permissions, symlinks, etc.)
             return raw
 
     @staticmethod
@@ -827,11 +834,12 @@ class RuntimeProjection:
         if runtime_root:
             try:
                 return Path(str(runtime_root)).resolve()
-            except Exception:
+            except OSError:
+                # OSError: path resolution failed
                 return Path(str(runtime_root))
         try:
             workspace_path = Path(workspace).resolve()
-        except Exception:
+        except OSError:
             workspace_path = Path(workspace)
         return Path(resolve_runtime_path(str(workspace_path), "runtime"))
 
@@ -872,15 +880,24 @@ class RuntimeProjection:
                 if self.ws is not None:
                     try:
                         await self.ws.close()
-                    except Exception as e:
-                        logger.debug("WS close error during subscribe fallback: %s", e)
+                    except websockets.exceptions.ConnectionClosed:
+                        # ConnectionClosed: WebSocket already closed, ignore
+                        pass
+                    except OSError:
+                        # OSError: other close errors
+                        pass
                 self.ws = None
                 self.connected = False
                 return False
             self.connected = True
             self.connection_error = ""
             return True
+        except websockets.exceptions.ConnectionClosed:
+            # ConnectionClosed: WS disconnected, not an error in connect flow
+            self.connection_error = "ws_connect_failed:connection_closed"
+            logger.debug("WS connect error: %s", e)
         except Exception as e:
+            # Catch-all for unexpected errors during connect.
             self.connection_error = f"ws_connect_failed:{type(e).__name__}"
             logger.debug("WS connect error: %s", e)
             self.connected = False
@@ -902,10 +919,11 @@ class RuntimeProjection:
             return "default"
         try:
             return str(resolve_storage_roots(raw).workspace_key or "").strip() or "default"
-        except Exception:
+        except (OSError, ValueError):
+            # OSError/ValueError: resolve_storage_roots() failure
             try:
                 return Path(raw).resolve().name or "default"
-            except Exception:
+            except (OSError, ValueError):
                 return Path(raw).name or "default"
 
     async def _send_subscribe(self, channels: list[str]) -> bool:
@@ -927,7 +945,12 @@ class RuntimeProjection:
             await self.ws.send(json.dumps(message, ensure_ascii=False))
             self._runtime_v2_client_id = str(message["client_id"])
             return True
-        except Exception as exc:
+        except websockets.exceptions.ConnectionClosed:
+            self.connection_error = "runtime_v2_subscribe_send_failed:connection_closed"
+            logger.debug("runtime.v2 SUBSCRIBE send failed: connection closed")
+            return False
+        except OSError as exc:
+            # OSError: network send errors
             self.connection_error = f"runtime_v2_subscribe_send_failed:{type(exc).__name__}"
             logger.debug("runtime.v2 SUBSCRIBE send failed: %s", exc)
             return False
@@ -949,7 +972,15 @@ class RuntimeProjection:
                 return False
             try:
                 raw_message = await asyncio.wait_for(self.ws.recv(), timeout=remaining)
-            except Exception as exc:
+            except asyncio.TimeoutError:
+                self.connection_error = "runtime_v2_subscribe_recv_timeout"
+                logger.debug("runtime.v2 SUBSCRIBE recv timed out")
+                return False
+            except websockets.exceptions.ConnectionClosed:
+                self.connection_error = "runtime_v2_subscribe_recv_connection_closed"
+                logger.debug("runtime.v2 SUBSCRIBE recv: connection closed")
+                return False
+            except OSError as exc:
                 self.connection_error = f"runtime_v2_subscribe_recv_failed:{type(exc).__name__}"
                 logger.debug("runtime.v2 SUBSCRIBE recv failed: %s", exc)
                 return False
@@ -997,8 +1028,8 @@ class RuntimeProjection:
         try:
             await self.ws.send(json.dumps(ack_payload, ensure_ascii=False))
             self._runtime_v2_last_acked_cursor = safe_cursor
-        except Exception as exc:
-            # ACK 失败不应中断监听循环，但要留下错误线索便于诊断。
+        except OSError as exc:
+            # OSError: network send errors
             self.connection_error = f"runtime_v2_ack_failed:{type(exc).__name__}"
             logger.debug("runtime.v2 ACK failed: cursor=%s error=%s", safe_cursor, exc)
 
@@ -1012,7 +1043,11 @@ class RuntimeProjection:
         if self.ws:
             try:
                 await self.ws.close()
-            except Exception as e:
+            except websockets.exceptions.ConnectionClosed:
+                # ConnectionClosed: already closed, ignore
+                pass
+            except OSError as e:
+                # OSError: close errors (connection lost, etc.)
                 logger.debug("WS close error during workspace retarget: %s", e)
         self.ws = None
 
@@ -1070,7 +1105,8 @@ class RuntimeProjection:
                 continue
             try:
                 resolved = candidate.resolve()
-            except Exception:
+            except OSError:
+                # OSError: path resolution failed
                 resolved = candidate
             if resolved in roots:
                 continue
@@ -1115,7 +1151,9 @@ class RuntimeProjection:
                             continue
                         try:
                             key = str(path.resolve())
-                        except Exception:
+                        except (OSError, RuntimeError):
+                            # OSError: path resolution failed
+                            # RuntimeError: invalid path
                             key = str(path)
                         if key in seen_paths:
                             continue
@@ -1154,7 +1192,9 @@ class RuntimeProjection:
                         continue
                     try:
                         key = str(path.resolve())
-                    except Exception:
+                    except (OSError, RuntimeError):
+                        # OSError: path resolution failed
+                        # RuntimeError: invalid path
                         key = str(path)
                     if key in seen_paths:
                         continue
@@ -1167,7 +1207,9 @@ class RuntimeProjection:
         """将文件 mtime(ns) 转为 UTC ISO 字符串。"""
         try:
             return datetime.fromtimestamp(float(value) / 1_000_000_000, tz=timezone.utc).isoformat()
-        except Exception:
+        except (ValueError, OSError):
+            # ValueError: value out of range for timestamp
+            # OSError: timestamp too large
             return ""
 
     def _poll_local_output_projection_once(self) -> None:
@@ -1549,7 +1591,8 @@ class RuntimeProjection:
         """将值压缩为紧凑的 JSON 字符串。"""
         try:
             text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        except Exception:
+        except (ValueError, TypeError):
+            # ValueError/TypeError: non-serializable object passed
             text = str(value)
         text = str(text).replace("\n", " ").strip()
         if len(text) > max_chars:
@@ -1620,7 +1663,8 @@ class RuntimeProjection:
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):
                         payload = parsed
-                except Exception:
+                except json.JSONDecodeError:
+                    # Malformed JSON, ignore and use empty payload
                     payload = {}
 
         event_raw = payload.get("raw")
@@ -1726,7 +1770,8 @@ class RuntimeProjection:
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):
                         payload = parsed
-                except Exception:
+                except json.JSONDecodeError:
+                    # Malformed JSON, ignore and use empty payload
                     payload = {}
 
         timestamp = str(payload.get("ts") or payload.get("timestamp") or msg.get("timestamp") or "")
@@ -2219,7 +2264,10 @@ class RuntimeProjection:
                     await self._on_message(parsed)
         except websockets.exceptions.ConnectionClosed:
             logger.info("WS connection closed")
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            # Catch-all: unexpected error in WS listener loop
             self.connection_error = f"ws_listener_failed:{type(e).__name__}"
             logger.error("WS listener error: %s", e)
         finally:
@@ -2284,7 +2332,8 @@ class RuntimeProjection:
                 if snapshot_text.startswith("{") or snapshot_text.startswith("["):
                     try:
                         parsed_snapshot = json.loads(snapshot_text)
-                    except Exception:
+                    except (ValueError, json.JSONDecodeError):
+                        # ValueError/JSONDecodeError: malformed JSON
                         parsed_snapshot = {}
                     snapshot_payload = parsed_snapshot if isinstance(parsed_snapshot, dict) else {}
                 else:
@@ -2298,7 +2347,7 @@ class RuntimeProjection:
                     if nested_text.startswith("{") or nested_text.startswith("["):
                         try:
                             nested_snapshot = json.loads(nested_text)
-                        except Exception:
+                        except json.JSONDecodeError:
                             nested_snapshot = {}
                 snapshot_payload = nested_snapshot if isinstance(nested_snapshot, dict) else {}
             if snapshot_payload:

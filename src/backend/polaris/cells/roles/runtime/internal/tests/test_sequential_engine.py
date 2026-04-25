@@ -3,25 +3,24 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.roles.runtime.internal.sequential_engine import (
+    DEFAULT_BUDGET_CONFIG,
+    RESERVED_KEYS,
+    WRITE_TOOL_NAMES,
     FailureClass,
     RetryHint,
     SeqEventType,
     SeqProgressDetector,
+    SeqState,
     SequentialBudget,
     SequentialStateProxy,
     SequentialStats,
-    SeqState,
     StepDecision,
     StepResult,
     StepStatus,
     TerminationReason,
     create_sequential_budget,
     should_enable_sequential,
-    RESERVED_KEYS,
-    WRITE_TOOL_NAMES,
-    DEFAULT_BUDGET_CONFIG,
 )
 
 
@@ -32,10 +31,7 @@ class TestEnums:
         assert TerminationReason.SEQ_COMPLETED.value == "seq_completed"
         assert TerminationReason.SEQ_NO_PROGRESS.value == "seq_no_progress"
         assert TerminationReason.SEQ_BUDGET_EXHAUSTED.value == "seq_budget_exhausted"
-        assert (
-            TerminationReason.SEQ_TOOL_FAIL_RECOVERABLE_EXHAUSTED.value
-            == "seq_tool_fail_recoverable_exhausted"
-        )
+        assert TerminationReason.SEQ_TOOL_FAIL_RECOVERABLE_EXHAUSTED.value == "seq_tool_fail_recoverable_exhausted"
         assert TerminationReason.SEQ_OUTPUT_INVALID_EXHAUSTED.value == "seq_output_invalid_exhausted"
         assert TerminationReason.SEQ_RESERVED_KEY_VIOLATION.value == "seq_reserved_key_violation"
         assert TerminationReason.SEQ_CRASH_ORPHAN.value == "seq_crash_orphan"
@@ -207,20 +203,23 @@ class TestSequentialStateProxy:
     def test_write_allowed_key(self):
         state = SeqState()
         proxy = SequentialStateProxy(state, emit_violation=False, fail_fast=False)
-        proxy.write("custom_field", "value")
-        assert getattr(state, "custom_field", None) == "value"
+        # step_index is not in RESERVED_KEYS, so it should be writable
+        proxy.write("step_index", 5)
+        assert state.step_index == 5
 
     def test_write_reserved_key_no_fail_fast(self):
         state = SeqState()
         proxy = SequentialStateProxy(state, emit_violation=False, fail_fast=False)
         proxy.write("phase", "testing")
-        # Should not raise, key just blocked
-        assert state.phase != "testing"
+        # Should not raise, key just blocked (no attribute created)
+        assert not hasattr(state, "phase")
 
     def test_write_reserved_key_fail_fast(self):
         state = SeqState()
         proxy = SequentialStateProxy(state, emit_violation=False, fail_fast=True)
-        with pytest.raises(Exception):
+        from polaris.cells.roles.runtime.internal.sequential_engine import ReservedKeyViolationError
+
+        with pytest.raises(ReservedKeyViolationError):
             proxy.write("status", "running")
 
     def test_get_state(self):
@@ -271,7 +270,7 @@ class TestSeqProgressDetector:
         state = SeqState()
 
         tool_result = {"tool": "write_file", "success": False}
-        progress, signals = detector.detect_progress(tool_result, decision, state)
+        progress, _ = detector.detect_progress(tool_result, decision, state)
         assert progress is False
 
     def test_detect_progress_with_tests_passed_delta(self):
@@ -286,9 +285,7 @@ class TestSeqProgressDetector:
 
     def test_detect_progress_with_blocker_in_actions(self):
         detector = SeqProgressDetector()
-        decision = StepDecision(
-            step_index=0, intent="analyze", planned_actions=["identify blocker: file missing"]
-        )
+        decision = StepDecision(step_index=0, intent="analyze", planned_actions=["identify blocker: file missing"])
         state = SeqState()
 
         progress, signals = detector.detect_progress(None, decision, state)

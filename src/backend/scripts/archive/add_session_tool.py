@@ -1,5 +1,4 @@
 ﻿from pathlib import Path
-import re
 
 # 1. Update Tool Spec Registry
 registry_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/tool_execution/tool_spec_registry.py')
@@ -40,7 +39,7 @@ h_content = handler_path.read_text(encoding='utf-8')
 
 if '_handle_update_session_state' not in h_content:
     h_content = h_content.replace('"get_state": _handle_get_state,', '"get_state": _handle_get_state,\n        "update_session_state": _handle_update_session_state,')
-    
+
     handler_code = '''
 def _handle_update_session_state(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     """Handle update_session_state tool call."""

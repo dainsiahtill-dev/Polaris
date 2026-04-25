@@ -1,5 +1,4 @@
-﻿import re
-from pathlib import Path
+﻿from pathlib import Path
 
 config_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/bootstrap/config.py')
 content = config_path.read_text(encoding='utf-8')

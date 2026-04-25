@@ -54,7 +54,8 @@ class TestArchitectureInvariants:
         for py_file in py_files:
             try:
                 content = py_file.read_text(encoding="utf-8")
-            except Exception:
+            except OSError:
+                # OSError: file read error (not found, permission, encoding issues)
                 continue
 
             # 检查是否有 role_agent 导入
@@ -132,7 +133,8 @@ class TestArchitectureInvariants:
         for py_file in py_files:
             try:
                 content = py_file.read_text(encoding="utf-8")
-            except Exception:
+            except OSError:
+                # OSError: file read error (not found, permission, encoding issues)
                 continue
 
             # 查找不带 encoding 的 open() 调用
@@ -204,7 +206,8 @@ class TestArchitectureInvariants:
 
             try:
                 content = py_file.read_text(encoding="utf-8")
-            except Exception:
+            except OSError:
+                # OSError: file read error (not found, permission, encoding issues)
                 continue
 
             # 检查 sys.path.insert 或 sys.path.append
@@ -239,7 +242,8 @@ class TestArchitectureInvariants:
 
             try:
                 content = py_file.read_text(encoding="utf-8")
-            except Exception:
+            except OSError:
+                # OSError: file read error (not found, permission, encoding issues)
                 continue
 
             # 检查 datetime.utcnow() 或 datetime.utcnow 的调用
@@ -278,7 +282,8 @@ class TestArchitectureInvariants:
 
             try:
                 content = factory_file.read_text(encoding="utf-8")
-            except Exception:
+            except OSError:
+                # OSError: file read error (not found, encoding, permission, etc.)
                 continue
 
             for pattern in placeholder_patterns:

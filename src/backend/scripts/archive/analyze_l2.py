@@ -1,6 +1,7 @@
 ﻿import json
+
 path = r'X:\.polaris\projects\l2-path-inference-bacd65b0c497-eee7f83fd6bc\runtime\events\director.llm.events.jsonl'
-with open(path, 'r', encoding='utf-8') as f:
+with open(path, encoding='utf-8') as f:
     for i, line in enumerate(f):
         data = json.loads(line)
         event = data.get('event')

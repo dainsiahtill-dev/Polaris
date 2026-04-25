@@ -1,6 +1,7 @@
 ﻿import json
+
 path = 'X:/.polaris/projects/l5-sequential-dag-38d62445a0e5-25f5c2e421c9/runtime/events/director.llm.events.jsonl'
-with open(path, 'r', encoding='utf-8') as f:
+with open(path, encoding='utf-8') as f:
     for i, line in enumerate(f):
         data = json.loads(line)
         event = data.get('event')

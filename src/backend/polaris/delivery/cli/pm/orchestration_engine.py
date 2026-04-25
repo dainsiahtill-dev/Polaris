@@ -65,6 +65,7 @@ from polaris.delivery.cli.pm.blocked_policy import (
     should_apply_degrade_settings,
 )
 from polaris.delivery.cli.pm.config import PmRoleState
+from polaris.delivery.cli.pm.engine.core import EngineRuntimeConfig, PolarisEngine
 from polaris.delivery.cli.pm.orchestration_core import (
     archive_task_history,
     check_spin_guard,
@@ -73,7 +74,6 @@ from polaris.delivery.cli.pm.orchestration_core import (
     load_state_and_context,
     update_consecutive_counters,
 )
-from polaris.delivery.cli.pm.engine.core import EngineRuntimeConfig, PolarisEngine
 from polaris.delivery.cli.pm.report_utils import (
     append_pm_report,
     format_chief_engineer_for_report,

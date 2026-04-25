@@ -117,7 +117,8 @@ class ObserverState:
         """压缩为紧凑 JSON。"""
         try:
             text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        except Exception:
+        except (ValueError, TypeError):
+            # ValueError/TypeError: non-serializable object passed
             text = str(value)
         compact = str(text).replace("\n", " ").strip()
         if len(compact) > max_chars:
@@ -139,7 +140,9 @@ class ObserverState:
         """宽松转换为非负整数。"""
         try:
             return max(0, int(value))
-        except Exception:
+        except (ValueError, TypeError):
+            # ValueError: invalid string for int conversion
+            # TypeError: wrong type passed to int()
             return 0
 
     @classmethod
@@ -162,7 +165,9 @@ class ObserverState:
             return 0
         try:
             return max(0, int(match.group(1)))
-        except Exception:
+        except (ValueError, IndexError):
+            # ValueError: group not a valid integer
+            # IndexError: no group(1)
             return 0
 
     @classmethod
@@ -234,7 +239,8 @@ class ObserverState:
             return ""
         try:
             parsed = json.loads(payload_text)
-        except Exception:
+        except json.JSONDecodeError:
+            # Malformed JSON, return the raw compact text
             compact = " ".join(payload_text.split())
             if len(compact) > 80:
                 compact = f"{compact[:80]}..."
@@ -275,7 +281,8 @@ class ObserverState:
 
         try:
             parsed = json.loads(candidate)
-        except Exception:
+        except json.JSONDecodeError:
+            # Malformed JSON, check for known patterns
             if '"plan_markdown"' in candidate:
                 return "计划草案预览（包含 plan_markdown）"
             if '"tasks"' in candidate:
@@ -339,7 +346,8 @@ class ObserverState:
         """获取终端宽度。"""
         try:
             return shutil.get_terminal_size().columns
-        except Exception:
+        except OSError:
+            # OSError: terminal size not available (e.g., in non-terminal environment)
             return 120
 
     def render(self) -> Layout:

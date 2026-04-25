@@ -18,7 +18,6 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 GREEN = "\033[92m"
 RED = "\033[91m"

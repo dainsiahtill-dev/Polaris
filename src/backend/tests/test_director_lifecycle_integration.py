@@ -233,6 +233,7 @@ class TestDirectorLifecycleConcurrency:
                         status=f"writer-{writer_id}-{i}",
                     )
                 except Exception as e:
+                    # Intentionally catch all exceptions to detect thread safety issues.
                     errors.append(e)
 
         threads = [

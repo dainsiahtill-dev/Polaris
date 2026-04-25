@@ -8,7 +8,7 @@ paths = [
 for path in paths:
     print(f'\n=== File: {path} ===')
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             for line in f:
                 data = json.loads(line)
                 event = data.get('event')
@@ -17,12 +17,12 @@ for path in paths:
                     metadata = d.get('metadata', {})
                     tools = d.get('tool_calls_count', 0)
                     response = metadata.get('response_content', '')
-                    print(f'[llm_call_end] Tools: {tools} | Text: {repr(response[:200])}...')
+                    print(f'[llm_call_end] Tools: {tools} | Text: {response[:200]!r}...')
                 elif event == 'llm_call_start':
                     messages = d.get('metadata', {}).get('messages', [])
                     print(f'[llm_call_start] Turn round: {d.get("metadata", {}).get("turn_round", 0)} | Messages: {len(messages)}')
                     if messages:
-                        print(f'   -> Last user prompt: {repr(messages[-1].get("content", "")[:200])}...')
+                        print(f'   -> Last user prompt: {messages[-1].get("content", "")[:200]!r}...')
                 elif event == 'llm_error':
                     print(f'[llm_error] Error: {d}')
                 else:

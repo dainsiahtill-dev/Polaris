@@ -1,6 +1,5 @@
-﻿from pathlib import Path
-import shutil
-import re
+﻿import shutil
+from pathlib import Path
 
 backend_root = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend')
 config_dir = backend_root / 'polaris' / 'config'

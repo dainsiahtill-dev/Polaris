@@ -197,6 +197,8 @@ class TestConcurrency:
                     update_index_with_report(temp_workspace, report)
                     time.sleep(0.001)  # Small delay to encourage interleaving
             except Exception as exc:  # pragma: no cover
+                # Intentionally catch all exceptions to detect thread safety issues.
+                # SystemExit/KeyboardInterrupt should not occur in worker threads.
                 errors.append(exc)
 
         # Run concurrent updates
@@ -255,7 +257,8 @@ class TestConcurrency:
                     reconcile_llm_test_index(temp_workspace)
                     time.sleep(0.005)
             except Exception as exc:
-                # Ignore transient Windows file access errors
+                # Intentionally catch all exceptions to detect thread safety issues.
+                # Filter transient Windows file access errors which are expected on Windows.
                 if "Access is denied" in str(exc) or "PermissionError" in type(exc).__name__:
                     return
                 errors.append(exc)
@@ -315,6 +318,7 @@ class TestConcurrency:
                     update_index_with_report(temp_workspace, report)
                     time.sleep(0.002)
             except Exception as exc:  # pragma: no cover
+                # Intentionally catch all exceptions to detect thread safety issues.
                 errors.append(exc)
 
         def reader_worker() -> None:
@@ -327,6 +331,7 @@ class TestConcurrency:
                         read_count[0] += 1
                     time.sleep(0.001)
             except Exception as exc:  # pragma: no cover
+                # Intentionally catch all exceptions to detect thread safety issues.
                 errors.append(exc)
 
         with ThreadPoolExecutor(max_workers=num_writers + num_readers) as executor:
@@ -568,7 +573,8 @@ class TestStress:
                     else:
                         load_llm_test_index(temp_workspace)
             except Exception as exc:
-                # Ignore transient errors (Windows file access issues)
+                # Intentionally catch all exceptions to detect thread safety issues.
+                # Filter transient Windows file access errors which are expected on Windows.
                 if "Access is denied" in str(exc) or "PermissionError" in type(exc).__name__:
                     return
                 errors.append(exc)

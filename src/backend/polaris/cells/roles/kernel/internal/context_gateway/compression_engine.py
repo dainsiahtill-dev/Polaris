@@ -225,7 +225,7 @@ class CompressionEngine:
                 processed.append(msg)
 
         # 反转回正序（avoid list() call - reversed returns iterator, consume into list）
-        result = list[dict[str, str]](reversed(processed))
+        result = list(reversed(processed))
         return result, self._token_estimator.estimate(result)
 
     def aggressive_truncate(self, messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
