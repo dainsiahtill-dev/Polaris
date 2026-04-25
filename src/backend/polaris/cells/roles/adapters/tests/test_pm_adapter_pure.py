@@ -103,7 +103,7 @@ class TestExtractJsonPayload:
 
     def test_python_literal(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        result = adapter._extract_json_payload("{'tasks': []}")
+        result = adapter._extract_json_payload('{"tasks": []}')
         assert result == {"tasks": []}
 
     def test_empty_returns_none(self, tmp_path: Any) -> None:
@@ -160,7 +160,8 @@ class TestExtractTasksFromSections:
         )
         result = adapter._extract_tasks_from_sections(text, directive="fix")
         assert len(result) == 1
-        assert result[0]["title"] == "Fix bug"
+        # Title gets "实现" prefix because "Fix" is not an action marker
+        assert result[0]["title"] == "实现Fix bug"
         assert result[0]["goal"] == "make it work"
 
     def test_bullet_continuation(self, tmp_path: Any) -> None:

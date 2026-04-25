@@ -79,12 +79,16 @@ def build_audit_llm_binding_config(settings: Any) -> AuditLLMBindingConfig:
 
     fallback_model = str(getattr(settings, "model", "") or "").strip()
 
+    _enabled = getattr(settings, "audit_llm_enabled", True)
+    _prefer_local = getattr(settings, "audit_llm_prefer_local_ollama", True)
+    _allow_fallback = getattr(settings, "audit_llm_allow_remote_fallback", True)
+
     return AuditLLMBindingConfig(
-        enabled=bool(getattr(settings, "audit_llm_enabled", True)),
+        enabled=True if _enabled is None else bool(_enabled),
         role_id=role_id,
         timeout_seconds=timeout_seconds,
-        prefer_local_ollama=bool(getattr(settings, "audit_llm_prefer_local_ollama", True)),
-        allow_remote_fallback=bool(getattr(settings, "audit_llm_allow_remote_fallback", True)),
+        prefer_local_ollama=True if _prefer_local is None else bool(_prefer_local),
+        allow_remote_fallback=True if _allow_fallback is None else bool(_allow_fallback),
         fallback_model=fallback_model,
     )
 

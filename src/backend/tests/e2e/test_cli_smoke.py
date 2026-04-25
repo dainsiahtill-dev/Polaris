@@ -7,6 +7,7 @@ execute business logic.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,15 +61,19 @@ _CLI_ENTRIES: list[CliEntry] = [
 ]
 
 
-def _resolve_python_path() -> str:
-    """Return the PYTHONPATH needed so that ``polaris`` is importable.
+def _build_env() -> dict[str, str]:
+    """Return an environment dict that lets ``python -m polaris.…`` work.
 
-    When pytest runs from the repo root, ``src/backend`` is already on
-    ``sys.path`` (via ``conftest.py``).  We replicate that for the
-    subprocess so that ``python -m polaris.…`` works identically.
+    The subprocess must inherit the parent's ``PYTHONPATH`` (so that venv
+    packages such as *fastapi* are discoverable) **and** have
+    ``src/backend`` prepended so that the ``polaris`` package is found.
     """
     backend_dir = Path(__file__).resolve().parents[2]  # …/src/backend
-    return str(backend_dir)
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    separator = os.pathsep
+    env["PYTHONPATH"] = f"{backend_dir}{separator}{existing}" if existing else str(backend_dir)
+    return env
 
 
 @pytest.mark.integration
@@ -79,7 +84,7 @@ def _resolve_python_path() -> str:
 )
 def test_cli_help_smoke(entry: CliEntry) -> None:
     """Verify ``python -m <module> --help`` exits 0 and prints expected text."""
-    env = {"PYTHONPATH": _resolve_python_path()}
+    env = _build_env()
     cmd = [sys.executable, "-m", entry.module, *entry.args]
 
     result = subprocess.run(
@@ -91,11 +96,14 @@ def test_cli_help_smoke(entry: CliEntry) -> None:
     )
 
     assert result.returncode == 0, (
-        f"CLI {entry.module!r} exited with {result.returncode}.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        f"CLI {entry.module!r} exited with {result.returncode}.\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
     )
 
     combined = f"{result.stdout}\n{result.stderr}"
     assert entry.expected_in_output in combined, (
         f"Expected text {entry.expected_in_output!r} not found in output of "
-        f"{entry.module!r}.\ncombined output:\n{combined}"
+        f"{entry.module!r}.\n"
+        f"combined output:\n{combined}"
     )

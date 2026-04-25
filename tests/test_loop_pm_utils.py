@@ -403,9 +403,10 @@ class TestLoopPmUtils(unittest.TestCase):
                 self.assertTrue(run_summary_path.is_file())
 
     def test_execute_non_director_tasks_policygate_block_is_fail_closed(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
-                payload = self.loop_pm.execute_non_director_tasks(
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(
+            os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False
+        ):
+            payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
                             "id": "PG-1",
@@ -426,9 +427,10 @@ class TestLoopPmUtils(unittest.TestCase):
                 self.assertEqual(payload["results"][0]["error_code"], "POLICY_GATE_BLOCKED")
 
     def test_execute_non_director_tasks_policygate_missing_decision_is_fail_closed(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
-                payload = self.loop_pm.execute_non_director_tasks(
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(
+            os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False
+        ):
+            payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
                             "id": "PG-2",

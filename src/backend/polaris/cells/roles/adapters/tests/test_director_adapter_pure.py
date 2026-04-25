@@ -251,13 +251,13 @@ class TestPersistExecutionBackendMetadata:
         adapter._persist_execution_backend_metadata("", MagicMock())
 
     def test_calls_update_board_task(self, tmp_path: Any) -> None:
-        mock_board = MagicMock()
-        adapter = _make_adapter(tmp_path, task_board=mock_board)
+        mock_runtime = MagicMock()
+        adapter = _make_adapter(tmp_path, task_runtime=mock_runtime)
         from polaris.cells.roles.adapters.internal.director_execution_backend import DirectorExecutionBackendRequest
 
         req = DirectorExecutionBackendRequest(execution_backend="code_edit")
         adapter._persist_execution_backend_metadata("t1", req)
-        mock_board.update_task.assert_called_once()
+        mock_runtime.update_task.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
