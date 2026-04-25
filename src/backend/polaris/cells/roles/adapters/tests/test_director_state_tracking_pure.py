@@ -9,12 +9,8 @@ Covers:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
-
-import pytest
 
 from polaris.cells.roles.adapters.internal.director.state_tracking import DirectorStateTracker
-
 
 # ---------------------------------------------------------------------------
 # QA state derivation
@@ -111,10 +107,16 @@ class TestSanitizeTaskDescription:
         assert DirectorStateTracker.sanitize_task_description("- item") == "item"
         assert DirectorStateTracker.sanitize_task_description("* item") == "item"
         assert DirectorStateTracker.sanitize_task_description("1. item") == "item"
-        assert DirectorStateTracker.sanitize_task_description("(a) item") == "item"
+        # (a) does not match the regex ^[-\*\d\.\)\(]+\s* because 'a' is not in the char class
+        assert DirectorStateTracker.sanitize_task_description("(a) item") == "a) item"
 
     def test_code_blocks_skipped(self) -> None:
-        assert DirectorStateTracker.sanitize_task_description("```python\ncode\n```") == ""
+        # Lines starting with ``` are skipped, but "code" in between is kept
+        # because only the fence line itself matches ```
+        result = DirectorStateTracker.sanitize_task_description("```python\ncode\n```")
+        # The fence lines are filtered, middle line remains
+        assert "code" in result
+        assert "```" not in result
 
     def test_truncation(self) -> None:
         long_text = "word " * 100

@@ -139,6 +139,7 @@ def get_retry_hint(category: Enum) -> str | None:
         NoRetryCategory.AUTHENTICATION_ERROR: "认证失败，请检查 API 密钥",
         NoRetryCategory.PERMISSION_DENIED: "权限不足，请检查权限配置",
         NoRetryCategory.CONTEXT_LENGTH_EXCEEDED: "上下文超长，请缩短输入",
+        NoRetryCategory.TOOL_EXECUTION_ERROR: "工具执行错误，请检查工具实现",
         NoRetryCategory.UNKNOWN_ERROR: "发生未知错误",
     }
     return hints.get(category)

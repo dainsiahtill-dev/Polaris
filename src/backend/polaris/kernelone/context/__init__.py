@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from .artifact_compression import (
+    ArtifactCompressionRequest,
+    ArtifactCompressionResult,
+    compress_if_changed,
+)
 from .budget_gate import (
     DEFAULT_FALLBACK_WINDOW,
     DEFAULT_SAFETY_MARGIN,
@@ -333,6 +338,7 @@ __all__ = [
     "canonical_balanced",
     "claude_like_dynamic",
     "clear_cache_manager",
+    "compress_if_changed",
     "compute_overall",
     "cost_guarded",
     "deep_research",

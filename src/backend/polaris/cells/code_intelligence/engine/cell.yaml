@@ -1,0 +1,47 @@
+id: code_intelligence.engine
+title: Code Intelligence Engine
+kind: capability
+visibility: public
+stateful: false
+owner: engineering
+purpose: >
+  Provide code indexing, context compilation, semantic analysis, and change
+  verification capabilities for Director and ChiefEngineer flows.
+  This Cell owns the code_intelligence service layer and adapters for accel/
+  infrastructure.
+
+current_modules:
+  - polaris.infrastructure.code_intelligence.code_intelligence
+  - polaris.infrastructure.code_intelligence.code_intelligence_async
+  - polaris.infrastructure.code_intelligence.incremental_analyzer
+
+tags:
+  - code-analysis
+  - semantic-index
+  - context-compilation
+
+owned_paths:
+  - polaris/infrastructure/code_intelligence/**
+  - polaris/infrastructure/accel/**
+
+public_contracts:
+  modules:
+    - polaris.cells.code_intelligence.engine.public.contracts
+
+depends_on:
+  - workspace.integrity
+  - kernelone.core
+  - policy.workspace_guard
+
+subgraphs: []
+
+state_owners: []
+
+effects_allowed:
+  - fs.read:workspace/**
+
+verification:
+  tests: []
+  gaps:
+    - Cell directory structure created (Phase 2).
+    - Full migration from infrastructure to cells layer pending (Phase 3).

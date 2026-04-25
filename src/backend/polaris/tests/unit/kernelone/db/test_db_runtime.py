@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,7 +28,7 @@ class TestKernelDatabaseHealth:
 class TestKernelDatabaseInit:
     def test_default_workspace(self) -> None:
         db = KernelDatabase("/tmp/ws")
-        assert db.workspace == "/tmp/ws"
+        assert db.workspace == os.path.abspath("/tmp/ws")
 
     def test_empty_workspace_defaults_to_cwd(self) -> None:
         import os

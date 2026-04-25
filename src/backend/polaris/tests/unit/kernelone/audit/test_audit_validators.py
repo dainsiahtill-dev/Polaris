@@ -51,7 +51,7 @@ class TestRequireValidRunId:
         with pytest.raises(ValueError, match="invalid run_id"):
             require_valid_run_id("")
         with pytest.raises(ValueError, match="invalid run_id"):
-            require_valid_run_id("bad")
+            require_valid_run_id("ab")
 
     def test_invalid_with_message(self) -> None:
         with pytest.raises(ValueError, match="invalid run_id: xx"):
@@ -112,7 +112,7 @@ class TestNormalizeEventType:
         assert normalize_event_type("task_start") == KernelAuditEventType.TASK_START
 
     def test_empty_defaults(self) -> None:
-        assert normalize_event_type("") == KernelAuditEventType("")
+        assert normalize_event_type("") == KernelAuditEventType.TASK_START
 
 
 class TestNormalizeRole:

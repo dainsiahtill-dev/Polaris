@@ -43,8 +43,9 @@ class TestIsWithin:
     def test_outside_parent(self) -> None:
         assert _is_within("/tmp", "/var") is False
 
-    def test_invalid_paths(self) -> None:
-        assert _is_within("", "") is False
+    def test_empty_paths_resolve_to_cwd(self) -> None:
+        # Empty strings resolve to cwd via os.path.abspath, so they are "within" each other
+        assert _is_within("", "") is True
 
 
 class TestManagedStorageRoots:
@@ -84,14 +85,14 @@ class TestResolveSqlitePath:
         assert Path(result).parent.exists()
 
     def test_unmanaged_absolute_denied(self, tmp_path: Path) -> None:
+        outside = os.path.abspath(os.path.join(os.path.dirname(str(tmp_path)), "outside", "test.db"))
         with pytest.raises(DatabasePolicyError, match="outside managed storage"):
-            resolve_sqlite_path(str(tmp_path), "/outside/test.db", allow_unmanaged_absolute=False, ensure_parent=False)
+            resolve_sqlite_path(str(tmp_path), outside, allow_unmanaged_absolute=False, ensure_parent=False)
 
     def test_unmanaged_absolute_allowed(self, tmp_path: Path) -> None:
-        result = resolve_sqlite_path(
-            str(tmp_path), "/outside/test.db", allow_unmanaged_absolute=True, ensure_parent=False
-        )
-        assert result == os.path.abspath("/outside/test.db")
+        outside = os.path.abspath(os.path.join(os.path.dirname(str(tmp_path)), "outside", "test.db"))
+        result = resolve_sqlite_path(str(tmp_path), outside, allow_unmanaged_absolute=True, ensure_parent=False)
+        assert result == outside
 
     def test_ensure_parent_creates_dirs(self, tmp_path: Path) -> None:
         db_path = os.path.join(str(tmp_path), "sub", "dir", "test.db")
@@ -119,8 +120,9 @@ class TestResolveLancedbPath:
         assert os.path.isabs(result)
 
     def test_unmanaged_absolute_denied(self, tmp_path: Path) -> None:
+        outside = os.path.abspath(os.path.join(os.path.dirname(str(tmp_path)), "outside", "lancedb"))
         with pytest.raises(DatabasePolicyError, match="outside managed storage"):
-            resolve_lancedb_path(str(tmp_path), "/outside/lancedb", allow_unmanaged_absolute=False, ensure_exists=False)
+            resolve_lancedb_path(str(tmp_path), outside, allow_unmanaged_absolute=False, ensure_exists=False)
 
     def test_ensure_exists_creates_dir(self, tmp_path: Path) -> None:
         db_path = os.path.join(str(tmp_path), "sub", "lancedb")

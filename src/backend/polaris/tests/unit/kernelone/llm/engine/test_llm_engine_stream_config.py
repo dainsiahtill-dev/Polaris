@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import patch
 
 import pytest
@@ -80,8 +81,9 @@ class TestStreamConfig:
 
     def test_immutable(self) -> None:
         cfg = StreamConfig()
-        with pytest.raises((AttributeError, TypeError)):
-            object.__setattr__(cfg, "timeout_sec", 10.0)
+        # Regular attribute assignment on frozen dataclass should raise
+        with pytest.raises((AttributeError, TypeError, dataclasses.FrozenInstanceError)):
+            cfg.timeout_sec = 10.0
 
     def test_from_env_uses_unified_timeout(self) -> None:
         with (

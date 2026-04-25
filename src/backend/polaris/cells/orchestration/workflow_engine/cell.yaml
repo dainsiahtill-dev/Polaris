@@ -14,7 +14,7 @@ current_modules:
 - polaris.cells.orchestration.workflow_engine.public.contracts
 tags: []
 owned_paths:
-- polaris/kernelone/workflow/engine.py
+- polaris/cells/orchestration/workflow_engine/**
 public_contracts:
   modules:
   - polaris.cells.orchestration.workflow_engine.public.contracts
@@ -25,9 +25,7 @@ public_contracts:
   results: []
   errors: []
 depends_on:
-- kernelone.process
-- kernelone.trace
-- infrastructure.db
+- kernelone.core
 subgraphs:
 - execution_governance_pipeline
 state_owners: []

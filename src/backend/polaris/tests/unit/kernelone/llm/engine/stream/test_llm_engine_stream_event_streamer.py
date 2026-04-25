@@ -148,7 +148,8 @@ class TestEventStreamerBroadcast:
         streamer._subscribers.setdefault("final_answer", []).append(queue)
 
         await streamer.broadcast(gen())
-        assert queue.qsize() == 2
+        # broadcast calls close() in finally, which puts None into queues
+        assert queue.qsize() == 3  # 2 events + 1 sentinel None
         assert streamer._closed is True
 
     async def test_broadcast_closes_on_exception(self) -> None:

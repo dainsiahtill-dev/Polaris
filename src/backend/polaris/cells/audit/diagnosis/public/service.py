@@ -23,8 +23,12 @@ from polaris.cells.audit.diagnosis.internal.toolkit.error_chain import (
     _parse_event_datetime,
 )
 from polaris.cells.audit.diagnosis.internal.toolkit.service import (
+    _discover_journal_run_dirs,
+    load_journal_events,
     resolve_runtime_root,
 )
+
+discover_journal_run_dirs = _discover_journal_run_dirs
 from polaris.cells.audit.diagnosis.internal.usecases import AuditUseCaseFacade
 
 __all__ = [
@@ -39,6 +43,8 @@ __all__ = [
     "_parse_event_datetime",
     "build_failure_hops",
     "build_triage_bundle",
+    "discover_journal_run_dirs",
+    "load_journal_events",
     "resolve_runtime_root",
     "run_audit_command",
     "to_legacy_result",

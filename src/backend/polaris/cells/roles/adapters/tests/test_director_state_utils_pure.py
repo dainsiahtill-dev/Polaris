@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from polaris.cells.roles.adapters.internal.director.state_utils import (
     compose_projection_requirement,
     default_projection_slug,
@@ -23,7 +21,6 @@ from polaris.cells.roles.adapters.internal.director.state_utils import (
     is_output_sparse,
     summarize_tool_results,
 )
-
 
 # ---------------------------------------------------------------------------
 # Output requirements extraction
@@ -208,7 +205,7 @@ class TestComposeProjectionRequirement:
         assert compose_projection_requirement(task, input_data) == "Build API"
 
     def test_input_data_requirement_delta(self) -> None:
-        task = {}
+        task: dict[str, Any] = {}
         input_data = {"requirement_delta": "Add auth"}
         assert compose_projection_requirement(task, input_data) == "Add auth"
 

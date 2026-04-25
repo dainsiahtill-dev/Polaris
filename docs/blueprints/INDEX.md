@@ -1,7 +1,7 @@
 # Blueprint Index
 
-**Last Updated**: 2026-04-24
-**Total Files**: 142
+**Last Updated**: 2026-04-25
+**Total Files**: 144
 
 > 本文档是 docs/blueprints/ 目录的唯一索引。
 > 状态标注：🟢 ACTIVE | 🟡 DRAFT | 🔴 ARCHIVED
@@ -19,6 +19,7 @@
 | MIGRATION_PORT_ADAPTER_20260423.md | ACGA 2.0 Port/Adapter Migration Plan | 2026-04-23 | 🟢 |
 | P0_CRITICAL_FIX_BLUEPRINT_20260423.md | Polaris P0 Critical Issues Fix Blueprint | 2026-04-23 | 🟢 |
 | PRINCIPAL_ARCHITECT_17_EXPERT_FULL_REPO_EXECUTION_BLUEPRINT_20260425.md | Principal Architect 17-Expert Full Repo Execution Blueprint | 2026-04-25 | 🟢 |
+| README_INFORMATION_ARCHITECTURE_BLUEPRINT_20260425.md | README Information Architecture Blueprint | 2026-04-25 | 🟢 |
 | POLARIS_AUDIT_REMEDIATION_MASTER_PLAN_20260424.md | Polaris 审计整改全量落地执行蓝图 | 2026-04-24 | 🟢 |
 | POLARIS_DEPRECATED_PATH_CLEANUP_BLUEPRINT_20260417.md | Polaris 废弃路径清理与架构收敛蓝图 | 2026-04-17 | 🟢 |
 | SPECULATIVE_EXECUTION_KERNEL_PHASE1_BLUEPRINT_20260417.md | Speculative Execution Kernel Phase 1 执行蓝图 | 2026-04-17 | 🟢 |

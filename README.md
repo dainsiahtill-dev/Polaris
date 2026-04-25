@@ -1,554 +1,392 @@
-# 🏯 Polaris：天工开物 · 认知自动化开发工厂
+# Polaris
 
-**「垂拱而治」（Wu-wei Governance）·「事务内核」（Transaction Kernel）·「认知连续」（Cognitive Lifeform）**
+Polaris 是一个面向复杂软件交付场景的 AI Agent 治理与运行时平台。  
+它的目标不是再做一个“会聊天、会调工具”的 Agent 壳，而是把 Agent 执行变成 **可事务化、可审计、可回滚、可验证** 的工程系统。
 
-*Polaris is not another chat-style coding agent. It is a transaction-governed software factory kernel for unattended, auditable, and recoverable AI software delivery.*
+从架构上看：
 
----
+- `KernelOne` 是底层运行时基座，负责上下文、执行、副作用、存储布局与事件等通用能力
+- `Cells` 是业务能力边界，负责把复杂系统拆成可治理的能力单元
+- `TransactionKernel` 和 `ContextOS` 是最关键的运行时真相链
 
-## 一句话看懂 Polaris 的野心
+## Polaris 是什么
 
-传统 Agent 把"继续还是停止"的控制权交给 LLM，本质上是模型主导的隐式递归，容易陷入死循环或幻觉；
-**Polaris 则把 LLM 降级为受限的决策组件。** 由系统内核接管执行、审计、预算、提交与停止，将 AI 从"聪明的对话助手"升级为**可无人值守、可追责、可回滚的工业级软件生产流水线**。
+可以把 Polaris 理解成两层：
 
----
+1. `KernelOne`
+   面向 AI Agent 的运行时底座，类似操作系统里的内核和通用子系统。
+2. `Polaris`
+   建立在 `KernelOne` 之上的治理与交付系统，负责多角色协作、任务编排、审计和验证闭环。
 
-## 📜 目录
+这意味着 Polaris 更接近“Agent Runtime + Governance Platform”，而不是单纯的 Prompt 模板集合或聊天式编码助手。
 
-- [🚀 为什么你应该加入 Polaris](#-为什么你应该加入-polaris)
-- [🏆 护城河技术清单](#-护城河技术清单)
-- [🧠 哲学顶层：认知生命体架构](#-哲学顶层认知生命体架构)
-- [👥 角色体系：三省六部制](#-角色体系三省六部制)
-- [🧩 技术架构总览](#-技术架构总览)
-- [🚀 快速开始](#-快速开始)
+## 当前状态
 
----
+当前仓库状态应被理解为：
 
-## 🚀 为什么你应该加入 Polaris
+- **Alpha**
+- **主干架构明确，但收敛仍在进行中**
+- **`src/backend/polaris/` 是后端 canonical 根目录**
+- **旧入口和兼容层仍存在，但不应继续承载新主实现**
 
-### 你将解决 AI 工程领域最艰难的问题
+如果你在评估项目，请把它看成一个“方向明确、工程量巨大、仍在持续收敛的运行时平台”，而不是一个已经完全稳定封板的产品。
 
-| 普通项目 | Polaris |
-|---------|---------|
-| 写一个 Agent prompt | 设计 Agent 的 **"心跳节奏"**——Transaction Kernel 如何保证每 Turn 只产生一个不可逆决策 |
-| 调用几个 API | 构建 **"认知生命体"**——前额叶(Orchestrator)、海马体(ContextOS)、小脑(WorkflowRuntime) 如何协作 |
-| 写写 Python 代码 | 实现 **AI 的 Linux 内核**——文件系统、进程调度、内存管理全部为 AI 运行时重新设计 |
-| 拼接 RAG | 打造 **四层正交记忆系统**——TruthLog + WorkingState + ReceiptStore + ProjectionEngine 严格隔离 |
+## 核心概念
 
-### 测试与质量状态
+### 1. KernelOne
 
-> 注意: 此前展示的 `pytest --collect-only` 数字不代表实际通过率。
-> 当前正在进行测试基础设施整改，真实覆盖率报告见 `src/backend/htmlcov/`。
+`KernelOne` 是 Polaris 的通用运行时基座，代码位于 [src/backend/polaris/kernelone](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone)。  
+它负责承载平台无关的技术能力，包括：
 
-```
-# 收集数量（非通过数量）
-pytest --collect-only -q → 13511 collected / 62 errors (2026-04-24)
-# 真实覆盖率: 23.3% (69360/297487 lines)
-```
+- Context runtime
+- execution substrate
+- storage layout / KFS
+- event and audit primitives
+- provider/tool/runtime contracts
 
-整改目标:
-- [ ] LLM Provider 集成测试覆盖
-- [ ] HTTP Router 契约测试覆盖
-- [ ] 核心模块 `roles.kernel` 内部覆盖率提升
+### 2. TransactionKernel
 
-### 你不是一个人在战斗
+`TransactionKernel` 是 turn 级执行内核，核心目标是让 Agent 的一次执行具备明确的提交边界，而不是无限 continuation。  
+相关代码和治理资产主要位于：
 
-> "加入 Polaris 前：每天担心 LLM 陷入死循环  
-> 加入 Polaris 后：KernelGuard 会物理熔断，我只需要设计更好的恢复策略"
+- [src/backend/polaris/cells/roles/kernel](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel)
+- [adr-0071](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md)
 
----
+### 3. ContextOS
 
-## 🏆 护城河技术清单
+`ContextOS` 是上下文运行时，目标是把“事实日志、工作状态、大对象引用、只读投影”分层管理，而不是把所有内容直接塞进 prompt。  
+相关代码位于 [src/backend/polaris/kernelone/context](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context)。
 
-### 1. 🫀 TransactionKernel：AI 的心跳控制器
+### 4. Cells
 
-**代码路径**: `polaris/cells/roles/kernel/internal/turn_transaction_controller.py`
+`Cells` 是 Polaris 的能力边界模型。  
+每个 Cell 应该有明确的职责、依赖、公开契约和治理资产，而不是靠目录约定和隐式依赖维持系统。  
+图谱真相位于 [src/backend/docs/graph/catalog/cells.yaml](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/graph/catalog/cells.yaml)。
 
-```python
-# 这不是 if-else，这是物理定律
-KernelGuard.assert_single_decision(turn_id, decision_count)
-KernelGuard.assert_single_tool_batch(turn_id, tool_batch_count)
-KernelGuard.assert_no_hidden_continuation(turn_id, state_trajectory)
-```
+### 5. 角色协作
 
-**为什么难以复制**: 全球唯一一个**生产级**强制执行 `len(TurnDecisions)==1` 的 Agent 系统。你的代码就是 AI 的心脏起搏器——每分钟跳 60 次，每次跳动都是一个不可逆的决策。
+当前系统围绕以下工程角色组织协作：
 
-**加入你能**:
-- 设计状态机驱动的决策仲裁
-- 实现 panic + handoff_workflow 熔断协议
-- 让 AI "心跳"既不过快（死循环）也不过慢（停滞）
+- `PM`
+- `Architect`
+- `Chief Engineer`
+- `Director`
+- `QA`
 
----
+历史文档里可能还能看到官职隐喻；对外理解和实际开发请优先使用工程术语。统一术语表见 [docs/TERMINOLOGY.md](/C:/Users/dains/Documents/GitLab/polaris/docs/TERMINOLOGY.md)。
 
-### 2. 🧠 ContextOS：永不污染的认知隔离架构
+## 核心优势
 
-**代码路径**: `polaris/kernelone/context/context_os/runtime.py`
+### 1. Agent 执行是事务化设计，而不是无限 while-loop
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  ContextOS 4-Layer Orthogonal Architecture                  │
-├─────────────────────────────────────────────────────────────┤
-│  TruthLog (Append-only)     → 不可篡改的审计源              │
-│  WorkingState (Mutable)      → 运行时状态，但绝不直接喂给 LLM │
-│  ReceiptStore (Referenced)   → 大文件只存引用，不重复         │
-│  ProjectionEngine (Read-only) → 严格只读投影生成             │
-└─────────────────────────────────────────────────────────────┘
-```
+Polaris 的一个核心优势，是它把 Agent 执行当成“有提交边界的运行时过程”来设计，而不是把模型、工具和状态全部塞进一个隐式循环里。  
+这条主线主要落在：
 
-**为什么难以复制**: 传统 Agent 把原始 tool output 直接塞进 prompt，Polaris 通过 4 层正交隔离保证**控制平面字段永不进入数据平面**。这是 工程级认知 hygiene，不是 prompt 技巧。
+- [src/backend/polaris/cells/roles/kernel](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel)
+- [adr-0071](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md)
 
-**加入你能**:
-- 设计内容寻址存储（ContentStore with SHA256 deduplication）
-- 实现 ref_count 生命周期管理
-- 将 109KB 上下文压缩到 <25KB 且零信息损失
+这件事的意义在于：
 
----
+- turn 级决策、工具批次和 handoff 可以被约束
+- 执行过程可以被审计、验证和逐步标准化
+- 系统有机会摆脱 hidden continuation 和 transport-dependent commit
 
-### 3. 🌊 StreamShadowEngine：跨 Turn 预知引擎
+这不是“多一个概念名”，而是把 Agent 从脚本化行为推进到运行时纪律。
 
-**代码路径**: `polaris/cells/roles/kernel/internal/stream_shadow_engine.py`
+### 2. ContextOS 把上下文问题从 prompt 技巧提升为系统设计
 
-```python
-# 当前 Turn 还在执行，下一个 Turn 的工具调用已经被预测并预执行
-if self.has_valid_speculation(session_id):
-    result = self.consume_speculation(session_id)  # 零延迟交付
-else:
-    result = await self.start_cross_turn_speculation(...)
-```
+很多 Agent 工程在上下文上依赖经验：消息太长了就裁、太乱了就摘要。  
+Polaris 的方向不是这样。`ContextOS` 试图把上下文拆成不同层级的职责：
 
-**为什么难以复制**: 这是 AI 的"直觉"——在意识决策前，潜意识已经准备好了答案。ADOPT/JOIN/CANCEL/REPLAY 事务语义是独创的。
+- 事实日志
+- 工作状态
+- 大对象引用
+- 只读投影
 
-**加入你能**:
-- 实现 ADOPT/JOIN/CANCEL/REPLAY 推测决议
-- 设计 ShadowTaskRegistry 推测任务注册表
-- 构建 StabilityScorer + CandidateDecoder 增量解析
+核心代码在：
 
----
+- [src/backend/polaris/kernelone/context](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context)
 
-### 4. 🏛️ Cell 波粒二象性：代码的高维 IR
+它的价值是：
 
-**代码路径**: `docs/graph/catalog/cells.yaml` (59 Cells)
+- prompt 组装可以逐步脱离原始消息堆积
+- 审计、压缩、回放和隔离具备更清楚的结构
+- 运行时事实和控制面信息有机会真正分层
 
-```
-Wave (Discovery)     → 语义检索、聚类、上下文压缩
-     ↓
-Particle (Truth)     → 契约、边界、状态所有权
-     ↓
-Projection (Delivery) → 文件系统上的物理投影
-```
+当前这条链路还在继续硬化，但它已经是 Polaris 与普通聊天式 Agent 项目最本质的差异之一。
 
-**为什么难以复制**: 传统代码组织是"文件夹"，Polaris 代码是**高维架构 IR**。每个 Cell 声明：
-- `owned_paths` - 状态所有权
-- `depends_on` - 合法依赖
-- `effects_allowed` - 副作用白名单
-- `state_owners` - 单一写入源
+### 3. 系统不是靠目录习惯维持，而是靠边界和治理资产维持
 
-**加入你能**:
-- 设计 Graph-First 架构约束（50+ Fitness Rules）
-- 实现 Cell 演化蓝图（Cell Evolution Schema）
-- 构建 9 阶段 CI 治理流水线
+Polaris 的另一个优势，是它不满足于“约定大家别乱 import”。  
+仓库里已经形成了比较完整的治理方向：
 
----
+- 规范根目录分层
+- Cell 边界
+- public/internal fence
+- graph truth
+- descriptor/context/verify pack
+- architecture/release gates
 
-### 5. 💾 Akashic Memory：三层融合的混合记忆
+关键真相源：
 
-**代码路径**: `polaris/kernelone/akashic/`
+- [src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md)
+- [src/backend/docs/graph/catalog/cells.yaml](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/graph/catalog/cells.yaml)
+- [src/backend/polaris/cells](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells)
 
-```
-VectorStore (embedding similarity) ─┐
-FullTextStore (keyword match)      ─┼─→ 融合评分 (0.4/0.3/0.3)
-GraphStore (entity relationships) ──┘
-```
+这条路线真正有价值的地方在于：  
+随着仓库变大，系统还能继续讨论“谁拥有状态、谁暴露契约、谁可以产生副作用”，而不是退化成全仓搜索替换。
 
-**为什么难以复制**: 问"给我所有关于认证的代码"，返回的是语义相关代码 + 关键词匹配文档 + 实体关系图谱，按融合相关性排序。
+### 4. KernelOne 的目标是可沉淀的 Agent Runtime Substrate
 
-**加入你能**:
-- 实现 LanceDB 向量检索 + JSONL 回退
-- 设计 fusion_weights 可配置权重融合
-- 构建 TierCoordinator 跨层提升/降级事务
+`KernelOne` 不是简单的工具目录，它的目标是承载平台无关、可复用的 Agent 运行时能力：
 
----
+- context runtime
+- execution substrate
+- storage layout / KFS
+- events and audit primitives
+- provider/tool/runtime contracts
 
-### 6. 📦 ContentStore：内容寻址存储
+相关代码与规范：
 
-**代码路径**: `polaris/kernelone/context/context_os/content_store.py`
+- [src/backend/polaris/kernelone](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone)
+- [src/backend/docs/KERNELONE_ARCHITECTURE_SPEC.md](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/KERNELONE_ARCHITECTURE_SPEC.md)
 
-```python
-# 任何文本内容只存储一次，其他位置只持有 ContentRef (hash+size)
-content_hash = sha256(content)[:24]
-if content_hash in self._content_map:
-    ref_count[content_hash] += 1  # 引用计数 +1
-else:
-    self._content_map[content_hash] = content  # 首次存储
-```
+这意味着 Polaris 的 ambition 不是只做“一个桌面 Agent 产品”，而是在往“Agent 基础软件层”推进。
 
-**为什么难以复制**: 同一文件在 20 个 snapshot 中只占一份存储空间，引用计数自动管理，ref_count==0 时才回收。
+### 5. 审计、门禁和副作用治理从一开始就是主线
 
-**加入你能**:
-- 实现 SHA256[:24] 内容哈希 + 碰撞检测
-- 设计 80% 内存水位线 + LRU 回退
-- 构建内容图谱内嵌快照持久化
+Polaris 很强调一个问题：  
+系统做了什么，能不能在事后说清楚，能不能在运行中阻断，能不能在变更时验证。
 
----
+这种思路已经体现在当前仓库里：
 
-### 7. 🔄 NATS JetStream 自愈流
+- 架构与发布门禁：
+  - [tests/architecture/test_kernelone_release_gates.py](/C:/Users/dains/Documents/GitLab/polaris/tests/architecture/test_kernelone_release_gates.py)
+  - [quality-gates.yml](/C:/Users/dains/Documents/GitLab/polaris/.github/workflows/quality-gates.yml)
+- 治理资产：
+  - [src/backend/docs/governance](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/governance)
+- 运行时证据路径：
+  - [runtime](/C:/Users/dains/Documents/GitLab/polaris/runtime)
+  - [src/backend/workspace/meta](/C:/Users/dains/Documents/GitLab/polaris/src/backend/workspace/meta)
 
-**代码路径**: `polaris/infrastructure/messaging/nats/client.py`
+这条路线说明 Polaris 想做的不是“更聪明一点的 Agent”，而是“更可治理一点的 Agent 系统”。
 
-```python
-# 消息持久化，服务器重启后自动 replay
-await self._js.publish(
-    subject,
-    payload,
-    stream=self._stream,
-    headers={"partition": str(partition)},
-)
-# 流自动重建，连接指数退避重连
-await self._recover_runtime_stream_if_needed()
-```
+### 6. Polaris 关注的是长链路协作，而不是单轮回答
 
-**为什么难以复制**: 消息中间件不是新概念，但**自愈流**（自动重建 stream）+ 消费者组偏移量管理 + 优雅降级（无 NATS 时内存回退）组合是独特的。
+从代码结构就能看出来，Polaris 不是围绕一次性问答设计的。  
+它显式建模了：
 
-**加入你能**:
-- 实现 JetStream 持久化 + 消费者组
-- 设计被动 replay + 主动确认语义
-- 构建 5 分钟 TTL 实例缓存 + 故障驱逐
+- 多角色协作
+- 任务市场
+- 执行 broker
+- evidence / archive / audit / runtime state
 
----
+对应路径包括：
 
-### 8. 🔍 LanceDB 语义代码搜索
+- [src/backend/polaris/cells/runtime/task_market](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/runtime/task_market)
+- [src/backend/polaris/cells/runtime/task_runtime](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/runtime/task_runtime)
+- [src/backend/polaris/cells/runtime/execution_broker](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/runtime/execution_broker)
+- [src/backend/polaris/cells/factory/pipeline](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/factory/pipeline)
 
-**代码路径**: `polaris/infrastructure/db/repositories/lancedb_code_search.py`
+这让 Polaris 更像一个 Agent 工程平台，而不是“套了工具调用的聊天窗口”。
 
-```python
-# 内容哈希幂等索引，批量 upsert 自动去重
-chunks = [KnowledgeChunkRecord(
-    content=chunk_text,
-    line_start=line_start,
-    line_end=line_end,
-    owner=file_path,
-    embedding=embed(chunk_text)  # numpy array
-) for chunk_text in chunks]
-```
+## 仓库结构
 
-**为什么难以复制**: AST 级分块（80 行/块，10 行重叠）+ 向量相似度阈值过滤 + ghost 数据清理（JSONL↔LanceDB 同步）。
+### 关键目录
 
-**加入你能**:
-- 设计 tree-sitter AST 分块算法
-- 实现增量索引 + 阈值过滤
-- 构建 owner + tenant_id + graph_entity_id 边界强制
+| 路径 | 作用 |
+|---|---|
+| [src/backend/polaris](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris) | 后端主实现 |
+| [src/backend/polaris/kernelone](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone) | Agent 运行时基座 |
+| [src/backend/polaris/cells](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells) | 业务能力边界 |
+| [src/frontend](/C:/Users/dains/Documents/GitLab/polaris/src/frontend) | React 前端 |
+| [src/electron](/C:/Users/dains/Documents/GitLab/polaris/src/electron) | Electron 壳层 |
+| [src/backend/docs](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs) | 后端架构、治理与图谱文档 |
+| [docs](/C:/Users/dains/Documents/GitLab/polaris/docs) | 项目级文档与蓝图 |
+| [tests](/C:/Users/dains/Documents/GitLab/polaris/tests) | 仓库级测试 |
+| [src/backend/tests](/C:/Users/dains/Documents/GitLab/polaris/src/backend/tests) | 后端治理/架构/集成测试 |
 
----
+### 后端规范根目录
 
-### 9. 🏭 EDA Task Market：异步任务集市
+后端当前的 canonical 分层是：
 
-**代码路径**: `polaris/cells/runtime/task_market/`
+- `bootstrap/`
+- `delivery/`
+- `application/`
+- `domain/`
+- `kernelone/`
+- `infrastructure/`
+- `cells/`
+- `tests/`
 
-```
-PM 发布任务 → Claim (抢占) → Lease (租约)
-    → Execute (执行) → Ack (确认) / Fail (失败)
-    → Requeue / DeadLetter
-```
+这些目录都位于 [src/backend/polaris](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris) 下。  
+具体规则见 [src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md) 和 [src/backend/docs/KERNELONE_ARCHITECTURE_SPEC.md](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/KERNELONE_ARCHITECTURE_SPEC.md)。
 
-**为什么难以复制**: 完整的有限状态机 + 优先级队列（low/medium/high/critical）+ dependency_digest 变更验证 + max_attempts 重试。
+## 快速开始
 
-**加入你能**:
-- 实现 TaskWorkItem 完整状态机
-- 设计 visibility_timeout 自动回收
-- 构建 DeadLetter + HITL 人工介入链路
+### 环境要求
 
----
+- Python `3.10+`，推荐 `3.11+`
+- Node.js `20+`
+- Windows/macOS/Linux 均可开发，当前仓库内含 Electron、FastAPI、Playwright、Vitest、Pytest 工作流
 
-### 10. 📜 TurnDecision 冰冻契约
-
-**代码路径**: `polaris/cells/roles/kernel/public/turn_contracts.py`
-
-```python
-@dataclass(frozen=True, slots=True)
-class TurnDecision:
-    kind: TurnDecisionKind  # TOOL_BATCH / FINAL_ANSWER / HANDOFF_WORKFLOW
-    effect_type: EffectType  # READ / WRITE / COMPUTE
-    execution_mode: ExecutionMode  # SPECULATIVE / PARALLEL / ...
-```
-
-**为什么难以复制**: Pydantic v2 frozen 模型 + `@validator` 约束 + 1753 个测试验证契约合规性 = 编译期+运行时双重保证。
-
-**加入你能**:
-- 设计 Frozen IR 模型 + 不可变语义
-- 实现 NonEmptyString / ValidWorkspacePath 验证器
-- 构建 HandoffPack 跨角色交接契约
-
----
-
-### 11. 🛡️ ContinuationPolicy：AI 的免疫系统
-
-**代码路径**: `polaris/cells/roles/runtime/internal/continuation_policy.py`
-
-```
-max_auto_turns      → 防止僵尸死循环
-stagnation_v2       → 2 轮 artifact hash 未变 + 无推测 = 强制终止
-repetitive_failure  → 3 轮相同错误 = 熔断器断开
-```
-
-**为什么难以复制**: 不是"错误处理"，是**物理定律**。can_continue() 返回 (bool, reason)，明确告诉 AI 应该继续、重试还是求助。
-
-**加入你能**:
-- 实现 FailureClass → 恢复策略映射
-- 设计 semantic stagnation + hash stagnation 双层检测
-- 构建 adaptive threshold learning 自动调参
-
----
-
-### 12. 📊 Tiered Summarizer：内容感知压缩
-
-**代码路径**: `polaris/kernelone/context/compaction.py`
-
-```python
-# 按内容类型自动选择策略
-if is_log_or_error(content):
-    strategy = "sumy"  # TextRank 抽取式
-elif is_code(content):
-    strategy = "tree-sitter"  # AST 保持结构
-elif is_dialogue(content):
-    strategy = "transformers"  # 生成式摘要
-# 但 error/exception/failed/timeout 关键词永远保留
-```
-
-**为什么难以复制**: 错误信息永远不会被摘要掉。正确的压缩策略给正确的内容类型。
-
-**加入你能**:
-- 实现 LLMLingua + TreeSitter + ORTools 多策略
-- 设计 NetworkXCycleDetector 循环引用检测
-- 构建 importance keyword 强制保留机制
-
----
-
-### 13. 🔭 Omniscient Audit：端到端追踪
-
-**代码路径**: `polaris/kernelone/audit/` + `polaris/cells/audit/`
-
-```
-LLM 调用拦截 → 工具执行拦截 → 任务生命周期拦截
-     ↓
-对话轮次拦截 → 上下文操作拦截 → Agent 告警拦截
-     ↓
-Schema Registry → Redaction (敏感数据) → OpenTelemetry 导出
-```
-
-**为什么难以复制**: "告诉我 AI 做了什么以及为什么"从调查变成查询。审计追踪是 AI 的黑匣子。
-
-**加入你能**:
-- 实现 interceptor 注入链（llm/tool/task/dialogue/context/agent/alert）
-- 设计 storm_detector 异常检测
-- 构建高可用模式 + 漂移检测
-
----
-
-### 14. 🔌 KernelOne OS Substrate：AI 的 Linux
-
-**代码路径**: `polaris/kernelone/` (992 Python files)
-
-```
-fs/          → 文件系统抽象 (KernelFileSystemAdapter)
-db/          → 数据库抽象 (SQLite/SQLAlchemy/LanceDB)
-locks/       → 分布式锁 (FileLock/SQLiteLock/RedisLock)
-ws/          → WebSocket 会话 (InMemory/Redis)
-effect/      → 副作用追踪 (Effect + EffectReceipt)
-runtime/     → 车道式并发 (ASYNC/BLOCKING/SUBPROCESS)
-storage/     → 3 层存储布局 (RAMDISK/WORKSPACE/GLOBAL)
-```
-
-**为什么难以复制**: 不是封装，是**重新定义 OS 为 AI 运行时服务**。所有副作用显式声明、可审计。
-
-**加入你能**:
-- 设计 Protocol-based 接口（197+ @runtime_checkable）
-- 实现 9 阶段引导链 + 双检锁 DI 容器
-- 构建 effect tracker 完整链路审计
-
----
-
-### 15. 🌱 Cognitive Lifeform：哲学可执行化
-
-**代码路径**: `docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md`
-
-```
-主控意识 (前额叶)  → RoleSessionOrchestrator.execute_stream()
-     ↓
-工作记忆 (小纸条)  → StructuredFindings 跨 Turn 传递
-     ↓
-海马体 (记忆固化)  → ContextOS + Commit Protocol
-     ↓
-肌肉记忆 (小脑)    → DevelopmentWorkflowRuntime
-     ↓
-心脏 (神经放电)    → TurnTransactionController + KernelGuard
-     ↓
-潜意识预感 (预激)  → StreamShadowEngine 跨 Turn 推测
-     ↓
-生理防线 (痛觉)   → ContinuationPolicy 熔断
-```
-
-**为什么难以复制**: 哲学不再是 PPT，而是**可执行、可测试、可审计的代码**。每个开发者都知道自己在构建什么。
-
----
-
-## 🧠 哲学顶层：认知生命体架构
-
-> **工程注释**：以下使用生物学隐喻作为记忆辅助。
-> 所有隐喻均可在 [`docs/TERMINOLOGY.md`](docs/TERMINOLOGY.md) 中找到对应的工程实体。
-> 代码实现中使用的是工程实体名称，而非隐喻。
-
-| 抽象概念 | 工程实体 | 为什么重要 |
-|---------|---------|-----------|
-| **主控意识** | `RoleSessionOrchestrator` | 裁决"此刻该做什么" |
-| **心脏** | `TurnTransactionController` | 不可逆的单次心跳 |
-| **肌肉记忆** | `DevelopmentWorkflowRuntime` | read→write→test 闭环自动化 |
-| **海马体** | `ContextOS` + `Commit Protocol` | Durable Truth 记忆固化 |
-| **免疫系统** | `ContinuationPolicy` | 防止死循环、资源耗尽 |
-| **直觉预感** | `StreamShadowEngine` | 思考与行动时间重叠 |
-
----
-
-## 👥 角色体系：三省六部制
-
-> **工程注释**：以下古名为内部文化标识，代码中使用标准英文角色名。
-> 所有角色名称映射可在 [`docs/TERMINOLOGY.md`](docs/TERMINOLOGY.md) 中找到。
-
-| 角色 | 古名（文化标识） | 工程职责 | 加入你能做什么 |
-|------|----------------|---------|---------------|
-| **Architect** | 中书令 | 系统架构设计 | 设计 spec.md，指导技术方向 |
-| **PM** | 尚书令 | 任务编排与需求管理 | 写 PM_TASKS.json 任务合同 |
-| **Chief Engineer** | 工部尚书 | 技术决策与蓝图生成 | 画 Blueprint 施工蓝图 |
-| **Director** | 工部侍郎 | 代码实现与按图施工 | 严格按图施工，写代码 |
-| **QA** | 门下侍中 | 独立审计与质量验收 | 一票否决，独立证据验收 |
-| **FinOps** | 户部尚书 | 预算控制与成本管理 | 管 Token 预算，防资产流失 |
-
-**为什么分工严格？因为 AI 既当裁判又当运动员就会造假。**
-
----
-
-## 🧩 技术架构总览
-
-### KernelOne OS Substrate (AI 的 Linux)
-
-```
-polaris/kernelone/
-├── fs/          # 文件系统：原子写入、UTF-8 强制、路径隔离
-├── db/          # 数据库：SQLite/SQLAlchemy/LanceDB 多适配器
-├── locks/       # 分布式锁：TTL、自旋重试、分布式抢占
-├── ws/          # WebSocket：InMemory/Redis 双模式
-├── effect/      # 副作用追踪：Effect + EffectReceipt 审计链
-├── runtime/     # 执行引擎：ASYNC/BLOCKING/SUBPROCESS 三车道
-├── storage/     # 存储布局：RAMDISK/WORKSPACE/GLOBAL 三层
-├── context/     # 上下文：ContextOS 四层 + Akashic Memory
-├── events/      # 事件总线：MessageBus + TypedEventBridge
-├── audit/       # 审计：Hash 链 + Omniscient E2E Tracing
-└── benchmark/   # 基准测试：Latency/Throughput/Memory/Chaos
-```
-
-### Cell 生态 (59 Cells)
-
-| 类别 | 代表 Cell | 做什么 |
-|------|---------|--------|
-| **Runtime** | `runtime.task_market` | 异步任务集市 |
-| **LLM** | `llm.control_plane` | Provider 组合边界 |
-| **Roles** | `roles.kernel` | 角色执行内核 |
-| **Orchestration** | `orchestration.pm_planning` | 合同生成 |
-| **Factory** | `factory.pipeline` | 流水线编排 |
-| **Audit** | `audit.evidence` | 证据事件 |
-| **Archive** | `archive.run_archive` | 运行归档 |
-
----
-
-## 🚀 快速开始
-
-### 环境配置
+### 1. 一键准备开发环境
 
 ```bash
-# 一键安装
 npm run setup:dev
+```
 
-# 启动 Dashboard
+该脚本会准备前端和本地开发所需的基础环境。  
+如果你只需要 Python 侧，也可以直接使用：
+
+```bash
+pip install -e .[dev]
+```
+
+### 2. 启动桌面端开发环境
+
+```bash
 npm run dev
 ```
 
-### 加入开发
+这会启动前端开发服务器并拉起 Electron。
+
+### 3. 仅启动后端
+
+推荐使用安装后的 canonical CLI：
 
 ```bash
-# 启动后端
-python src/backend/server.py --host 127.0.0.1 --port 49977
+polaris --host 127.0.0.1 --port 49977
+```
 
-# 单独运行角色（类似 Claude Code）
+兼容方式仍然可用，但属于旧入口 shim：
+
+```bash
+python src/backend/server.py --host 127.0.0.1 --port 49977
+```
+
+canonical 实现位于 [src/backend/polaris/delivery/server.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/delivery/server.py)，兼容 shim 位于 [src/backend/server.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/server.py)。
+
+### 4. 单独运行角色 CLI
+
+```bash
+pm --workspace . --start-from pm
+director --workspace . --iterations 1
 python -m polaris.cells.architect.design.internal.architect_cli --mode interactive --workspace .
 python -m polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli --mode interactive --workspace .
-python -m polaris.delivery.cli.director.cli_thin --workspace . --iterations 1
 ```
 
-### 运行测试
+### 5. 前端测试
 
 ```bash
-# 全部测试
-pytest --collect-only -q  # 14907 collected / 47 errors (2026-04-24)
-
-# 运行 lint + typecheck + test
-ruff check . --fix && ruff format . && mypy . && pytest . -q
+npm test
+npm run test:e2e
 ```
 
-### Pre-commit Hooks
+## 测试与质量门禁
+
+### Python 侧最小门禁
 
 ```bash
-# 一键安装 pre-commit hooks
-python scripts/setup_precommit.py
-
-# 手动运行所有 hooks
-pre-commit run --all-files
+ruff check src/backend/polaris --fix
+ruff format src/backend/polaris
+mypy src/backend/polaris
+pytest src/backend/tests -q
 ```
 
-### 工程度量看板
+### 架构/发布关键门禁
 
 ```bash
-# 生成覆盖率徽章
-python scripts/generate_coverage_badge.py --percentage 23.3
-
-# 生成工程度量看板
-python scripts/engineering_dashboard.py
+python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+python src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+python src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
 ```
 
----
+### CI 工作流
 
-## 📈 项目规模
+当前与质量最相关的工作流位于：
 
-| 指标 | 数值 | 统计方式 |
-|------|------|----------|
-| Python 文件 | 2732 | `find src/backend/polaris -name "*.py" \| wc -l` (2026-04-24) |
-| Cell 数量 | 59 | `grep "^  - id:" src/backend/docs/graph/catalog/cells.yaml \| wc -l` (2026-04-24) |
-| 测试收集 | 13511 | `pytest --collect-only -q` (2026-04-24) |
-| 真实覆盖率 | 23.3% | `pytest --cov=polaris` (69360/297487 lines) |
-| 架构约束规则 | 50+ |
-| Protocol 接口 | 197+ |
-| 冰冻数据类 | 1668 |
+- [quality-gates.yml](/C:/Users/dains/Documents/GitLab/polaris/.github/workflows/quality-gates.yml)
+- [kernel_quality.yml](/C:/Users/dains/Documents/GitLab/polaris/.github/workflows/kernel_quality.yml)
+- [ci.yml](/C:/Users/dains/Documents/GitLab/polaris/.github/workflows/ci.yml)
 
----
+## 未来方向
 
-## ☕ 请作者喝杯咖啡
+### 1. 让 KernelOne 真正变成纯底座
 
-如果 Polaris 对你有所帮助，欢迎请作者喝杯咖啡！
+未来的关键方向之一，不是往 `KernelOne` 里继续堆业务语义，而是反过来做纯化：
 
-<table>
-  <tr>
-    <td align="center">
-      <img src="docs/assets/images/coffee/alipay.jpg" width="200" alt="Alipay 支付宝" /><br/>
-      <strong>支付宝 Alipay</strong>
-    </td>
-    <td width="60"></td>
-    <td align="center">
-      <img src="docs/assets/images/coffee/wechat.jpg" width="200" alt="WeChat Pay 微信支付" /><br/>
-      <strong>微信支付 WeChat Pay</strong>
-    </td>
-  </tr>
-</table>
+- 清理反向依赖
+- 清理角色语义泄漏
+- 清理绕过 `storage.layout` / KFS 的旁路写盘
 
----
+目标是让 `KernelOne` 真正成为稳定、可复用、平台无关的 Agent Runtime Substrate。
 
-## 许可协议
+### 2. 把规范主干真正落成代码主干
 
-MIT License
+当前规范要求的主干是：
+
+- `delivery -> application -> domain/kernelone`
+
+未来最重要的架构收敛方向之一，就是让这条链路在真实代码里成立：
+
+- `delivery` 只做 transport
+- `application` 真正承担编排和事务边界
+- `domain` 真正承载业务规则
+- `cells` 通过 public contract 协作
+
+这一步做成以后，Polaris 的可维护性和可验证性会明显上一个台阶。
+
+### 3. 完成 TransactionKernel + ContextOS 的单一真相链
+
+未来真正决定 Polaris 上限的，不是增加多少工具，而是把以下链路彻底闭合：
+
+- `TransactionKernel` 成为唯一 durable commit authority
+- `ContextOS` 成为唯一上下文真相链
+- `run` 和 `stream` 不再形成第二提交通道
+- handoff 不再依赖 transport 差异
+
+这一点决定 Polaris 能不能从“能跑起来”走向“能长期稳定运行”。
+
+### 4. 让 graph、manifest 和治理 pack 变成可执行真相
+
+Polaris 已经有了 graph、cell manifest、packs、verification card、ADR、release gate 这些治理资产。  
+未来方向不是再增加更多文档，而是让它们真正成为系统边界和变更门禁的一部分：
+
+- `catalog/cells.yaml`
+- `cell.yaml`
+- `descriptor/context/verify pack`
+- release gate / catalog gate / ADR / verification card
+
+一旦这条治理链完全打通，系统演进会更像工程系统，而不是“靠核心成员脑内记忆”的项目。
+
+### 5. 把可观测性做成 operator-grade
+
+未来方向不仅是“日志更多”，而是：
+
+- 统一事件事实
+- 统一 receipt / evidence / archive
+- 统一 runtime 状态与 UI 展示
+- 让 PM / Director / QA 的链路具备可回溯、可解释、可归因的观测能力
+
+这会直接决定 Polaris 能否支撑真正的长任务和无人值守场景。
+
+## 当前你最应该先读什么
+
+如果你要理解项目而不是只跑起来，建议按这个顺序读：
+
+1. [src/backend/AGENTS.md](/C:/Users/dains/Documents/GitLab/polaris/src/backend/AGENTS.md)
+2. [src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md)
+3. [src/backend/docs/KERNELONE_ARCHITECTURE_SPEC.md](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/KERNELONE_ARCHITECTURE_SPEC.md)
+4. [docs/TERMINOLOGY.md](/C:/Users/dains/Documents/GitLab/polaris/docs/TERMINOLOGY.md)
+5. [src/backend/docs/graph/catalog/cells.yaml](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/graph/catalog/cells.yaml)
+
+如果你想看这次 README 重构背后的信息架构设计，见 [README_INFORMATION_ARCHITECTURE_BLUEPRINT_20260425.md](/C:/Users/dains/Documents/GitLab/polaris/docs/blueprints/README_INFORMATION_ARCHITECTURE_BLUEPRINT_20260425.md)。
+
+## 支持与许可
+
+如果你想支持项目，仓库中仍保留了赞助二维码资源，位于：
+
+- [docs/assets/images/coffee](/C:/Users/dains/Documents/GitLab/polaris/docs/assets/images/coffee)
+
+许可证：MIT，见 [LICENSE](/C:/Users/dains/Documents/GitLab/polaris/LICENSE)。

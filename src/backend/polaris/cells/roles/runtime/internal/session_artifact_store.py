@@ -89,7 +89,7 @@ class SessionArtifactStore:
 
     async def _trigger_incremental_compress(self, orig_hash: str, artifact: dict[str, Any]) -> None:
         try:
-            from polaris.kernelone.context.context_os import compress_if_changed  # type: ignore[attr-defined]
+            from polaris.kernelone.context.artifact_compression import compress_if_changed
 
             await compress_if_changed(
                 session_id=self.session_id,

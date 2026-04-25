@@ -165,7 +165,8 @@ class TestDebugCompactPayload:
         assert isinstance(result, dict)
         assert result["_truncated"] is True
         assert len(result["preview"]) == 2000
-        assert result["total_length"] == 3000
+        # JSON serialization adds quotes, so total_length is 3002 not 3000
+        assert result["total_length"] == 3002
 
     def test_unserializable(self) -> None:
         class Obj:

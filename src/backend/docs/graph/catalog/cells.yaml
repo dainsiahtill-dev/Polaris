@@ -1971,6 +1971,7 @@ cells:
       - polaris/application/cognitive_runtime/**
       - polaris/infrastructure/cognitive_runtime/**
       - polaris/cells/factory/cognitive_runtime/**
+      - polaris/bootstrap/cognitive_runtime/**
       - polaris/delivery/http/routers/cognitive_runtime.py
     public_contracts:
       modules:
@@ -2143,6 +2144,47 @@ cells:
       gaps:
         - Legacy dispatch entrypoints still exist and are not fully removed.
 
+  - id: code_intelligence.engine
+    title: Code Intelligence Engine
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: engineering
+    purpose: >
+      Provide code indexing, context compilation, semantic analysis, and change
+      verification capabilities for Director and ChiefEngineer flows. Owns the
+      code_intelligence service layer and adapters for accel/ infrastructure.
+    current_modules:
+      - polaris.infrastructure.code_intelligence.code_intelligence
+      - polaris.infrastructure.code_intelligence.code_intelligence_async
+      - polaris.infrastructure.code_intelligence.incremental_analyzer
+      - polaris.infrastructure.accel.indexers
+      - polaris.infrastructure.accel.query
+      - polaris.infrastructure.accel.verify
+    owned_paths:
+      - polaris/infrastructure/code_intelligence/**
+      - polaris/infrastructure/accel/**
+    public_contracts:
+      modules:
+        - polaris.cells.code_intelligence.engine.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - workspace.integrity
+      - kernelone.core
+      - policy.workspace_guard
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+    verification:
+      gaps:
+        - Cell directory structure pending creation (Phase 2).
+        - Full migration from infrastructure to cells layer (Phase 3).
+
   - id: chief_engineer.blueprint
     title: Chief Engineer Blueprint
     kind: capability
@@ -2306,6 +2348,8 @@ cells:
         - DirectorExecutionErrorV1
     depends_on:
       - chief_engineer.blueprint
+      - director.planning
+      - director.tasking
       - factory.pipeline
       - factory.cognitive_runtime
       - policy.permission
@@ -2483,6 +2527,7 @@ cells:
       and the KernelOne tool chain execution capability.
     owned_paths:
       - polaris/cells/director/runtime/**
+      - polaris/kernelone/tools/**
     public_contracts:
       modules:
         - polaris.cells.director.runtime.public.contracts
@@ -2492,6 +2537,7 @@ cells:
       results: []
       errors: []
     depends_on:
+      - kernelone.tools
       - audit.evidence
       - policy.workspace_guard
       - workspace.integrity
@@ -2869,8 +2915,10 @@ cells:
       - archive.run_archive
       - orchestration.workflow_engine
       - orchestration.pm_planning
+      - orchestration.pm_dispatch
       - resident.autonomy
       - roles.adapters
+      - roles.profile
       - workspace.integrity
     subgraphs:
       - execution_governance_pipeline

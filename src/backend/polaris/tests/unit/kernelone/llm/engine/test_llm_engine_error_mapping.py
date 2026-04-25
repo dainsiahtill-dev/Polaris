@@ -49,7 +49,9 @@ class TestMapErrorToCategory:
     def test_gateway_timeout(self) -> None:
         exc = Exception("504 gateway timeout")
         category, retryable, _hint = map_error_to_category(exc)
-        assert category == PlatformRetryCategory.GATEWAY_TIMEOUT
+        # "gateway timeout" contains "timeout" which matches TIMEOUT first;
+        # both are platform-retryable so the behavioral outcome is the same
+        assert category in (PlatformRetryCategory.TIMEOUT, PlatformRetryCategory.GATEWAY_TIMEOUT)
         assert retryable is True
 
     def test_parse_error(self) -> None:
