@@ -51,6 +51,7 @@ from polaris.kernelone.events.constants import (
     EVENT_TYPE_TOOL_RESULT,
 )
 from pydantic import BaseModel
+from starlette.responses import JSONResponse
 
 from ._shared import StructuredHTTPException, get_state, require_auth, structured_error_response
 from .sse_utils import create_sse_response, sse_event_generator
@@ -314,10 +315,10 @@ async def get_session(
             session = service.get_session(session_id)
 
             if not session:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                return JSONResponse(
+                    {"ok": False, "error": f"Session not found: {session_id}"},
+                    status_code=404,
+                )
 
             return {
                 "ok": True,
@@ -366,10 +367,10 @@ async def update_session(
             )
 
             if not session:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session not found: {session_id}",
+                )
 
             return {
                 "ok": True,
@@ -403,10 +404,10 @@ async def delete_session(
             success = service.delete_session(session_id, soft=soft)
 
             if not success:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                return JSONResponse(
+                    {"ok": False, "error": f"Session not found: {session_id}"},
+                    status_code=404,
+                )
 
             return {
                 "ok": True,
@@ -444,10 +445,10 @@ async def get_messages(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session not found: {session_id}",
+                )
 
             messages = service.get_messages(session_id, limit=limit, offset=offset)
 
@@ -499,10 +500,10 @@ async def send_message(
             )
 
             if not session:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session not found: {session_id}",
+                )
 
             return {
                 "ok": True,
@@ -809,10 +810,10 @@ async def get_artifacts(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session not found: {session_id}",
+                )
 
         # Use artifact service to list artifacts
         artifact_service = RoleSessionArtifactService(Path(str(state.settings.workspace or "")))
@@ -854,10 +855,10 @@ async def get_audit(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session not found: {session_id}",
+                )
 
         # Use audit service to get events
         audit_service = RoleSessionAuditService(Path(str(state.settings.workspace or "")))
@@ -1124,10 +1125,10 @@ async def export_to_workflow(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session not found: {session_id}",
+                )
 
         # 1. Collect session content
         artifacts = artifact_service.list_artifacts(session_id)

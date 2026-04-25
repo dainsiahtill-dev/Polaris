@@ -394,7 +394,7 @@ storage/     → 3 层存储布局 (RAMDISK/WORKSPACE/GLOBAL)
 ## 🧠 哲学顶层：认知生命体架构
 
 > **工程注释**：以下使用生物学隐喻作为记忆辅助。
-> 所有隐喻均可在 `src/backend/docs/TERMINOLOGY.md` 中找到对应的工程实体。
+> 所有隐喻均可在 [`docs/TERMINOLOGY.md`](docs/TERMINOLOGY.md) 中找到对应的工程实体。
 > 代码实现中使用的是工程实体名称，而非隐喻。
 
 | 抽象概念 | 工程实体 | 为什么重要 |
@@ -411,7 +411,7 @@ storage/     → 3 层存储布局 (RAMDISK/WORKSPACE/GLOBAL)
 ## 👥 角色体系：三省六部制
 
 > **工程注释**：以下古名为内部文化标识，代码中使用标准英文角色名。
-> 所有角色名称映射可在 `src/backend/docs/TERMINOLOGY.md` 中找到。
+> 所有角色名称映射可在 [`docs/TERMINOLOGY.md`](docs/TERMINOLOGY.md) 中找到。
 
 | 角色 | 古名（文化标识） | 工程职责 | 加入你能做什么 |
 |------|----------------|---------|---------------|

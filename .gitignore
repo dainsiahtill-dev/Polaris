@@ -163,6 +163,7 @@ src/backend/aider-main/*
 src/backend/debug_*
 
 src/backend/workspace/*
+src/backend/runtime/
 src/backend/.polaris/*
 src/backend/.kernelone/*
 

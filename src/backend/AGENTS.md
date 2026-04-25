@@ -478,7 +478,7 @@ Cell 是最小自治边界。
 ## 18. 认知生命体与工程架构对齐（2026-04-17）
 
 > **工程注释**：本节使用生物学隐喻作为记忆辅助。
-> 所有隐喻均可在 [TERMINOLOGY.md](../TERMINOLOGY.md) 中找到对应的工程实体。
+> 所有隐喻均可在 [docs/TERMINOLOGY.md](../../docs/TERMINOLOGY.md) 中找到对应的工程实体。
 > 代码实现中使用的是工程实体名称，而非隐喻。
 >
 > 本节是 `docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md` 的权威摘要。修改须同步 `CLAUDE.md` 与 `GEMINI.md`。
