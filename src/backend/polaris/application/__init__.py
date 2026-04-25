@@ -189,6 +189,8 @@ __all__ = [
     "TokenService",
     "ToolTimeoutService",
     "TraceContext",
+    "TraceabilityAdminError",
+    "TraceabilityAdminService",
     "TranscriptService",
     "ValidationError",
     "Worker",

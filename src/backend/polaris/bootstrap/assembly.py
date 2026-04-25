@@ -135,6 +135,28 @@ def _inject_embedding_port(settings: Settings) -> None:
     logger.warning("No real embedding infrastructure found. Injected StubEmbeddingPort.")
 
 
+def _inject_provider_manager_port() -> None:
+    """Wire IProviderRegistryPort into KernelOne for LLM modules.
+
+    This enables proper dependency injection of the provider management port,
+    improving testability and following the port/adapter pattern.
+
+    Migration Note:
+        Once all LLM modules use get_provider_manager_port() instead of
+        ServiceLocator.get_provider_manager(), the legacy fallback can be removed.
+    """
+    try:
+        from polaris.infrastructure.llm.provider_bootstrap import ProviderAdapter
+        from polaris.infrastructure.llm.providers.provider_registry import provider_manager
+        from polaris.kernelone.llm.providers.provider_injection import set_provider_manager_port
+
+        provider_adapter = ProviderAdapter(provider_manager)
+        set_provider_manager_port(provider_adapter)
+        logger.info("Wired IProviderRegistryPort into KernelOne")
+    except ImportError as exc:
+        logger.debug("Provider port injection unavailable (missing dependencies): %s", exc)
+
+
 def _ensure_typed_event_bridge(message_bus: MessageBus) -> None:
     """Ensure typed-events bridge is globally initialized in dual-write mode."""
     if get_default_typed_event_adapter() is not None:
@@ -245,6 +267,10 @@ def assemble_core_services(container: DIContainer | None = None, settings: Setti
         set_default_ollama_adapter(OllamaRuntimeAdapter())
     except (OSError, RuntimeError, ValueError) as exc:
         logger.debug("Failed to inject Ollama runtime adapter: %s", exc)
+
+    # Wire IProviderRegistryPort for KernelOne LLM modules
+    # This enables proper dependency injection and testability
+    _inject_provider_manager_port()
 
     # 2. Base configurations
     if container is not None and not container.has_registration(Settings):

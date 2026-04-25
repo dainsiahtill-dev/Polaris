@@ -29,7 +29,7 @@ def validate_run_id(run_id: str) -> bool:
 def require_valid_run_id(run_id: str) -> str:
     """Require a valid run id, otherwise raise ValueError."""
     token = str(run_id or "").strip()
-    if token and not validate_run_id(token):
+    if not validate_run_id(token):
         raise ValueError(f"invalid run_id: {run_id}")
     return token
 
@@ -67,7 +67,10 @@ def normalize_event_type(value: KernelAuditEventType | str) -> KernelAuditEventT
     """Normalize event type input into enum."""
     if isinstance(value, KernelAuditEventType):
         return value
-    return KernelAuditEventType(str(value or "").strip())
+    token = str(value or "").strip()
+    if not token:
+        return KernelAuditEventType.TASK_START
+    return KernelAuditEventType(token)
 
 
 def normalize_role(value: KernelAuditRole | str) -> str:

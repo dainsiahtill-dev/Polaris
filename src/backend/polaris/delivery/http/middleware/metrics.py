@@ -280,7 +280,7 @@ async def metrics_endpoint() -> Response:
 
     # Append task_market business metrics if available.
     try:
-        from polaris.cells.runtime.task_market.internal.metrics import get_task_market_metrics
+        from polaris.cells.runtime.task_market.public.metrics import get_task_market_metrics
 
         tm_metrics = get_task_market_metrics()
         tm_text = tm_metrics.get_prometheus_metrics()

@@ -566,10 +566,26 @@ class StateFirstContextOS:
         Returns:
             Tuple of (transcript_log, working_state, content_store_cache).
         """
-        # Access internal state directly for snapshot (avoiding missing public APIs)
-        transcript = tuple(getattr(self._truth_log, "_entries", ()))
+        from copy import deepcopy
+
+        # GAP-2 Fix: Deep copy entries to prevent state pollution
+        # _entries contains mutable dict[str, Any] - must deep copy at snapshot time
+        # to ensure snapshot isolation even if original dicts are mutated later.
+        raw_entries = getattr(self._truth_log, "_entries", ())
+        transcript = tuple(
+            self._truth_log._normalize_entry(entry) for entry in raw_entries
+        )
+
+        # working_state is already deep-copied by WorkingStateManager.current()
         working_state = self._working_state_manager.current()
-        cache_snapshot: dict[str, Any] = dict(getattr(self._content_store_cache, "_cache", {}))
+
+        # GAP-2 Fix: Deep copy cache entries to prevent shared mutable state
+        # The shallow dict() copy leaves values as shared references.
+        raw_cache = getattr(self._content_store_cache, "_cache", {})
+        cache_snapshot: dict[str, Any] = {
+            key: deepcopy(value) for key, value in raw_cache.items()
+        }
+
         return transcript, working_state, cache_snapshot
 
     def _validate_projection(self, projection: ContextOSProjection) -> bool:

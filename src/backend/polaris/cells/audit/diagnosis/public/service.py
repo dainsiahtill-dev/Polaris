@@ -22,7 +22,9 @@ from polaris.cells.audit.diagnosis.internal.toolkit.error_chain import (
     EventLoader,
     _parse_event_datetime,
 )
-from polaris.cells.audit.diagnosis.internal.toolkit.service import resolve_runtime_root
+from polaris.cells.audit.diagnosis.internal.toolkit.service import (
+    resolve_runtime_root,
+)
 from polaris.cells.audit.diagnosis.internal.usecases import AuditUseCaseFacade
 
 __all__ = [

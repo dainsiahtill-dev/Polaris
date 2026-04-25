@@ -237,9 +237,7 @@ async def _archive_turn_events(
         # which differs from public archive_run() (run-level). This needs a public contract
         # via polaris.cells.archive.run_archive.public before this lazy import can be removed.
         # Technical debt: tracked in delivery跨层导入修复 issue.
-        from polaris.cells.archive.run_archive.internal.stream_archiver import (
-            create_stream_archiver,
-        )
+        from polaris.cells.archive.run_archive.public.service import create_stream_archiver
 
         archiver = create_stream_archiver(workspace)
         archive_id = await archiver.archive_turn(

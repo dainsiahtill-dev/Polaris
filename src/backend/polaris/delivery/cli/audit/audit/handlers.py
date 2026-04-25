@@ -11,8 +11,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.audit.diagnosis.internal.toolkit.service import (
-    _discover_journal_run_dirs,
+from polaris.cells.audit.diagnosis.public.service import (
+    discover_journal_run_dirs,
     load_journal_events,
 )
 from polaris.delivery.cli.audit.audit.auditor import export_data, get_failures, health_check, show_event

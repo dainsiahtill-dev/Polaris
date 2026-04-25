@@ -111,7 +111,7 @@ class TraceabilityAdminService:
         external_id: str,
         content: str,
         metadata: dict[str, Any] | None = None,
-    ) -> "TraceNode | None":
+    ) -> TraceNode | None:
         """Safely register a trace node.
 
         This method wraps TraceabilityService.register_node() with
@@ -152,10 +152,10 @@ class TraceabilityAdminService:
 
     def safe_link(
         self,
-        source: "TraceNode | None",
-        target: "TraceNode | None",
+        source: TraceNode | None,
+        target: TraceNode | None,
         link_kind: str = "derives_from",
-    ) -> "TraceLink | None":
+    ) -> TraceLink | None:
         """Safely create a trace link between two nodes.
 
         This method wraps TraceabilityService.link() with
@@ -192,7 +192,7 @@ class TraceabilityAdminService:
         self,
         external_id: str,
         node_kind: str,
-    ) -> "TraceNode | None":
+    ) -> TraceNode | None:
         """Safely find a trace node by external ID.
 
         This method wraps TraceabilityService.find_node() with
@@ -227,7 +227,7 @@ class TraceabilityAdminService:
 
     def safe_persist_matrix(
         self,
-        matrix: "TraceabilityMatrix | None",
+        matrix: TraceabilityMatrix | None,
         path: str,
     ) -> bool:
         """Safely persist a traceability matrix to disk.
