@@ -349,9 +349,10 @@ class TestLoopPmUtils(unittest.TestCase):
         self.assertNotIn("failed_at", tasks[0])
 
     def test_execute_non_director_tasks_generates_defect_followup(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
-                payload = self.loop_pm.execute_non_director_tasks(
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(
+            os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False
+        ):
+            payload = self.loop_pm.execute_non_director_tasks(
                     tasks=[
                         {
                             "id": "AUD-1",
