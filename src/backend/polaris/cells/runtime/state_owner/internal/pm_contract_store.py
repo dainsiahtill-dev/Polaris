@@ -13,7 +13,7 @@ from typing import Any
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 
-def _get_fs_adapter():
+def _get_fs_adapter() -> Any:
     return get_default_adapter()
 
 

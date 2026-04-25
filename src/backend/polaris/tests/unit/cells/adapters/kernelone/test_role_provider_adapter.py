@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.adapters.kernelone.role_provider_adapter import RoleProviderAdapter
 from polaris.kernelone.ports.role_provider import IRoleProvider
 

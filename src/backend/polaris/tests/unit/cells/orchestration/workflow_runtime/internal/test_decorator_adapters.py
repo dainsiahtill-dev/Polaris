@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.decorator_adapters import (
     ActivityAPI,
     WorkflowAPI,
@@ -22,7 +20,14 @@ class TestWorkflowAPI:
         class TestWorkflow:
             pass
 
-        assert hasattr(TestWorkflow, "__embedded_workflow_name__")
+        # decorator_adapters.WorkflowAPI.defn registers to workflow_registry
+        # and returns the class unchanged (no __embedded_workflow_name__ here)
+        from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime.workflow_registry import (
+            get_workflow_registry,
+        )
+
+        registry = get_workflow_registry()
+        assert registry.has_workflow("test_workflow")
 
     def test_run_decorator(self) -> None:
         class Wf:

@@ -1043,7 +1043,7 @@ ROLE_TOOL_INTEGRATIONS: dict[str, type] = {
 }
 
 
-def get_role_tool_integration(role: str, workspace: str):
+def get_role_tool_integration(role: str, workspace: str) -> Any:
     """获取角色工具集成的工厂函数。
 
     Args:

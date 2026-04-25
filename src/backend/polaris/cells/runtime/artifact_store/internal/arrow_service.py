@@ -39,7 +39,7 @@ class ArrowService:
             logger.error(f"Failed to convert to Arrow IPC: {e}")
             return None
 
-    def get_status(self):
+    def get_status(self) -> dict[str, Any | None]:
         return {"available": self.available, "version": pa.__version__ if self.available else None}
 
 

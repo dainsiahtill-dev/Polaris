@@ -2,7 +2,7 @@
 # ARCH-001: Created to declare previously undeclared cell
 # DEPRECATED: This cell is deprecated per __init__.py docstring
 #             Use DirectorPool cell instead
-cell_id: director.task_consumer
+id: director.task_consumer
 title: Director Task Consumer
 kind: capability
 visibility: public

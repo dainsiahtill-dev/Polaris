@@ -188,6 +188,7 @@ def _index_read_lock(paths: list[str]) -> Generator[None, None, None]:
 # Path resolution helpers (pure path math — no I/O)
 # ---------------------------------------------------------------------------
 
+
 def _get_default_index_path() -> str:
     """获取默认索引路径"""
     workspace = os.environ.get("KERNELONE_WORKSPACE", ".")

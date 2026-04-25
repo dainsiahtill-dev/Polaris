@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.event_stream import EventStream
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_orchestrator import (
     RuntimeOrchestrator,
@@ -84,11 +83,17 @@ class TestRuntimeOrchestrator:
 
     @pytest.mark.asyncio
     async def test_terminate_not_running(self, orchestrator: RuntimeOrchestrator) -> None:
+        definition = ServiceDefinition(
+            name="pm",
+            command=["echo", "hi"],
+            working_dir=Path("."),
+        )
         handle = ServiceHandle(
             id="s1",
-            definition=MagicMock(),
+            definition=definition,
             state=ServiceState.COMPLETED,
         )
+        orchestrator._services["s1"] = handle
         result = await orchestrator.terminate(handle)
         assert result is True
 
@@ -116,21 +121,24 @@ class TestRuntimeOrchestrator:
 
     @pytest.mark.asyncio
     async def test_launch_pm(self, orchestrator: RuntimeOrchestrator) -> None:
-        with patch.object(
-            orchestrator._launcher,
-            "launch_pm",
-            return_value=MagicMock(
-                command=["python", "-m", "pm"],
-                env_vars={},
+        with (
+            patch.object(
+                orchestrator._launcher,
+                "launch_pm",
+                return_value=MagicMock(
+                    command=["python", "-m", "pm"],
+                    env_vars={},
+                ),
             ),
-        ), patch.object(
-            orchestrator._launcher,
-            "launch",
-            new_callable=AsyncMock,
-            return_value=MagicMock(
-                is_success=MagicMock(return_value=True),
-                pid=123,
-                process_handle={"id": "p1"},
+            patch.object(
+                orchestrator._launcher,
+                "launch",
+                new_callable=AsyncMock,
+                return_value=MagicMock(
+                    is_success=MagicMock(return_value=True),
+                    pid=123,
+                    process_handle={"id": "p1"},
+                ),
             ),
         ):
             handle = await orchestrator.launch_pm(Path("."))
@@ -138,21 +146,24 @@ class TestRuntimeOrchestrator:
 
     @pytest.mark.asyncio
     async def test_launch_director(self, orchestrator: RuntimeOrchestrator) -> None:
-        with patch.object(
-            orchestrator._launcher,
-            "launch_director",
-            return_value=MagicMock(
-                command=["python", "-m", "director"],
-                env_vars={},
+        with (
+            patch.object(
+                orchestrator._launcher,
+                "launch_director",
+                return_value=MagicMock(
+                    command=["python", "-m", "director"],
+                    env_vars={},
+                ),
             ),
-        ), patch.object(
-            orchestrator._launcher,
-            "launch",
-            new_callable=AsyncMock,
-            return_value=MagicMock(
-                is_success=MagicMock(return_value=True),
-                pid=123,
-                process_handle={"id": "p1"},
+            patch.object(
+                orchestrator._launcher,
+                "launch",
+                new_callable=AsyncMock,
+                return_value=MagicMock(
+                    is_success=MagicMock(return_value=True),
+                    pid=123,
+                    process_handle={"id": "p1"},
+                ),
             ),
         ):
             handle = await orchestrator.launch_director(Path("."))

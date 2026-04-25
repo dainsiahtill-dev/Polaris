@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from polaris.cells.orchestration.workflow_runtime.public.contracts import (
     CancelWorkflowCommandV1,
     QueryWorkflowEventsV1,
@@ -12,8 +13,6 @@ from polaris.cells.orchestration.workflow_runtime.public.contracts import (
     WorkflowExecutionStartedEventV1,
     WorkflowRuntimeError,
 )
-
-import pytest
 
 
 class TestStartWorkflowCommandV1:

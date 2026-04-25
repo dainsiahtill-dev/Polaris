@@ -11,7 +11,7 @@ Note:
 from __future__ import annotations
 
 import warnings
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
 
@@ -19,7 +19,7 @@ from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
 __all__ = ["ErrorCategory", "_category_from_exception", "classify_error"]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Provide deprecation warnings for direct module imports."""
     if name == "ErrorCategory":
         warnings.warn(

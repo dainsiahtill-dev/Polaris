@@ -1,42 +1,63 @@
 """Application layer for Polaris.
 
-Role: Use-case orchestration and application service facade.
-In this branch, the primary capability carriers are Cells and KernelOne;
-the application layer provides a thin facade for cross-cutting concerns.
+Role
+----
+Thin use-case orchestration and facade layer.  The application layer sits
+between *delivery* (HTTP / CLI / WebSocket) and the capability carriers
+(*Cells*, *KernelOne*, *domain*).  It exposes cohesive **admin service
+facades** so that delivery code never needs to import Cell internals,
+infrastructure adapters, or low-level KernelOne modules directly.
 
-Call chain (correct pattern):
-    delivery -> application -> domain/kernelone/cells
+Call chain (canonical pattern)::
 
-Current branch status (migration):
-    delivery currently calls Cells directly in some paths; this is
-    acceptable during migration. New code should go through Cells
-    (not application), since Cells are the primary capability carriers.
+    delivery  ->  application  ->  cells.*.public / domain / kernelone
 
-Sub-packages:
-    llm/          - LLM evaluation and tooling (cell-backed)
-    orchestration/ - Workflow orchestration (cell-backed)
-    resident/     - Resident/daemon services (cell-backed)
-    roles/        - Role engine and kernel components (cell-backed)
+Application services
+~~~~~~~~~~~~~~~~~~~~
+- ``RuntimeAdminService``  -- orchestrator and role-runtime facade
+- ``StorageAdminService``  -- storage layout resolution facade
+- ``SessionAdminService``  -- session lifecycle management facade
+- ``CognitiveRuntimeService`` -- cognitive-runtime orchestration (sub-pkg)
+- ``health``               -- runtime health checks (non-facade utility)
 
-This layer intentionally contains no new implementations in this branch.
-Do NOT add business logic or new use-case implementations here.
-Main capability implementations live in polaris/cells/ and polaris/kernelone/.
+Re-exported aliases
+~~~~~~~~~~~~~~~~~~~
+Domain entities, domain services and KernelOne contracts that are consumed
+by multiple Cells or needed for delivery-layer dependency injection are
+re-exported here for convenience.  The canonical source for each type
+remains in its originating module.
 
-Re-exported aliases (for cross-cutting convenience):
-    - Domain entities and services consumed by multiple Cells
-    - KernelOne contracts needed by delivery-layer dependency injection
-
-Architecture constraints:
-    - delivery must NOT import infrastructure adapters directly
-    - delivery must NOT bypass Cells for business orchestration
-    - application may NOT contain Polaris business semantics
-    - application must NOT implement port/adapter patterns already in Cells
+Architecture constraints
+~~~~~~~~~~~~~~~~~~~~~~~~
+- delivery must NOT import infrastructure adapters directly
+- delivery must NOT bypass Cells for business orchestration
+- application may NOT contain Polaris business semantics
+- application must NOT implement port/adapter patterns already in Cells
+- All text I/O must use explicit UTF-8
 """
 
 from __future__ import annotations
 
-# Re-export domain entities for cross-cutting convenience.
+# ---------------------------------------------------------------------------
+# Application services (lazy-import friendly)
+# ---------------------------------------------------------------------------
+from polaris.application.runtime_admin import (
+    RuntimeAdminError,
+    RuntimeAdminService,
+)
+from polaris.application.session_admin import (
+    SessionAdminError,
+    SessionAdminService,
+)
+from polaris.application.storage_admin import (
+    StorageAdminError,
+    StorageAdminService,
+)
+
+# ---------------------------------------------------------------------------
+# Re-exported domain entities for cross-cutting convenience.
 # The canonical source for each type is in the submodule.
+# ---------------------------------------------------------------------------
 from polaris.domain.entities import (
     Task,
     TaskEvidence,
@@ -106,6 +127,7 @@ from polaris.kernelone.contracts.technical import (
 )
 
 __all__ = [
+    # -- Domain entities ----------------------------------------------------
     "AuthenticationError",
     "BackgroundTask",
     "BackgroundTaskService",
@@ -136,12 +158,19 @@ __all__ = [
     "ProcessNotRunningError",
     "RateLimitError",
     "Result",
+    # -- Application services -----------------------------------------------
+    "RuntimeAdminError",
+    "RuntimeAdminService",
     "ScheduleResult",
     "ScheduledTask",
     "SchedulerPort",
     "SecurityService",
     "ServiceUnavailableError",
+    "SessionAdminError",
+    "SessionAdminService",
     "StateError",
+    "StorageAdminError",
+    "StorageAdminService",
     "StorageError",
     "StreamChunk",
     "SubsystemHealth",

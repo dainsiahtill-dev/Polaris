@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
-
-import pytest
 
 from polaris.kernelone.audit.alerting import (
     Alert,
@@ -56,7 +54,7 @@ class TestAlertRule:
             condition=AlertCondition(),
             severity=AlertSeverity.WARNING,
         )
-        assert rule.cooldown_seconds == 30
+        assert rule.cooldown_seconds == 300
         assert rule.enabled is True
         assert rule.tags == {}
         assert rule.is_dynamic_storm_rule is False
@@ -101,6 +99,10 @@ class TestAlertingEngine:
         assert len(rules) >= 4
         ids = {r.id for r in rules}
         assert "high_failure_rate" in ids
+
+    def test_explicit_empty_rules(self) -> None:
+        engine = AlertingEngine(rules=[])
+        assert len(engine.rules) == 0
 
     def test_add_and_remove_rule(self) -> None:
         engine = AlertingEngine(rules=[])
@@ -218,13 +220,30 @@ class TestAlertingEngine:
         event = self._make_event()
         assert engine.evaluate(event, current_storm_level="warning") == []
 
+    def test_storm_rule_no_level_provided(self) -> None:
+        engine = AlertingEngine(rules=[])
+        rule = AlertRule(
+            id="storm_test",
+            name="Storm",
+            description="d",
+            condition=AlertCondition(storm_levels=("critical",)),
+            severity=AlertSeverity.CRITICAL,
+            is_dynamic_storm_rule=True,
+            cooldown_seconds=0,
+        )
+        engine.add_rule(rule)
+        event = self._make_event()
+        assert engine.evaluate(event) == []
+
     def test_task_pattern_filter(self) -> None:
         engine = AlertingEngine(rules=[])
         rule = AlertRule(
             id="r1",
             name="R",
             description="d",
-            condition=AlertCondition(event_type="task_failed", task_pattern="t*", threshold_count=1, threshold_window_minutes=5),
+            condition=AlertCondition(
+                event_type="task_failed", task_pattern="t*", threshold_count=1, threshold_window_minutes=5
+            ),
             severity=AlertSeverity.WARNING,
             cooldown_seconds=0,
         )

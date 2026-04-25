@@ -194,7 +194,7 @@ class TaskMarketMetrics:
 
     # ---- Convenience helpers ------------------------------------------------
 
-    def time_operation(self, operation: str, *, stage: str = ""):
+    def time_operation(self, operation: str, *, stage: str = "") -> _OperationTimer:
         """Context manager / decorator helper that times an operation.
 
         Usage::

@@ -27,6 +27,10 @@ from polaris.cells.archive.run_archive.public.contracts import (
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
+    from polaris.cells.archive.run_archive.internal.stream_archiver import (
+        StreamArchiver,
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +52,7 @@ def _run_background(coro: Coroutine[Any, Any, None]) -> None:
     threading.Thread(target=_runner, daemon=True).start()
 
 
-def create_run_archive_service(workspace: str):
+def create_run_archive_service(workspace: str) -> Any:
     from polaris.cells.archive.run_archive.internal.history_archive_service import (
         HistoryArchiveService,
     )
@@ -117,6 +121,29 @@ def trigger_factory_archive(workspace: str, run_id: str, *, reason: str) -> None
     )
 
 
+def create_stream_archiver(workspace: str) -> StreamArchiver:
+    """Create a ``StreamArchiver`` for the given workspace.
+
+    This is the public boundary factory for turn-level event archiving.
+    Delivery layers MUST use this function instead of importing from
+    ``archive.run_archive.internal.stream_archiver``.
+
+    Parameters
+    ----------
+    workspace:
+        Absolute workspace path.
+
+    Returns
+    -------
+    ``StreamArchiver`` backed by a ``HistoryArchiveService``.
+    """
+    from polaris.cells.archive.run_archive.internal.stream_archiver import (
+        create_stream_archiver as _create,
+    )
+
+    return _create(workspace)
+
+
 def create_archive_sink(bus: Any) -> Any:
     """Create an ArchiveSink instance wired to the given MessageBus.
 
@@ -142,6 +169,7 @@ __all__ = [
     "archive_run",
     "create_archive_sink",
     "create_run_archive_service",
+    "create_stream_archiver",
     "get_run_events",
     "get_run_manifest",
     "list_history_runs",

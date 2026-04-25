@@ -6,11 +6,9 @@ import gzip
 import io
 import json
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.archive.run_archive.internal.stream_archiver import (
     StreamArchiver,
     StreamArchiverError,
@@ -76,13 +74,15 @@ class TestStreamArchiverArchiveTurn:
     async def test_archive_turn_os_error(self, mock_archiver: MagicMock) -> None:
         stream_archiver = StreamArchiver(mock_archiver)
 
-        with patch.object(Path, "mkdir", side_effect=OSError("disk full")):
-            with pytest.raises(StreamArchiverError, match="disk full"):
-                await stream_archiver.archive_turn(
-                    session_id="s1",
-                    turn_id="t1",
-                    events=[{"type": "chunk"}],
-                )
+        with (
+            patch.object(Path, "mkdir", side_effect=OSError("disk full")),
+            pytest.raises(StreamArchiverError, match="disk full"),
+        ):
+            await stream_archiver.archive_turn(
+                session_id="s1",
+                turn_id="t1",
+                events=[{"type": "chunk"}],
+            )
 
 
 class TestStreamArchiverGetArchive:
@@ -136,9 +136,7 @@ class TestCreateStreamArchiver:
     """Tests for create_stream_archiver factory."""
 
     def test_factory(self) -> None:
-        with patch(
-            "polaris.cells.archive.run_archive.internal.stream_archiver.HistoryArchiveService"
-        ) as mock_cls:
+        with patch("polaris.cells.archive.run_archive.internal.stream_archiver.HistoryArchiveService") as mock_cls:
             mock_cls.return_value = MagicMock()
             archiver = create_stream_archiver("/tmp/ws")
             assert isinstance(archiver, StreamArchiver)

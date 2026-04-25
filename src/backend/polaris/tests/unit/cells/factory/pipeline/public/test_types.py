@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from polaris.cells.factory.pipeline.public.types import (
     VALID_PHASE_TRANSITIONS,
+    AgentTurnRequest,
     EventType,
     FactoryControlRequest,
     FactoryRun,
@@ -24,6 +23,7 @@ from polaris.cells.factory.pipeline.public.types import (
     get_next_phases,
     is_valid_transition,
 )
+from pydantic import ValidationError
 
 
 class TestRunPhase:
@@ -233,14 +233,20 @@ class TestFactoryRunStatus:
     """Tests for FactoryRunStatus model."""
 
     def test_factory_run_status(self) -> None:
+        import datetime
+
+        now = datetime.datetime.now()
         status = FactoryRunStatus(
             run_id="r1",
-            phase=RunPhase.RUNNING,
+            phase=RunPhase.PLANNING,
             status=RunLifecycleStatus.RUNNING,
             progress=50.0,
             roles={},
             gates=[],
-            created_at=__import__("datetime").datetime.now(),
+            created_at=now,
+            started_at=now,
+            updated_at=now,
+            completed_at=None,
         )
         assert status.run_id == "r1"
         assert status.progress == 50.0

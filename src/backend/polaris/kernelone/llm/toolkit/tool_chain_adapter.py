@@ -273,7 +273,7 @@ def integrate_with_director_tools_v2(director_tools, workspace: str) -> None:
     # 注入到 DirectorToolsV2 的 _get_handler 方法
     original_get_handler = director_tools._get_handler
 
-    def patched_get_handler(tool_name: str):
+    def patched_get_handler(tool_name: str) -> Any:
         # 先检查 Standard Toolkit 工具
         if tool_name in handlers:
             return handlers[tool_name]

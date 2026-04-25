@@ -13,12 +13,8 @@ Covers:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -157,7 +153,15 @@ class TestParseReviewResult:
 class TestMergeReviewResult:
     def test_llm_passed_inherits(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        base = {"verdict": "PASS", "score": 100, "critical_issues": [], "major_issues": [], "warnings": [], "evidence": [], "suggestions": []}
+        base = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": [],
+            "suggestions": [],
+        }
         llm = {"parsed_json": True, "verdict": "FAIL", "score": 50, "critical_issues": ["bug"], "warnings": ["slow"]}
         merged = adapter._merge_review_result(base, llm)
         assert merged["verdict"] == "FAIL"
@@ -167,7 +171,15 @@ class TestMergeReviewResult:
 
     def test_llm_unparsed_adds_warning(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        base = {"verdict": "PASS", "score": 100, "critical_issues": [], "major_issues": [], "warnings": [], "evidence": [], "suggestions": []}
+        base = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": [],
+            "suggestions": [],
+        }
         llm = {"parsed_json": False, "raw_excerpt": "bad json"}
         merged = adapter._merge_review_result(base, llm)
         assert "qa_llm_judgement_unavailable" in merged["warnings"]
@@ -175,7 +187,15 @@ class TestMergeReviewResult:
 
     def test_dedupe(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        base = {"verdict": "PASS", "score": 100, "critical_issues": ["a"], "major_issues": [], "warnings": [], "evidence": [], "suggestions": []}
+        base = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": ["a"],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": [],
+            "suggestions": [],
+        }
         llm = {"parsed_json": True, "verdict": "PASS", "critical_issues": ["a", "b"]}
         merged = adapter._merge_review_result(base, llm)
         assert merged["critical_issues"] == ["a", "b"]
@@ -189,27 +209,59 @@ class TestMergeReviewResult:
 class TestFinalizeReviewResult:
     def test_pass_when_no_issues(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        review = {"verdict": "PASS", "score": 100, "critical_issues": [], "major_issues": [], "warnings": [], "evidence": [], "suggestions": []}
+        review = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": [],
+            "suggestions": [],
+        }
         result = adapter._finalize_review_result(review)
         assert result["passed"] is True
         assert result["score"] == 100
 
     def test_fail_on_critical(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        review = {"verdict": "PASS", "score": 100, "critical_issues": ["bug"], "major_issues": [], "warnings": [], "evidence": [], "suggestions": []}
+        review = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": ["bug"],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": [],
+            "suggestions": [],
+        }
         result = adapter._finalize_review_result(review)
         assert result["passed"] is False
         assert result["score"] == 70
 
     def test_fail_on_verdict_fail(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        review = {"verdict": "FAIL", "score": 100, "critical_issues": [], "major_issues": [], "warnings": [], "evidence": [], "suggestions": []}
+        review = {
+            "verdict": "FAIL",
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": [],
+            "suggestions": [],
+        }
         result = adapter._finalize_review_result(review)
         assert result["passed"] is False
 
     def test_score_computed_correctly(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        review = {"verdict": "PASS", "score": 100, "critical_issues": ["a", "b"], "major_issues": ["c"], "warnings": ["d"], "evidence": [], "suggestions": []}
+        review = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": ["a", "b"],
+            "major_issues": ["c"],
+            "warnings": ["d"],
+            "evidence": [],
+            "suggestions": [],
+        }
         result = adapter._finalize_review_result(review)
         # 100 - 2*30 - 1*10 - 1*4 = 26
         assert result["score"] == 26
@@ -271,7 +323,12 @@ class TestStripJsonLineComments:
 class TestNormalizeReviewPayload:
     def test_basic(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        payload = {"verdict": "PASS", "score": 90, "critical_issues": ["a"], "findings": [{"severity": "high", "description": "bug"}]}
+        payload = {
+            "verdict": "PASS",
+            "score": 90,
+            "critical_issues": ["a"],
+            "findings": [{"severity": "high", "description": "bug"}],
+        }
         result = adapter._normalize_review_payload(payload)
         assert result["verdict"] == "PASS"
         assert "bug" in result["major_issues"]
@@ -406,7 +463,9 @@ class TestDetectRegressions:
         baseline = {"code": "def a(): pass\ndef b(): pass\n"}
         current = "def a(): pass\n"
         result = adapter._detect_regressions(current, baseline_snapshot=baseline)
-        assert "api_reduction" in result["regressions"][0]
+        # Both significant_code_reduction and api_reduction may be triggered;
+        # assert api_reduction is present somewhere in regressions.
+        assert any("api_reduction" in r for r in result["regressions"])
 
     def test_stable(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

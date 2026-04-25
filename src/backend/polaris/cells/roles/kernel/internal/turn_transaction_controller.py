@@ -1689,7 +1689,25 @@ class TurnTransactionController:
         ledger: TurnLedger,
         workflow_context: dict | None = None,
     ) -> dict:
-        """构建符合契约的 TurnResult dict"""
+        """构建符合契约的 TurnResult dict.
+
+        Session-level state (``_session_phase_manager``,
+        ``_session_modification_contract``) that persists across turns is
+        snapshotted into the ledger *before* finalization so that cross-turn
+        mutations are auditable via the single commit path.
+        """
+        # --- Snapshot session-level state into the ledger (single commit point) ---
+        ledger.record_session_state_snapshot(
+            phase_manager_state=(
+                self._session_phase_manager.to_dict() if self._session_phase_manager is not None else None
+            ),
+            modification_contract_state=(
+                self._session_modification_contract.to_dict()
+                if self._session_modification_contract is not None
+                else None
+            ),
+        )
+
         ledger.record_tool_batch_resolved(kind)
         self._guard_assert_no_hidden_continuation(
             turn_id=turn_id,

@@ -56,7 +56,7 @@ BUILTIN_PATTERNS: list[ErrorPattern] = [
         regex=r"object of type '(.+)' has no len",
         description="对不支持 len() 的对象调用 len()",
         root_cause_template=(
-            "在代码中对类型为 '{value_type}' 的对象调用了 len()。"
+            "在代码中对类型为 '{group_0}' 的对象调用了 len()。"
             "常见原因：\n"
             "  1. 错误地引用了类方法而不是实例属性（如 AIStreamEvent.reasoning 而非 event.reasoning）\n"
             "  2. 变量被错误地赋值为方法引用\n"
@@ -76,7 +76,7 @@ BUILTIN_PATTERNS: list[ErrorPattern] = [
         name="method_not_callable",
         regex=r"'(.+)' object is not callable",
         description="将不可调用对象当作函数调用",
-        root_cause_template="将类型为 '{value_type}' 的对象当作函数调用了",
+        root_cause_template="将类型为 '{group_0}' 的对象当作函数调用了",
         fix_suggestion_template="检查是否错误地引用了类属性而不是实例",
         search_keywords=["()", "invoke(", "call("],
         priority=8,
@@ -85,7 +85,7 @@ BUILTIN_PATTERNS: list[ErrorPattern] = [
         name="attribute_error",
         regex=r"'(.+)' object has no attribute '(.+)'",
         description="对象没有指定的属性",
-        root_cause_template="类型为 '{value_type}' 的对象没有属性 '{attribute}'",
+        root_cause_template="类型为 '{group_0}' 的对象没有属性 '{group_1}'",
         fix_suggestion_template="检查属性名是否正确，或对象类型是否正确",
         search_keywords=[".to_dict", ".value", ".content"],
         priority=5,
@@ -94,7 +94,7 @@ BUILTIN_PATTERNS: list[ErrorPattern] = [
         name="type_error_format",
         regex=r"can only concatenate str \(not '(.+)'\) to str",
         description="字符串拼接类型错误",
-        root_cause_template="尝试将 '{wrong_type}' 与字符串拼接",
+        root_cause_template="尝试将 '{group_0}' 与字符串拼接",
         fix_suggestion_template="使用 str() 转换或检查变量类型",
         search_keywords=['"', "+"],
         priority=3,

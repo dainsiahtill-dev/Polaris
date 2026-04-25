@@ -363,7 +363,7 @@ class ActivityRunner:
         cancel_event = self._cancel_events.get(activity_id)
 
         # 并行等待 handler 和取消事件 - 使用 create_task 包装协程
-        async def run_handler():
+        async def run_handler() -> Any:
             return await self._execute_handler(handler, input)
 
         if cancel_event:

@@ -48,7 +48,7 @@ def _nop_update_role_status(role: str, *, status: str, running: bool, detail: st
     pass
 
 
-def _get_chief_engineer_service():
+def _get_chief_engineer_service() -> Callable:
     """Lazy import for chief_engineer.blueprint to avoid module-level cross-Cell coupling."""
     from polaris.cells.chief_engineer.blueprint.public.service import (
         run_pre_dispatch_chief_engineer,
@@ -57,7 +57,7 @@ def _get_chief_engineer_service():
     return run_pre_dispatch_chief_engineer
 
 
-def _get_workflow_runtime():
+def _get_workflow_runtime() -> tuple[type, type, Callable]:
     """Lazy import for workflow_runtime to avoid module-level cross-Cell coupling."""
     from polaris.cells.orchestration.workflow_runtime.public.service import (
         PMWorkflowInput,
@@ -68,7 +68,7 @@ def _get_workflow_runtime():
     return PMWorkflowInput, WorkflowSubmissionResult, submit_pm_workflow_sync
 
 
-def _get_task_market_services():
+def _get_task_market_services() -> tuple[type, Callable]:
     """Lazy import for runtime.task_market to avoid module-level cross-Cell coupling."""
     from polaris.cells.runtime.task_market.public.contracts import (
         PublishTaskWorkItemCommandV1,
@@ -80,7 +80,7 @@ def _get_task_market_services():
     return PublishTaskWorkItemCommandV1, get_task_market_service
 
 
-def _get_task_market_revision_services():
+def _get_task_market_revision_services() -> tuple[type, type, type]:
     """Lazy import for task_market revision/change-order contracts."""
     from polaris.cells.runtime.task_market.public.contracts import (
         QueryPlanRevisionsV1,
@@ -91,7 +91,7 @@ def _get_task_market_revision_services():
     return RegisterPlanRevisionCommandV1, SubmitChangeOrderCommandV1, QueryPlanRevisionsV1
 
 
-def _get_task_market_consumers():
+def _get_task_market_consumers() -> tuple[type, type, type]:
     """Lazy import for CE/Director/QA task-market consumers."""
     from polaris.cells.chief_engineer.blueprint.public.service import CEConsumer
     from polaris.cells.director.task_consumer import DirectorExecutionConsumer
@@ -100,7 +100,7 @@ def _get_task_market_consumers():
     return CEConsumer, DirectorExecutionConsumer, QAConsumer
 
 
-def _get_shared_quality():
+def _get_shared_quality() -> tuple[Callable, Callable]:
     """Lazy import for shared_quality to avoid circular imports."""
     from polaris.cells.orchestration.pm_planning.public.service import (
         detect_integration_verify_command,
@@ -110,14 +110,14 @@ def _get_shared_quality():
     return detect_integration_verify_command, run_integration_verify_runner
 
 
-def _get_io_utils():
+def _get_io_utils() -> tuple[Callable, Callable]:
     """Lazy import for events to avoid circular imports."""
     from polaris.kernelone.events import emit_dialogue, emit_event
 
     return emit_event, emit_dialogue
 
 
-def _get_tasks_utils():
+def _get_tasks_utils() -> tuple[Callable, Callable]:
     """Return task utility functions from the Cell's own port module.
 
     Delivery layer is intentionally never imported here; all pure logic
@@ -1857,7 +1857,7 @@ run_pre_dispatch_chief_engineer = None  # type: ignore[assignment]
 """Re-exported from _get_chief_engineer_service() for test patchability."""
 
 
-def _submit_pm_workflow_sync_resolve():
+def _submit_pm_workflow_sync_resolve() -> Callable:
     """Lazily resolve submit_pm_workflow_sync and cache at module level."""
     global submit_pm_workflow_sync
     if submit_pm_workflow_sync is None:

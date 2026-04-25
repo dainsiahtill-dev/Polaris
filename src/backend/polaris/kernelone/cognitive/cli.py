@@ -6,7 +6,7 @@ import asyncio
 import os
 
 
-def main():
+def main() -> None:
     """Simple CLI demo for Cognitive Life Form."""
     import argparse
 
@@ -53,7 +53,7 @@ def main():
 
     from polaris.kernelone.cognitive.orchestrator import CognitiveOrchestrator
 
-    async def run():
+    async def run() -> None:
         orchestrator = CognitiveOrchestrator()
 
         print("=== Cognitive Life Form Demo ===")

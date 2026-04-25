@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.kernelone.audit.evidence_paths import (
     _is_within_path,
     ensure_runtime_scoped_directory,
@@ -90,9 +89,11 @@ class TestEnsureRuntimeScopedDirectory:
             ensure_runtime_scoped_directory(".", "")
 
     def test_outside_runtime_raises(self, tmp_path: Path) -> None:
-        with patch(
-            "polaris.kernelone.audit.evidence_paths.resolve_storage_roots",
-            return_value=MagicMock(runtime_root=str(tmp_path / "runtime")),
+        with (
+            patch(
+                "polaris.kernelone.audit.evidence_paths.resolve_storage_roots",
+                return_value=MagicMock(runtime_root=str(tmp_path / "runtime")),
+            ),
+            pytest.raises(ValueError),
         ):
-            with pytest.raises(ValueError):
-                ensure_runtime_scoped_directory(str(tmp_path), "/outside/runtime")
+            ensure_runtime_scoped_directory(str(tmp_path), "/outside/runtime")

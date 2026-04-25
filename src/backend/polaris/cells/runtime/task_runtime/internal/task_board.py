@@ -373,7 +373,7 @@ class TaskBoard:
         return self._kernel_fs.to_logical_path(str(path))
 
     @contextmanager
-    def transaction(self):
+    def transaction(self) -> Any:
         """Board-level transaction lock for atomic cache+filesystem updates."""
         with self._lock:
             yield
@@ -421,7 +421,7 @@ class TaskBoard:
         self._kernel_fs.write_text(logical, str(int(value)), encoding="utf-8")
 
     @contextmanager
-    def _file_lock(self, lock_file_path: Path):
+    def _file_lock(self, lock_file_path: Path) -> Any:
         """Cross-platform exclusive file lock context manager."""
         lock_file_path.parent.mkdir(parents=True, exist_ok=True)
         lock_file = None

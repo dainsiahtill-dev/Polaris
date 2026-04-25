@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.llm.evaluation.internal.path_validators import (
     DANGEROUS_PATH_CHARS,
     MAX_IDENTIFIER_LENGTH,

@@ -8,14 +8,11 @@ and helper functions.
 from __future__ import annotations
 
 import ast
-import json
 import tempfile
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.context.catalog.internal.descriptor_pack_generator import (
     DescriptorPack,
     FunctionalAnalyzer,
@@ -27,7 +24,6 @@ from polaris.cells.context.catalog.internal.descriptor_pack_generator import (
     validate_schema,
     verify_recall_at_10,
 )
-
 
 # ---------------------------------------------------------------------------
 # DescriptorPack
@@ -179,7 +175,7 @@ class TestValidateSchema:
     def test_missing_required_field(self, tmp_path: Path) -> None:
         schema_path = tmp_path / "schema.yaml"
         schema_path.write_text(
-            'required:\n  - version\n  - cell_id\n$defs:\n  descriptor:\n    required:\n      - name\n',
+            "required:\n  - version\n  - cell_id\n$defs:\n  descriptor:\n    required:\n      - name\n",
             encoding="utf-8",
         )
         descriptor = {"version": "1.0"}  # missing cell_id
@@ -188,7 +184,7 @@ class TestValidateSchema:
     def test_valid_schema(self, tmp_path: Path) -> None:
         schema_path = tmp_path / "schema.yaml"
         schema_path.write_text(
-            'required:\n  - version\n  - cell_id\n',
+            "required:\n  - version\n  - cell_id\n",
             encoding="utf-8",
         )
         descriptor = {"version": "1.0", "cell_id": "test"}
@@ -203,7 +199,7 @@ class TestValidateSchema:
     def test_descriptor_validation(self, tmp_path: Path) -> None:
         schema_path = tmp_path / "schema.yaml"
         schema_path.write_text(
-            'required:\n  - version\n$defs:\n  descriptor:\n    required:\n      - name\n',
+            "required:\n  - version\n$defs:\n  descriptor:\n    required:\n      - name\n",
             encoding="utf-8",
         )
         descriptor = {
@@ -218,7 +214,7 @@ class TestValidateSchema:
     def test_empty_descriptors_passes(self, tmp_path: Path) -> None:
         schema_path = tmp_path / "schema.yaml"
         schema_path.write_text(
-            'required:\n  - version\n$defs:\n  descriptor:\n    required:\n      - name\n',
+            "required:\n  - version\n$defs:\n  descriptor:\n    required:\n      - name\n",
             encoding="utf-8",
         )
         descriptor = {"version": "1.0", "descriptors": []}
@@ -361,12 +357,12 @@ class TestAnalyzeFile:
         py_file.write_text(
             '"""Module docstring."""\n'
             "class MyClass:\n"
-            '    \"\"\"Class doc.\"\"\"\n'
+            '    """Class doc."""\n'
             "    def my_method(self):\n"
             "        pass\n"
             "\n"
             "def my_function():\n"
-            '    \"\"\"Function doc.\"\"\"\n'
+            '    """Function doc."""\n'
             "    pass\n",
             encoding="utf-8",
         )
@@ -467,9 +463,7 @@ class TestGeneratePack:
             encoding="utf-8",
         )
 
-        with patch(
-            "polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs"
-        ) as mock_kfs:
+        with patch("polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs") as mock_kfs:
             mock_fs = MagicMock()
             mock_kfs.return_value = mock_fs
             result = await generate_pack(cell_dir, tmp_path, skip_schema_validation=True)
@@ -500,9 +494,7 @@ class TestGeneratePack:
         venv_dir.mkdir()
         (venv_dir / "skip.py").write_text("def skip(): pass\n", encoding="utf-8")
 
-        with patch(
-            "polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs"
-        ) as mock_kfs:
+        with patch("polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs") as mock_kfs:
             mock_fs = MagicMock()
             mock_kfs.return_value = mock_fs
             result = await generate_pack(cell_dir, tmp_path, skip_schema_validation=True)
@@ -524,9 +516,7 @@ class TestRunAll:
 
         cells_root = tmp_path / "polaris" / "cells"
         cells_root.mkdir(parents=True)
-        with patch(
-            "polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs"
-        ) as mock_kfs:
+        with patch("polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs") as mock_kfs:
             mock_fs = MagicMock()
             mock_kfs.return_value = mock_fs
             await run_all(repo_root=tmp_path)
@@ -550,9 +540,7 @@ class TestRunAll:
             py_dir.mkdir()
             (py_dir / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
 
-        with patch(
-            "polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs"
-        ) as mock_kfs:
+        with patch("polaris.cells.context.catalog.internal.descriptor_pack_generator._build_kernel_fs") as mock_kfs:
             mock_fs = MagicMock()
             mock_kfs.return_value = mock_fs
             await run_all(repo_root=tmp_path, skip_schema_validation=True)

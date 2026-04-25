@@ -7,6 +7,8 @@ All internal imports are lazy-loaded to maintain proper architectural boundaries
 
 from __future__ import annotations
 
+from typing import Any
+
 # Pre-declare lazy-loaded names to satisfy __all__ and static analysis.
 # These are populated via __getattr__ at access time.
 # NOTE: Do NOT pre-declare names that are module-level definitions (e.g., WorkspaceIntegrityService).
@@ -84,7 +86,7 @@ class WorkspaceIntegrityService:
 
         ensure_docs_ready_or_raise(command.workspace)
 
-    def generate_docs_templates(self, command):
+    def generate_docs_templates(self, command) -> Any:
         from polaris.cells.workspace.integrity.internal.workspace_service import (
             build_docs_templates,
             detect_project_profile,
@@ -131,12 +133,12 @@ def ensure_docs_ready_command(command) -> None:
     create_workspace_integrity_service().ensure_docs_ready(command)
 
 
-def generate_docs_templates_command(command):
+def generate_docs_templates_command(command) -> Any:
     """Convenience wrapper: create instance on-demand, avoid module-level singleton."""
     return create_workspace_integrity_service().generate_docs_templates(command)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy import dispatcher for internal modules."""
     # Optional dependency - DirectorCodeIntelMixin
     if name == "DirectorCodeIntelMixin":

@@ -173,7 +173,7 @@ def normalize_cell(cell_path: Path, dry_run: bool = True) -> list[str]:
     return all_changes
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Normalize cell.yaml schema")
     parser.add_argument(
         "--dry-run", action="store_true", default=True, help="Show changes without applying them (default: True)"

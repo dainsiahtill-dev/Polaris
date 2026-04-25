@@ -17,6 +17,7 @@ import logging
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from polaris.domain.entities.evidence_bundle import (
     ChangeType,
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 EXTERNAL_STORAGE_THRESHOLD = 100 * 1024
 
 
-def _get_fs_adapter():
+def _get_fs_adapter() -> Any:
     return get_default_adapter()
 
 

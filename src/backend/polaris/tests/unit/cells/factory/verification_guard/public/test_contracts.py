@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.factory.verification_guard.public.contracts import (
     ExecutionResult,
     VerificationClaim,

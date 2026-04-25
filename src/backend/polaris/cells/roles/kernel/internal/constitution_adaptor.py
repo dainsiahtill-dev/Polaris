@@ -141,7 +141,7 @@ class ConstitutionGuard:
         return self._violations + self.enforcer.get_violations()
 
 
-def constitutional_role(role: Role, strict: bool = True):
+def constitutional_role(role: Role, strict: bool = True) -> Callable[[type], type]:
     """宪法角色装饰器 - 为类方法添加宪法检查。
 
     Usage:
@@ -209,7 +209,7 @@ def _assert_action_allowed(guard: ConstitutionGuard, role: Role, action: str) ->
         raise error
 
 
-def require_role_permission(role: Role, action: str):
+def require_role_permission(role: Role, action: str) -> Callable[[Callable], Callable]:
     """函数装饰器 - 要求特定权限。
 
     Usage:
@@ -220,7 +220,7 @@ def require_role_permission(role: Role, action: str):
 
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             if not is_action_allowed(role, action):
                 raise ConstitutionViolationError(
                     role=role,

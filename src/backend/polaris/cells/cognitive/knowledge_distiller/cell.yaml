@@ -1,6 +1,6 @@
 # cell.yaml - Cognitive Knowledge Distiller Cell
 # ARCH-001: Created to declare previously undeclared cell
-cell_id: cognitive.knowledge_distiller
+id: cognitive.knowledge_distiller
 title: Cognitive Knowledge Distiller
 kind: capability
 visibility: public

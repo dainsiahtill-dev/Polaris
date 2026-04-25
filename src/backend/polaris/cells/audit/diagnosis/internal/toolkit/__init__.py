@@ -30,6 +30,8 @@
 CRITICAL: 所有文本文件 I/O 必须使用 UTF-8 编码。
 """
 
+from typing import Any
+
 from .error_chain import (
     ErrorChain,
     ErrorChainLink,
@@ -42,14 +44,14 @@ from .triage import build_triage_bundle
 from .verify import verify_chain, verify_file_integrity
 
 
-def run_audit_command(*args, **kwargs):
+def run_audit_command(*args, **kwargs) -> Any:
     """Lazy import to avoid package-level circular dependency."""
     from .service import run_audit_command as _impl
 
     return _impl(*args, **kwargs)
 
 
-def to_legacy_result(*args, **kwargs):
+def to_legacy_result(*args, **kwargs) -> Any:
     """Lazy import to avoid package-level circular dependency."""
     from .service import to_legacy_result as _impl
 

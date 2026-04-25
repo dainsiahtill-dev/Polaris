@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.adapters.kernelone.role_tool_integration_adapter import (
     RoleToolIntegrationAdapter,
 )

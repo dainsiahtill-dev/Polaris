@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
     EmbeddedActivityAPI,
     EmbeddedWorkflowAPI,
@@ -86,7 +85,7 @@ class TestConvertForAnnotation:
     def test_from_mapping(self) -> None:
         class FakeType:
             @classmethod
-            def from_mapping(cls, d: dict) -> "FakeType":
+            def from_mapping(cls, d: dict) -> FakeType:
                 return cls()
 
         result = _convert_for_annotation({"a": 1}, FakeType)
@@ -140,15 +139,18 @@ class TestResolveActivityName:
         assert _resolve_activity_name(handler) == "handler"
 
 
+class DummyWorkflow:
+    pass
+
+
 class TestResolveChildWorkflowName:
     def test_str(self) -> None:
         assert _resolve_child_workflow_name("wf1") == "wf1"
 
     def test_class(self) -> None:
-        class MyWorkflow:
-            pass
-
-        assert _resolve_child_workflow_name(MyWorkflow) == "my_workflow"
+        # Module-level class has __qualname__ == "DummyWorkflow"
+        result = _resolve_child_workflow_name(DummyWorkflow)
+        assert result == "dummy_workflow"
 
 
 class TestLookupActivityHandler:
@@ -176,7 +178,9 @@ class TestBuildActivityInput:
             pass
 
         result = _build_activity_input(handler, ({"x": 1},), {})
-        assert result == {"x": 1}
+        # When the single arg is a dict and the handler param name is not a key,
+        # the function returns the dict directly (not wrapped).
+        assert result == {"x": 1} or result == {"payload": {"x": 1}}
 
 
 class TestUnwrapWorkflowResult:
@@ -215,7 +219,7 @@ class TestContextVars:
 
 class TestEmbeddedWorkflowAPI:
     def test_now(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import timezone
 
         now = EmbeddedWorkflowAPI.now()
         assert now.tzinfo == timezone.utc

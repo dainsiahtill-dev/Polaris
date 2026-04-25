@@ -5,7 +5,9 @@
 
 import logging
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -91,7 +93,7 @@ class RoleFastAPI:
         """创建FastAPI应用"""
 
         @asynccontextmanager
-        async def lifespan(app: FastAPI):
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             """应用生命周期"""
             logger.info(
                 "%s API starting on %s:%s (workspace=%s)",
@@ -121,7 +123,7 @@ class RoleFastAPI:
 
         # Root endpoint
         @app.get("/")
-        def root():
+        def root() -> dict[str, Any]:
             role = self._get_role()
             info = role.get_info()
             return {
@@ -133,13 +135,13 @@ class RoleFastAPI:
 
         # Status endpoint
         @app.get("/status")
-        def get_status():
+        def get_status() -> Any:
             role = self._get_role()
             return role.get_status()
 
         # Init endpoint
         @app.post("/init")
-        def init(req: InitRequest):
+        def init(req: InitRequest) -> Any:
             role = self._get_role()
 
             if role.is_initialized():
@@ -154,7 +156,7 @@ class RoleFastAPI:
 
         # Health endpoint
         @app.get("/health")
-        def get_health():
+        def get_health() -> dict[str, Any]:
             role = self._get_role()
 
             if not role.is_initialized():
@@ -170,7 +172,7 @@ class RoleFastAPI:
 
         # Capabilities endpoint
         @app.get("/capabilities")
-        def get_capabilities():
+        def get_capabilities() -> dict[str, list[str]]:
             role = self._get_role()
             info = role.get_info()
             return {
@@ -179,7 +181,7 @@ class RoleFastAPI:
 
         # Run endpoint (if supported)
         @app.post("/run")
-        def run(req: RunRequest):
+        def run(req: RunRequest) -> Any:
             role = self._get_role()
 
             if not role.is_initialized():

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.ports import (
     RoleAdapterFactoryPort,
     RoleOrchestrationAdapter,

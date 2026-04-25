@@ -514,7 +514,7 @@ class OmniscientAuditBus:
         self,
         tool_name: str,
         priority: AuditPriority = AuditPriority.INFO,
-    ):
+    ) -> Any:
         """Context manager for tracking LLM interactions.
 
         Automatically emits start/complete/error events.
@@ -579,7 +579,7 @@ class OmniscientAuditBus:
         self,
         tool_name: str,
         priority: AuditPriority = AuditPriority.INFO,
-    ):
+    ) -> Any:
         """Context manager for tracking tool executions.
 
         Automatically emits start/complete/error events.

@@ -23,11 +23,11 @@ _PENDING_BROADCAST_TASKS_LOCK = Lock()
 logger = logging.getLogger(__name__)
 
 
-def _get_fs_adapter():
+def _get_fs_adapter() -> Any:
     return get_default_adapter()
 
 
-def _get_message_bus_imports():
+def _get_message_bus_imports() -> tuple[Any, Any]:
     """延迟导入避免循环依赖"""
     global _MESSAGE_BUS_TYPES
     with _MESSAGE_BUS_TYPES_LOCK:

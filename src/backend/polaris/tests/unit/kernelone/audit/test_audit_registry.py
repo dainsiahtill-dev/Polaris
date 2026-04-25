@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from polaris.kernelone.audit.registry import (
     _store_cache,
     _store_factory,

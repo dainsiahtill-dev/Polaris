@@ -165,7 +165,7 @@ class TreeSitterSymbolHandler:
             "warnings": warnings if warnings else None,
         }
 
-    def _get_ts_parser(self, language: str):
+    def _get_ts_parser(self, language: str) -> Any | None:
         """Get a tree-sitter parser for the given language."""
         try:
             from tree_sitter_language_pack import get_parser

@@ -51,7 +51,7 @@ MAX_CONCURRENT_TOOL_EXECUTIONS = 5
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Provide deprecation warnings for direct module imports."""
     if name == "ErrorCategory":
         warnings.warn(

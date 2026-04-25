@@ -5,11 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.models import PMWorkflowInput
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import (
-    WorkflowSubmissionResult,
-    WorkflowUnavailableError,
     _normalize_workflow_input,
     cancel_workflow_sync,
     describe_workflow_sync,

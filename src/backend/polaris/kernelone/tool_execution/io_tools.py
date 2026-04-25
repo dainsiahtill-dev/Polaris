@@ -35,7 +35,7 @@ def resolve_codex_path() -> str | None:
                 return alt
         return candidate
 
-    def _pick_best(paths):
+    def _pick_best(paths: list[str]) -> str:
         scored = []
         for item in paths:
             path = _prefer_windows_launcher(item)

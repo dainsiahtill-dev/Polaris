@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime.workflow_registry import (
     WorkflowDefinition,
     WorkflowRegistry,

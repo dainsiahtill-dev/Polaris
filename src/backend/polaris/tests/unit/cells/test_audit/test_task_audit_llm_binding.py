@@ -150,11 +150,21 @@ class TestBuildAuditLLMBindingConfig:
 class TestMakeAuditLLMCaller:
     """LLM caller factory behavior."""
 
-    def test_no_llm_caller_returns_inconclusive(self) -> None:
-        class Settings:
-            workspace = "."
+    @patch("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider")
+    def test_no_llm_caller_returns_empty_when_provider_fails(self, mock_invoke: Any) -> None:
+        mock_invoke.return_value = MagicMock(
+            ok=False,
+            output="",
+            provider_id="",
+            provider_type="",
+            model="",
+            attempted=False,
+            latency_ms=0,
+            error=None,
+        )
 
-        caller = make_audit_llm_caller(workspace=".", settings=Settings(), config=None)
+        cfg = AuditLLMBindingConfig(prefer_local_ollama=False)
+        caller = make_audit_llm_caller(workspace=".", settings=None, config=cfg)
         output, info = caller("qa", "prompt")
         assert output == ""
         assert info["llm_strategy"] == "role_runtime"

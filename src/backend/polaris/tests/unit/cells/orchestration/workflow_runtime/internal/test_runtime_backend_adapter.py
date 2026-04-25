@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_backend_adapter import (
     RuntimeBackendAdapter,
     WorkflowResult,
@@ -14,7 +13,6 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_backend_adapt
     get_adapter,
     query_workflow_sync,
     reset_adapter,
-    set_adapter,
     set_adapter_factory,
     submit_pm_workflow_sync,
 )
@@ -45,6 +43,7 @@ class TestRuntimeBackendAdapter:
             new_callable=AsyncMock,
         ) as mock_get:
             mock_runtime = MagicMock()
+            mock_runtime.stop = AsyncMock()
             mock_get.return_value = mock_runtime
             with patch.object(adapter, "_resolve_runtime_db_path", return_value=":memory:"):
                 await adapter.start()
@@ -61,8 +60,21 @@ class TestRuntimeBackendAdapter:
     @pytest.mark.asyncio
     async def test_submit_workflow_validation(self) -> None:
         adapter = RuntimeBackendAdapter()
-        with pytest.raises(ValueError, match="required"):
-            await adapter.submit_workflow("", "wid")
+        # start adapter so _require_runtime doesn't raise
+        mock_runtime = MagicMock()
+        mock_runtime.stop = AsyncMock()
+        with (
+            patch(
+                "polaris.cells.orchestration.workflow_runtime.internal.runtime_backend_adapter._get_runtime_backend",
+                new_callable=AsyncMock,
+                return_value=mock_runtime,
+            ),
+            patch.object(adapter, "_resolve_runtime_db_path", return_value=":memory:"),
+        ):
+            await adapter.start()
+            with pytest.raises(ValueError, match="required"):
+                await adapter.submit_workflow("", "wid")
+            await adapter.stop()
 
     @pytest.mark.asyncio
     async def test_submit_pm_workflow_validation(self) -> None:

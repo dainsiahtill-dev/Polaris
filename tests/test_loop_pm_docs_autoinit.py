@@ -28,13 +28,17 @@ class TestLoopPmDocsAutoInit(unittest.TestCase):
         cls.storage_layout = importlib.import_module("storage_layout")
 
     def test_ensure_docs_ready_auto_initializes_persistent_docs(self):
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as hp_home, patch.dict(
-            os.environ,
-            {
-                "KERNELONE_HOME": hp_home,
-                "KERNELONE_DOCS_INIT_MODE": "auto",
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as hp_home,
+            patch.dict(
+                os.environ,
+                {
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_DOCS_INIT_MODE": "auto",
+                },
+                clear=False,
+            ),
         ):
             self.assertFalse(self.mod.workspace_has_docs(workspace))
             code = self.mod.ensure_docs_ready(workspace)
@@ -42,22 +46,22 @@ class TestLoopPmDocsAutoInit(unittest.TestCase):
             self.assertTrue(self.mod.workspace_has_docs(workspace))
             self.assertFalse((Path(workspace) / "docs").exists())
 
-            docs_root = Path(
-                self.storage_layout.resolve_workspace_persistent_path(
-                    workspace, "workspace/docs"
-                )
-            )
+            docs_root = Path(self.storage_layout.resolve_workspace_persistent_path(workspace, "workspace/docs"))
             self.assertTrue((docs_root / "agent" / "README.md").is_file())
             self.assertTrue((docs_root / "product" / "requirements.md").is_file())
 
     def test_ensure_docs_ready_strict_mode_keeps_fail_closed(self):
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as hp_home, patch.dict(
-            os.environ,
-            {
-                "KERNELONE_HOME": hp_home,
-                "KERNELONE_DOCS_INIT_MODE": "strict",
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as hp_home,
+            patch.dict(
+                os.environ,
+                {
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_DOCS_INIT_MODE": "strict",
+                },
+                clear=False,
+            ),
         ):
             self.assertFalse(self.mod.workspace_has_docs(workspace))
             code = self.mod.ensure_docs_ready(workspace)
@@ -239,13 +243,17 @@ TBD
         self.assertFalse(self.mod._document_quality_ok(leaked))
 
     def test_load_state_and_context_doc_stage_advances_when_previous_tasks_terminal(self):
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as hp_home, patch.dict(
-            os.environ,
-            {
-                "KERNELONE_HOME": hp_home,
-                "KERNELONE_PM_DOC_STAGE_MODE": "on",
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as hp_home,
+            patch.dict(
+                os.environ,
+                {
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_PM_DOC_STAGE_MODE": "on",
+                },
+                clear=False,
+            ),
         ):
             req_rel = "workspace/docs/product/requirements.md"
             contract_rel = "workspace/docs/product/interface_contract.md"
@@ -320,13 +328,17 @@ TBD
             self.assertIn("CONTRACT-STAGE", context2["requirements"])
 
     def test_load_state_and_context_doc_stage_waits_when_previous_tasks_not_terminal(self):
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as hp_home, patch.dict(
-            os.environ,
-            {
-                "KERNELONE_HOME": hp_home,
-                "KERNELONE_PM_DOC_STAGE_MODE": "on",
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as hp_home,
+            patch.dict(
+                os.environ,
+                {
+                    "KERNELONE_HOME": hp_home,
+                    "KERNELONE_PM_DOC_STAGE_MODE": "on",
+                },
+                clear=False,
+            ),
         ):
             req_rel = "workspace/docs/product/requirements.md"
             contract_rel = "workspace/docs/product/interface_contract.md"
@@ -385,12 +397,16 @@ TBD
             self.assertEqual(context2["docs_stage"]["active_doc_path"], req_rel)
 
     def test_write_architect_docs_pipeline_materializes_blueprints_manifest(self):
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as hp_home, patch.dict(
-            os.environ,
-            {
-                "KERNELONE_HOME": hp_home,
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as hp_home,
+            patch.dict(
+                os.environ,
+                {
+                    "KERNELONE_HOME": hp_home,
+                },
+                clear=False,
+            ),
         ):
             req_rel = "workspace/docs/product/requirements.md"
             adr_rel = "workspace/docs/product/adr.md"

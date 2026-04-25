@@ -53,7 +53,7 @@ def build_pm_status(state: AppState) -> dict[str, Any]:
         # to schedule the coroutine on the existing loop from a thread
         import concurrent.futures
 
-        def run_in_loop():
+        def run_in_loop() -> Any:
             # This runs in a thread, so we can use the existing loop
             return asyncio.run_coroutine_threadsafe(build_pm_status_async(state), loop).result(timeout=10)
 

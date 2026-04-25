@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from polaris.kernelone.audit.contracts import KernelAuditEventType, KernelAuditRole
 from polaris.kernelone.audit.gateway import (
     AuditGateway,
     _to_kernel_event_type,
@@ -15,7 +14,6 @@ from polaris.kernelone.audit.gateway import (
     emit_audit_event,
     get_gateway,
 )
-from polaris.kernelone.audit.contracts import KernelAuditEventType, KernelAuditRole
 
 
 class TestToKernelEventType:

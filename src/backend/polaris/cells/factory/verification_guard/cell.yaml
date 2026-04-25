@@ -1,8 +1,7 @@
-"""Cell definition for VerificationGuard.
-
-This cell implements "Verification Before Completion" pattern,
-ensuring that no completion claim is accepted without fresh verification evidence.
-"""
+# Cell definition for VerificationGuard.
+#
+# This cell implements "Verification Before Completion" pattern,
+# ensuring that no completion claim is accepted without fresh verification evidence.
 
 id: factory.verification_guard
 title: Verification Guard

@@ -343,7 +343,7 @@ def patch_asyncio_create_task() -> None:
         *,
         name=None,
         context=None,
-    ):
+    ) -> Any:
         # Python 3.11+ asyncio.create_task支持context参数
         # 但我们仍然需要复制我们的自定义上下文
         if context is None:

@@ -91,7 +91,7 @@ class TUILLMClient:
             self._provider_config = {"ok": False, "error": str(exc)}
             return self._provider_config
 
-    def _get_provider(self):
+    def _get_provider(self) -> Any | None:
         """获取 Provider 实例 (向后兼容)."""
         try:
             from polaris.kernelone.llm.toolkit.contracts import ServiceLocator

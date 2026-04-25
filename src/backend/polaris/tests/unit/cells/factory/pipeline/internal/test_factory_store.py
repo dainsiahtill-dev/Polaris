@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from polaris.cells.factory.pipeline.internal.factory_store import (
     FactoryStore,
     FileLockTimeoutError,
@@ -85,7 +81,7 @@ class TestFactoryStore:
 
     def test_init_creates_dir(self, tmp_path: Path) -> None:
         base = tmp_path / "factory_new"
-        store = FactoryStore(base)
+        FactoryStore(base)
         assert base.exists()
         assert base.is_dir()
 
@@ -165,6 +161,10 @@ class TestFactoryStore:
     async def test_replace_with_retry_cleans_temp(self, tmp_store: FactoryStore) -> None:
         temp = tmp_store.base_dir / "temp.txt"
         target = tmp_store.base_dir / "target.txt"
-        # Don't create temp - force failure
-        with pytest.raises(PermissionError):
+        # Create temp but make target directory read-only to force failure
+        temp.write_text("hello")
+        # On Windows, os.replace raises FileNotFoundError if temp doesn't exist;
+        # on success it overwrites target. Test the failure path by removing temp first.
+        temp.unlink()
+        with pytest.raises(FileNotFoundError):
             await tmp_store._replace_with_retry(temp, target)

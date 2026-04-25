@@ -13,9 +13,7 @@ from polaris.cells.archive.task_snapshot_archive.public.contracts import (
 
 class TestArchiveTaskSnapshotCommandV1:
     def test_fields(self) -> None:
-        cmd = ArchiveTaskSnapshotCommandV1(
-            task_id="t1", source_path="/tmp", requested_by="user"
-        )
+        cmd = ArchiveTaskSnapshotCommandV1(task_id="t1", source_path="/tmp", requested_by="user")
         assert cmd.task_id == "t1"
         assert cmd.source_path == "/tmp"
         assert cmd.requested_by == "user"

@@ -6,8 +6,6 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
 from polaris.kernelone.audit.failure_hops import (
     _build_hop3,
     _collect_events,
@@ -251,7 +249,16 @@ class TestBuildFailureHops:
         events_file = tmp_path / "events.jsonl"
         lines = [
             json.dumps({"seq": 1, "kind": "action", "name": "tool_a", "refs": {"run_id": "r1", "phase": "director"}}),
-            json.dumps({"seq": 2, "kind": "observation", "name": "tool_a", "ok": False, "refs": {"run_id": "r1"}, "output": {"error": "boom"}}),
+            json.dumps(
+                {
+                    "seq": 2,
+                    "kind": "observation",
+                    "name": "tool_a",
+                    "ok": False,
+                    "refs": {"run_id": "r1"},
+                    "output": {"error": "boom"},
+                }
+            ),
         ]
         events_file.write_text("\n".join(lines), encoding="utf-8")
         result = build_failure_hops(

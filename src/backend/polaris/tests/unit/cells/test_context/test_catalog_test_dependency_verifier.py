@@ -7,19 +7,15 @@ dependency classification, verification, and circular import detection.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
-
 from polaris.cells.context.catalog.internal.skill_validator.dependency_verifier import (
     DependencyNode,
     DependencyType,
     DependencyValidationResult,
     DependencyVerificationEngine,
 )
-
 
 # ---------------------------------------------------------------------------
 # DependencyType Enum
@@ -472,9 +468,7 @@ class TestDetectCircularImports:
         pkg_dir.mkdir()
         a_file = pkg_dir / "a.py"
         a_file.write_text(
-            "from typing import TYPE_CHECKING\n"
-            "if TYPE_CHECKING:\n"
-            "    from mypkg.b import thing\n",
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from mypkg.b import thing\n",
             encoding="utf-8",
         )
         b_file = pkg_dir / "b.py"

@@ -168,6 +168,12 @@ class TurnLedger:
     # 异常标记（finalization 等阶段的协议偏离记录）
     anomaly_flags: list[dict] = field(default_factory=list)
 
+    # Session-level state snapshots recorded at turn boundaries.
+    # Each entry captures the session-persistent PhaseManager and
+    # ModificationContract state so cross-turn mutations are auditable
+    # via the ledger commit path (single commit point principle).
+    session_state_snapshots: list[dict[str, Any]] = field(default_factory=list)
+
     # 交付契约与突变义务追踪（Phase 2）
     delivery_contract: DeliveryContract = field(default_factory=DeliveryContract)
     mutation_obligation: MutationObligationState = field(default_factory=MutationObligationState)
@@ -246,6 +252,42 @@ class TurnLedger:
         self.speculative_attempted_call_ids.add(call_id)
         if not error:
             self.speculative_successful_call_ids.add(call_id)
+
+    def record_session_state_snapshot(
+        self,
+        *,
+        phase_manager_state: dict[str, Any] | None = None,
+        modification_contract_state: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a snapshot of session-level state at a turn boundary.
+
+        Session-level state (PhaseManager, ModificationContract) persists across
+        turns on the TurnTransactionController but historically was never captured
+        in the per-turn TurnLedger.  This violates the single-commit-point
+        principle because cross-turn mutations become invisible to audit.
+
+        This method is called from ``_build_turn_result()`` *before* the ledger
+        is finalized, so every turn's ledger contains a serialized snapshot of
+        the session state as it existed at commit time.
+
+        Args:
+            phase_manager_state: ``PhaseManager.to_dict()`` output, or *None*
+                if the session has no PhaseManager yet.
+            modification_contract_state: ``ModificationContract.to_dict()``
+                output, or *None* if the session has no ModificationContract yet.
+        """
+        snapshot: dict[str, Any] = {
+            "timestamp_ms": int(time.time() * 1000),
+            "phase_manager": phase_manager_state,
+            "modification_contract": modification_contract_state,
+        }
+        self.session_state_snapshots.append(snapshot)
+        logger.debug(
+            "session_state_snapshot_recorded: turn_id=%s phase=%s mc_status=%s",
+            self.turn_id,
+            (phase_manager_state or {}).get("current_phase", "N/A"),
+            (modification_contract_state or {}).get("status", "N/A"),
+        )
 
     def build_monitoring_metrics(self, final_kind: str) -> dict[str, float]:
         """构建 Phase 7 监控指标快照（per-turn）。"""
@@ -371,10 +413,15 @@ class TurnLedger:
             continuation_hint=continuation_hint,
         )
 
-    def to_audit_log(self) -> dict:
-        """转换为审计日志格式"""
+    def to_audit_log(self) -> dict[str, Any]:
+        """转换为审计日志格式。
+
+        The ``session_state_snapshots`` key is only included when at least one
+        snapshot has been recorded, preserving backward compatibility for
+        existing consumers that do not expect the field.
+        """
         final_kind = str(self.decisions[-1].get("kind", "")) if self.decisions else ""
-        return {
+        audit: dict[str, Any] = {
             "turn_id": self.turn_id,
             "duration_ms": self.get_duration_ms(),
             "llm_calls": len(self.llm_calls),
@@ -388,3 +435,6 @@ class TurnLedger:
             "delivery_mode": self.delivery_contract.mode.value,
             "mutation_obligation": self.mutation_obligation.to_audit_dict(),
         }
+        if self.session_state_snapshots:
+            audit["session_state_snapshots"] = self.session_state_snapshots
+        return audit

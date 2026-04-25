@@ -96,9 +96,7 @@ def test_cli_help_smoke(entry: CliEntry) -> None:
     )
 
     assert result.returncode == 0, (
-        f"CLI {entry.module!r} exited with {result.returncode}.\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        f"CLI {entry.module!r} exited with {result.returncode}.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
     combined = f"{result.stdout}\n{result.stderr}"

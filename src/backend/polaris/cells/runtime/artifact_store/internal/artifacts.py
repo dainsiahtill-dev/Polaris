@@ -672,7 +672,7 @@ def _build_pm_status(state: AppState) -> dict[str, Any]:
         from polaris.cells.orchestration.pm_planning.public.service import PMService
         from polaris.infrastructure.di.container import get_container
 
-        async def get_pm_service_status():
+        async def get_pm_service_status() -> Any | None:
             try:
                 container = await get_container()
                 pm_service = await container.resolve_async(PMService)

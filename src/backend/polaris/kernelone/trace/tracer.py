@@ -562,7 +562,7 @@ def traced(
 
         if asyncio.iscoroutinefunction(func):
 
-            async def async_wrapper(*args, **kwargs):
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 with tracer.span(span_name, tags=tags or {}) as span:
                     span.set_tag("function", func.__qualname__)
                     span.set_tag("args_count", len(args))
@@ -572,7 +572,7 @@ def traced(
             return async_wrapper
         else:
 
-            def sync_wrapper(*args, **kwargs):
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 with tracer.span(span_name, tags=tags or {}) as span:
                     span.set_tag("function", func.__qualname__)
                     span.set_tag("args_count", len(args))

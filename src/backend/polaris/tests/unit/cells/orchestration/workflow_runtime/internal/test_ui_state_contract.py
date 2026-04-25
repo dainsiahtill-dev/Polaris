@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
     FileChangeStats,
     OrchestrationSnapshot,
@@ -25,7 +21,9 @@ from polaris.cells.orchestration.workflow_runtime.internal.ui_state_contract imp
 
 class TestUIFileChangeMetrics:
     def test_to_display_string(self) -> None:
-        metrics = UIFileChangeMetrics(created=1, modified=2, deleted=3, lines_added=10, lines_removed=5, lines_changed=2)
+        metrics = UIFileChangeMetrics(
+            created=1, modified=2, deleted=3, lines_added=10, lines_removed=5, lines_changed=2
+        )
         assert metrics.to_display_string() == "C1/M2/D3 +10/-5/~2"
 
     def test_to_dict(self) -> None:

@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from polaris.cells.orchestration.workflow_runtime.public.process_launch import (
     ProcessLaunchRequest,

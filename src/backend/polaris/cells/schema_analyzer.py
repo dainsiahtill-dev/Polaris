@@ -141,7 +141,7 @@ def analyze_cell(cell_path: Path) -> dict[str, Any]:
     }
 
 
-def main():
+def main() -> None:
     # Find all cell.yaml files
     # Use **/cell.yaml for cross-platform compatibility
     cell_files = list(CELLS_DIR.glob("**/cell.yaml"))

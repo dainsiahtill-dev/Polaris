@@ -1,7 +1,7 @@
 # cell.yaml - Compatibility Cell
 # ARCH-001: Created to declare previously undeclared cell
 # TRANSITIONAL: This cell serves as a compatibility layer
-cell_id: polaris.compatibility
+id: polaris.compatibility
 title: Compatibility Layer
 kind: capability
 visibility: public

@@ -32,7 +32,7 @@ def resolve_artifact_path(workspace: str, cache_root: str, rel_path: str) -> str
     return _resolve(workspace, cache_root, rel_path)
 
 
-def select_latest_artifact(workspace: str, cache_root: str, rel_path: str):
+def select_latest_artifact(workspace: str, cache_root: str, rel_path: str) -> Any:
     """Proxy to artifact_store.public.service.select_latest_artifact (lazy load)."""
     from polaris.cells.runtime.artifact_store.public.service import (
         select_latest_artifact as _select,

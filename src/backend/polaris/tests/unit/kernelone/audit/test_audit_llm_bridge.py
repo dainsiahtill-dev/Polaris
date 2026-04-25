@@ -7,10 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from polaris.kernelone.audit.llm_bridge import LLMuditBridge
 from polaris.kernelone.audit.contracts import KernelAuditEventType
+from polaris.kernelone.audit.llm_bridge import LLMuditBridge
 
 
 class TestLLMuditBridge:
@@ -131,9 +129,7 @@ class TestLLMuditBridge:
     def test_replay_directory_pattern_filter(self, tmp_path: Path) -> None:
         mock_runtime = MagicMock()
         bridge = LLMuditBridge(runtime=mock_runtime)
-        (tmp_path / "session.json").write_text(
-            json.dumps({"session_id": "s1", "events": []}), encoding="utf-8"
-        )
+        (tmp_path / "session.json").write_text(json.dumps({"session_id": "s1", "events": []}), encoding="utf-8")
         (tmp_path / "other.txt").write_text("not json", encoding="utf-8")
         results = bridge.replay_directory(tmp_path, pattern="*.json")
         assert len(results) == 1

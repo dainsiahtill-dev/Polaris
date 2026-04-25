@@ -125,7 +125,7 @@
 
 - `docs/graph/catalog/cells.yaml` — `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
 - cells.yaml 声明的 Cell：**59 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-04-24）
-- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**0 / 52**
+- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**54 / 54**
 - `docs/graph/subgraphs/` 当前仅有：
   - `execution_governance_pipeline.yaml`
   - `storage_archive_pipeline.yaml`
@@ -158,13 +158,15 @@
 3. `fitness-rules.yaml` blocker 尚未全量自动化执行
 4. `KERNELONE_` 与 `KERNELONE_` 仍混用
 
-### 6.5 未登记 Cell（需补充）
+### 6.5 未登记 Cell（已清零）
 
-- `roles.host`
-- `director.delivery`
-- `director.runtime`
-- `director.planning`
-- `director.tasking`
+以下 Cell 已于 2026-04-25 全部补登至 `cells.yaml`，无剩余未登记 Cell：
+
+- ~~`roles.host`~~
+- ~~`director.delivery`~~
+- ~~`director.runtime`~~
+- ~~`director.planning`~~
+- ~~`director.tasking`~~
 
 ### 6.6 环境变量前缀现状（2026-03-28）
 

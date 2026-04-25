@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.adapters.kernelone.bus_adapter import KernelOneBusPortAdapter
 from polaris.kernelone.ports.bus_port import AgentEnvelope, DeadLetterRecord, IBusPort
 
@@ -20,7 +19,7 @@ class TestKernelOneBusPortAdapter:
     @pytest.fixture
     def adapter(self, mock_impl: MagicMock) -> KernelOneBusPortAdapter:
         with patch(
-            "polaris.cells.adapters.kernelone.bus_adapter.KernelOneMessageBusPort",
+            "polaris.cells.roles.runtime.internal.kernel_one_bus_port.KernelOneMessageBusPort",
             return_value=mock_impl,
         ):
             return KernelOneBusPortAdapter()
@@ -64,7 +63,10 @@ class TestKernelOneBusPortAdapter:
             receiver="b",
             payload={},
         )
-        mock_impl.poll_async.return_value = envelope
+        import asyncio
+
+        mock_impl.poll_async.return_value = asyncio.Future()
+        mock_impl.poll_async.return_value.set_result(envelope)
         result = await adapter.poll_async("b", block=False, timeout=1.0)
         mock_impl.poll_async.assert_called_once_with("b", block=False, timeout=1.0)
         assert result is envelope

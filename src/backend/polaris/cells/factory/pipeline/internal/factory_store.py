@@ -7,6 +7,7 @@ import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from polaris.kernelone.fs.text_ops import open_text_log_append, write_text_atomic
 from polaris.kernelone.runtime import BoundedCache
@@ -63,7 +64,7 @@ def _acquire_lock_with_timeout(lock: threading.Lock, timeout: float) -> bool:
 
 
 @asynccontextmanager
-async def _acquire_file_lock(file_path: Path, timeout: float = 5.0):
+async def _acquire_file_lock(file_path: Path, timeout: float = 5.0) -> Any:
     """Acquire/release a cross-loop lock without blocking the event loop.
 
     Uses asyncio.wait_for() to implement timeout protection, preventing
@@ -159,7 +160,7 @@ class FactoryStore:
                 )
             raise last_error
 
-    async def get_run(self, run_id: str):
+    async def get_run(self, run_id: str) -> Any | None:
         """Get run from disk"""
         from .factory_run_service import FactoryRun
 

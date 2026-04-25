@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-import pytest
-
 from polaris.cells.llm.evaluation.internal.constants import (
     INTERVIEW_EMBEDDING_MODEL,
     INTERVIEW_SEMANTIC_ENABLED,

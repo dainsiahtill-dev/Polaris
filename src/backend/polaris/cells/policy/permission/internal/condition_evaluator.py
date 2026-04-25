@@ -228,10 +228,6 @@ class PermissionConditionEvaluator:
 
         matched = start <= current_time <= end if start <= end else current_time >= start or current_time <= end
 
-
-
-
-
         return ConditionResult(
             matched=matched,
             reason=f"Time {current_time} is {'within' if matched else 'outside'} range {start}-{end}",
@@ -349,7 +345,7 @@ class PermissionConditionEvaluator:
         if match_mode == "all":
             matched = all(r.matched for r in results)
             reason = "All conditions matched" if matched else "Some conditions failed"
-  # any
+            # any
             matched = any(r.matched for r in results)
             reason = "At least one condition matched" if matched else "No conditions matched"
 

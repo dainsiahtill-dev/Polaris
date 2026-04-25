@@ -6,9 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.process_launcher import (
-    LauncherError,
     ProcessLauncher,
     launch_director_once,
     launch_pm_once,

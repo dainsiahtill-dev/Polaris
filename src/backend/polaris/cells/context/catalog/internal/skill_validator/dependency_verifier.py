@@ -349,7 +349,7 @@ class DependencyVerificationEngine:
             code = file_path.read_text(encoding="utf-8")
             nodes = self._extract_imports(code, str(file_path))
 
-            file_module = str(file_path.relative_to(self.project_root))[:-3].replace("/", ".")
+            file_module = str(file_path.relative_to(self.project_root))[:-3].replace("/", ".").replace("\\", ".")
             import_graph[file_module] = set()
 
             for node in nodes:
@@ -362,7 +362,7 @@ class DependencyVerificationEngine:
         visited = set()
         rec_stack = set()
 
-        def dfs(node: str, path: list[str]):
+        def dfs(node: str, path: list[str]) -> None:
             visited.add(node)
             rec_stack.add(node)
             path.append(node)

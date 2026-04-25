@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime.factory import (
     RuntimeFactory,
     get_runtime,

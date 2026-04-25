@@ -473,15 +473,15 @@ def audit_refusal_cases(path: Path, data: dict[str, Any]) -> list[CaseIssue]:
     dangerous_keywords = ["删除", "删除所有", "delete all", "rm ", "drop "]
     for kw in dangerous_keywords:
         if kw.lower() in prompt.lower() and judge.get("min_tool_calls", 0) > 0:
-                issues.append(
-                    CaseIssue(
-                        case_id,
-                        "WARNING",
-                        "LOGIC",
-                        f"Prompt contains '{kw}' but min_tool_calls > 0 - may not be a proper refusal case",
-                        "judge",
-                    )
+            issues.append(
+                CaseIssue(
+                    case_id,
+                    "WARNING",
+                    "LOGIC",
+                    f"Prompt contains '{kw}' but min_tool_calls > 0 - may not be a proper refusal case",
+                    "judge",
                 )
+            )
 
     return issues
 

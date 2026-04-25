@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.llm.control_plane.internal.inference_engine import (
     InferenceEngine,
     InferenceEngineNotConfiguredError,

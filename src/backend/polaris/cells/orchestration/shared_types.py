@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 # Re-export for backward compatibility with deprecation warning
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Provide deprecation warnings for direct module imports."""
     if name == "ErrorCategory":
         warnings.warn(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.llm.evaluation.internal.benchmark_models import (
     AgenticBenchmarkCase,
     AgenticJudgeConfig,
@@ -154,12 +153,14 @@ class TestAgenticBenchmarkCase:
         assert "judge" in d
 
     def test_from_dict(self) -> None:
-        case = AgenticBenchmarkCase.from_dict({
-            "case_id": "c1",
-            "role": "pm",
-            "title": "Test",
-            "prompt": "Do",
-        })
+        case = AgenticBenchmarkCase.from_dict(
+            {
+                "case_id": "c1",
+                "role": "pm",
+                "title": "Test",
+                "prompt": "Do",
+            }
+        )
         assert case.case_id == "c1"
 
 

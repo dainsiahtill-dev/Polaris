@@ -190,7 +190,7 @@ class TaskMarketService:
 
     # ---- Store access -------------------------------------------------------
 
-    def _get_store(self, workspace: str):
+    def _get_store(self, workspace: str) -> Any:
         """Return the appropriate store backend (lazy)."""
         return get_store(workspace)
 

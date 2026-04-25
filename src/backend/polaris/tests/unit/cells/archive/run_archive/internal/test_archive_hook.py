@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 from polaris.cells.archive.run_archive.internal.archive_hook import (
     ArchiveHook,
     create_archive_hook,
@@ -55,7 +53,8 @@ class TestArchiveHookTaskTracking:
         hook = ArchiveHook("/tmp/ws")
         assert hook.get_pending_task_ids() == []
 
-    def test_create_task_with_tracking(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_task_with_tracking(self) -> None:
         hook = ArchiveHook("/tmp/ws")
 
         async def dummy() -> None:
@@ -65,7 +64,7 @@ class TestArchiveHookTaskTracking:
         assert task.done() is False
         assert "test:1" in hook._pending_tasks
         # Wait for completion
-        asyncio.get_event_loop().run_until_complete(task)
+        await task
         assert task.done() is True
 
 
@@ -90,10 +89,11 @@ class TestArchiveHookTriggerMethods:
         hook.trigger_factory_archive("factory-1")
         assert hook.get_pending_task_count() == 0
 
-    def test_trigger_run_archive_creates_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_trigger_run_archive_creates_task(self) -> None:
         hook = ArchiveHook("/tmp/ws")
 
-        async def mock_archive() -> None:
+        async def mock_archive(run_id: str, reason: str, status: str) -> None:
             pass
 
         hook._archive_run_async = mock_archive  # type: ignore[method-assign]
@@ -101,10 +101,16 @@ class TestArchiveHookTriggerMethods:
         assert hook.get_pending_task_count() == 1
         assert "run:run-1" in hook.get_pending_task_ids()
 
-    def test_trigger_task_snapshot_archive_creates_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_trigger_task_snapshot_archive_creates_task(self) -> None:
         hook = ArchiveHook("/tmp/ws")
 
-        async def mock_archive() -> None:
+        async def mock_archive(
+            snapshot_id: str,
+            source_tasks_dir: str | None,
+            source_plan_path: str | None,
+            reason: str,
+        ) -> None:
             pass
 
         hook._archive_task_snapshot_async = mock_archive  # type: ignore[method-assign]
@@ -112,10 +118,15 @@ class TestArchiveHookTriggerMethods:
         assert hook.get_pending_task_count() == 1
         assert "task_snapshot:snap-1" in hook.get_pending_task_ids()
 
-    def test_trigger_factory_archive_creates_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_trigger_factory_archive_creates_task(self) -> None:
         hook = ArchiveHook("/tmp/ws")
 
-        async def mock_archive() -> None:
+        async def mock_archive(
+            factory_run_id: str,
+            source_factory_dir: str | None,
+            reason: str,
+        ) -> None:
             pass
 
         hook._archive_factory_async = mock_archive  # type: ignore[method-assign]

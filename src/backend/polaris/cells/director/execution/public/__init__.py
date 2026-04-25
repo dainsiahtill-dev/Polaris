@@ -63,6 +63,7 @@ async def rebind_director_service(workspace: str | Path) -> Any:
     func = _get_rebind_director_service()
     return await func(workspace)
 
+
 __all__ = [
     "ALLOWED_EXECUTION_COMMANDS",
     "DirectorConfig",

@@ -7,6 +7,7 @@ infrastructure adapter without exposing kernelone types to Cells.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -81,7 +82,7 @@ class CellAIExecutor:
             logger.warning("[CellAIExecutor] invoke failed: %s", exc)
             return CellAIResponse(ok=False, error=str(exc))
 
-    async def invoke_stream(self, request: CellAIRequest):
+    async def invoke_stream(self, request: CellAIRequest) -> AsyncGenerator[dict[str, Any], None]:
         """Invoke the LLM (streaming).
 
         Yields Cell-defined stream events.

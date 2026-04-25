@@ -63,7 +63,7 @@ class QualityService:
             logger.error("Ruff execution failed: %s", e)
             return {"success": False, "error": str(e)}
 
-    def get_status(self):
+    def get_status(self) -> dict[str, Any]:
         return {"available": self.available, "path": self.ruff_executable}
 
 

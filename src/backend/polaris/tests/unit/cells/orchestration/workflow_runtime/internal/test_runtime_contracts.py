@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
     CompatibilityMapper,
@@ -176,9 +173,7 @@ class TestOrchestrationRunRequest:
         assert any("Either pipeline_spec or role_entries" in e for e in errors)
 
     def test_validate_with_pipeline_spec(self, tmp_path: Path) -> None:
-        spec = PipelineSpec(
-            tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))]
-        )
+        spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
         req = OrchestrationRunRequest(
             run_id="r1",
             workspace=tmp_path,

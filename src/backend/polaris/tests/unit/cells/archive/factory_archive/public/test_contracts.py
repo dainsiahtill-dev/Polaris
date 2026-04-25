@@ -13,9 +13,7 @@ from polaris.cells.archive.factory_archive.public.contracts import (
 
 class TestArchiveFactoryRunCommandV1:
     def test_fields(self) -> None:
-        cmd = ArchiveFactoryRunCommandV1(
-            run_id="r1", source_path="/tmp", requested_by="user"
-        )
+        cmd = ArchiveFactoryRunCommandV1(run_id="r1", source_path="/tmp", requested_by="user")
         assert cmd.run_id == "r1"
         assert cmd.source_path == "/tmp"
         assert cmd.requested_by == "user"

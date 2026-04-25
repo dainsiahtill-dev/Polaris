@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from polaris.cells.orchestration.workflow_orchestration.public.contracts import (
     CancelWorkflowCommandV1,
     QueryWorkflowEventsV1,
@@ -98,6 +99,3 @@ class TestWorkflowRuntimeError:
         assert str(err) == "boom"
         assert err.code == "E123"
         assert err.details == {"key": "val"}
-
-
-import pytest

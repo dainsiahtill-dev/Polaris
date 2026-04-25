@@ -197,7 +197,7 @@ class AlertingEngine:
         rules: list[AlertRule] | None = None,
         max_history: int = 1000,
     ) -> None:
-        self._rules = list(rules) if rules else list(_get_default_rules())
+        self._rules = list(rules) if rules is not None else list(_get_default_rules())
         self._active_alerts: dict[str, Alert] = {}
         self._alert_history: list[Alert] = []
         self._max_history = max_history

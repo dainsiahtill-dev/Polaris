@@ -6,13 +6,8 @@ and evolution insights generation.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import patch
-
 import pytest
-
 from polaris.cells.context.catalog.internal.evolution_engine import EvolutionEngine
-
 
 # ---------------------------------------------------------------------------
 # EvolutionEngine initialization

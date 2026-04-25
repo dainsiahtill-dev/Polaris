@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.llm.provider_config.public.contracts import (
     LlmProviderConfigError,
     ProviderConfigResultV1,
@@ -60,16 +59,12 @@ class TestSyncSettingsFromLlmCommandV1:
 
 class TestProviderConfigResultV1:
     def test_success(self) -> None:
-        result = ProviderConfigResultV1(
-            ok=True, workspace="ws", provider_id="openai", provider_type="openai"
-        )
+        result = ProviderConfigResultV1(ok=True, workspace="ws", provider_id="openai", provider_type="openai")
         assert result.ok is True
 
     def test_failure_requires_error(self) -> None:
         with pytest.raises(ValueError, match="failed result"):
-            ProviderConfigResultV1(
-                ok=False, workspace="ws", provider_id="openai", provider_type="openai"
-            )
+            ProviderConfigResultV1(ok=False, workspace="ws", provider_id="openai", provider_type="openai")
 
     def test_failure_with_error(self) -> None:
         result = ProviderConfigResultV1(

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.event_stream import (
     EventLevel,
     EventSpan,

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.archive.run_archive.internal.history_archive_service import (
     ArchiveManifest,
     HistoryArchiveService,

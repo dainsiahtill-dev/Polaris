@@ -910,7 +910,7 @@ class RoleAgent(ABC):
         if event in self._callbacks:
             self._callbacks[event].append(callback)
 
-    def _get_backend_tool_runtime(self):
+    def _get_backend_tool_runtime(self) -> Any | None:
         """Get shared backend tool runtime (lazy init)."""
         if self._backend_tool_runtime is not None:
             return self._backend_tool_runtime

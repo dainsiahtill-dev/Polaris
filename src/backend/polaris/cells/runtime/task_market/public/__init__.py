@@ -42,6 +42,10 @@ from .hitl_api import (
     list_pending_reviews,
     resolve_review,
 )
+from .metrics import (
+    TaskMarketMetrics,
+    get_task_market_metrics,
+)
 from .service import TaskMarketService, get_task_market_service, reset_task_market_service
 
 __all__ = [
@@ -67,6 +71,7 @@ __all__ = [
     "SubmitChangeOrderCommandV1",
     "TaskLeaseRenewResultV1",
     "TaskMarketError",
+    "TaskMarketMetrics",
     "TaskMarketService",
     "TaskMarketStatusResultV1",
     "TaskWorkItemResultV1",
@@ -76,6 +81,7 @@ __all__ = [
     "get_dlq_stats",
     "get_escalation_chain",
     "get_next_role",
+    "get_task_market_metrics",
     "get_task_market_service",
     "list_dlq_items",
     "list_pending_reviews",

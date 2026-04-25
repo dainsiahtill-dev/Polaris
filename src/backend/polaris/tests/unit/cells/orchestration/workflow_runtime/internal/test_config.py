@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.config import (
     InternalWorkflowConfig,
     WorkflowConfig,
@@ -70,10 +68,7 @@ class TestResolveOrchestrationRuntime:
 
     def test_env_override(self) -> None:
         assert resolve_orchestration_runtime("", environ={"KERNELONE_ORCHESTRATION_RUNTIME": "workflow"}) == "workflow"
-        assert (
-            resolve_orchestration_runtime("", environ={"KERNELONE_ORCHESTRATION_RUNTIME": "unknown"})
-            == "workflow"
-        )
+        assert resolve_orchestration_runtime("", environ={"KERNELONE_ORCHESTRATION_RUNTIME": "unknown"}) == "workflow"
 
 
 class TestInternalWorkflowConfig:

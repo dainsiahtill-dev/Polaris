@@ -5,12 +5,8 @@ import re
 from dataclasses import dataclass
 
 # Pre-compiled patterns for performance
-_DANGEROUS_SHELL_CHARS = re.compile(
-    r"[;&|`$\n\r\t()<>\\!#\"\'*?\[\]|~]"
-)
-_COMMAND_SUBSTITUTION = re.compile(
-    r"\$\([^)]*\)|`[^`]+`|\$\{[^}]+\}|\$[a-zA-Z_][a-zA-Z0-9_]*"
-)
+_DANGEROUS_SHELL_CHARS = re.compile(r"[;&|`$\n\r\t()<>\\!#\"\'*?\[\]|~]")
+_COMMAND_SUBSTITUTION = re.compile(r"\$\([^)]*\)|`[^`]+`|\$\{[^}]+\}|\$[a-zA-Z_][a-zA-Z0-9_]*")
 _PATH_TRAVERSAL = re.compile(r"\.\./|\.\.[\\/]")
 _UNICODE_CONFUSABLES = re.compile(
     r"[\u200b-\u200f\u2028-\u202f\ufeff]"  # Zero-width chars

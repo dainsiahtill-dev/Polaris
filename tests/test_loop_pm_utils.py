@@ -349,162 +349,170 @@ class TestLoopPmUtils(unittest.TestCase):
         self.assertNotIn("failed_at", tasks[0])
 
     def test_execute_non_director_tasks_generates_defect_followup(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(
-            os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False),
         ):
             payload = self.loop_pm.execute_non_director_tasks(
-                    tasks=[
-                        {
-                            "id": "AUD-1",
-                            "title": "Audit director result",
-                            "assigned_to": "Auditor",
-                            "required_evidence": {
-                                "audit_result": "FAIL",
-                                "defect_ticket": {
-                                    "defect_id": "D-100",
-                                    "severity": "high",
-                                    "repro_steps": ["run test", "observe fail"],
-                                    "expected": "all checks pass",
-                                    "actual": "check failed",
-                                    "artifact_path": ".polaris/runtime/results/qa.review.md",
-                                    "suspected_scope": ["src/backend/scripts/loop-pm.py"],
-                                },
+                tasks=[
+                    {
+                        "id": "AUD-1",
+                        "title": "Audit director result",
+                        "assigned_to": "Auditor",
+                        "required_evidence": {
+                            "audit_result": "FAIL",
+                            "defect_ticket": {
+                                "defect_id": "D-100",
+                                "severity": "high",
+                                "repro_steps": ["run test", "observe fail"],
+                                "expected": "all checks pass",
+                                "actual": "check failed",
+                                "artifact_path": ".polaris/runtime/results/qa.review.md",
+                                "suspected_scope": ["src/backend/scripts/loop-pm.py"],
                             },
-                        }
-                    ],
-                    workspace_full=workspace,
-                    cache_root_full="",
-                    run_id="pm-00001",
-                    pm_iteration=1,
-                    events_path="",
-                    dialogue_path="",
-                )
-                self.assertFalse(payload["hard_block"])
-                self.assertEqual(len(payload["generated_director_tasks"]), 1)
-                followup = payload["generated_director_tasks"][0]
-                self.assertEqual(followup["assigned_to"], "Director")
-                self.assertIn("D-100", followup["title"])
-                from io_utils import resolve_artifact_path
-                from pm.director_mgmt import build_run_dir
+                        },
+                    }
+                ],
+                workspace_full=workspace,
+                cache_root_full="",
+                run_id="pm-00001",
+                pm_iteration=1,
+                events_path="",
+                dialogue_path="",
+            )
+            self.assertFalse(payload["hard_block"])
+            self.assertEqual(len(payload["generated_director_tasks"]), 1)
+            followup = payload["generated_director_tasks"][0]
+            self.assertEqual(followup["assigned_to"], "Director")
+            self.assertIn("D-100", followup["title"])
+            from io_utils import resolve_artifact_path
+            from pm.director_mgmt import build_run_dir
 
-                summary_path = Path(
-                    resolve_artifact_path(
-                        workspace,
-                        "",
-                        "runtime/state/assignee_execution.state.json",
-                    )
+            summary_path = Path(
+                resolve_artifact_path(
+                    workspace,
+                    "",
+                    "runtime/state/assignee_execution.state.json",
                 )
-                run_summary_path = (
-                    Path(build_run_dir(workspace, "", 1))
-                    / "state"
-                    / "assignee_execution.state.json"
-                )
-                self.assertTrue(summary_path.is_file())
-                self.assertTrue(run_summary_path.is_file())
+            )
+            run_summary_path = Path(build_run_dir(workspace, "", 1)) / "state" / "assignee_execution.state.json"
+            self.assertTrue(summary_path.is_file())
+            self.assertTrue(run_summary_path.is_file())
 
     def test_execute_non_director_tasks_policygate_block_is_fail_closed(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(
-            os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False),
         ):
             payload = self.loop_pm.execute_non_director_tasks(
-                    tasks=[
-                        {
-                            "id": "PG-1",
-                            "title": "Policy review",
-                            "assigned_to": "PolicyGate",
-                            "required_evidence": {"policy_decision": "BLOCK"},
-                        }
-                    ],
-                    workspace_full=workspace,
-                    cache_root_full="",
-                    run_id="pm-00001",
-                    pm_iteration=1,
-                    events_path="",
-                    dialogue_path="",
-                )
-                self.assertTrue(payload["hard_block"])
-                self.assertEqual(payload["results"][0]["status"], "blocked")
-                self.assertEqual(payload["results"][0]["error_code"], "POLICY_GATE_BLOCKED")
+                tasks=[
+                    {
+                        "id": "PG-1",
+                        "title": "Policy review",
+                        "assigned_to": "PolicyGate",
+                        "required_evidence": {"policy_decision": "BLOCK"},
+                    }
+                ],
+                workspace_full=workspace,
+                cache_root_full="",
+                run_id="pm-00001",
+                pm_iteration=1,
+                events_path="",
+                dialogue_path="",
+            )
+            self.assertTrue(payload["hard_block"])
+            self.assertEqual(payload["results"][0]["status"], "blocked")
+            self.assertEqual(payload["results"][0]["error_code"], "POLICY_GATE_BLOCKED")
 
     def test_execute_non_director_tasks_policygate_missing_decision_is_fail_closed(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(
-            os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False),
         ):
             payload = self.loop_pm.execute_non_director_tasks(
-                    tasks=[
-                        {
-                            "id": "PG-2",
-                            "title": "Policy review missing decision",
-                            "assigned_to": "PolicyGate",
-                            "required_evidence": {},
-                        }
-                    ],
-                    workspace_full=workspace,
-                    cache_root_full="",
-                    run_id="pm-00001",
-                    pm_iteration=1,
-                    events_path="",
-                    dialogue_path="",
-                )
-                self.assertTrue(payload["hard_block"])
-                self.assertEqual(payload["results"][0]["status"], "blocked")
-                self.assertEqual(payload["results"][0]["error_code"], "POLICY_GATE_DECISION_MISSING")
+                tasks=[
+                    {
+                        "id": "PG-2",
+                        "title": "Policy review missing decision",
+                        "assigned_to": "PolicyGate",
+                        "required_evidence": {},
+                    }
+                ],
+                workspace_full=workspace,
+                cache_root_full="",
+                run_id="pm-00001",
+                pm_iteration=1,
+                events_path="",
+                dialogue_path="",
+            )
+            self.assertTrue(payload["hard_block"])
+            self.assertEqual(payload["results"][0]["status"], "blocked")
+            self.assertEqual(payload["results"][0]["error_code"], "POLICY_GATE_DECISION_MISSING")
 
     def test_execute_non_director_tasks_policygate_escalate_is_block(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
-                payload = self.loop_pm.execute_non_director_tasks(
-                    tasks=[
-                        {
-                            "id": "PG-3",
-                            "title": "Policy escalate",
-                            "assigned_to": "PolicyGate",
-                            "required_evidence": {"policy_decision": "ESCALATE"},
-                        }
-                    ],
-                    workspace_full=workspace,
-                    cache_root_full="",
-                    run_id="pm-00001",
-                    pm_iteration=1,
-                    events_path="",
-                    dialogue_path="",
-                    schema_warnings=["PM-WARN-1"],
-                )
-                self.assertTrue(payload["hard_block"])
-                self.assertEqual(payload["results"][0]["error_code"], "POLICY_GATE_ESCALATED")
-                self.assertEqual(payload["schema_warning_count"], 1)
-                self.assertEqual(payload["schema_warnings"], ["PM-WARN-1"])
-                self.assertEqual(len(payload["gate_receipts"]), 1)
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False),
+        ):
+            payload = self.loop_pm.execute_non_director_tasks(
+                tasks=[
+                    {
+                        "id": "PG-3",
+                        "title": "Policy escalate",
+                        "assigned_to": "PolicyGate",
+                        "required_evidence": {"policy_decision": "ESCALATE"},
+                    }
+                ],
+                workspace_full=workspace,
+                cache_root_full="",
+                run_id="pm-00001",
+                pm_iteration=1,
+                events_path="",
+                dialogue_path="",
+                schema_warnings=["PM-WARN-1"],
+            )
+            self.assertTrue(payload["hard_block"])
+            self.assertEqual(payload["results"][0]["error_code"], "POLICY_GATE_ESCALATED")
+            self.assertEqual(payload["schema_warning_count"], 1)
+            self.assertEqual(payload["schema_warnings"], ["PM-WARN-1"])
+            self.assertEqual(len(payload["gate_receipts"]), 1)
 
     def test_execute_non_director_tasks_auditor_missing_ticket_blocks(self):
-        with tempfile.TemporaryDirectory() as workspace:
-            with patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
-                payload = self.loop_pm.execute_non_director_tasks(
-                    tasks=[
-                        {
-                            "id": "AUD-2",
-                            "title": "Audit fails without ticket",
-                            "assigned_to": "Auditor",
-                            "required_evidence": {"audit_result": "FAIL"},
-                        }
-                    ],
-                    workspace_full=workspace,
-                    cache_root_full="",
-                    run_id="pm-00001",
-                    pm_iteration=1,
-                    events_path="",
-                    dialogue_path="",
-                )
-                self.assertTrue(payload["hard_block"])
-                self.assertEqual(payload["results"][0]["error_code"], "DEFECT_TICKET_MISSING")
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False),
+        ):
+            payload = self.loop_pm.execute_non_director_tasks(
+                tasks=[
+                    {
+                        "id": "AUD-2",
+                        "title": "Audit fails without ticket",
+                        "assigned_to": "Auditor",
+                        "required_evidence": {"audit_result": "FAIL"},
+                    }
+                ],
+                workspace_full=workspace,
+                cache_root_full="",
+                run_id="pm-00001",
+                pm_iteration=1,
+                events_path="",
+                dialogue_path="",
+            )
+            self.assertTrue(payload["hard_block"])
+            self.assertEqual(payload["results"][0]["error_code"], "DEFECT_TICKET_MISSING")
 
     def test_migrate_tasks_in_place_adds_defaults_for_old_format(self):
         payload = {
             "tasks": [
                 {"id": "OLD-1", "status": "todo", "title": "Legacy task"},
                 {"id": "OLD-2", "status": "failed", "title": "Failed legacy"},
-                {"id": "OLD-3", "status": "done", "title": "Done legacy",
-                 "error_code": "STALE", "failure_detail": "stale"},
+                {
+                    "id": "OLD-3",
+                    "status": "done",
+                    "title": "Done legacy",
+                    "error_code": "STALE",
+                    "failure_detail": "stale",
+                },
             ]
         }
         self.loop_pm._migrate_tasks_in_place(payload)
@@ -602,9 +610,9 @@ class TestLoopPmUtils(unittest.TestCase):
     def test_extract_json_from_llm_output_handles_tool_call_wrappers(self):
         output = (
             "[TOOL_CALL]\n"
-            "{tool => \"repo_tool\", args => { --command \"ls -la\" }}\n"
+            '{tool => "repo_tool", args => { --command "ls -la" }}\n'
             "[/TOOL_CALL]\n"
-            "{\"overall_goal\":\"g\",\"focus\":\"f\",\"tasks\":[]}"
+            '{"overall_goal":"g","focus":"f","tasks":[]}'
         )
         parsed = self.loop_pm._extract_json_from_llm_output(output)
         self.assertIsInstance(parsed, dict)
@@ -690,9 +698,7 @@ class TestLoopPmUtils(unittest.TestCase):
                 execution_started=True,
             )
         )
-        self.assertFalse(
-            self.loop_pm.requires_manual_intervention_for_error("PLAN_MISSING", director_started=False)
-        )
+        self.assertFalse(self.loop_pm.requires_manual_intervention_for_error("PLAN_MISSING", director_started=False))
 
     def test_classify_director_start_state_prefers_lifecycle_markers(self):
         state = self.loop_pm.classify_director_start_state(
@@ -745,7 +751,10 @@ class TestLoopPmUtils(unittest.TestCase):
             self.assertEqual(self.loop_pm.resolve_agents_approval_mode(args), "wait")
 
     def test_wait_for_agents_confirmation_auto_accept_creates_agents(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False),
+        ):
             runtime = Path(workspace) / ".polaris" / "runtime"
             runtime.mkdir(parents=True, exist_ok=True)
             draft = runtime / "contracts" / "agents.generated.md"
@@ -800,7 +809,10 @@ class TestLoopPmUtils(unittest.TestCase):
             self.assertIn("Auto", agents_path.read_text(encoding="utf-8"))
 
     def test_wait_for_agents_confirmation_wait_timeout_pauses_for_manual(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False):
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(os.environ, {"KERNELONE_STATE_TO_RAMDISK": "0"}, clear=False),
+        ):
             runtime = Path(workspace) / ".polaris" / "runtime"
             runtime.mkdir(parents=True, exist_ok=True)
             draft = runtime / "contracts" / "agents.generated.md"
@@ -839,13 +851,16 @@ class TestLoopPmUtils(unittest.TestCase):
             self.assertFalse((Path(workspace) / "AGENTS.md").exists())
 
     def test_wait_for_agents_confirmation_wait_timeout_can_pause_when_configured(self):
-        with tempfile.TemporaryDirectory() as workspace, patch.dict(
-            os.environ,
-            {
-                "KERNELONE_STATE_TO_RAMDISK": "0",
-                "KERNELONE_MANUAL_INTERVENTION_MODE": "pause",
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            patch.dict(
+                os.environ,
+                {
+                    "KERNELONE_STATE_TO_RAMDISK": "0",
+                    "KERNELONE_MANUAL_INTERVENTION_MODE": "pause",
+                },
+                clear=False,
+            ),
         ):
             runtime = Path(workspace) / ".polaris" / "runtime"
             runtime.mkdir(parents=True, exist_ok=True)
@@ -890,24 +905,26 @@ class TestLoopPmUtils(unittest.TestCase):
             "prompt_context_obj": SimpleNamespace(model_dump=lambda: {}),
             "context_pack": None,
         }
-        with patch.object(self.loop_pm, "_use_context_engine_v2", return_value=False):
-            with patch.object(self.loop_pm, "get_anthropomorphic_context", return_value=mock_ctx):
-                prompt = self.loop_pm.build_pm_prompt(
-                    requirements="req",
-                    plan_text="plan",
-                    gap_report="",
-                    last_qa="",
-                    last_tasks={},
-                    director_result={},
-                    pm_state={},
-                    iteration=1,
-                    run_id="pm-test",
-                    events_path="",
-                )
+        with (
+            patch.object(self.loop_pm, "_use_context_engine_v2", return_value=False),
+            patch.object(self.loop_pm, "get_anthropomorphic_context", return_value=mock_ctx),
+        ):
+            prompt = self.loop_pm.build_pm_prompt(
+                requirements="req",
+                plan_text="plan",
+                gap_report="",
+                last_qa="",
+                last_tasks={},
+                director_result={},
+                pm_state={},
+                iteration=1,
+                run_id="pm-test",
+                events_path="",
+            )
         self.assertIn("Bootstrap-first planning rule (required):", prompt)
         self.assertIn("Do NOT schedule verification-only tasks", prompt)
-        self.assertIn("default to `scope_mode: \"module\"` with `scope_paths`", prompt)
-        self.assertIn("Only use `scope_mode: \"exact_files\"`", prompt)
+        self.assertIn('default to `scope_mode: "module"` with `scope_paths`', prompt)
+        self.assertIn('Only use `scope_mode: "exact_files"`', prompt)
 
 
 if __name__ == "__main__":

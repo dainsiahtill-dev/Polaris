@@ -146,7 +146,7 @@ class TruthLogIndex:
 
         index_entry = TruthLogIndexEntry(
             entry_id=entry_id,
-            entry=entry,
+            entry=deepcopy(entry),
             role=role if isinstance(role, str) else None,
             event_type=event_type if isinstance(event_type, str) else None,
             timestamp=timestamp if isinstance(timestamp, datetime) else None,
@@ -291,23 +291,25 @@ class TruthLogIndex:
 
     def query_by_role(self, role: str) -> list[dict[str, Any]]:
         """Get all entries from a specific role."""
-        return [e.entry for e in self._entries_by_id.values() if e.role and role.lower() in e.role.lower()]
+        return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.role and role.lower() in e.role.lower()]
 
     def query_by_event_type(self, event_type: str) -> list[dict[str, Any]]:
         """Get all entries of a specific event type."""
         return [
-            e.entry for e in self._entries_by_id.values() if e.event_type and event_type.lower() in e.event_type.lower()
+            deepcopy(e.entry)
+            for e in self._entries_by_id.values()
+            if e.event_type and event_type.lower() in e.event_type.lower()
         ]
 
     def query_by_time_range(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Get all entries within a time range."""
-        return [e.entry for e in self._entries_by_id.values() if e.timestamp and start <= e.timestamp <= end]
+        return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.timestamp and start <= e.timestamp <= end]
 
     def get_recent(self, n: int = 10) -> list[dict[str, Any]]:
         """Get the N most recent entries by insertion order."""
         all_entries = list(self._entries_by_id.values())
         all_entries.sort(key=lambda e: e.entry_id, reverse=True)
-        return [e.entry for e in all_entries[:n]]
+        return [deepcopy(e.entry) for e in all_entries[:n]]
 
     def clear(self) -> None:
         """Clear the index."""
@@ -381,7 +383,7 @@ class TruthLogService:
             # Store reference to prevent GC, but don't wait on it
             task = asyncio.create_task(self._index_entry_async(normalized, f"tl_{len(self._entries) - 1}"))
 
-            def _handle_index_error(t):
+            def _handle_index_error(t: Any) -> None:
                 try:
                     t.result()
                 except (RuntimeError, asyncio.InvalidStateError, asyncio.CancelledError) as e:

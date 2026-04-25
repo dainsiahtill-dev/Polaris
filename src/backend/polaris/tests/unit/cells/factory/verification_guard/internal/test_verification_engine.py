@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from polaris.cells.factory.verification_guard.internal.verification_engine import VerificationEngine
 from polaris.cells.factory.verification_guard.public.contracts import (
     ExecutionResult,
@@ -364,17 +362,17 @@ class TestValidateClaimStructure:
 
     def test_invalid_timeout(self) -> None:
         engine = VerificationEngine()
-        claim = VerificationClaim(claim_id="c1", claimed_outcome="ok", timeout_seconds=-1)
+        # VerificationClaim.__post_init__ rejects <=0, so we must bypass it
+        claim = VerificationClaim(claim_id="c1", claimed_outcome="ok")
+        object.__setattr__(claim, "timeout_seconds", -1)
         errors = engine.validate_claim_structure(claim)
         assert any("timeout" in e.lower() for e in errors)
 
     def test_empty_command(self) -> None:
         engine = VerificationEngine()
-        claim = VerificationClaim(
-            claim_id="c1",
-            claimed_outcome="ok",
-            verification_commands=[""],
-        )
+        # VerificationClaim normalizes and drops empty strings, so bypass __post_init__
+        claim = VerificationClaim(claim_id="c1", claimed_outcome="ok")
+        object.__setattr__(claim, "verification_commands", ("",))
         errors = engine.validate_claim_structure(claim)
         assert any("Empty command" in e for e in errors)
 

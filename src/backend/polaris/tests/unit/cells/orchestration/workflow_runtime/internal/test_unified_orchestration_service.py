@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
     OrchestrationMode,
     OrchestrationRunRequest,
@@ -17,7 +16,6 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts imp
     RoleEntrySpec,
     RunStatus,
     SignalRequest,
-    TaskPhase,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
     InMemoryOrchestrationRepository,
@@ -86,7 +84,14 @@ class TestLoggingEventPublisher:
 class TestUnifiedOrchestrationService:
     @pytest.fixture
     def service(self) -> UnifiedOrchestrationService:
-        return UnifiedOrchestrationService()
+        # Provide a dummy role adapter factory so submit_run doesn't fail on adapter lookup
+        def _factory(role_id: str, workspace: str) -> MagicMock:
+            adapter = MagicMock()
+            adapter.role_id = role_id
+            adapter.workspace = workspace
+            return adapter  # type: ignore[return-value]
+
+        return UnifiedOrchestrationService(role_adapter_factory=_factory)
 
     @pytest.mark.asyncio
     async def test_submit_run_validation_error(self, service: UnifiedOrchestrationService) -> None:
@@ -97,7 +102,9 @@ class TestUnifiedOrchestrationService:
     @pytest.mark.asyncio
     async def test_submit_run_with_pipeline_spec(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
         spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
-        req = OrchestrationRunRequest(run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec)
+        req = OrchestrationRunRequest(
+            run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec
+        )
         snap = await service.submit_run(req)
         assert snap.run_id == "r1"
         assert snap.status == RunStatus.PENDING
@@ -105,7 +112,9 @@ class TestUnifiedOrchestrationService:
     @pytest.mark.asyncio
     async def test_query_run(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
         spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
-        req = OrchestrationRunRequest(run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec)
+        req = OrchestrationRunRequest(
+            run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec
+        )
         await service.submit_run(req)
         snap = await service.query_run("r1")
         assert snap is not None
@@ -114,7 +123,9 @@ class TestUnifiedOrchestrationService:
     @pytest.mark.asyncio
     async def test_query_run_tasks(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
         spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
-        req = OrchestrationRunRequest(run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec)
+        req = OrchestrationRunRequest(
+            run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec
+        )
         await service.submit_run(req)
         result = await service.query_run_tasks("r1")
         assert result["count"] == 1
@@ -122,7 +133,9 @@ class TestUnifiedOrchestrationService:
     @pytest.mark.asyncio
     async def test_cancel_run(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
         spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
-        req = OrchestrationRunRequest(run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec)
+        req = OrchestrationRunRequest(
+            run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec
+        )
         await service.submit_run(req)
         snap = await service.cancel_run("r1")
         assert snap.status == RunStatus.CANCELLED
@@ -135,7 +148,9 @@ class TestUnifiedOrchestrationService:
     @pytest.mark.asyncio
     async def test_signal_run_invalid_signal(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
         spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
-        req = OrchestrationRunRequest(run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec)
+        req = OrchestrationRunRequest(
+            run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec
+        )
         await service.submit_run(req)
         with pytest.raises(InvalidSignalError):
             await service.signal_run("r1", SignalRequest(signal=OrchestrationSignal.PAUSE))
@@ -143,7 +158,9 @@ class TestUnifiedOrchestrationService:
     @pytest.mark.asyncio
     async def test_list_runs(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
         spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
-        req = OrchestrationRunRequest(run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec)
+        req = OrchestrationRunRequest(
+            run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec
+        )
         await service.submit_run(req)
         runs = await service.list_runs(workspace=str(tmp_path))
         assert len(runs) == 1
@@ -151,7 +168,9 @@ class TestUnifiedOrchestrationService:
     @pytest.mark.asyncio
     async def test_get_ui_state(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
         spec = PipelineSpec(tasks=[PipelineTask(task_id="t1", role_entry=RoleEntrySpec(role_id="pm"))])
-        req = OrchestrationRunRequest(run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec)
+        req = OrchestrationRunRequest(
+            run_id="r1", workspace=tmp_path, mode=OrchestrationMode.WORKFLOW, pipeline_spec=spec
+        )
         await service.submit_run(req)
         ui_state = await service.get_ui_state("r1")
         assert ui_state is not None

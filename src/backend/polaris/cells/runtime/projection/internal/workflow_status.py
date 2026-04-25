@@ -165,7 +165,7 @@ def _runtime_db_path(cache_root: str) -> str:
 
 
 @contextmanager
-def _workflow_runtime_environment(workspace: str, cache_root: str):
+def _workflow_runtime_environment(workspace: str, cache_root: str) -> Any:
     workspace_value = str(workspace or "").strip()
     cache_root_value = str(cache_root or "").strip()
     overrides: dict[str, str] = {}

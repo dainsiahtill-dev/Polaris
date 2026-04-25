@@ -12,12 +12,9 @@ Covers:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,7 +77,7 @@ class TestSelectExecutionStrategy:
         result = adapter._select_execution_strategy("fix bug", {}, {})
         assert result == "default"
 
-    def test_重构_triggers_conservative(self, tmp_path: Any) -> None:
+    def test_refactor_zh_triggers_conservative(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         result = adapter._select_execution_strategy("重构代码", {}, {})
         assert result == "conservative"

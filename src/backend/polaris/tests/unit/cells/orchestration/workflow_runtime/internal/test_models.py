@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.models import (
     DirectorTaskInput,
     DirectorTaskResult,
@@ -47,12 +45,19 @@ class TestUtcNowIso:
     def test_uses_workflow_api_now(self) -> None:
         mock_api = MagicMock()
         mock_api.now.return_value = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-        with patch(
-            "polaris.cells.orchestration.workflow_runtime.internal.models.get_workflow_api",
-            return_value=mock_api,
-        ):
+        # get_workflow_api is imported locally inside utc_now_iso; patch the module attribute
+        import polaris.cells.orchestration.workflow_runtime.internal.models as _models
+
+        original = getattr(_models, "get_workflow_api", None)
+        try:
+            _models.get_workflow_api = lambda: mock_api  # type: ignore[attr-defined]
             result = utc_now_iso()
             assert isinstance(result, str)
+        finally:
+            if original is not None:
+                _models.get_workflow_api = original  # type: ignore[attr-defined]
+            else:
+                delattr(_models, "get_workflow_api")
 
 
 class TestExecutionEvent:
@@ -129,15 +134,18 @@ class TestDirectorWorkflowInput:
             "workspace": "/tmp/ws",
             "run_id": "r1",
             "tasks": [],
+            "execution_mode": "sequential",
+            "max_parallel_tasks": 1,
             "metadata": {
                 "director_config": {
-                    "execution_mode": "serial",
-                    "max_parallel_tasks": 1,
+                    "execution_mode": "parallel",
+                    "max_parallel_tasks": 99,
                 }
             },
         }
         inp = DirectorWorkflowInput.from_mapping(raw)
-        assert inp.execution_mode == "serial"
+        # Payload keys take precedence over director_config fallback
+        assert inp.execution_mode == "sequential"
         assert inp.max_parallel_tasks == 1
 
 

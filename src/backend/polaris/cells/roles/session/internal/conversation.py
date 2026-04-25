@@ -275,7 +275,7 @@ def _get_kernel_db() -> KernelDatabase:
     return _kernel_db
 
 
-def get_engine(database_url: str | None = None):
+def get_engine(database_url: str | None = None) -> Any:
     """获取或创建数据库引擎（线程安全）"""
     global _engine
     resolved_database_url = _normalize_database_url(database_url)
@@ -301,7 +301,7 @@ def get_engine(database_url: str | None = None):
     return _engine
 
 
-def get_session_local():
+def get_session_local() -> Any:
     """获取会话工厂（线程安全）"""
     global _SessionLocal
     engine = get_engine()
@@ -319,7 +319,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def get_db():
+def get_db() -> Any:
     """获取数据库会话（用于依赖注入）"""
     session_local = get_session_local()
     db = session_local()

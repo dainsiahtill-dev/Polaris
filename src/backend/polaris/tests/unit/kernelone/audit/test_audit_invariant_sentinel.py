@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from unittest.mock import patch
 
 from polaris.kernelone.audit.invariant_sentinel import (
     _check_contract_immutable,

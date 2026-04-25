@@ -6,6 +6,8 @@ All internal imports are lazy-loaded to maintain proper architectural boundaries
 
 from __future__ import annotations
 
+from typing import Any
+
 # Pre-declare lazy-loaded names to satisfy __all__ and static analysis.
 ARTIFACT_REGISTRY: type | None = None
 LEGACY_KEY_MAPPING: type | None = None
@@ -42,7 +44,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy import dispatcher for internal modules."""
     if name in {
         "ARTIFACT_REGISTRY",

@@ -1,16 +1,51 @@
 """统一任务追踪事件发射
 
 提供统一的 task trace 事件发射接口，供 Cells 和 KernelOne 复用。
+
+KernelOne Purity Note (2026-04-25):
+    Message bus resolution now uses an ``IContainerPort`` port registered
+    via ``set_container_port()`` during bootstrap, eliminating the reverse
+    dependency ``kernelone -> infrastructure.di.container``.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.events import MessageType
+
+if TYPE_CHECKING:
+    from polaris.kernelone.ports.container import IContainerPort
+
+logger = logging.getLogger(__name__)
+
+# ── Injected container port ──────────────────────────────────────────────
+
+_container_port: IContainerPort | None = None
+
+
+def set_container_port(port: IContainerPort) -> None:
+    """Register the DI container port for message bus resolution.
+
+    Infrastructure / bootstrap calls this so that ``_resolve_message_bus``
+    can resolve the ``DirectorService`` without importing
+    ``polaris.infrastructure.di.container`` at runtime.
+
+    Args:
+        port: A container satisfying ``IContainerPort``.
+    """
+    global _container_port
+    _container_port = port
+
+
+def reset_container_port() -> None:
+    """Clear the injected container port (for test isolation)."""
+    global _container_port
+    _container_port = None
 
 
 def _sanitize_step_detail(detail: str, max_length: int = 280) -> str:
@@ -119,19 +154,32 @@ def _next_seq_for_task(task_id: str) -> int:
     return next_seq
 
 
-async def _resolve_message_bus():  # type: ignore[no-untyped-def]
-    """解析 message bus.
+async def _resolve_message_bus() -> Any | None:
+    """Resolve the message bus via the injected container port.
 
-    Uses TYPE_CHECKING pattern to avoid runtime import of DirectorService.
-    The bus is obtained via container resolution using the type hint for type safety.
+    Uses the ``IContainerPort`` registered via ``set_container_port()`` when
+    available.  Falls back to a direct infrastructure import during the
+    migration period until all bootstrap paths wire the port.
+
+    Returns:
+        The message bus instance, or ``None`` if resolution fails.
     """
     try:
+        container = _container_port
+        if container is not None:
+            director_service = await container.resolve_async("DirectorService")  # type: ignore[arg-type]
+            bus: Any = getattr(director_service, "_bus", None)
+            return bus
+
+        # Migration fallback: direct import until bootstrap universally calls
+        # set_container_port().
+        # TODO(kernelone-purity): Remove this fallback once bootstrap wiring
+        # is complete.
         from polaris.infrastructure.di.container import get_container
 
-        container = await get_container()
-        # Use type hint with TYPE_CHECKING guard to get the service without runtime import
-        director_service = await container.resolve_async("DirectorService")  # type: ignore[arg-type]
+        fallback_container = await get_container()
+        director_service = await fallback_container.resolve_async("DirectorService")  # type: ignore[arg-type]
         bus = getattr(director_service, "_bus", None)
         return bus
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError, KeyError):
         return None

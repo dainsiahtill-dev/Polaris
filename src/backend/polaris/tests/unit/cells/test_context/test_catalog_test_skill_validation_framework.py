@@ -7,24 +7,19 @@ LLMJudge, and SkillValidationFramework.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from polaris.cells.context.catalog.internal.skill_validator.framework import (
     LLMJudge,
     PythonTestPrefixInvariant,
-    SQLWhereClauseInvariant,
     SkillValidationFramework,
+    SQLWhereClauseInvariant,
     ValidationConfig,
     ValidationResult,
     ValidationStatus,
     ValidationTier,
 )
-
 
 # ---------------------------------------------------------------------------
 # ValidationStatus / ValidationTier
@@ -134,7 +129,7 @@ class TestSQLWhereClauseInvariant:
     def test_valid_select_with_limit(self) -> None:
         rule = SQLWhereClauseInvariant()
         content = "```sql\nSELECT * FROM users LIMIT 10;\n```"
-        passed, score, evidence = rule.validate(content, {})
+        passed, score, _evidence = rule.validate(content, {})
         assert passed is True
         assert score == 1.0
 
@@ -149,16 +144,13 @@ class TestSQLWhereClauseInvariant:
     def test_ddl_statements_exempt(self) -> None:
         rule = SQLWhereClauseInvariant()
         content = "```sql\nCREATE TABLE users (id INT);\n```"
-        passed, score, evidence = rule.validate(content, {})
+        passed, score, _evidence = rule.validate(content, {})
         assert passed is True
         assert score == 1.0
 
     def test_mixed_sql_blocks(self) -> None:
         rule = SQLWhereClauseInvariant()
-        content = (
-            "```sql\nSELECT * FROM users WHERE id = 1;\n```\n"
-            "```sql\nSELECT * FROM orders;\n```"
-        )
+        content = "```sql\nSELECT * FROM users WHERE id = 1;\n```\n```sql\nSELECT * FROM orders;\n```"
         passed, score, evidence = rule.validate(content, {})
         assert passed is False
         assert score == 0.5
@@ -168,13 +160,13 @@ class TestSQLWhereClauseInvariant:
     def test_case_insensitive_keywords(self) -> None:
         rule = SQLWhereClauseInvariant()
         content = "```sql\nselect * from users where id = 1;\n```"
-        passed, score, evidence = rule.validate(content, {})
+        passed, _score, _evidence = rule.validate(content, {})
         assert passed is True
 
     def test_mysql_dialect_tag(self) -> None:
         rule = SQLWhereClauseInvariant()
         content = "```mysql\nSELECT * FROM users WHERE id = 1;\n```"
-        passed, score, evidence = rule.validate(content, {})
+        passed, _score, _evidence = rule.validate(content, {})
         assert passed is True
 
 
@@ -194,46 +186,30 @@ class TestPythonTestPrefixInvariant:
     def test_test_function_with_prefix(self) -> None:
         rule = PythonTestPrefixInvariant()
         content = "```python\ndef test_something():\n    pass\n```"
-        passed, score, evidence = rule.validate(content, {})
+        passed, score, _evidence = rule.validate(content, {})
         assert passed is True
         assert score == 1.0
 
     def test_test_function_without_prefix(self) -> None:
         rule = PythonTestPrefixInvariant()
-        content = "```python\ndef something():\n    pass\n```"
-        passed, score, evidence = rule.validate(content, {})
         # "something" contains "test" so it might be classified as likely test
         # Let's use a name that clearly isn't a test
         content = "```python\ndef helper():\n    pass\n```"
-        passed, score, evidence = rule.validate(content, {})
+        _passed, _score, evidence = rule.validate(content, {})
         # helper() doesn't look like a test function
         assert evidence["reason"] == "No test functions found"
 
     def test_pytest_decorator_recognized(self) -> None:
         rule = PythonTestPrefixInvariant()
-        content = (
-            "```python\n"
-            "import pytest\n"
-            "@pytest.mark.parametrize('x', [1, 2])\n"
-            "def check_values(x):\n"
-            "    pass\n"
-            "```"
-        )
-        passed, score, evidence = rule.validate(content, {})
+        content = "```python\nimport pytest\n@pytest.mark.parametrize('x', [1, 2])\ndef check_values(x):\n    pass\n```"
+        passed, score, _evidence = rule.validate(content, {})
         assert passed is True
         assert score == 1.0
 
     def test_fixture_decorator_recognized(self) -> None:
         rule = PythonTestPrefixInvariant()
-        content = (
-            "```python\n"
-            "import pytest\n"
-            "@pytest.fixture\n"
-            "def my_fixture():\n"
-            "    pass\n"
-            "```"
-        )
-        passed, score, evidence = rule.validate(content, {})
+        content = "```python\nimport pytest\n@pytest.fixture\ndef my_fixture():\n    pass\n```"
+        passed, score, _evidence = rule.validate(content, {})
         assert passed is True
         assert score == 1.0
 
@@ -245,7 +221,7 @@ class TestPythonTestPrefixInvariant:
             "    pass\n"
             "```"
         )
-        passed, score, evidence = rule.validate(content, {})
+        _passed, _score, evidence = rule.validate(content, {})
         # verify_something contains "verify" not "test" but has no decorators
         # It won't be classified as likely test, so no test functions found
         assert evidence["reason"] == "No test functions found"
@@ -253,14 +229,7 @@ class TestPythonTestPrefixInvariant:
     def test_compliance_threshold(self) -> None:
         rule = PythonTestPrefixInvariant()
         # One compliant, one non-compliant (but non-compliant won't be detected as test)
-        content = (
-            "```python\n"
-            "def test_one():\n"
-            "    pass\n"
-            "def test_two():\n"
-            "    pass\n"
-            "```"
-        )
+        content = "```python\ndef test_one():\n    pass\ndef test_two():\n    pass\n```"
         passed, score, evidence = rule.validate(content, {})
         assert passed is True
         assert score == 1.0
@@ -303,9 +272,7 @@ class TestLLMJudge:
         # _call_llm_with_perspective returns 0.5 for all perspectives
         # variance will be 0.0, so this won't trigger UNCERTAIN
         # Let's patch to return varying scores
-        with patch.object(
-            judge, "_call_llm_with_perspective", side_effect=[0.5, 0.9, 0.3]
-        ):
+        with patch.object(judge, "_call_llm_with_perspective", side_effect=[0.5, 0.9, 0.3]):
             result = judge.evaluate("content", "rubric", {})
             assert result["status"] == "UNCERTAIN"
             assert "variance" in result["reason"].lower() or "High variance" in result["reason"]
@@ -313,9 +280,7 @@ class TestLLMJudge:
     def test_evaluate_returns_pass(self) -> None:
         config = ValidationConfig(l3_variance_threshold=1.0)
         judge = LLMJudge(config)
-        with patch.object(
-            judge, "_call_llm_with_perspective", return_value=0.9
-        ):
+        with patch.object(judge, "_call_llm_with_perspective", return_value=0.9):
             result = judge.evaluate("content", "rubric", {})
             assert result["status"] == "PASS"
             assert result["score"] == 0.9
@@ -323,9 +288,7 @@ class TestLLMJudge:
     def test_evaluate_returns_fail(self) -> None:
         config = ValidationConfig(l3_variance_threshold=1.0)
         judge = LLMJudge(config)
-        with patch.object(
-            judge, "_call_llm_with_perspective", return_value=0.5
-        ):
+        with patch.object(judge, "_call_llm_with_perspective", return_value=0.5):
             result = judge.evaluate("content", "rubric", {})
             assert result["status"] == "FAIL"
 

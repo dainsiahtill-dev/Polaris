@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-
+from polaris.kernelone.audit.contracts import KernelAuditEventType, KernelAuditRole
 from polaris.kernelone.audit.validators import (
     SYSTEM_ROLE,
     derive_task_id,
@@ -17,7 +17,6 @@ from polaris.kernelone.audit.validators import (
     require_valid_run_id,
     validate_run_id,
 )
-from polaris.kernelone.audit.contracts import KernelAuditEventType, KernelAuditRole
 
 
 class TestSystemRole:

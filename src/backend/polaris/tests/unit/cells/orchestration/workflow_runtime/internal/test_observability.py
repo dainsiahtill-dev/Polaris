@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from polaris.cells.orchestration.workflow_runtime.internal.event_stream import EventStream
 from polaris.cells.orchestration.workflow_runtime.internal.observability import (
     HealthMonitor,
@@ -116,10 +114,6 @@ class TestMetricsCollector:
         assert collector.get_summary()["total_services"] == 0
 
     def test_export_json(self, collector: MetricsCollector, tmp_path: Path) -> None:
-        from polaris.cells.orchestration.workflow_runtime.internal.event_stream import (
-            EventType,
-            OrchestrationEvent,
-        )
 
         collector._metrics["s1"] = ServiceMetrics(
             service_id="s1",

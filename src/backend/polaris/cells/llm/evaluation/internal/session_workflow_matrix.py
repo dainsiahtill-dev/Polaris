@@ -27,7 +27,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnContinuationMode,
@@ -185,7 +185,7 @@ class MockWorkflowKernel:
 # ---------------------------------------------------------------------------
 
 
-def _make_envelope_builder(envelopes: list[TurnOutcomeEnvelope]):
+def _make_envelope_builder(envelopes: list[TurnOutcomeEnvelope]) -> Callable[[CompletionEvent], TurnOutcomeEnvelope]:
     """Create a closure that returns envelopes in turn order."""
     _index = 0
 

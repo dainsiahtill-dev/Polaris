@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.cells.llm.evaluation.public.contracts import (
     ILlmEvaluationService,
     LlmEvaluationCompletedEventV1,

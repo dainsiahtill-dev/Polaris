@@ -931,7 +931,7 @@ class OrchestrationStageExecutor:
             artifacts=["runtime/qa/report.json"],
         )
 
-    def _build_orchestration_service(self, context: dict[str, Any]):
+    def _build_orchestration_service(self, context: dict[str, Any]) -> Any:
         from polaris.bootstrap.config import Settings
         from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
 

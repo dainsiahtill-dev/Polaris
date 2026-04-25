@@ -112,10 +112,7 @@ class KernelGuard:
             level: Risk level (normal/low/high/critical)
         """
         if level not in _VALID_RISK_LEVELS:
-            raise ValueError(
-                f"Invalid risk level: {level}. "
-                f"Must be one of: {_VALID_RISK_LEVELS}"
-            )
+            raise ValueError(f"Invalid risk level: {level}. Must be one of: {_VALID_RISK_LEVELS}")
         cls._set_risk_level(level)
 
     @classmethod

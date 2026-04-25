@@ -189,7 +189,7 @@ class WorkflowRoleAdapter:
         return _WorkflowRoleAdapter(*args, **kwargs)
 
 
-def execute_workflow_role(*args, **kwargs):
+def execute_workflow_role(*args, **kwargs) -> Any:
     """Forward workflow role execution to `roles.adapters` public service."""
     from polaris.cells.roles.adapters.public.service import (
         execute_workflow_role as _execute_workflow_role,
@@ -198,7 +198,7 @@ def execute_workflow_role(*args, **kwargs):
     return _execute_workflow_role(*args, **kwargs)
 
 
-def get_role_system_prompt(*args, **kwargs):
+def get_role_system_prompt(*args, **kwargs) -> Any:
     """Lazy proxy to avoid control-plane import cycles at module import time."""
     from polaris.cells.llm.control_plane.public.service import (
         get_role_system_prompt as _get_role_system_prompt,
