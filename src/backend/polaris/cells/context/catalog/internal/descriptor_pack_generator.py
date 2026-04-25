@@ -156,10 +156,12 @@ def _load_yaml_simple(path: Path) -> dict[str, Any]:
     try:
         import yaml
 
+        if not path.exists():
+            return {}
         with open(path, encoding="utf-8") as f:
             data_yaml: dict[str, Any] = yaml.safe_load(f)  # renamed to avoid redef
             return data_yaml if isinstance(data_yaml, dict) else {}
-    except ImportError:
+    except (OSError, ImportError):
         # Fallback for basic cell.yaml structure
         data: dict[str, Any] = {}
         if not path.exists():
@@ -234,7 +236,7 @@ def analyze_file(path: Path) -> dict[str, Any]:
         visitor = FunctionalAnalyzer()
         visitor.visit(tree)
         return {"classes": visitor.classes, "functions": visitor.functions}
-    except (RuntimeError, ValueError) as e:
+    except (OSError, SyntaxError, RuntimeError, ValueError) as e:
         logger.debug("Failed to analyze Python file %s: %s", path, e)
         return {"error": str(e)}
 

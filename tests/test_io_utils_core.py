@@ -28,9 +28,8 @@ class TestIoUtilsCore(unittest.TestCase):
 
     def test_resolve_workspace_path_raises_without_docs(self):
         io_utils = _import_io_utils()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with self.assertRaises(ValueError):
-                io_utils.resolve_workspace_path(temp_dir, require_docs=True)
+        with tempfile.TemporaryDirectory() as temp_dir, self.assertRaises(ValueError):
+            io_utils.resolve_workspace_path(temp_dir, require_docs=True)
 
     def test_resolve_workspace_path_allows_missing_docs(self):
         io_utils = _import_io_utils()
