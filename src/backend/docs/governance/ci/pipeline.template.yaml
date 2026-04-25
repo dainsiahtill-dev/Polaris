@@ -72,6 +72,13 @@ stages:
       - python -m polaris.delivery.cli agentic-eval --workspace . --suite tool_calling_matrix --role director --matrix-transport both --provider-id runtime_binding --model runtime_binding --format json
       - python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py --workspace . --role director --mode hard-fail --report workspace/meta/governance_reports/tool_calling_canonical_gate.json
 
+  - id: directory_hygiene_gate
+    purpose: >
+      Scan the backend for temp, cache, and auto-generated directories that
+      should be gitignored. Exits with the count of violations (0 = clean).
+    commands:
+      - python docs/governance/ci/scripts/check_directory_hygiene.py --workspace .
+
 notes:
   - catalog_governance_fail_on_new is the default gate during migration and blocks regressions.
   - catalog_governance_hard_fail can be enabled per branch once baseline debt is burned down.

@@ -385,7 +385,7 @@ class TestCompressionEngineToolPreservation:
         ]
 
         excess = 100
-        result, tokens = engine.smart_content_truncation(messages, excess)
+        result, _tokens = engine.smart_content_truncation(messages, excess)
 
         # Tool message should be preserved
         tool_msgs = [m for m in result if m["role"] == "tool"]
@@ -416,7 +416,7 @@ class TestCompressionEngineToolPreservation:
             {"role": "tool", "content": "<tool_result>" + "X" * 10000 + "</tool_result>"},
         ]
 
-        result, tokens = engine.emergency_fallback(messages)
+        result, _tokens = engine.emergency_fallback(messages)
 
         # Tool message should be preserved
         tool_msgs = [m for m in result if m["role"] == "tool"]

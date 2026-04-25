@@ -972,3 +972,22 @@ rules:
     desired_automation:
       - grep -rP "logger\.(warning|error|info)\(['\"].*?['\"]\)" polaris/kernelone/ polaris/infrastructure/ --include="*.py" | grep -v exc_info
       - fail if logger call without exc_info=True found in except blocks
+
+  # ---------------------------------------------------------------------------
+  # Directory Hygiene Rule (2026-04-25)
+  # ---------------------------------------------------------------------------
+
+  - id: directory_hygiene
+    severity: high
+    description: >
+      Temp, cache, and auto-generated directories (__pycache__, .mypy_cache,
+      .pytest_cache, .ruff_cache, .transcripts, .polaris, workspace, runtime,
+      htmlcov, .tmp_*) must be covered by .gitignore. Uncovered directories
+      risk accidental commits of build artifacts, runtime state, and cache data.
+    evidence:
+      - docs/governance/ci/scripts/check_directory_hygiene.py
+      - .gitignore
+    current_status: enforced_non_regressive
+    desired_automation:
+      - python docs/governance/ci/scripts/check_directory_hygiene.py --workspace .
+      - fail if any temp/cache/auto-generated directory exists without .gitignore coverage
