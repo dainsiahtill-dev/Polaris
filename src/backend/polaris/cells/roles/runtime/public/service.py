@@ -96,6 +96,9 @@ from polaris.cells.roles.runtime.internal.sequential_engine import (
 )
 
 # Re-export RoleSessionOrchestrator for Cell boundary compliance
+from polaris.cells.roles.runtime.internal.session_orchestrator import (
+    RoleSessionOrchestrator,
+)
 from polaris.cells.roles.runtime.internal.skill_loader import (
     RoleSkillManager,
     SkillLoader,
