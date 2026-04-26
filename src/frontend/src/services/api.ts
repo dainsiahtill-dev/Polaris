@@ -145,27 +145,27 @@ export const processService = {
   async startPm(resume = false): Promise<ApiResult<void>> {
     const url = resume ? '/v2/pm/start?resume=true' : '/v2/pm/start';
     const res = await apiFetch(url, { method: 'POST' });
-    return handleResponse(res, '启动尚书令失败');
+    return handleResponse(res, 'Failed to start PM');
   },
 
   async stopPm(): Promise<ApiResult<void>> {
     const res = await apiFetch('/v2/pm/stop', { method: 'POST' });
-    return handleResponse(res, '停止尚书令失败');
+    return handleResponse(res, 'Failed to stop PM');
   },
 
   async runPmOnce(): Promise<ApiResult<void>> {
     const res = await apiFetch('/v2/pm/run_once', { method: 'POST' });
-    return handleResponse(res, '尚书令单次督办失败');
+    return handleResponse(res, 'PM run once failed');
   },
 
   async startDirector(): Promise<ApiResult<void>> {
     const res = await apiFetch('/v2/director/start', { method: 'POST' });
-    return handleResponse(res, '启动工部尚书失败');
+    return handleResponse(res, 'Failed to start Chief Engineer');
   },
 
   async stopDirector(): Promise<ApiResult<void>> {
     const res = await apiFetch('/v2/director/stop', { method: 'POST' });
-    return handleResponse(res, '停止工部尚书失败');
+    return handleResponse(res, 'Failed to stop Chief Engineer');
   },
 };
 

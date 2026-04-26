@@ -86,7 +86,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
   - `cells/` -> `src/backend/polaris/cells/`
   - `tests/` -> `src/backend/polaris/tests/`
 - `src/backend/docs/graph/`、`src/backend/docs/governance/`、`src/backend/docs/templates/` 继续保留在仓库现有位置，作为共享真相与治理资产
-- `src/backend/app/`、`src/backend/core/`、`src/backend/api/`、`src/backend/scripts/` 仍属于迁移中的旧根目录；除兼容垫片、转发入口和必要修复外，不应继续承载新的主实现
+- `src/backend/app/`、`src/backend/core/`、`src/backend/api/` 已移除；`src/backend/scripts/` 仍保留（历史脚本），新功能应写入 `polaris/delivery/cli/`
 
 ---
 
@@ -260,7 +260,7 @@ python -m core.polaris_loop.role_agent.architect_cli --mode interactive --worksp
 python -m core.polaris_loop.role_agent.chief_engineer_cli --mode interactive --workspace .
 
 # PM - 项目管理
-python src/backend/scripts/pm/cli.py --workspace . --start-from pm
+python -m polaris.delivery.cli.pm.cli --workspace . --start-from pm
 
 # Director - 代码执行
 python -m scripts.director.cli_thin --workspace . --iterations 1
@@ -273,7 +273,7 @@ python -m scripts.director.cli_thin --workspace . --iterations 1
 以下功能已在代码库中实现，更新指南请勿重复创建：
 
 ### 8.1) 智能错误恢复
-- **实现**: `src/backend/app/orchestration/error_classifier.py`
+- **实现**: `src/backend/polaris/kernelone/tool_execution/error_classifier.py`
 - **功能**: 错误分类（可重试 vs 不可重试）、指数退避、熔断器
 
 ### 8.2) MCP 协议支持
@@ -289,7 +289,7 @@ python -m scripts.director.cli_thin --workspace . --iterations 1
 - **功能**: 依赖图生成、复杂度分析
 
 ### 8.5) 实时 WebSocket
-- **实现**: `src/backend/api/v2/runtime_ws.py`
+- **实现**: `src/backend/polaris/delivery/ws/runtime_endpoint.py`
 - **功能**: 实时状态推送、事件流、心跳保活
 
 ### 8.6) 多编辑模式

@@ -163,10 +163,10 @@ export const ProviderCard = memo(function ProviderCard({
   }, [provider.type]);
 
   const getRoleDisplayName = useCallback((roleId?: string) => {
-    if (roleId === 'pm') return '尚书令';
-    if (roleId === 'director') return '工部尚书';
-    if (roleId === 'qa') return '门下侍中';
-    if (roleId === 'architect' || roleId === 'docs') return '中书令';
+    if (roleId === 'pm') return 'PM';
+    if (roleId === 'director') return '工部侍郎';
+    if (roleId === 'qa') return 'QA';
+    if (roleId === 'architect' || roleId === 'docs') return 'Architect';
     return roleId || '未署名';
   }, []);
 

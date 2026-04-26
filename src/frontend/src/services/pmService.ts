@@ -1,5 +1,5 @@
 /**
- * PM (尚书令) Service
+ * PM Service
  *
  * 封装所有PM相关的API调用，提供类型安全的接口
  */
@@ -94,35 +94,35 @@ export async function getAllStatuses(): Promise<{
  */
 export async function startPm(resume = false): Promise<ApiResult<void>> {
   const path = resume ? '/v2/pm/start?resume=true' : '/v2/pm/start';
-  return apiPostEmpty<void>(path, '启动尚书令失败');
+  return apiPostEmpty<void>(path, 'Failed to start PM');
 }
 
 /**
  * 停止PM
  */
 export async function stopPm(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/pm/stop', '停止尚书令失败');
+  return apiPostEmpty<void>('/v2/pm/stop', 'Failed to stop PM');
 }
 
 /**
  * 单次运行PM
  */
 export async function runPmOnce(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/pm/run_once', '尚书令单次督办失败');
+  return apiPostEmpty<void>('/v2/pm/run_once', 'PM run once failed');
 }
 
 /**
  * 启动Director
  */
 export async function startDirector(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/director/start', '启动工部尚书失败');
+  return apiPostEmpty<void>('/v2/director/start', 'Failed to start Chief Engineer');
 }
 
 /**
  * 停止Director
  */
 export async function stopDirector(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/director/stop', '停止工部尚书失败');
+  return apiPostEmpty<void>('/v2/director/stop', 'Failed to stop Chief Engineer');
 }
 
 // ============================================================================

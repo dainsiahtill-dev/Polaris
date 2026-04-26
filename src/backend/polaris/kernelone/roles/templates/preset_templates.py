@@ -1,12 +1,12 @@
 """Preset role templates for Polaris roles.
 
 This module provides predefined templates for the six core roles:
-- pm: 尚书令 (Project Management)
-- architect: 中书令 (Architecture Design)
-- chief_engineer: 工部尚书 (Technical Analysis)
-- director: 工部侍郎 (Code Execution)
-- qa: 门下侍中 (Quality Review)
-- scout: 探子 (Read-only Code Exploration)
+- pm: Project Manager
+- architect: Architecture Designer
+- chief_engineer: Chief Engineer
+- director: Code Director
+- qa: Quality Assurance
+- scout: Scout (Read-only Code Exploration)
 
 Each template includes tools, prompts, constraints, and capabilities
 that define the role's behavior and permissions.
@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from polaris.kernelone.roles.dynamic_role import DynamicRoleManager, RoleTemplate
 
-# Project Management role - 尚书令
+# Project Management role
 PM_TEMPLATE = RoleTemplate(
     name="pm",
-    description="Project Manager - 尚书令. Handles project planning, task tracking, and stakeholder coordination.",
+    description="Project Manager. Handles project planning, task tracking, and stakeholder coordination.",
     tools=(
         "task_create",
         "task_update",
@@ -30,7 +30,7 @@ PM_TEMPLATE = RoleTemplate(
         "director_invoke",
     ),
     prompts={
-        "system": "You are 尚书令 (Project Manager). You coordinate project activities and ensure timely delivery.",
+        "system": "You are the Project Manager. You coordinate project activities and ensure timely delivery.",
         "task_creation": "Create a detailed task breakdown for: {task_description}",
         "status_update": "Update status of task {task_id} to {new_status}",
     },
@@ -47,10 +47,10 @@ PM_TEMPLATE = RoleTemplate(
     ),
 )
 
-# Architecture Design role - 中书令
+# Architecture Design role
 ARCHITECT_TEMPLATE = RoleTemplate(
     name="architect",
-    description="Architecture Designer - 中书令. Designs system architecture and technical specifications.",
+    description="Architecture Designer. Designs system architecture and technical specifications.",
     tools=(
         "codebase_search",
         "file_read",
@@ -60,7 +60,7 @@ ARCHITECT_TEMPLATE = RoleTemplate(
         "component_map",
     ),
     prompts={
-        "system": "You are 中书令 (Architecture Designer). You design scalable and maintainable system architectures.",
+        "system": "You are the Architecture Designer. You design scalable and maintainable system architectures.",
         "design_proposal": "Design architecture for: {requirement}",
         "review": "Review existing architecture: {component}",
     },
@@ -77,10 +77,10 @@ ARCHITECT_TEMPLATE = RoleTemplate(
     ),
 )
 
-# Technical Analysis role - 工部尚书
+# Technical Analysis role
 CHIEF_ENGINEER_TEMPLATE = RoleTemplate(
     name="chief_engineer",
-    description="Chief Engineer - 工部尚书. Performs deep technical analysis and provides expert guidance.",
+    description="Chief Engineer. Performs deep technical analysis and provides expert guidance.",
     tools=(
         "codebase_search",
         "file_read",
@@ -91,7 +91,7 @@ CHIEF_ENGINEER_TEMPLATE = RoleTemplate(
         "performance_analyze",
     ),
     prompts={
-        "system": "You are 工部尚书 (Chief Engineer). You provide expert technical analysis and guidance.",
+        "system": "You are the Chief Engineer. You provide expert technical analysis and guidance.",
         "analysis": "Perform technical analysis of: {subject}",
         "review": "Review code quality: {file_path}",
     },
@@ -108,10 +108,10 @@ CHIEF_ENGINEER_TEMPLATE = RoleTemplate(
     ),
 )
 
-# Code Execution role - 工部侍郎
+# Code Execution role
 DIRECTOR_TEMPLATE = RoleTemplate(
     name="director",
-    description="Code Director - 工部侍郎. Executes code changes and coordinates implementation.",
+    description="Code Director. Executes code changes and coordinates implementation.",
     tools=(
         "file_write",
         "file_edit",
@@ -122,7 +122,7 @@ DIRECTOR_TEMPLATE = RoleTemplate(
         "workflow_execute",
     ),
     prompts={
-        "system": "You are 工部侍郎 (Code Director). You execute code changes and coordinate implementation.",
+        "system": "You are the Code Director. You execute code changes and coordinate implementation.",
         "implement": "Implement feature: {feature_description}",
         "refactor": "Refactor code in: {target}",
     },
@@ -139,10 +139,10 @@ DIRECTOR_TEMPLATE = RoleTemplate(
     ),
 )
 
-# Quality Assurance role - 门下侍中
+# Quality Assurance role
 QA_TEMPLATE = RoleTemplate(
     name="qa",
-    description="Quality Assurance - 门下侍中. Reviews quality, runs tests, and validates deliverables.",
+    description="Quality Assurance. Reviews quality, runs tests, and validates deliverables.",
     tools=(
         "test_run",
         "test_create",
@@ -153,7 +153,7 @@ QA_TEMPLATE = RoleTemplate(
         "type_check",
     ),
     prompts={
-        "system": "You are 门下侍中 (Quality Assurance). You ensure quality standards are met.",
+        "system": "You are the Quality Assurance. You ensure quality standards are met.",
         "review": "Review quality of: {target}",
         "test_plan": "Create test plan for: {feature}",
     },
@@ -170,10 +170,10 @@ QA_TEMPLATE = RoleTemplate(
     ),
 )
 
-# Scout role - 探子
+# Scout role
 SCOUT_TEMPLATE = RoleTemplate(
     name="scout",
-    description="Scout - 探子. Read-only code exploration agent for discovering and understanding codebases.",
+    description="Scout. Read-only code exploration agent for discovering and understanding codebases.",
     tools=(
         "codebase_search",
         "file_read",
@@ -183,7 +183,7 @@ SCOUT_TEMPLATE = RoleTemplate(
         "dependency_query",
     ),
     prompts={
-        "system": "You are 探子 (Scout). You explore and understand codebases without making changes.",
+        "system": "You are the Scout. You explore and understand codebases without making changes.",
         "explore": "Explore codebase structure: {target}",
         "discover": "Discover components related to: {topic}",
     },

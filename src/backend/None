@@ -1,3 +1,0 @@
-{"timestamp": "2026-04-26T02:22:06.381258", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}
-{"timestamp": "2026-04-26T02:34:25.992367", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}
-{"timestamp": "2026-04-26T03:19:28.018915", "level": "info", "event_type": "audit_log", "source": "test", "process_id": null, "pid": null, "payload": {}, "trace_id": "", "span_id": ""}

@@ -130,13 +130,13 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     setField('pmActionError', null);
     setField('isStartingPM', true);
 
-    const startToastId = toast.loading(resume ? '正在恢复尚书令运行...' : '正在启动尚书令...', {
+    const startToastId = toast.loading(resume ? 'Resuming PM...' : 'Starting PM...', {
       duration: 5000,
     });
 
     try {
       if (lancedbBlocked) {
-        toast.warning(lancedbBlockMessage || 'LanceDB 是启动尚书令所必需。');
+        toast.warning(lancedbBlockMessage || 'LanceDB is required to start PM.');
         toast.dismiss(startToastId);
         return false;
       }
@@ -146,22 +146,22 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
       if (!result.ok) {
         toast.dismiss(startToastId);
         const combined = await handleProcessError(
-          result.error || '启动尚书令失败',
+          result.error || 'Failed to start PM',
           'runtime/logs/pm.process.log',
           'pm'
         );
         onOpenLogs?.('pm-subprocess', combined);
-        toast.error('启动尚书令失败');
+        toast.error('Failed to start PM');
         return false;
       }
 
       toast.dismiss(startToastId);
-      toast.success(resume ? '尚书令已恢复运行' : '尚书令已启动');
+      toast.success(resume ? 'PM resumed' : 'PM started');
       onStatusChange?.();
       return true;
     } catch (err) {
       toast.dismiss(startToastId);
-      const message = err instanceof Error ? err.message : '尚书令操作失败';
+      const message = err instanceof Error ? err.message : 'PM operation failed';
       onOpenLogs?.('pm-subprocess', message);
       toast.error(message);
       return false;
@@ -177,12 +177,12 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     try {
       const result = await stopPm();
       if (!result.ok) {
-        throw new Error(result.error || '停止尚书令失败');
+        throw new Error(result.error || 'Failed to stop PM');
       }
       onStatusChange?.();
       return true;
     } catch (err) {
-      const message = err instanceof Error ? err.message : '尚书令操作失败';
+      const message = err instanceof Error ? err.message : 'PM operation failed';
       setField('pmActionError', message);
       toast.error(message);
       return false;
@@ -203,13 +203,13 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     setField('pmActionError', null);
     setField('isStartingPM', true);
 
-    const startToastId = toast.loading('正在执行单次督办...', {
+    const startToastId = toast.loading('Running PM once...', {
       duration: 5000,
     });
 
     try {
       if (lancedbBlocked) {
-        toast.warning(lancedbBlockMessage || 'LanceDB 是运行尚书令所必需。');
+        toast.warning(lancedbBlockMessage || 'LanceDB is required to run PM.');
         toast.dismiss(startToastId);
         return false;
       }
@@ -219,22 +219,22 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
       if (!result.ok) {
         toast.dismiss(startToastId);
         const combined = await handleProcessError(
-          result.error || '尚书令单次督办失败',
+          result.error || 'PM run once failed',
           'runtime/logs/pm.process.log',
           'pm'
         );
         onOpenLogs?.('pm-subprocess', combined);
-        toast.error('尚书令单次督办失败');
+        toast.error('PM run once failed');
         return false;
       }
 
       toast.dismiss(startToastId);
-      toast.success('单次督办已启动');
+      toast.success('PM run once started');
       onStatusChange?.();
       return true;
     } catch (err) {
       toast.dismiss(startToastId);
-      const message = err instanceof Error ? err.message : '尚书令单次督办失败';
+      const message = err instanceof Error ? err.message : 'PM run once failed';
       onOpenLogs?.('pm-subprocess', message);
       toast.error(message);
       return false;
@@ -291,7 +291,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     setField('directorActionError', null);
     setField('isStartingDirector', true);
 
-    const startToastId = toast.loading('正在启动工部尚书...', {
+    const startToastId = toast.loading('Starting Chief Engineer...', {
       duration: 5000,
     });
 
@@ -299,16 +299,16 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
       if (checkAgents?.required) {
         toast.dismiss(startToastId);
         if (checkAgents.draftReady) {
-          toast.warning('请先审阅并确认 AGENTS.generated.md，再启动工部尚书。');
+          toast.warning('Please review and confirm AGENTS.generated.md before starting Chief Engineer.');
         } else {
-          toast.warning('请先运行尚书令，让其读取《营造法式》并生成 AGENTS.generated.md。');
+          toast.warning('Please run PM first to read the spec and generate AGENTS.generated.md.');
         }
         return false;
       }
 
       if (lancedbBlocked) {
         toast.dismiss(startToastId);
-        toast.warning(lancedbBlockMessage || 'LanceDB 是启动工部尚书所必需。');
+        toast.warning(lancedbBlockMessage || 'LanceDB is required to start Chief Engineer.');
         return false;
       }
 
@@ -317,24 +317,24 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
       if (!result.ok) {
         toast.dismiss(startToastId);
         const combined = await handleProcessError(
-          result.error || '启动工部尚书失败',
+          result.error || 'Failed to start Chief Engineer',
           'runtime/logs/director.process.log',
           'director'
         );
         onOpenLogs?.('director', combined);
-        toast.error('启动工部尚书失败');
+        toast.error('Failed to start Chief Engineer');
         return false;
       }
 
       await seedDirectorQueueFromPmTasks(tasks);
 
       toast.dismiss(startToastId);
-      toast.success('工部尚书已启动');
+      toast.success('Chief Engineer started');
       onStatusChange?.();
       return true;
     } catch (err) {
       toast.dismiss(startToastId);
-      const message = err instanceof Error ? err.message : '工部尚书操作失败';
+      const message = err instanceof Error ? err.message : 'Chief Engineer operation failed';
       setField('directorActionError', message);
       toast.error(message);
       return false;
@@ -350,12 +350,12 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     try {
       const result = await stopDirector();
       if (!result.ok) {
-        throw new Error(result.error || '停止工部尚书失败');
+        throw new Error(result.error || 'Failed to stop Chief Engineer');
       }
       onStatusChange?.();
       return true;
     } catch (err) {
-      const message = err instanceof Error ? err.message : '工部尚书操作失败';
+      const message = err instanceof Error ? err.message : 'Chief Engineer operation failed';
       setField('directorActionError', message);
       toast.error(message);
       return false;

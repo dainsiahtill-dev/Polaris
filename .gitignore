@@ -148,6 +148,10 @@ docs/fixes/
 # ForRef UI-Framework
 src/minimal/
 nul
+None
+temp_dirs.txt
+coverage.xml
+all_ruff.json
 
 cline_mcp_settings.json
 .cocoindex_code/

@@ -581,10 +581,27 @@ class StateFirstContextOS:
 
         # GAP-2 Fix: Deep copy cache entries to prevent shared mutable state
         # The shallow dict() copy leaves values as shared references.
+        # NOTE: ContentStore contains threading.Lock which is non-picklable.
+        # We must deep-copy only the serializable subset to avoid pickle errors.
         raw_cache = getattr(self._content_store_cache, "_cache", {})
-        cache_snapshot: dict[str, Any] = {
-            key: deepcopy(value) for key, value in raw_cache.items()
-        }
+        cache_snapshot: dict[str, Any] = {}
+        for key, value in raw_cache.items():
+            if hasattr(value, "_lock") or hasattr(value, "_async_lock"):
+                # ContentStore — extract serializable data only
+                cache_snapshot[key] = {
+                    "store_keys": list(getattr(value, "_store", {}).keys()),
+                    "key_index_keys": list(getattr(value, "_key_index", {}).keys()),
+                    "current_bytes": getattr(value, "_current_bytes", 0),
+                    "hits": getattr(value, "_hits", 0),
+                    "misses": getattr(value, "_misses", 0),
+                    "evict_count": getattr(value, "_evict_count", 0),
+                }
+            else:
+                try:
+                    cache_snapshot[key] = deepcopy(value)
+                except TypeError:
+                    # Non-deep-copyable value (e.g. Lock, file handle) — store lightweight repr
+                    cache_snapshot[key] = repr(value)
 
         return transcript, working_state, cache_snapshot
 
