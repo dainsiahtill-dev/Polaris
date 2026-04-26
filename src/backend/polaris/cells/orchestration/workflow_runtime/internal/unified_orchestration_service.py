@@ -34,9 +34,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts imp
     TaskSnapshot,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.ui_state_contract import UIStateConverter
-from polaris.cells.workspace.integrity.public.service import (
-    TaskFileChangeTracker,
-)
+from polaris.cells.workspace.integrity.internal.diff_tracker import TaskFileChangeTracker
 
 logger = logging.getLogger(__name__)
 
@@ -502,13 +500,13 @@ class UnifiedOrchestrationService(OrchestrationService):
         await self._update_task_status(run_id, task.task_id, RunStatus.RUNNING)
 
         # 获取角色适配器
-        adapter = self._adapters.get(task.role_entry.role_id)
+        adapter = self._adapters.get(task.role_entry.role_id)  # type: ignore[misc]
         if not adapter:
             raise RuntimeError(f"No adapter for role: {task.role_entry.role_id}")
 
         # 初始化文件变更追踪
         workspace = str(task.role_entry.scope_paths[0]) if task.role_entry.scope_paths else "."
-        file_tracker = TaskFileChangeTracker(workspace, task.task_id)
+        file_tracker: Any = TaskFileChangeTracker(workspace, task.task_id)
         file_tracker.start()
 
         # 构建上下文
@@ -568,7 +566,7 @@ class UnifiedOrchestrationService(OrchestrationService):
     ) -> dict[str, Any]:
         """Run adapter execution in an isolated event loop on a worker thread."""
         return asyncio.run(
-            adapter.execute(
+            adapter.execute(  # type: ignore[misc]
                 task_id=task_id,
                 input_data=input_data,
                 context=context,

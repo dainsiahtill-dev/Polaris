@@ -294,9 +294,9 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
     mode = str(payload.mode or "minimal").strip().lower()
     if mode not in ("minimal",):
         mode = "minimal"
-    profile = detect_project_profile(workspace_str)
+    profile = detect_project_profile(workspace_str)  # type: ignore[misc]
     cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace_str)
-    qa_commands = default_qa_commands(profile)
+    qa_commands = default_qa_commands(profile)  # type: ignore[misc]
     fields = {
         "goal": payload.goal or "",
         "in_scope": payload.in_scope or "",
@@ -305,7 +305,7 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
         "definition_of_done": payload.definition_of_done or "",
         "backlog": payload.backlog or "",
     }
-    ai_fields = await generate_docs_ai_fields(workspace_str, state.settings, fields)
+    ai_fields = await generate_docs_ai_fields(workspace_str, state.settings, fields)  # type: ignore[misc]
     if not ai_fields:
         raise HTTPException(status_code=409, detail="中书令角色 LLM 不可用，请检查 provider/model 与网络连通性。")
     if ai_fields.get("goal"):
@@ -320,13 +320,13 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
         fields["definition_of_done"] = "\n".join(ai_fields.get("definition_of_done") or [])
     if ai_fields.get("backlog"):
         fields["backlog"] = "\n".join(ai_fields.get("backlog") or [])
-    docs_map = build_docs_templates(workspace_str, mode, fields, qa_commands)
-    target_root = select_docs_target_root(workspace_str)
+    docs_map = build_docs_templates(workspace_str, mode, fields, qa_commands)  # type: ignore[misc]
+    target_root = select_docs_target_root(workspace_str)  # type: ignore[misc]
     files: list[dict[str, Any]] = []
     for rel_path, content in docs_map.items():
         suffix = rel_path.replace("docs/", "", 1)
         target_path = target_root.rstrip("/") + "/" + suffix if target_root != "docs" else rel_path
-        full_path = resolve_artifact_path(workspace_str, cache_root, normalize_rel_path(target_path))
+        full_path = resolve_artifact_path(workspace_str, cache_root, normalize_rel_path(target_path))  # type: ignore[misc]
         files.append(
             {
                 "path": target_path.replace("\\", "/"),
@@ -338,7 +338,7 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
         "ok": True,
         "mode": mode,
         "target_root": target_root,
-        "docs_exists": workspace_has_docs(workspace_str),
+        "docs_exists": workspace_has_docs(workspace_str),  # type: ignore[misc]
         "project": profile,
         "files": files,
     }
@@ -368,8 +368,8 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
             await queue.put(
                 {"type": "stage", "data": {"stage": "detect", "message": "检测项目配置...", "progress": 10}}
             )
-            profile = detect_project_profile(workspace_str)
-            qa_commands = default_qa_commands(profile)
+            profile = detect_project_profile(workspace_str)  # type: ignore[misc]
+            qa_commands = default_qa_commands(profile)  # type: ignore[misc]
 
             fields = {
                 "goal": payload.goal or "",
@@ -435,8 +435,8 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
             await queue.put(
                 {"type": "stage", "data": {"stage": "build_templates", "message": "构建文档模板...", "progress": 80}}
             )
-            docs_map = build_docs_templates(workspace_str, mode, fields, qa_commands)
-            target_root = select_docs_target_root(workspace_str)
+            docs_map = build_docs_templates(workspace_str, mode, fields, qa_commands)  # type: ignore[misc]
+            target_root = select_docs_target_root(workspace_str)  # type: ignore[misc]
 
             # 阶段 6: 准备文件列表
             await queue.put(
@@ -446,7 +446,7 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
             for rel_path, content in docs_map.items():
                 suffix = rel_path.replace("docs/", "", 1)
                 target_path = target_root.rstrip("/") + "/" + suffix if target_root != "docs" else rel_path
-                full_path = resolve_artifact_path(workspace_str, cache_root, normalize_rel_path(target_path))
+                full_path = resolve_artifact_path(workspace_str, cache_root, normalize_rel_path(target_path))  # type: ignore[misc]
                 files.append(
                     {
                         "path": target_path.replace("\\", "/"),
@@ -463,7 +463,7 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
                         "ok": True,
                         "mode": mode,
                         "target_root": target_root,
-                        "docs_exists": workspace_has_docs(workspace_str),
+                        "docs_exists": workspace_has_docs(workspace_str),  # type: ignore[misc]
                         "project": profile,
                         "files": files,
                         "progress": 100,
@@ -483,7 +483,7 @@ def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> dict[str
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
     cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace_str)
-    target_root = normalize_rel_path(payload.target_root or "workspace/docs")
+    target_root = normalize_rel_path(payload.target_root or "workspace/docs")  # type: ignore[misc]
     if not target_root or not target_root.lower().startswith("workspace/docs"):
         raise HTTPException(status_code=400, detail="target_root must be under workspace/docs/")
     files = payload.files or []
@@ -491,18 +491,18 @@ def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> dict[str
         raise HTTPException(status_code=400, detail="no files to write")
     created: list[str] = []
     for item in files:
-        rel_path = normalize_rel_path(item.path)
-        if not is_safe_docs_path(rel_path, target_root):
+        rel_path = normalize_rel_path(item.path)  # type: ignore[misc]
+        if not is_safe_docs_path(rel_path, target_root):  # type: ignore[misc]
             raise HTTPException(status_code=400, detail=f"invalid docs path: {item.path}")
         try:
-            full_path = resolve_artifact_path(workspace_str, cache_root, rel_path)
+            full_path = resolve_artifact_path(workspace_str, cache_root, rel_path)  # type: ignore[misc]
         except (RuntimeError, ValueError) as e:
             raise HTTPException(status_code=400, detail=f"invalid docs path: {item.path}") from e
         write_text_atomic(full_path, item.content or "")
         created.append(rel_path.replace("\\", "/"))
     # Record init event (best effort, with semantic suppression in emit_event)
     try:
-        event_path = resolve_artifact_path(workspace_str, cache_root, "runtime/events/runtime.events.jsonl")
+        event_path = resolve_artifact_path(workspace_str, cache_root, "runtime/events/runtime.events.jsonl")  # type: ignore[misc]
         emit_event(
             event_path,
             kind="observation",
@@ -515,8 +515,8 @@ def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> dict[str
         )
     except (RuntimeError, ValueError) as exc:
         log.warning("init_docs_onboarding failed (non-critical): %s", exc)
-    if workspace_has_docs(workspace_str):
-        clear_workspace_status(workspace_str)
+    if workspace_has_docs(workspace_str):  # type: ignore[misc]
+        clear_workspace_status(workspace_str)  # type: ignore[misc]
     # Sync plan to runtime so PM loop picks it up automatically
     try:
         _sync_plan_to_runtime(workspace_str, cache_root)

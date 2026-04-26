@@ -1284,7 +1284,7 @@ class RoleConsoleHost:
             if use_orchestrator:
                 orchestrator = RoleSessionOrchestrator(
                     session_id=session_id,
-                    kernel=tx_controller,
+                    kernel=tx_controller,  # type: ignore[operator]
                     workspace=self.workspace,
                     role=runtime_role,
                     max_auto_turns=int(capability_profile.get("max_auto_turns", 10)) if capability_profile else 10,

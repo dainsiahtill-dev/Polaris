@@ -52,11 +52,8 @@ logger = logging.getLogger(__name__)
 
 def handle_verify(args: argparse.Namespace, runtime_root: Path | None) -> int:
     """处理 verify 命令。"""
-    result = verify(
-        runtime_root=runtime_root,
-        mode=args.mode,
-        strict_non_empty=bool(args.strict_non_empty),
-    )
+    workspace = str(runtime_root) if runtime_root else "."
+    result = verify(workspace=workspace)  # type: ignore[call-arg]
     if args.format == "compact":
         status = "✓" if result.get("chain_valid") else "✗"
         mode = result.get("mode", "unknown")
@@ -98,7 +95,8 @@ def handle_verify(args: argparse.Namespace, runtime_root: Path | None) -> int:
 
 def handle_stats(args: argparse.Namespace, runtime_root: Path | None) -> int:
     """处理 stats 命令。"""
-    result = get_stats(runtime_root=runtime_root, mode=args.mode)
+    workspace = str(runtime_root) if runtime_root else "."
+    result = get_stats(workspace=workspace)  # type: ignore[call-arg]
     stats = result.get("stats", {})
     total = int(stats.get("total_events", 0) or 0)
     runtime_inventory: dict[str, Any] | None = None
@@ -146,18 +144,16 @@ def handle_events(args: argparse.Namespace, runtime_root: Path | None) -> int:
     if getattr(args, "journal", False):
         return _handle_journal_events(args, runtime_root)
 
-    result = get_events(
+    result: dict[str, Any] = get_events(  # type: ignore[assignment]
+        workspace=str(runtime_root) if runtime_root else ".",
         limit=args.limit,
-        event_type=args.event_type,
-        runtime_root=runtime_root,
-        mode=args.mode,
     )
     if args.format == "compact":
-        events = result.get("events", [])
-        mode = result.get("mode", "unknown")
+        events = result.get("events", [])  # type: ignore[typeddict-item]
+        mode = result.get("mode", "unknown")  # type: ignore[typeddict-item]
         print(f"Events: {len(events)} (mode: {mode})\n")
 
-        for event in events:
+        for event in events:  # type: ignore[assignment]
             use_relative = not args.no_relative_time
             print(format_event_compact(event, use_relative_time=use_relative))
 

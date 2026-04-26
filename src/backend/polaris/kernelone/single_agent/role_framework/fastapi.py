@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 # FastAPI imports with fallback
 try:
+    from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
 
     FASTAPI_AVAILABLE = True
@@ -159,7 +160,7 @@ class RoleFastAPI:
             role = self._get_role()
 
             if not role.is_initialized():
-                raise HTTPException(status_code=400, detail="Not initialized")
+                raise HTTPException(status_code=400, detail="Not initialized")  # type: ignore[call-arg]
 
             if hasattr(role, "get_health"):
                 return role.get_health()
@@ -184,17 +185,17 @@ class RoleFastAPI:
             role = self._get_role()
 
             if not role.is_initialized():
-                raise HTTPException(status_code=400, detail="Not initialized")
+                raise HTTPException(status_code=400, detail="Not initialized")  # type: ignore[call-arg]
 
             if not hasattr(role, "run"):
-                raise HTTPException(status_code=501, detail="Run not supported")
+                raise HTTPException(status_code=501, detail="Run not supported")  # type: ignore[call-arg]
 
             try:
                 result = role.run(iterations=req.iterations, timeout=req.timeout)
                 return result
             except (RuntimeError, ValueError) as e:
                 logger.error("Role run failed: %s", e)
-                raise HTTPException(status_code=500, detail="internal error") from e
+                raise HTTPException(status_code=500, detail="internal error") from e  # type: ignore[call-arg]
 
         self._app = app
         return app
@@ -233,19 +234,11 @@ if __name__ == "__main__":
     class ExampleRole(RoleBase):
         def get_info(self) -> RoleInfo:
             return RoleInfo(
-                name="example",
+                name="Example",
                 version="1.0.0",
-                description="Example role",
+                description="An example role",
+                capabilities=[],
             )
 
-        def get_status(self) -> dict:
-            return {"name": self.role_name, "state": self.state.name}
-
-        def is_initialized(self) -> bool:
-            return True
-
-        def initialize(self, **kwargs) -> dict:
-            return {"success": True}
-
-    api = RoleFastAPI(ExampleRole, port=50001)
+    api = RoleFastAPI(ExampleRole, port=50000)  # type: ignore[type-abstract]
     api.run()

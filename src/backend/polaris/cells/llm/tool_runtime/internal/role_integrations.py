@@ -246,10 +246,9 @@ class ChiefEngineerToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
-        return False
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
@@ -486,10 +485,9 @@ class DirectorToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
-        return False
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
@@ -609,10 +607,9 @@ class PMToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
-        return False
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
@@ -703,10 +700,9 @@ class ArchitectToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
-        return False
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
@@ -797,10 +793,9 @@ class QAToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
-        return False
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""
@@ -915,10 +910,9 @@ class ScoutToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
-        return False
 
     def get_system_prompt(self) -> str:
         """获取带有工具说明的系统提示."""

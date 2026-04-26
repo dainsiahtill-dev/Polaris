@@ -151,7 +151,7 @@ def _inject_provider_manager_port() -> None:
         from polaris.kernelone.llm.providers.provider_injection import set_provider_manager_port
 
         provider_adapter = ProviderAdapter(provider_manager)
-        set_provider_manager_port(provider_adapter)
+        set_provider_manager_port(provider_adapter)  # type: ignore[arg-type]
         logger.info("Wired IProviderRegistryPort into KernelOne")
     except ImportError as exc:
         logger.debug("Provider port injection unavailable (missing dependencies): %s", exc)

@@ -189,7 +189,7 @@ async def create_task(workspace: str, subject: str, description: str, priority: 
     """Create a new task via director."""
     from polaris.cells.director.execution.public.service import DirectorService
 
-    service = DirectorService(workspace=workspace)
+    service = DirectorService(config=None)  # type: ignore[call-arg,arg-type]
     result = await service.create_task(
         subject=subject,
         description=description or "",

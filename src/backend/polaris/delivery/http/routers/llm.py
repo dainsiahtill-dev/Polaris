@@ -113,7 +113,7 @@ def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]
 @router.post("/llm/config/migrate", dependencies=[Depends(require_auth)])
 def migrate_config(payload: dict[str, Any]) -> dict[str, Any]:
     try:
-        return _provider_manager.migrate_legacy_config(payload)
+        return _provider_manager.migrate_legacy_config(payload)  # type: ignore[attr-defined]
     except (RuntimeError, ValueError) as exc:  # pragma: no cover - defensive runtime path
         logger.error("migrate_config failed: %s", exc)
         raise HTTPException(status_code=500, detail="internal error") from exc

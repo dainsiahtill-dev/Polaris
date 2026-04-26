@@ -84,7 +84,7 @@ def _seed_agent_context_os_session(session_factory, workspace: Path) -> str:
         ],
         recent_window_messages=2,
     )
-    snapshot = projection.snapshot.to_dict()
+    snapshot = projection.snapshot.to_dict()  # type: ignore[attr-defined]
     artifact_store = list(snapshot.get("artifact_store") or [])
     artifact_refs = []
     if artifact_store:

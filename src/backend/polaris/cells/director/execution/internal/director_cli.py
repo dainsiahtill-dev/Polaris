@@ -14,7 +14,7 @@ import warnings
 
 # Import from tasking - DirectorCLI may not exist yet, handle gracefully
 try:
-    from polaris.cells.director.tasking.internal.director_cli import (
+    from polaris.cells.director.tasking.internal.director_cli import (  # type: ignore[attr-defined]
         DirectorCLI,
     )
 

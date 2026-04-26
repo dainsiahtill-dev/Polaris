@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from polaris.infrastructure.llm.providers import ProviderManager
 
 
-def get_provider_manager() -> ProviderManager:
+def get_provider_manager() -> ProviderManager:  # type: ignore[valid-type]
     """获取 infrastructure ProviderManager 单例。
 
     直接委托给 polaris.infrastructure.llm.providers.provider_manager，

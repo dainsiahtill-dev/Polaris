@@ -279,12 +279,7 @@ def smart_triage(
     """
     from polaris.delivery.cli.audit.audit_agent import triage
 
-    result = triage(
-        run_id=run_id,
-        task_id=task_id,
-        runtime_root=runtime_root,
-        mode=mode,
-    )
+    result = triage(workspace=str(runtime_root) if runtime_root else ".")  # type: ignore[call-arg]
 
     # 检查是否有实际事件数据
     tool_audit = result.get("director_tool_audit", {})

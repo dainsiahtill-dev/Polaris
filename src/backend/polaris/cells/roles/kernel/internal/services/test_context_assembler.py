@@ -474,7 +474,7 @@ class TestBuildContext:
         result = assembler.build_context(request)
 
         assert result.compression_applied is True
-        assert result.compression_strategy is not None
+        assert result.compression_strategy is not None  # type: ignore[union-attr]
 
     def test_metrics_recorded(self) -> None:
         """Test that metrics are recorded after build."""
@@ -554,8 +554,8 @@ class TestIntegration:
 
         # Verify result structure
         assert isinstance(result.messages, tuple)
-        assert result.token_estimate > 0
-        assert isinstance(result.context_sources, tuple)
+        assert result.token_estimate > 0  # type: ignore[union-attr]
+        assert isinstance(result.context_sources, tuple)  # type: ignore[union-attr]
 
         # Verify metrics
         metrics = assembler.get_last_metrics()
@@ -570,7 +570,7 @@ class TestIntegration:
         for i in range(3):
             request = TurnEngineContextRequest(message=f"Message {i}")
             result = assembler.build_context(request)
-            assert result.token_estimate > 0
+            assert result.token_estimate > 0  # type: ignore[union-attr]
 
         # Each build should update metrics
         metrics = assembler.get_last_metrics()

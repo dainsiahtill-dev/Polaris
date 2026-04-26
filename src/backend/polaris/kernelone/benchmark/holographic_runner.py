@@ -2755,8 +2755,8 @@ async def _exec_tc_qm_003(case: HolographicCase) -> dict[str, float]:
 def _reset_cognitive_globals_for_benchmark() -> None:
     import polaris.kernelone.cognitive.context as ctx_module
 
-    ctx_module._global_session_manager = None
-    ctx_module._global_workspace = None
+    ctx_module._global_session_manager = None  # type: ignore[attr-defined]
+    ctx_module._global_workspace = None  # type: ignore[attr-defined]
 
 
 def _build_cognitive_intent_graph(*, session_id: str, intent_type: str, confidence: float = 0.9) -> IntentGraph:

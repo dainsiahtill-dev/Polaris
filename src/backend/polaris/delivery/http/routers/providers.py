@@ -112,7 +112,7 @@ def provider_models(request: Request, provider_id: str, payload: ProviderActionP
 def list_providers(request: Request) -> dict[str, Any]:
     """List all available providers with their information"""
     try:
-        providers_info = _provider_manager.list_provider_info()
+        providers_info = _provider_manager.list_provider_info()  # type: ignore[attr-defined]
         return {
             "providers": [
                 info.__dict__
@@ -143,7 +143,7 @@ def list_providers(request: Request) -> dict[str, Any]:
 def get_provider_info(request: Request, provider_type: str) -> dict[str, Any]:
     """Get detailed information about a specific provider"""
     try:
-        info = _provider_manager.get_provider_info(provider_type)
+        info = _provider_manager.get_provider_info(provider_type)  # type: ignore[attr-defined]
         if not info:
             raise HTTPException(status_code=404, detail="Provider not found")
 
@@ -168,7 +168,7 @@ def get_provider_info(request: Request, provider_type: str) -> dict[str, Any]:
 def get_provider_default_config(request: Request, provider_type: str) -> dict[str, Any]:
     """Get default configuration for a provider"""
     try:
-        config = _provider_manager.get_provider_default_config(provider_type)
+        config = _provider_manager.get_provider_default_config(provider_type)  # type: ignore[attr-defined]
         if config is None:
             raise HTTPException(status_code=404, detail="Provider not found")
         return config
@@ -183,7 +183,7 @@ def get_provider_default_config(request: Request, provider_type: str) -> dict[st
 def validate_provider_config(request: Request, provider_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Validate provider configuration"""
     try:
-        provider_class = _provider_manager.get_provider_class(provider_type)
+        provider_class = _provider_manager.get_provider_class(provider_type)  # type: ignore[attr-defined]
         if provider_class is None:
             return {
                 "valid": False,
@@ -207,7 +207,7 @@ def health_check_all(request: Request, payload: dict[str, Any]) -> dict[str, Any
     """Perform health checks on all configured providers"""
     try:
         configs = payload.get("providers", {})
-        results = _provider_manager.health_check_all(configs)
+        results = _provider_manager.health_check_all(configs)  # type: ignore[attr-defined]
         return results
     except (RuntimeError, ValueError) as exc:
         logger.error("health_check_all failed: %s", exc)

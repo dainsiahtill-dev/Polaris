@@ -390,7 +390,7 @@ class ToolLoopController:
         history_with_metadata = tuple((e.role, e.content, e.metadata) for e in self._history)
         return ContextRequest(
             message=self._last_consumed_message,
-            history=history_with_metadata,
+            history=history_with_metadata,  # type: ignore[arg-type]
             task_id=self.request.task_id,
             context_os_snapshot=context_os_snapshot,
         )

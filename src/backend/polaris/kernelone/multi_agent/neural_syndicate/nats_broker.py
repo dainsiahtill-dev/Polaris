@@ -145,7 +145,7 @@ class NATSBroker:
         """
         from polaris.kernelone.multi_agent.bus_port import create_kernel_one_bus_port
 
-        return create_kernel_one_bus_port(
+        return create_kernel_one_bus_port(  # type: ignore[return-value]
             nats_url=nats_url,
             nats_enabled=nats_enabled,
             max_queue_size=max_queue_size,

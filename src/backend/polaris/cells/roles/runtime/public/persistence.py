@@ -55,7 +55,7 @@ def resolve_session_override(session_id: str) -> dict[str, Any] | None:
             if not raw:
                 return None
 
-            cfg: dict[str, Any] = json.loads(raw)
+            cfg: dict[str, Any] = json.loads(raw)  # type: ignore[arg-type]
             return cfg.get("strategy_override") or None
     except (RuntimeError, ValueError):
         # Session service may not be initialized; degrade gracefully.

@@ -253,7 +253,7 @@ async def _run_session_workflow_case(
         max_auto_turns=20,
     )
     # Monkey-patch envelope builder so we can control continuation modes
-    orch._build_envelope_from_completion = envelope_builder  # type: ignore[method-assign]
+    orch._build_envelope_from_completion = envelope_builder  # type: ignore[assignment]
 
     # Collect events
     event_list: list[TurnEvent] = []

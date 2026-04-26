@@ -2,30 +2,18 @@
 
 This module provides public-facing APIs that delegate to internal implementations.
 All internal imports are lazy-loaded to maintain proper architectural boundaries.
+
+IMPORTANT: Do NOT pre-declare module-level variables for lazy-loaded names
+(e.g., "X: type | None = None"). Python evaluates these at import time,
+which triggers __getattr__ but then uses the pre-declared None value instead
+of the dynamically loaded class. This is a known Python __getattr__ gotcha.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# Pre-declare lazy-loaded names to satisfy __all__ and static analysis.
-ARTIFACT_REGISTRY: type | None = None
-LEGACY_KEY_MAPPING: type | None = None
-LEGACY_PATH_ALIASES: type | None = None
-ArtifactService: type | None = None
-AuditContext: type | None = None
-CodeChange: type | None = None
-IndependentAuditService: type | None = None
-Review: type | None = None
-ReviewEventType: type | None = None
-ReviewGate: type | None = None
-create_artifact_service: type | None = None
-get_artifact_key: type | None = None
-get_artifact_path: type | None = None
-get_review_gate: type | None = None
-list_artifact_keys: type | None = None
-
-__all__ = [
+__all__ = [  # noqa: F822
     "ARTIFACT_REGISTRY",
     "LEGACY_KEY_MAPPING",
     "LEGACY_PATH_ALIASES",

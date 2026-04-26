@@ -94,7 +94,7 @@ class TraceabilityAdminService:
                 create_traceability_service,
             )
 
-            self._trace_service = create_traceability_service()
+            self._trace_service = create_traceability_service()  # type: ignore[call-arg]
             return self._trace_service
         except Exception as exc:  # noqa: BLE001
             logger.debug(

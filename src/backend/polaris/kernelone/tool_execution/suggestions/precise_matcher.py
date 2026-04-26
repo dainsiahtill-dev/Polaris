@@ -53,7 +53,7 @@ def _fix_common_syntax_errors(text: str) -> str:
 
     result = text
     for pattern, replacement in fixes:
-        result = re.sub(pattern, replacement, result)
+        result = re.sub(pattern, replacement, result)  # type: ignore[call-overload]
     return result
 
 

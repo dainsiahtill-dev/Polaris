@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from polaris.delivery.cli.audit.audit.auditor import run_diff, run_why, smart_triage
 from polaris.delivery.cli.audit.audit.diagnosis import diagnose_runtime
@@ -57,10 +57,11 @@ def handle_corruption(args: argparse.Namespace, runtime_root: Path | None) -> in
     """处理 corruption 命令。"""
     from polaris.delivery.cli.audit.audit.formatters import format_relative_time
 
-    result = get_corruption_log(limit=args.limit, runtime_root=runtime_root, mode=args.mode)
+    workspace = str(runtime_root) if runtime_root else "."
+    result = get_corruption_log(workspace=workspace, limit=args.limit)  # type: ignore[call-arg]
     if args.format == "compact":
-        records = result.get("records", [])
-        mode = result.get("mode", "unknown")
+        records: list[dict[str, Any]] = result  # type: ignore[assignment]
+        mode = result.get("mode", "unknown") if isinstance(result, dict) else "unknown"  # type: ignore[assignment]
         print(f"Corruption records: {len(records)} (mode: {mode})\n")
 
         for record in records:

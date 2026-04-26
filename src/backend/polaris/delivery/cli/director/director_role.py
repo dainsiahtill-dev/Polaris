@@ -76,7 +76,7 @@ class DirectorRole(RoleBase):
     """Director Role - 工部侍郎"""
 
     def __init__(self, workspace: str | None = None) -> None:
-        self.workspace = workspace or os.getcwd()
+        self.workspace = workspace or os.getcwd()  # type: ignore[assignment]
         self.role_id = "director"
         self.role_name = "Director"
-        self.capabilities = [RoleCapability.TASK_EXECUTION, RoleCapability.FILE_OPERATIONS]
+        self.capabilities = [RoleCapability.TASK_EXECUTION, RoleCapability.FILE_OPERATIONS]  # type: ignore[attr-defined]

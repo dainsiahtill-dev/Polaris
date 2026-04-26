@@ -31,7 +31,7 @@ async def run_connectivity_suite(
             "details": {},
         }
 
-    provider = get_provider_manager().get_provider_instance(provider_type)
+    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
     if provider is None:
         return {
             "ok": False,
@@ -224,7 +224,7 @@ async def run_response_suite(
 ) -> dict[str, Any]:
     """运行响应测试套件"""
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)
+    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
 
     if provider is None:
         return {
@@ -274,7 +274,7 @@ async def run_thinking_suite(
 ) -> dict[str, Any]:
     """运行思考能力测试套件"""
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)
+    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
 
     if provider is None:
         return {
@@ -359,7 +359,7 @@ async def run_qualification_suite(
     ]
 
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)
+    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
 
     if provider is None:
         return {
@@ -436,7 +436,7 @@ async def run_interview_suite(
     ]
 
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)
+    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
 
     if provider is None:
         return {

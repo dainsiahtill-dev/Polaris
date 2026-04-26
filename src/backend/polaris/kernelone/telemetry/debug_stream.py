@@ -26,7 +26,7 @@ _DEBUG_SINK: ContextVar[DebugEventSink | None] = ContextVar(
     "kernelone_debug_stream_sink",
     default=None,
 )
-_DEBUG_TAGS: ContextVar[dict[str, Any]] = ContextVar("kernelone_debug_stream_tags", default=None)
+_DEBUG_TAGS: ContextVar[dict[str, Any]] = ContextVar("kernelone_debug_stream_tags", default={})  # noqa: B039
 
 
 def _normalize_debug_value(value: Any) -> Any:

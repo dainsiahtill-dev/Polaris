@@ -34,7 +34,7 @@ class TaskState(str, Enum):
     RETRYING = "retrying"
 
 
-class TaskEvent(AuditEvent):  # type: ignore[call-arg]  # frozen=True inherited from AuditEvent model_config; mypy flags redundant kwarg
+class TaskEvent(AuditEvent, frozen=True):  # type: ignore[call-arg]  # frozen=True inherited from AuditEvent model_config; mypy flags redundant kwarg
     """Task orchestration audit event.
 
     Tracks task lifecycle for:

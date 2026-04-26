@@ -126,7 +126,7 @@ class TestContentStoreIntern:
         # Manually inject content_b under content_a's hash
         store._store[target_hash] = content_b
         store._refs[target_hash] = 1
-        store._access[target_hash] = time.monotonic()
+        store._access[target_hash] = time.monotonic()  # type: ignore[assignment]
 
         # intern(content_a) should detect store[hash] != content_a → collision
         with pytest.raises(RuntimeError, match=r"[Cc]ollision"):

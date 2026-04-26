@@ -148,7 +148,7 @@ def _load_agent_session(session_id: str) -> dict[str, Any] | None:
         payload = session.to_dict(include_messages=False)
         if not _is_agent_session_payload(payload):
             return None
-        messages = [message.to_dict() for message in service.get_messages(session.id, limit=200, offset=0)]
+        messages = [message.to_dict() for message in service.get_messages(str(session.id), limit=200, offset=0)]
         return _build_agent_session_payload(session_payload=payload, messages=messages)
 
 
@@ -185,7 +185,7 @@ def _project_agent_turn(
     session_context: dict[str, Any],
 ) -> tuple[tuple[tuple[str, str], ...], dict[str, Any]]:
     prior_messages = [message.to_dict() for message in service.get_messages(session_id, limit=50, offset=0)]
-    projection = _AGENT_CONTINUITY_ENGINE.project(
+    projection = _AGENT_CONTINUITY_ENGINE.project(  # type: ignore[attr-defined]
         SessionContinuityRequest(
             session_id=session_id,
             role=role,
@@ -200,12 +200,12 @@ def _project_agent_turn(
             history_limit=10,
         )
     )
-    if projection.changed:
+    if projection.changed:  # type: ignore[attr-defined]
         service.update_session(
             session_id=session_id,
-            context_config=projection.persisted_context_config,
+            context_config=projection.persisted_context_config,  # type: ignore[attr-defined]
         )
-    return messages_to_history_pairs(projection.recent_messages), dict(projection.prompt_context)
+    return messages_to_history_pairs(projection.recent_messages), dict(projection.prompt_context)  # type: ignore[attr-defined]
 
 
 async def _execute_agent_message(
@@ -451,7 +451,7 @@ async def list_agent_sessions(
             payloads.append(
                 _build_agent_session_payload(
                     session_payload=session_payload,
-                    messages=[message.to_dict() for message in service.get_messages(session.id, limit=20, offset=0)],
+                    messages=[message.to_dict() for message in service.get_messages(str(session.id), limit=20, offset=0)],
                 )
             )
             if len(payloads) >= limit:

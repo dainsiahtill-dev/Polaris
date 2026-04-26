@@ -10,6 +10,7 @@ Executes the 4-phase workflow with:
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import logging
 import os
 import shutil

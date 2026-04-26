@@ -24,10 +24,10 @@ class ResidentPMBridge:
     """Stage approved Resident goals into governed PM-facing artifacts."""
 
     def __init__(self, storage: ResidentStorage, workspace: str, *, ramdisk_root: str = "") -> None:
-        self._storage = storage
+        self._storage = storage  # type: ignore[misc]
         self.workspace = str(Path(workspace or ".").expanduser().resolve())
         self.cache_root = build_cache_root(str(ramdisk_root or ""), self.workspace)
-        self.artifacts = ArtifactService(workspace=self.workspace, cache_root=self.cache_root)
+        self.artifacts = ArtifactService(workspace=self.workspace, cache_root=self.cache_root)  # type: ignore[misc]
         self._backup_root = Path(self._storage.paths.root_dir) / "staging_backups"
         self._backup_root.mkdir(parents=True, exist_ok=True)
 

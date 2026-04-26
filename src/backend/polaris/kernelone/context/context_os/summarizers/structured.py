@@ -13,6 +13,7 @@ ADR-0067: ContextOS 2.0 摘要策略选型 - Tier 2 安全摘要层
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any

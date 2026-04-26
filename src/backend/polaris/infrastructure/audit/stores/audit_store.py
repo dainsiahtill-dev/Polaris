@@ -34,8 +34,7 @@ logger = logging.getLogger(__name__)
 # Backward Compatibility Aliases (P1-AUDIT-001)
 # =============================================================================
 
-# Use TypeAlias so mypy treats these as proper type aliases, not variables.
-AuditEventType: TypeAlias = type[KernelAuditEventType]
+AuditEventType: TypeAlias = KernelAuditEventType
 """Canonical audit event types. Prefer KernelAuditEventType."""
 
 AuditEvent: TypeAlias = KernelAuditEvent

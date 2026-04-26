@@ -64,7 +64,7 @@ class CognitivePipelineAdapter:
         """
         try:
             # Step 1: Perception
-            intent_graph, _uncertainty = await self._orchestrator._perception.process(
+            intent_graph, _uncertainty = await self._orchestrator._coordinator._perception.process(  # type: ignore[attr-defined]
                 message,
                 session_id=session_id,
             )
@@ -73,8 +73,8 @@ class CognitivePipelineAdapter:
             confidence = float(surface_intent.confidence) if surface_intent else 0.0
 
             # Step 2: Governance pre-checks
-            if self._orchestrator._governance is not None:
-                pre_result = await self._orchestrator._governance.verify_pre_perception(message)
+            if self._orchestrator._governance_gate is not None:  # type: ignore[attr-defined]
+                pre_result = await self._orchestrator._governance_gate.verify_pre_perception(message)  # type: ignore[attr-defined]
                 if pre_result.status == "FAIL":
                     return CognitivePreCheckResult(
                         should_proceed=False,
@@ -83,7 +83,7 @@ class CognitivePipelineAdapter:
                         block_reason=pre_result.message,
                     )
 
-                post_result = await self._orchestrator._governance.verify_post_perception(
+                post_result = await self._orchestrator._governance_gate.verify_post_perception(  # type: ignore[attr-defined]
                     intent_type,
                     confidence,
                 )

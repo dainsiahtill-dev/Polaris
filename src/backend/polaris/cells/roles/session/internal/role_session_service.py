@@ -159,9 +159,8 @@ class RoleSessionService:
     def __enter__(self) -> RoleSessionService:
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> bool:
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         self.close()
-        return False
 
     def _persist_session(self, session: Conversation) -> bool:
         """持久化会话到文件系统
@@ -931,7 +930,7 @@ class RoleSessionService:
 
             if run_id or task_id:
                 service.attach_session(
-                    session.id,
+                    str(session.id),  # type: ignore[arg-type]
                     run_id=run_id,
                     task_id=task_id,
                     mode=AttachmentMode.ATTACHED_COLLABORATIVE.value,
