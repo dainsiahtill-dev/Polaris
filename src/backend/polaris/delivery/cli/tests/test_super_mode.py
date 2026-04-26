@@ -15,6 +15,7 @@ from polaris.delivery.cli.super_mode import (
     build_pm_handoff_message,
     build_super_readonly_message,
     extract_blueprint_items_from_ce_output,
+    write_architect_blueprint_to_disk,
 )
 
 
@@ -212,6 +213,7 @@ def test_super_pipeline_context_defaults() -> None:
     assert ctx.original_request == "fix bug"
     assert ctx.architect_output == ""
     assert ctx.pm_output == ""
+    assert ctx.blueprint_file_path == ""
     assert ctx.extracted_tasks == ()
     assert ctx.published_task_ids == ()
     assert ctx.ce_claims == ()
@@ -269,3 +271,86 @@ def test_super_mode_router_routes_contextos_request_to_full_pipeline_with_flags(
     assert decision.use_pm is True
     assert decision.use_chief_engineer is True
     assert decision.use_director is True
+
+
+def test_super_mode_router_routes_blueprint_then_execute_to_full_pipeline() -> None:
+    """'先制定计划蓝图，然后开始落地执行' must trigger full pipeline, NOT architect-only."""
+    decision = SuperModeRouter().decide(
+        "进一步完善编排层，请先制定计划蓝图，然后开始落地执行。",
+        fallback_role="director",
+    )
+    assert decision.roles == ("architect", "pm", "chief_engineer", "director")
+    assert decision.reason == "architect_code_delivery"
+    assert decision.use_architect is True
+    assert decision.use_pm is True
+    assert decision.use_chief_engineer is True
+    assert decision.use_director is True
+
+
+def test_super_mode_router_routes_pure_architecture_still_architect_only() -> None:
+    """Pure architecture request (no execution intent) should still be architect-only."""
+    decision = SuperModeRouter().decide(
+        "请给我一个编排层的架构蓝图",
+        fallback_role="director",
+    )
+    assert decision.roles == ("architect",)
+    assert decision.reason == "architecture_design"
+
+
+def test_build_pm_handoff_message_includes_blueprint_file_path() -> None:
+    message = build_pm_handoff_message(
+        original_request="进一步完善编排层",
+        architect_output="架构分析结果",
+        blueprint_file_path="docs/blueprints/SUPER_BLUEPRINT_20260427_further_improve.md",
+    )
+    assert "[SUPER_MODE_PM_HANDOFF]" in message
+    assert "blueprint_file: docs/blueprints/SUPER_BLUEPRINT_20260427_further_improve.md" in message
+    assert "architect_output" in message
+
+
+def test_build_pm_handoff_message_without_blueprint_file_path() -> None:
+    message = build_pm_handoff_message(
+        original_request="进一步完善编排层",
+        architect_output="架构分析结果",
+    )
+    assert "[SUPER_MODE_PM_HANDOFF]" in message
+    assert "blueprint_file:" not in message
+
+
+def test_write_architect_blueprint_to_disk_creates_file(tmp_path: Path) -> None:
+    workspace = str(tmp_path)
+    result = write_architect_blueprint_to_disk(
+        workspace=workspace,
+        original_request="进一步完善编排层",
+        architect_output="# 编排层蓝图\n\n## 架构分析\n\n详细内容...",
+    )
+    assert result.startswith("docs/blueprints/")
+    assert result.endswith(".md")
+    full_path = tmp_path / result
+    assert full_path.exists()
+    content = full_path.read_text(encoding="utf-8")
+    assert "SUPER Mode Architect Blueprint" in content
+    assert "进一步完善编排层" in content
+    assert "架构分析" in content
+
+
+def test_write_architect_blueprint_to_disk_empty_output(tmp_path: Path) -> None:
+    result = write_architect_blueprint_to_disk(
+        workspace=str(tmp_path),
+        original_request="test",
+        architect_output="",
+    )
+    assert result == ""
+
+
+def test_super_pipeline_context_defaults_includes_blueprint_file_path() -> None:
+    ctx = SuperPipelineContext(original_request="fix bug")
+    assert ctx.original_request == "fix bug"
+    assert ctx.architect_output == ""
+    assert ctx.pm_output == ""
+    assert ctx.blueprint_file_path == ""
+    assert ctx.extracted_tasks == ()
+    assert ctx.published_task_ids == ()
+    assert ctx.ce_claims == ()
+    assert ctx.director_claims == ()
+    assert ctx.blueprint_items == ()

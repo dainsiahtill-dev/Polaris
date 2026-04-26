@@ -51,6 +51,7 @@ from polaris.delivery.cli.super_mode import (
     build_super_readonly_message,
     extract_blueprint_items_from_ce_output,
     extract_task_list_from_pm_output,
+    write_architect_blueprint_to_disk,
 )
 from polaris.kernelone.fs.encoding import enforce_utf8
 from polaris.kernelone.traceability.session_source import SessionSource, SourceChain
@@ -1801,7 +1802,7 @@ _DIRECTOR_DONE_MARKER = (
     "all done",
 )
 _MAX_DIRECTOR_LOOPS = 5
-_SUPER_DIRECTOR_MULTI_TURN_REASONS = {"code_delivery", "architect_code_delivery"}
+_SUPER_DIRECTOR_MULTI_TURN_REASONS = {"code_delivery", "architect_code_delivery", "architecture_design"}
 
 
 def _director_output_suggests_more_work(content: str) -> bool:
@@ -2063,9 +2064,11 @@ def _run_super_turn(
                 original_request=message,
             )
         elif next_role == "pm":
+            # Pass blueprint file path if architect already wrote one
             turn_message = build_pm_handoff_message(
                 original_request=message,
                 architect_output=ctx.architect_output,
+                blueprint_file_path=ctx.blueprint_file_path,
             )
         elif next_role == "chief_engineer":
             if not ctx.pm_output.strip():
@@ -2230,10 +2233,17 @@ def _run_super_turn(
                 )
 
         if next_role == "architect" and last_result is not None and not last_result.saw_error:
+            # Write architect output to blueprint file on disk
+            blueprint_path = write_architect_blueprint_to_disk(
+                workspace=str(workspace_path),
+                original_request=message,
+                architect_output=last_result.final_content,
+            )
             ctx = SuperPipelineContext(
                 original_request=ctx.original_request,
                 architect_output=last_result.final_content,
                 pm_output=ctx.pm_output,
+                blueprint_file_path=blueprint_path,
                 source_chain=ctx.source_chain.append(SessionSource.ARCHITECT_DESIGNED),
             )
         elif next_role == "pm" and last_result is not None and not last_result.saw_error:
@@ -2269,9 +2279,12 @@ def _run_super_turn(
             host_kind=host_kind,
             session_title=session_title,
         )
+        pm_fallback = ctx.pm_output or "(PM planning stage produced no output; proceeding with original request)"
+        if ctx.blueprint_file_path:
+            pm_fallback += f"\n\nblueprint_file: {ctx.blueprint_file_path}"
         degraded_handoff = build_director_handoff_message(
             original_request=message,
-            pm_output="(PM planning stage produced no output; proceeding with original request)",
+            pm_output=pm_fallback,
         )
         last_result = _run_streaming_turn(
             host,

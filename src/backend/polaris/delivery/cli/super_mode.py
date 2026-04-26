@@ -104,6 +104,19 @@ _PM_KEYWORDS = (
     "roadmap",
     "plan",
 )
+_EXECUTION_INTENT_KEYWORDS = (
+    "落地执行",
+    "开始执行",
+    "开始实施",
+    "开始落地",
+    "实施计划",
+    "着手实施",
+    "动手",
+    "now execute",
+    "now implement",
+    "start implementing",
+    "start developing",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +141,7 @@ class SuperPipelineContext:
     original_request: str
     architect_output: str = ""
     pm_output: str = ""
+    blueprint_file_path: str = ""
     extracted_tasks: tuple[SuperTaskItem, ...] = ()
     published_task_ids: tuple[int, ...] = ()
     ce_claims: tuple[SuperClaimedTask, ...] = ()
@@ -227,6 +241,20 @@ class SuperModeRouter:
         text = str(message or "").strip().lower()
 
         if _contains_any(text, _ARCHITECT_KEYWORDS):
+            # If the request also has explicit execution intent
+            # (e.g. "制定蓝图，然后落地执行"), route through the FULL pipeline:
+            # Architect → PM → CE → Director
+            has_execution_intent = _contains_any(text, _EXECUTION_INTENT_KEYWORDS)
+            if has_execution_intent:
+                return SuperRouteDecision(
+                    roles=("architect", "pm", "chief_engineer", "director"),
+                    reason="architect_code_delivery",
+                    fallback_role=fallback_role,
+                    use_architect=True,
+                    use_pm=True,
+                    use_chief_engineer=True,
+                    use_director=True,
+                )
             return SuperRouteDecision(
                 roles=("architect",),
                 reason="architecture_design",
@@ -323,9 +351,63 @@ def build_director_handoff_message(
     )
 
 
-def build_pm_handoff_message(*, original_request: str, architect_output: str) -> str:
+def write_architect_blueprint_to_disk(
+    *,
+    workspace: str,
+    original_request: str,
+    architect_output: str,
+) -> str:
+    """Write architect analysis output to docs/blueprints/ as a markdown file.
+
+    Returns the relative file path of the written blueprint, or empty string on failure.
+    This is called by the SUPER pipeline after the Architect stage completes,
+    so downstream stages (PM, CE, Director) can reference the blueprint file.
+    """
+    import os
+    from datetime import datetime
+
+    clean_output = str(architect_output or "").strip()
+    if not clean_output:
+        return ""
+
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Derive a slug from the original request
+        clean_request = str(original_request or "").strip()
+        slug = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fff]+", "_", clean_request[:40]).strip("_").lower()
+        if not slug:
+            slug = "super_architect"
+        filename = f"SUPER_BLUEPRINT_{timestamp}_{slug}.md"
+        blueprints_dir = os.path.join(workspace, "docs", "blueprints")
+        os.makedirs(blueprints_dir, exist_ok=True)
+        filepath = os.path.join(blueprints_dir, filename)
+
+        header = (
+            f"# SUPER Mode Architect Blueprint\n\n"
+            f"**Generated**: {datetime.now().isoformat()}\n"
+            f"**Original Request**: {clean_request}\n\n"
+            f"---\n\n"
+        )
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(header)
+            f.write(clean_output)
+            if not clean_output.endswith("\n"):
+                f.write("\n")
+
+        relative_path = os.path.relpath(filepath, workspace).replace("\\", "/")
+        logger.info("SUPER_MODE_BLUEPRINT_WRITTEN: path=%s", relative_path)
+        return relative_path
+    except Exception:
+        logger.exception("SUPER_MODE_BLUEPRINT_WRITE_FAILED")
+        return ""
+
+
+def build_pm_handoff_message(*, original_request: str, architect_output: str, blueprint_file_path: str = "") -> str:
     clean_request = str(original_request or "").strip()
     clean_architect_output = _truncate_text(architect_output, limit=5000) or "(architect produced no textual plan)"
+    blueprint_ref = ""
+    if blueprint_file_path:
+        blueprint_ref = f"\nblueprint_file: {blueprint_file_path}\n"
     return (
         "[mode:analyze]\n"
         "[SUPER_MODE_PM_HANDOFF]\n"
@@ -350,6 +432,7 @@ def build_pm_handoff_message(*, original_request: str, architect_output: str) ->
         "```\n\n"
         f"original_user_request:\n{clean_request}\n\n"
         f"architect_output:\n{clean_architect_output}\n"
+        f"{blueprint_ref}"
         "[/SUPER_MODE_PM_HANDOFF]"
     )
 
@@ -833,4 +916,5 @@ __all__ = [
     "build_super_readonly_message",
     "extract_blueprint_items_from_ce_output",
     "extract_task_list_from_pm_output",
+    "write_architect_blueprint_to_disk",
 ]
