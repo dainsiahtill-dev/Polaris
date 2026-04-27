@@ -69,7 +69,7 @@ class TestCourtActorState:
     """Tests for CourtActorState dataclass."""
 
     def test_defaults(self) -> None:
-        state = CourtActorState(role_id="emperor", role_name="天子", status=ActorStatus.IDLE)
+        state = CourtActorState(role_id="emperor", role_name="User", status=ActorStatus.IDLE)
         assert state.current_action == ""
         assert state.task_id is None
         assert state.risk_level == RiskLevel.NONE
@@ -80,15 +80,15 @@ class TestCourtActorState:
     def test_to_dict(self) -> None:
         state = CourtActorState(
             role_id="emperor",
-            role_name="天子",
+            role_name="User",
             status=ActorStatus.EXECUTING,
-            current_action="听政",
+            current_action="Reviewing",
             risk_level=RiskLevel.LOW,
         )
         d = state.to_dict()
         assert d["role_id"] == "emperor"
         assert d["status"] == "executing"
-        assert d["current_action"] == "听政"
+        assert d["current_action"] == "Reviewing"
         assert d["risk_level"] == "low"
 
 
@@ -96,7 +96,7 @@ class TestCourtTopologyNode:
     """Tests for CourtTopologyNode dataclass."""
 
     def test_defaults(self) -> None:
-        node = CourtTopologyNode(role_id="test", role_name="测试")
+        node = CourtTopologyNode(role_id="test", role_name="Test")
         assert node.position == [0.0, 0.0, 0.0]
         assert node.department == ""
         assert node.level == 0
@@ -105,7 +105,7 @@ class TestCourtTopologyNode:
     def test_to_dict(self) -> None:
         node = CourtTopologyNode(
             role_id="emperor",
-            role_name="天子",
+            role_name="User",
             parent_id=None,
             position=[0, 2, 0],
             department="imperial",
@@ -144,7 +144,7 @@ class TestCourtSceneConfig:
     """Tests for CourtSceneConfig dataclass."""
 
     def test_defaults(self) -> None:
-        config = CourtSceneConfig(scene_id="hall", scene_name="大殿", phase=CourtScenePhase.COURT_AUDIENCE)
+        config = CourtSceneConfig(scene_id="hall", scene_name="Main Hall", phase=CourtScenePhase.COURT_AUDIENCE)
         assert config.description == ""
         assert config.camera_position == [0.0, 5.0, 10.0]
         assert config.focus_roles == []
@@ -153,7 +153,7 @@ class TestCourtSceneConfig:
     def test_to_dict(self) -> None:
         config = CourtSceneConfig(
             scene_id="taiji",
-            scene_name="太极殿",
+            scene_name="Main Hall",
             phase=CourtScenePhase.COURT_AUDIENCE,
             focus_roles=["emperor"],
         )
@@ -179,14 +179,14 @@ class TestCourtState:
     def test_to_dict(self) -> None:
         actor = CourtActorState(
             role_id="emperor",
-            role_name="天子",
+            role_name="User",
             status=ActorStatus.IDLE,
         )
         state = CourtState(
             phase=CourtScenePhase.DRAFT,
             current_scene="zhongshu_pavilion",
             actors={"emperor": actor},
-            topology=[CourtTopologyNode("emperor", "天子")],
+            topology=[CourtTopologyNode("emperor", "User")],
         )
         d = state.to_dict()
         assert d["phase"] == "draft"

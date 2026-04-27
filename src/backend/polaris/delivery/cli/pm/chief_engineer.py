@@ -1,6 +1,6 @@
 """Deterministic ChiefEngineer blueprint service for PM -> Director bridge.
 
-ChiefEngineer (工部尚书) - Blueprint Designer
+ChiefEngineer (Chief Engineer) - Blueprint Designer
 =============================================
 Role: Designs construction blueprints (module/file/method level) before implementation.
 Relationship with Director: ChiefEngineer designs the "图纸" (blueprint), Director follows it.
@@ -16,8 +16,8 @@ Key Responsibilities:
 4. Provide technical guidance to Director
 
 IMPORTANT DISTINCTION:
-- ChiefEngineer (工部尚书): Designs blueprints, does NOT write implementation code
-- Director (工部侍郎): Follows blueprints, writes actual implementation
+- ChiefEngineer (Chief Engineer): Designs blueprints, does NOT write implementation code
+- Director (Director): Follows blueprints, writes actual implementation
 - They are SEPARATE roles working in sequence, not merged.
 
 Usage Flow:

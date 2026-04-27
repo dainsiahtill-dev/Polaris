@@ -1,4 +1,4 @@
-"""Director (工部侍郎) Output Schema - Code implementation.
+"""Director (Director) Output Schema - Code implementation.
 
 Defines the structured output format for code execution and patch generation.
 """

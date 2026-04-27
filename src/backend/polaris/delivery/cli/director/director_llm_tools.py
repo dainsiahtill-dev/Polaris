@@ -277,7 +277,7 @@ class DirectorToolEnabledImplementation:
 
         result = await self.llm_client.invoke_with_tools(
             prompt=prompt,
-            system_prompt="你是 Director（工部侍郎），负责实现代码。",
+            system_prompt="你是 Director（Director），负责实现代码。",
             blueprint_context=blueprint,
         )
 

@@ -1,4 +1,4 @@
-"""尚书令PM系统全方位压测
+"""PMPM系统全方位压测
 
 测试内容：
 1. 功能压测：1000需求注册、500任务并发更新、100次文档版本
@@ -525,7 +525,7 @@ class TestSystemIntegrity(TestPMBase):
 def run_all_tests():
     """Run all stress tests."""
     print("=" * 70)
-    print("尚书令PM系统全方位压测")
+    print("PMPM系统全方位压测")
     print("=" * 70)
     print()
 

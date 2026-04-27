@@ -29,7 +29,7 @@ class TestWorkingMemoryContractGuide:
                 allow_file_delete=False,
             ),
             responsibilities=["代码执行"],
-            display_name="工部侍郎",
+            display_name="Director",
             description="代码执行角色",
         )
 

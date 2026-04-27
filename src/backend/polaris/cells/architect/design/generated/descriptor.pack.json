@@ -48,7 +48,7 @@
     {
       "type": "class",
       "name": "ArchitectAgent",
-      "description": "Architect role agent (`中书令`) on top of RoleAgent runtime.",
+      "description": "Architect role agent on top of RoleAgent runtime.",
       "defined_in": "polaris/cells/architect/design/internal/architect_agent.py",
       "methods": [
         {

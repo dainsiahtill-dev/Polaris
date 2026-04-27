@@ -14,7 +14,7 @@ export const DEFAULT_LOG_SOURCES = [
   { id: 'pm-subprocess', label: 'PM 案牍', path: 'runtime/logs/pm.process.log', channel: 'pm_subprocess', llmChannel: 'llm' },
   { id: 'pm-report', label: 'PM 禀报', path: 'runtime/results/pm.report.md', channel: 'pm_report', llmChannel: '' },
   { id: 'pm-log', label: 'PM 纪要（jsonl）', path: 'runtime/events/pm.events.jsonl', channel: 'pm_log', llmChannel: '' },
-  { id: 'director', label: '工部子进程', path: 'runtime/logs/director.process.log', channel: 'director_console', llmChannel: 'llm' },
+  { id: 'director', label: 'Director 子进程', path: 'runtime/logs/director.process.log', channel: 'director_console', llmChannel: 'llm' },
   { id: 'planner', label: '谋划稿', path: 'runtime/results/planner.output.md', channel: 'planner', llmChannel: '' },
   { id: 'ollama', label: 'Ollama', path: 'runtime/results/director_llm.output.md', channel: 'ollama', llmChannel: '' },
   { id: 'qa', label: '审校', path: 'runtime/results/qa.review.md', channel: 'qa', llmChannel: '' },

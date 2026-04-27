@@ -93,14 +93,14 @@ export const validateVisualGraph = (
 
 export const getRoleLabel = (roleId: VisualRoleId | string): string => {
   const labels: Record<string, string> = {
-    pm: '尚书令',
-    director: '工部侍郎',
-    chief_engineer: '工部尚书',
-    qa: '门下侍中',
-    architect: '中书令',
-    cfo: '户部尚书',
-    hr: '吏部尚书',
-    docs: '中书令',
+    pm: 'PM',
+    director: 'Director',
+    chief_engineer: 'Chief Engineer',
+    qa: 'QA',
+    architect: 'Architect',
+    cfo: 'CFO',
+    hr: 'HR',
+    docs: 'Architect',
   };
   return labels[roleId] || roleId;
 };

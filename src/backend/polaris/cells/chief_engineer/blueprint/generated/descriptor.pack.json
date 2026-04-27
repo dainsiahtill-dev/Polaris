@@ -256,7 +256,7 @@
     {
       "type": "class",
       "name": "ChiefEngineerAgent",
-      "description": "Chief Engineer role agent (`工部尚书`).",
+      "description": "Chief Engineer role agent.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_agent.py",
       "methods": [
         {

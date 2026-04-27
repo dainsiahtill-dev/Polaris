@@ -1,11 +1,11 @@
 export type VisualRoleId =
-  | 'pm'           // 尚书令
-  | 'director'     // 工部侍郎 (实际编码)
-  | 'chief_engineer' // 工部尚书 (设计蓝图)
-  | 'qa'           // 门下侍中
-  | 'architect'    // 中书令
-  | 'cfo'          // 户部尚书
-  | 'hr';          // 吏部尚书
+  | 'pm'           // PM
+  | 'director'     // Director (coding)
+  | 'chief_engineer' // Chief Engineer (design)
+  | 'qa'           // QA
+  | 'architect'    // Architect
+  | 'cfo'          // CFO
+  | 'hr';          // HR
 
 export type VisualNodeKind = 'role' | 'provider' | 'model';
 

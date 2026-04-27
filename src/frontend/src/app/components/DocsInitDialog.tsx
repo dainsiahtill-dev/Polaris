@@ -20,7 +20,7 @@ import { Button } from '@/app/components/ui/button';
 import { ScrollArea } from '@/app/components/ui/scroll-area';
 
 const WIZARD_MODE = 'minimal';
-const INVALID_PREVIEW_ERROR = '条陈预览数据不完整，请重新拟定条陈。';
+const INVALID_PREVIEW_ERROR = 'Plan preview data incomplete, please redraft plan.';
 const SLOT_LABELS: Record<string, string> = {
   deployment_mode: '部署方式',
   auth_mode: '访问控制',
@@ -123,7 +123,7 @@ export function DocsInitDialog({
   const [dialoguing, setDialoguing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 拟定条陈流式进度状态
+  // Draft Plan streaming progress state
   const [previewProgress, setPreviewProgress] = useState<{
     open: boolean;
     stage: string;
@@ -247,7 +247,7 @@ export function DocsInitDialog({
     (data: Record<string, unknown>) => {
       const reply = String(data.reply || '').trim();
       const questions = ((data.questions || []) as string[]).map((s) => String(s).trim()).filter(Boolean);
-      const assistantContent = reply || (questions.length ? questions.join('\n') : '臣已据廷议更新条陈。');
+      const assistantContent = reply || (questions.length ? questions.join('\n') : 'Plan updated based on discussion.');
 
       setDialogueTurns((prev) => {
         const idx = streamingIndexRef.current;
@@ -309,7 +309,7 @@ export function DocsInitDialog({
   const onError = useCallback((error: string) => {
     streamingIndexRef.current = -1;
     setError(error);
-    toast.error(error || '奏对失败。');
+    toast.error(error || 'Dialogue failed.');
     setDialoguing(false);
   }, []);
 
@@ -318,7 +318,7 @@ export function DocsInitDialog({
   const runDialogue = async () => {
     const message = tingyiMessage.trim() || goal.trim();
     if (!message) {
-      toast.error('请先输入廷议内容或圣意目标。');
+      toast.error('Please enter discussion content or project goal.');
       return;
     }
     setDialoguing(true);
@@ -390,13 +390,13 @@ export function DocsInitDialog({
       });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
-        throw new Error(detail?.detail || '用印写入失败。');
+        throw new Error(detail?.detail || 'Approve write failed.');
       }
-      toast.success('条陈已批红并用印');
+      toast.success('Plan approved');
       onApplied?.();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '用印写入失败。');
+      setError(err instanceof Error ? err.message : 'Approve write failed.');
     } finally {
       setApplying(false);
     }
@@ -429,12 +429,12 @@ export function DocsInitDialog({
                 <div>
                   <DialogTitle className="text-lg font-bold tracking-wide">
                     <span className="text-[#CA8A04] [text-shadow:0_0_12px_rgba(202,138,4,0.4),_0_0_4px_rgba(202,138,4,0.2)]">政 事 堂</span>
-                    <span className="ml-2.5 text-xs font-normal tracking-widest text-[#CA8A04]/40">中书令廷议规划</span>
+                    <span className="ml-2.5 text-xs font-normal tracking-widest text-[#CA8A04]/40">Architect Discussion Planning</span>
                   </DialogTitle>
                   <DialogDescription className="mt-0.5 text-[11px] text-[#F8FAFC]/30">
                     {docsMissing
-                      ? '当前疆域缺少 docs/ 卷宗，请先在政事堂廷议立卷。'
-                      : '奏对问答 → 拟定条陈 → 批红用印 ┃ 全程以中书令角色绑定 LLM'}
+                      ? 'Current workspace missing docs/, please start Docs Wizard discussion first.'
+                      : 'Dialogue Q&A → Draft Plan → Approve ┃ Full process bound to Architect LLM'}
                   </DialogDescription>
                 </div>
               </div>
@@ -443,7 +443,7 @@ export function DocsInitDialog({
               <div className="flex items-center gap-2 rounded-lg border border-[#F8FAFC]/8 bg-[#F8FAFC]/[0.03] px-3 py-1.5">
                 <div className={`h-1.5 w-1.5 rounded-full ${phaseReady ? 'bg-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-[#CA8A04] shadow-[0_0_8px_rgba(202,138,4,0.5)] animate-pulse'}`} />
                 <span className="text-[10px] tracking-widest text-[#F8FAFC]/60">
-                  {phaseReady ? '廷议齐备 · 可拟条陈' : '廷议进行中'}
+                  {phaseReady ? 'Discussion ready · Can draft plan' : 'Discussion in progress'}
                 </span>
               </div>
               <span className="text-[10px] text-[#CA8A04]/25 font-mono">
@@ -453,7 +453,7 @@ export function DocsInitDialog({
           </div>
           {workspace ? (
             <div className="mt-2 text-[10px] tracking-wider text-[#F8FAFC]/20 font-mono">
-              疆域 ▸ {workspace}
+              Workspace ▸ {workspace}
             </div>
           ) : null}
         </DialogHeader>
@@ -464,7 +464,7 @@ export function DocsInitDialog({
           </div>
         ) : null}
 
-        {/* ── 拟定条陈进度弹窗 ── */}
+        {/* ── Draft Plan progress modal ── */}
         {previewProgress.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
             <div className="w-full max-w-md rounded-xl border border-[#CA8A04]/20 bg-[#0C0C1E]/95 p-6 shadow-[0_0_60px_rgba(202,138,4,0.15)]">
@@ -474,8 +474,8 @@ export function DocsInitDialog({
                   <ScrollText className="absolute inset-0 m-auto h-4 w-4 text-[#CA8A04]" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-[#CA8A04]">拟定条陈中...</h3>
-                  <p className="text-[11px] text-[#F8FAFC]/50">中书令正在为您生成文档</p>
+                  <h3 className="text-sm font-bold text-[#CA8A04]">Drafting Plan...</h3>
+                  <p className="text-[11px] text-[#F8FAFC]/50">Architect is generating documents for you</p>
                 </div>
               </div>
 
@@ -505,7 +505,7 @@ export function DocsInitDialog({
                 <div className="mb-4 max-h-48 overflow-y-auto rounded-lg border border-[#CA8A04]/10 bg-[#CA8A04]/5 p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <Brain className="h-3 w-3 text-[#CA8A04]" />
-                    <span className="text-[10px] font-bold text-[#CA8A04]/60">中书令思考中...</span>
+                    <span className="text-[10px] font-bold text-[#CA8A04]/60">Architect thinking...</span>
                   </div>
                   <div className="text-[11px] text-[#F8FAFC]/50 leading-relaxed font-mono whitespace-pre-wrap">
                     {previewProgress.thinking.slice(-800)}
@@ -517,7 +517,7 @@ export function DocsInitDialog({
                 </div>
               ) : null}
 
-              {/* 已生成的字段预览 */}
+              {/* 已生成的chars段预览 */}
               {previewProgress.fields && Object.keys(previewProgress.fields).length > 0 && (
                 <div className="mb-4 max-h-32 overflow-y-auto rounded-lg border border-[#22C55E]/10 bg-[#22C55E]/5 p-3">
                   <div className="text-[10px] font-bold text-[#22C55E]/60 mb-2">已生成内容</div>
@@ -547,28 +547,28 @@ export function DocsInitDialog({
                 className="w-full cursor-pointer border-[#F8FAFC]/10 bg-[#F8FAFC]/[0.05] text-[#F8FAFC]/70 hover:bg-[#F8FAFC]/[0.08] hover:text-[#F8FAFC]"
               >
                 <X className="mr-1.5 h-3.5 w-3.5" />
-                取消拟定
+                Cancel Draft
               </Button>
             </div>
           </div>
         )}
 
-        {/* ── Step 2: 奏对 ── */}
+        {/* ── Step 2: Dialogue ── */}
         {step === 2 ? (
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[1.1fr_1.9fr]">
 
-            {/* ─ Left: 圣意输入 ─ */}
+            {/* ─ Left: Project Goal Input ─ */}
             <ScrollArea className="h-[74vh] rounded-xl border border-[#CA8A04]/12 bg-[#12112A]/80 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(202,138,4,0.06)]">
               <div className="grid gap-4 p-5 text-sm">
 
                 <div className="rounded-lg border border-[#CA8A04]/15 bg-[#CA8A04]/5 px-4 py-2.5 text-[11px] leading-relaxed text-[#F8FAFC]/60">
-                  <span className="text-[#CA8A04]/80 font-semibold">御笔提示</span>
+                  <span className="text-[#CA8A04]/80 font-semibold">Tip</span>
                   <span className="mx-1.5 text-[#CA8A04]/20">│</span>
-                  先输入目标并进行 1~3 轮奏对，再点击「拟定条陈」生成落卷草案。
+                  Enter goal and have 1-3 dialogue rounds, then click Draft Plan to generate doc draft.
                 </div>
 
                 <label className="grid gap-1.5">
-                  <span className="text-xs font-semibold tracking-wide text-[#CA8A04]/70">圣 意 目 标</span>
+                  <span className="text-xs font-semibold tracking-wide text-[#CA8A04]/70">Project Goal</span>
                   <input
                     data-testid="docs-init-goal-input"
                     value={goal}
@@ -585,7 +585,7 @@ export function DocsInitDialog({
                     value={tingyiMessage}
                     onChange={(event) => setTingyiMessage(event.target.value)}
                     className="min-h-[84px] rounded-lg border border-[#F8FAFC]/8 bg-[#F8FAFC]/[0.03] px-3.5 py-2.5 text-sm text-[#F8FAFC]/90 placeholder:text-[#F8FAFC]/20 focus:border-[#CA8A04]/30 focus:outline-none focus:ring-1 focus:ring-[#CA8A04]/15 resize-none transition-colors duration-200"
-                    placeholder="可直接回答中书令追问，例如：1 本机进程 2 无鉴权 3 不限大小 4 需要 5 不压测"
+                    placeholder="Can directly answer Architect follow-up，例如：1 本机进程 2 无鉴权 3 不限大小 4 需要 5 不压测"
                   />
                 </label>
 
@@ -600,12 +600,12 @@ export function DocsInitDialog({
                   >
                     <span className="flex items-center gap-1.5">
                       <RiAiGenerate2 className="size-4" />
-                      {dialoguing ? '奏对中…' : '发 起 奏 对'}
+                      {dialoguing ? 'Dialoguing...' : '发 起 奏 对'}
                     </span>
                   </Button>
                 </div>
 
-                {/* 廷议状态 */}
+                {/* Discussion Status */}
                 <div className="rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-4 py-3">
                   <div className="flex items-center gap-2 text-xs font-semibold text-[#F8FAFC]/70">
                     <div className={`h-2 w-2 rounded-full ${phaseReady ? 'bg-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-[#CA8A04] shadow-[0_0_8px_rgba(202,138,4,0.4)] animate-pulse'}`} />
@@ -617,7 +617,7 @@ export function DocsInitDialog({
                       data-testid="docs-init-phase-status"
                       className={phaseReady ? 'text-[#22C55E]' : 'text-[#CA8A04]'}
                     >
-                      {phaseReady ? '可拟定条陈' : '补齐关键信息中'}
+                      {phaseReady ? 'Can draft plan' : 'Filling key info'}
                     </span>
                   </div>
                   <div data-testid="docs-init-unresolved-list" className="mt-2.5">
@@ -625,7 +625,7 @@ export function DocsInitDialog({
                     <div className="flex flex-wrap gap-1.5">
                       {dialogueMeta.unresolved_slots.length === 0 ? (
                         <span className="rounded-md border border-[#22C55E]/25 bg-[#22C55E]/10 px-2.5 py-1 text-[10px] font-semibold text-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.12)]">
-                          ✓ 已齐备
+                          ✓ Ready
                         </span>
                       ) : (
                         dialogueMeta.unresolved_slots.map((slotId) => (
@@ -641,17 +641,17 @@ export function DocsInitDialog({
                   </div>
                 </div>
 
-                {/* 高级条令 */}
+                {/* Advanced Options */}
                 <details className="group rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-4 py-3">
                   <summary className="cursor-pointer text-xs font-semibold text-[#F8FAFC]/50 hover:text-[#F8FAFC]/80 transition-colors duration-200 select-none">
-                    高 级 条 令<span className="ml-1 text-[10px] font-normal text-[#F8FAFC]/20">（可选展开）</span>
+                    高 级 条 令<span className="ml-1 text-[10px] font-normal text-[#F8FAFC]/20">（Optional）</span>
                   </summary>
                   <div className="mt-4 grid gap-3">
                     {([
-                      ['纳入范围', inScope, setInScope, '每行一项'],
-                      ['排除范围', outOfScope, setOutOfScope, '每行一项'],
-                      ['约束条令', constraints, setConstraints, '建议 3-5 行'],
-                      ['结案标准', definitionOfDone, setDefinitionOfDone, '勘验命令或验收条令'],
+                      ['In Scope', inScope, setInScope, '每行一项'],
+                      ['Out of Scope', outOfScope, setOutOfScope, '每行一项'],
+                      ['Constraints', constraints, setConstraints, '建议 3-5 行'],
+                      ['Definition of Done', definitionOfDone, setDefinitionOfDone, '勘验命令或验收条令'],
                     ] as const).map(([label, value, setter, ph]) => (
                       <label key={label} className="grid gap-1.5">
                         <span className="text-[11px] text-[#F8FAFC]/40">{label}</span>
@@ -664,7 +664,7 @@ export function DocsInitDialog({
                       </label>
                     ))}
                     <label className="grid gap-1.5">
-                      <span className="text-[11px] text-[#F8FAFC]/40">条陈草案（可手工覆盖）</span>
+                      <span className="text-[11px] text-[#F8FAFC]/40">Plan Draft (can override)</span>
                       <textarea
                         value={backlog}
                         onChange={(event) => {
@@ -672,7 +672,7 @@ export function DocsInitDialog({
                           setTiaochenDraft(splitLines(event.target.value));
                         }}
                         className="min-h-[64px] rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-3 py-2 text-xs text-[#F8FAFC]/80 placeholder:text-[#F8FAFC]/15 focus:border-[#CA8A04]/25 focus:outline-none resize-none transition-colors duration-200"
-                        placeholder="每行一条任务"
+                        placeholder="One task per line"
                       />
                     </label>
                   </div>
@@ -680,10 +680,10 @@ export function DocsInitDialog({
               </div>
             </ScrollArea>
 
-            {/* ─ Right: 奏对记录 + 条陈 ─ */}
+            {/* ─ Right: Dialogue Record + Plan ─ */}
             <div className="grid grid-rows-[minmax(300px,1fr)_auto] gap-3 overflow-hidden" style={{ height: '74vh' }}>
 
-              {/* 奏对记录 */}
+              {/* Dialogue Record */}
               <div className="rounded-xl border border-[#00FFFF]/10 bg-[#0C0C1E]/80 backdrop-blur-sm p-4 flex flex-col overflow-hidden shadow-[inset_0_1px_0_rgba(0,255,255,0.04)]" style={{ minHeight: '200px' }}>
                 <div className="flex items-center justify-between mb-3 flex-shrink-0">
                   <div className="flex items-center gap-2.5">
@@ -697,8 +697,8 @@ export function DocsInitDialog({
                     {dialogueTurns.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-12 text-center">
                         <Landmark className="size-8 mb-3 text-[#CA8A04]/20" />
-                        <div className="text-xs text-[#F8FAFC]/25">廷议尚未开始</div>
-                        <div className="text-[10px] text-[#F8FAFC]/12 mt-1">输入圣意目标，点击「发起奏对」开启廷议</div>
+                        <div className="text-xs text-[#F8FAFC]/25">Discussion not started</div>
+                        <div className="text-[10px] text-[#F8FAFC]/12 mt-1">Enter project goal, click Start Dialogue to start discussion</div>
                       </div>
                     ) : (
                       dialogueTurns.map((turn, index) => {
@@ -720,7 +720,7 @@ export function DocsInitDialog({
                                   ? 'border-[#CA8A04]/30 bg-[#CA8A04]/12 text-[#CA8A04]'
                                   : 'border-[#00FFFF]/25 bg-[#00FFFF]/10 text-[#00FFFF]/80'
                               }`}>
-                                {isUser ? '天 子' : '中 书 令'}
+                                {isUser ? 'User' : 'Architect'}
                               </span>
                             </div>
 
@@ -741,9 +741,9 @@ export function DocsInitDialog({
                                   ) : null}
                                   {turn.rawContent ? (
                                     <div className="rounded-lg border border-[#00FFFF]/10 bg-[#00FFFF]/5 px-3 py-2">
-                                      <div className="text-[9px] font-bold tracking-widest text-[#00FFFF]/40 mb-0.5">奏答接收中…</div>
+                                      <div className="text-[9px] font-bold tracking-widest text-[#00FFFF]/40 mb-0.5">Receiving response...</div>
                                       <div className="text-[10px] text-[#F8FAFC]/30 italic">
-                                        已接收 {turn.rawContent.length} 字
+                                        Received {turn.rawContent.length} chars
                                       </div>
                                     </div>
                                   ) : null}
@@ -754,12 +754,12 @@ export function DocsInitDialog({
                                       <span className="inline-block w-1 h-1 rounded-full bg-[#00FFFF]/60 animate-bounce" style={{ animationDelay: '300ms' }} />
                                     </span>
                                     {turn.reasoning
-                                      ? '中书令正在草拟奏答…'
+                                      ? 'Architect drafting response...'
                                       : buildStreamingThoughtPreview(turn.rawContent || '')
-                                        ? '实时流式内容'
+                                        ? 'Real-time streaming content'
                                         : turn.rawContent
-                                          ? '奏答流式接收中'
-                                          : '中书令正在思考…'}
+                                          ? 'Response streaming...'
+                                          : 'Architect thinking...'}
                                   </span>
                                 </div>
                               ) : (
@@ -767,7 +767,7 @@ export function DocsInitDialog({
                                   {turn.reasoning ? (
                                     <details className="mb-2">
                                       <summary className="text-[9px] tracking-widest text-[#CA8A04]/35 cursor-pointer hover:text-[#CA8A04]/60 transition-colors duration-200 select-none">
-                                        展开思维链
+                                        Expand reasoning chain
                                       </summary>
                                       <div className="mt-1.5 rounded-lg border border-[#CA8A04]/10 bg-[#CA8A04]/5 px-3 py-2 text-[11px] text-[#F8FAFC]/45 italic leading-relaxed max-h-[140px] overflow-y-auto">
                                         {turn.reasoning}
@@ -776,7 +776,7 @@ export function DocsInitDialog({
                                   ) : null}
                                   <div className={isUser ? 'text-[#F8FAFC]/85' : 'text-[#F8FAFC]/80'}>
                                     {turn.content || (() => {
-                                      if (!turn.rawContent) return '臣已据廷议更新条陈。';
+                                      if (!turn.rawContent) return 'Plan updated based on discussion.';
                                       try {
                                         const parsed = JSON.parse(turn.rawContent);
                                         return parsed.reply || turn.rawContent;
@@ -810,12 +810,12 @@ export function DocsInitDialog({
               <div className="rounded-xl border border-[#22C55E]/10 bg-[#0C0C1E]/60 backdrop-blur-sm p-4 shadow-[inset_0_1px_0_rgba(34,197,94,0.04)]">
                 <div className="flex items-center gap-2.5 mb-2">
                   <div className="h-4 w-0.5 rounded-full bg-[#22C55E]/30 shadow-[0_0_6px_rgba(34,197,94,0.3)]" />
-                  <span className="text-xs font-bold tracking-widest text-[#22C55E]/60">条 陈 · 奏 章</span>
-                  <span className="text-[9px] text-[#22C55E]/25 tracking-wide">草拟</span>
+                  <span className="text-xs font-bold tracking-widest text-[#22C55E]/60">Plan · Draft</span>
+                  <span className="text-[9px] text-[#22C55E]/25 tracking-wide">Draft</span>
                 </div>
                 <div className="grid gap-0.5 text-xs text-[#F8FAFC]/60 max-h-[18vh] overflow-y-auto pr-1">
                   {tiaochenDraft.length === 0 ? (
-                    <div className="text-[#F8FAFC]/20 text-[11px] py-2">尚未生成条陈，请先进行奏对。</div>
+                    <div className="text-[#F8FAFC]/20 text-[11px] py-2">Plan not yet generated, please start dialogue first.</div>
                   ) : (
                     tiaochenDraft.map((item, index) => (
                       <div key={`${index}-${item}`} className="flex gap-2 py-0.5 rounded px-2 hover:bg-[#22C55E]/5 transition-colors duration-150">
@@ -830,19 +830,19 @@ export function DocsInitDialog({
           </div>
         ) : null}
 
-        {/* ── Step 3: 批红 ── */}
+        {/* ── Step 3: Approve ── */}
         {step === 3 ? (
           <div className="grid gap-3 min-h-0 overflow-hidden">
             <div className="rounded-lg border border-[#CA8A04]/20 bg-[#CA8A04]/5 px-4 py-3 text-xs text-[#F8FAFC]/60 flex items-center gap-3">
               <ScrollText className="size-5 text-[#CA8A04]/70 flex-shrink-0" />
               <div>
-                <div className="text-[#F8FAFC]/70">条陈卷宗目录：<span className="text-[#CA8A04] font-semibold">{preview?.target_root || 'docs'}</span></div>
-                <div className="text-[#F8FAFC]/30 text-[10px] mt-0.5">确认无误后点击「批红 / 用印」，正式落卷。</div>
+                <div className="text-[#F8FAFC]/70">Plan doc directory：<span className="text-[#CA8A04] font-semibold">{preview?.target_root || 'docs'}</span></div>
+                <div className="text-[#F8FAFC]/30 text-[10px] mt-0.5">Click Approve after confirmation to finalize docs.</div>
               </div>
             </div>
             {tiaochenDraft.length > 0 ? (
               <div className="rounded-lg border border-[#22C55E]/12 bg-[#22C55E]/5 px-4 py-3 text-xs text-[#F8FAFC]/60">
-                <div className="mb-2 font-bold tracking-widest text-[#22C55E]/60 text-[11px]">条 陈 · 奏 章</div>
+                <div className="mb-2 font-bold tracking-widest text-[#22C55E]/60 text-[11px]">Plan · Draft</div>
                 <div className="space-y-0.5">
                   {tiaochenDraft.map((item, index) => (
                     <div key={`${index}-${item}`} className="flex gap-2">
@@ -896,7 +896,7 @@ export function DocsInitDialog({
               onClick={() => onOpenChange(false)}
               className="cursor-pointer text-[#F8FAFC]/30 hover:text-[#F8FAFC]/60 text-xs transition-colors duration-200"
             >
-              退朝
+              Close
             </Button>
             {step === 2 ? (
               <Button
@@ -907,7 +907,7 @@ export function DocsInitDialog({
               >
                 <span className="flex items-center gap-1.5">
                   <ScrollText className="size-3.5" />
-                  {loadingPreview ? '拟稿中…' : '拟 定 条 陈'}
+                  {loadingPreview ? 'Drafting...' : '拟 定 条 陈'}
                 </span>
               </Button>
             ) : null}
@@ -920,7 +920,7 @@ export function DocsInitDialog({
               >
                 <span className="flex items-center gap-1.5">
                   <Stamp className="size-3.5" />
-                  {applying ? '用印中…' : '批 红 / 用 印'}
+                  {applying ? 'Approving...' : 'Approve'}
                 </span>
               </Button>
             ) : null}

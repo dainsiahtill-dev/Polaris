@@ -55,7 +55,7 @@ export function ArsenalPanel() {
           className="border-white/10 hover:bg-white/5"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
-          重新勘测
+          重新分析
         </Button>
       </div>
 
@@ -76,7 +76,7 @@ export function ArsenalPanel() {
           <div className="h-[500px] flex items-center justify-center border border-white/5 rounded bg-black/40">
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-              <span className="text-sm text-cyan-400/80">正在勘测代码疆域结构...</span>
+              <span className="text-sm text-cyan-400/80">正在分析代码结构...</span>
             </div>
           </div>
         ) : (

@@ -186,7 +186,7 @@ export function ProjectProgressPanel({
   const effectiveDetail = toText(pmState?.last_director_detail) || engineDirectorDetail || '';
 
   let progress = 0;
-  let progressHint = '待尚书省出具章奏';
+  let progressHint = '待 PM 出具任务';
   let progressMode: 'done' | 'position' | 'success' | 'idle' = 'idle';
 
   if (totalTasks > 0 && completedCount > 0) {
@@ -219,12 +219,12 @@ export function ProjectProgressPanel({
   const currentSummary = clampText(directorTaskLabel || '', 160);
   const goalList = Array.isArray(goals) ? goals.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
   const directorQueueHint = normalizedDirectorTasks.length > 0
-    ? `${directorCompletedCount}/${normalizedDirectorTasks.length} 工部队列已完成`
+    ? `${directorCompletedCount}/${normalizedDirectorTasks.length} Director queue 已完成`
     : directorTaskSource === 'realtime'
       ? directorRealtimeConnected
-        ? '工部实时队列为空'
-        : '工部实时队列已断开'
-      : '工部队列待同步';
+        ? 'Director live queue 为空'
+        : 'Director live queue 已断开'
+      : 'Director queue 待同步';
 
   return (
     <div
@@ -238,7 +238,7 @@ export function ProjectProgressPanel({
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-heading font-bold text-text-main">尚书省政务进度</span>
+              <span className="text-sm font-heading font-bold text-text-main">PM 政务进度</span>
               {pmRunning ? (
                 <StatusBadge color="success" variant="dot" pulse className="animate-pulse shadow-[0_0_8px_rgba(90,138,106,0.3)]">
                   {UI_TERMS.states.running}
@@ -264,20 +264,20 @@ export function ProjectProgressPanel({
               >
                 {directorTaskSource === 'realtime'
                   ? directorRealtimeConnected
-                    ? '工部实时队列'
-                    : '工部实时断线'
-                  : '工部快照回退'}
+                    ? 'Director live queue'
+                    : 'Director live 断线'
+                  : 'Director snapshot 回退'}
               </StatusBadge>
             </div>
             <div className="mt-1 text-xs text-text-muted">
               {focusText || notesText ? (
                 <>
-                  {focusText ? <span>圣意: <span className="text-text-main">{focusText}</span></span> : null}
+                  {focusText ? <span>Focus: <span className="text-text-main">{focusText}</span></span> : null}
                   {focusText && notesText ? <span className="mx-2 text-white/10">|</span> : null}
                   {notesText ? <span>批注: {notesText}</span> : null}
                 </>
               ) : (
-                <span>尚书省正在整章理目</span>
+                <span>PM 正在整理任务</span>
               )}
             </div>
           </div>
@@ -369,7 +369,7 @@ export function ProjectProgressPanel({
         </div>
       )}
 
-      {/* 可折叠的圣意总览 */}
+      {/* 可折叠的 Focus 总览 */}
       {goalList.length > 0 && (
         <div className="mt-4 rounded-2xl border border-white/5 bg-white/5 overflow-hidden">
           <button
@@ -382,7 +382,7 @@ export function ProjectProgressPanel({
               ) : (
                 <ChevronRight className="w-4 h-4 text-text-muted" />
               )}
-              <span className="text-xs font-medium uppercase tracking-wide text-text-muted">圣意总览</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-text-muted">Focus 总览</span>
             </div>
             <span className="text-xs font-mono text-text-muted">{goalList.length} 项</span>
           </button>
@@ -414,7 +414,7 @@ export function ProjectProgressPanel({
         <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
           <div className="flex items-center gap-2">
             <ListChecks className="size-4 text-text-dim" />
-            <span className="font-medium uppercase tracking-wide">章奏队列（尚书省 → 工部）</span>
+            <span className="font-medium uppercase tracking-wide">任务队列（PM → Director）</span>
           </div>
           <span className="font-mono">{totalTasks ? `${totalTasks} \u9879` : '\u6682\u65e0\u4efb\u52a1'}</span>
         </div>

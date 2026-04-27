@@ -65,7 +65,7 @@ def test_make_audit_llm_caller_prefers_local_ollama(monkeypatch, tmp_path) -> No
     assert len(calls) == 1
     assert calls[0]["blocked_provider_types"] == ("openai_compat",)
     assert provider_info["llm_strategy"] == "local_ollama"
-    assert provider_info["court_role_name"] == "门下侍中"
+    assert provider_info["court_role_name"] == "QA"
 
 
 def test_make_audit_llm_caller_falls_back_to_role_runtime(monkeypatch, tmp_path) -> None:

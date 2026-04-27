@@ -1,4 +1,4 @@
-"""Document Manager - 尚书令文档管理器
+"""Document Manager - PM文档管理器
 
 文档版本控制、结构解析、差异分析和变更影响分析。
 """
@@ -92,7 +92,7 @@ class DocumentDiff:
 
 
 class DocumentManager:
-    """尚书令文档管理器
+    """PM文档管理器
 
     核心功能：
     1. 文档版本控制 - 自动版本快照

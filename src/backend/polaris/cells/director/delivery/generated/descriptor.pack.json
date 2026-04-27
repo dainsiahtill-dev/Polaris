@@ -730,7 +730,7 @@
     {
       "type": "class",
       "name": "DirectorRole",
-      "description": "Director Role - 工部侍郎",
+      "description": "Director Role.",
       "defined_in": "polaris/delivery/cli/director/director_role.py",
       "methods": [
         {

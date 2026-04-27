@@ -55,7 +55,7 @@ def test_build_docs_templates_interface_contract_uses_semantic_capabilities() ->
         qa_commands=["python -m pytest -q"],
     )
     contract_md = docs.get("docs/product/interface_contract.md", "")
-    assert "验证执行与证据归档" in contract_md
+    assert "验证执行与证据Finalize" in contract_md
     assert "实时事件流接入、排序校验与幂等处理" in contract_md
     assert "状态快照与增量广播的一致性策略" in contract_md
     assert "No Yapping" not in contract_md

@@ -73,7 +73,7 @@ except ImportError:
 
 
 class DirectorRole(RoleBase):
-    """Director Role - 工部侍郎"""
+    """Director Role - Director"""
 
     def __init__(self, workspace: str | None = None) -> None:
         self.workspace = workspace or os.getcwd()  # type: ignore[assignment]

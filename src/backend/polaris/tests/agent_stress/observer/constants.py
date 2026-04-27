@@ -100,9 +100,9 @@ PROJECTION_EVENT_STYLES: dict[str, str] = {
 
 # 角色显示配置
 ROLE_DISPLAY: dict[str, dict[str, str]] = {
-    "pm": {"icon": "🧭", "label": "尚书令", "color": "cyan"},
-    "architect": {"icon": "🏛", "label": "中书令", "color": "magenta"},
-    "chief_engineer": {"icon": "🧪", "label": "工部尚书", "color": "blue"},
-    "director": {"icon": "⚙", "label": "工部侍郎", "color": "green"},
-    "qa": {"icon": "🛡", "label": "门下侍中", "color": "red"},
+    "pm": {"icon": "🧭", "label": "PM", "color": "cyan"},
+    "architect": {"icon": "🏛", "label": "Architect", "color": "magenta"},
+    "chief_engineer": {"icon": "🧪", "label": "Chief Engineer", "color": "blue"},
+    "director": {"icon": "⚙", "label": "Director", "color": "green"},
+    "qa": {"icon": "🛡", "label": "QA", "color": "red"},
 }

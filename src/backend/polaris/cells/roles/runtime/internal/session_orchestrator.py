@@ -1334,18 +1334,18 @@ class RoleSessionOrchestrator:
         _role_hint = ""
         if self.role == "director":
             _role_hint = (
-                "【角色定位】你是 Director（工部侍郎），职责是执行代码修改，不是探索或规划。"
+                "【角色定位】你是 Director（Director），职责是执行代码修改，不是探索或规划。"
                 "你只使用 read_file 确认已知文件内容，然后立即用 write_file/edit_file 执行修改。"
                 "严禁使用 repo_tree/repo_rg/glob/list_directory 等探索工具。"
             )
         elif self.role == "architect":
             _role_hint = (
-                "【角色定位】你是 Architect（中书令），职责是架构设计和蓝图制定。"
+                "【角色定位】你是 Architect（Architect），职责是架构设计和蓝图制定。"
                 "你可以使用探索工具了解代码库结构，然后输出清晰的设计文档和修改计划。"
             )
         elif self.role == "pm":
             _role_hint = (
-                "【角色定位】你是 PM（尚书令），职责是任务分解和项目管理。"
+                "【角色定位】你是 PM（PM），职责是任务分解和项目管理。"
                 "你可以使用探索工具了解项目状态，然后输出可执行的任务列表和验收标准。"
             )
 

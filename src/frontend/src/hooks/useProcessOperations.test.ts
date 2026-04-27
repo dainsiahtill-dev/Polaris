@@ -100,7 +100,7 @@ describe('useProcessOperations', () => {
 
       expect(successResult).toBe(true);
       expect(mockStartPm).toHaveBeenCalledWith(false);
-      expect(toast.success).toHaveBeenCalledWith('尚书令已启动');
+      expect(toast.success).toHaveBeenCalledWith('PM started');
       expect(result.current.isStartingPM).toBe(false);
     });
 
@@ -111,7 +111,7 @@ describe('useProcessOperations', () => {
         await result.current.startPmLoop();
       });
 
-      expect(toast.loading).toHaveBeenCalledWith('正在启动尚书令...', expect.any(Object));
+      expect(toast.loading).toHaveBeenCalledWith('Starting PM...', expect.any(Object));
       expect(toast.dismiss).toHaveBeenCalledWith('toast-id');
     });
 
@@ -126,7 +126,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(onOpenLogs).toHaveBeenCalledWith('pm-subprocess', expect.any(String));
-      expect(toast.error).toHaveBeenCalledWith('启动尚书令失败');
+      expect(toast.error).toHaveBeenCalledWith('Failed to start PM');
     });
 
     it('returns false when lancedbBlocked', async () => {
@@ -151,8 +151,8 @@ describe('useProcessOperations', () => {
         expect(success).toBe(true);
       });
 
-      expect(toast.loading).toHaveBeenCalledWith('正在恢复尚书令运行...', expect.any(Object));
-      expect(toast.success).toHaveBeenCalledWith('尚书令已恢复运行');
+      expect(toast.loading).toHaveBeenCalledWith('Resuming PM...', expect.any(Object));
+      expect(toast.success).toHaveBeenCalledWith('PM resumed');
     });
 
     it('calls onStatusChange on success', async () => {
@@ -252,7 +252,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(mockRunPmOnce).toHaveBeenCalledWith();
-      expect(toast.success).toHaveBeenCalledWith('单次督办已启动');
+      expect(toast.success).toHaveBeenCalledWith('Run Once started');
     });
 
     it('returns false when lancedbBlocked', async () => {
@@ -299,7 +299,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(mockStartDirector).toHaveBeenCalledWith();
-      expect(toast.success).toHaveBeenCalledWith('工部尚书已启动');
+      expect(toast.success).toHaveBeenCalledWith('Chief Engineer started');
     });
 
     it('returns false when checkAgents.required and not draftReady', async () => {
@@ -328,7 +328,7 @@ describe('useProcessOperations', () => {
         expect(success).toBe(false);
       });
 
-      expect(toast.warning).toHaveBeenCalledWith('请先审阅并确认 AGENTS.generated.md，再启动工部尚书。');
+      expect(toast.warning).toHaveBeenCalledWith('Please review and confirm AGENTS.generated.md before starting Chief Engineer.');
     });
 
     it('seeds director queue from PM tasks', async () => {

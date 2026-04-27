@@ -79,7 +79,7 @@ class BlueprintStore:
 
 
 class ArchitectAgent(RoleAgent):
-    """Architect role agent (`中书令`) on top of RoleAgent runtime."""
+    """Architect role agent (`Architect`) on top of RoleAgent runtime."""
 
     def __init__(self, workspace: str) -> None:
         super().__init__(workspace=workspace, agent_name="Architect")

@@ -4,13 +4,13 @@ import type { InterviewProviderSummary, InterviewResultDetail } from './Intervie
 type RoleId = 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr';
 
 const ROLE_META: Record<RoleId, { label: string; badge: string }> = {
-  pm: { label: '尚书令', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' },
-  director: { label: '工部侍郎', badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30' },
-  chief_engineer: { label: '工部尚书', badge: 'bg-emerald-600/20 text-emerald-300 border-emerald-600/30' },
-  qa: { label: '门下侍中', badge: 'bg-blue-500/20 text-blue-200 border-blue-500/30' },
-  architect: { label: '中书令', badge: 'bg-amber-500/20 text-amber-200 border-amber-500/30' },
-  cfo: { label: '户部尚书', badge: 'bg-purple-500/20 text-purple-200 border-purple-500/30' },
-  hr: { label: '吏部尚书', badge: 'bg-pink-500/20 text-pink-200 border-pink-500/30' }
+  pm: { label: 'PM', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' },
+  director: { label: 'Director', badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30' },
+  chief_engineer: { label: 'Chief Engineer', badge: 'bg-emerald-600/20 text-emerald-300 border-emerald-600/30' },
+  qa: { label: 'QA', badge: 'bg-blue-500/20 text-blue-200 border-blue-500/30' },
+  architect: { label: 'Architect', badge: 'bg-amber-500/20 text-amber-200 border-amber-500/30' },
+  cfo: { label: 'CFO', badge: 'bg-purple-500/20 text-purple-200 border-purple-500/30' },
+  hr: { label: 'HR', badge: 'bg-pink-500/20 text-pink-200 border-pink-500/30' }
 };
 
 export const RoleBadge: React.FC<{ roleId: RoleId; result: InterviewResultDetail }> = ({ roleId, result }) => {

@@ -279,19 +279,19 @@ export function FactoryWorkspace({
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">任务概览</h3>
             <div className="space-y-2 text-xs">
               <div className="flex justify-between text-slate-500">
-                <span>PM 章奏</span>
+                <span>PM Task</span>
                 <span className="text-slate-300">{pmWorkflowTasks.length}</span>
               </div>
               <div className="flex justify-between text-slate-500">
-                <span>已完成章奏</span>
+                <span>已完成Task</span>
                 <span className="text-emerald-400">{completedPmTasks}</span>
               </div>
               <div className="flex justify-between text-slate-500">
-                <span>工部队列</span>
+                <span>Director Queue</span>
                 <span className="text-cyan-400">{directorWorkflowTasks.length}</span>
               </div>
               <div className="flex justify-between text-slate-500">
-                <span>工部执行中</span>
+                <span>Director Executing</span>
                 <span className="text-amber-400">{activeDirectorTasks}</span>
               </div>
             </div>

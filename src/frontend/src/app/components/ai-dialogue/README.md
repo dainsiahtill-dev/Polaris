@@ -22,8 +22,8 @@ function PMPage() {
   return (
     <AIDialoguePanel
       role="pm"
-      roleName="尚书令"
-      welcomeMessage="尚书令已就绪"
+      roleName="PM"
+      welcomeMessage="PM已就绪"
       context={{ workspace, taskCount }}
     />
   );
@@ -34,13 +34,13 @@ function ArchitectPage() {
   return (
     <AIDialoguePanel
       role="architect"
-      roleName="中书令"
+      roleName="Architect"
       roleTheme={{
         primary: 'purple',
         secondary: 'purple-400',
         gradient: 'from-purple-500 to-purple-700',
       }}
-      welcomeMessage="中书令已就绪"
+      welcomeMessage="Architect已就绪"
     />
   );
 }
@@ -61,7 +61,7 @@ function CustomChat() {
     chatStatus,
   } = useRoleChat({
     role: 'pm',
-    welcomeMessage: '尚书令已就绪',
+    welcomeMessage: 'PM已就绪',
     context: { workspace: '/path' },
   });
 
@@ -210,13 +210,13 @@ export function ArchitectAIDialoguePanel() {
   return (
     <AIDialoguePanel
       dialogueRole="architect"
-      roleDisplayName="中书令"
+      roleDisplayName="Architect"
       roleTheme={{
         primary: 'purple',
         secondary: 'purple-400',
         gradient: 'from-purple-500 to-purple-700',
       }}
-      welcomeMessage="中书令已就绪"
+      welcomeMessage="Architect已就绪"
     />
   );
 }

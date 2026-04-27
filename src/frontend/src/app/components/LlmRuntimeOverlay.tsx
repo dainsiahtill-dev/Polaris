@@ -49,13 +49,13 @@ interface LlmRuntimeOverlayProps {
 const PHASE_LABELS: Record<string, string> = {
   idle: '空闲',
   agents: 'AGENTS 审核',
-  planning: '政事堂规划',
+  planning: 'Planning',
   analyzing: '任务分析',
-  executing: '工部执行中',
+  executing: 'Executing',
   llm_calling: 'LLM 推理',
   tool_running: '工具执行',
   verification: '验证中',
-  chief_engineer: '工部侍郎设计',
+  chief_engineer: 'Chief Engineer Design',
   director: 'Director 执行',
   qa: 'QA 验收',
   completed: '已完成',
@@ -227,7 +227,7 @@ export function LlmRuntimeOverlay({
   const llmStateToken = normalizeStateToken(llmState);
   const phaseLabel = (
     PHASE_LABELS[currentPhase] ||
-    (pmRunning && !directorRunning ? '政事堂/PM 执行中' : '') ||
+    (pmRunning && !directorRunning ? 'PM Running' : '') ||
     (directorRunning ? 'Director 执行中' : '') ||
     currentPhase ||
     '等待中'

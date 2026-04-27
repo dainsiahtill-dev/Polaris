@@ -1,7 +1,7 @@
-"""宫廷角色映射层单元测试.
+"""Court role mapping layer unit test.
 
-本测试模块验证技术角色到古制角色的映射正确性，以及宫廷状态生成的确定性。
-所有测试遵循 Phase 1 验收标准。
+This test module verifies the correctness of mapping from technical roles to display roles, and the determinism of court state generation.
+All tests follow Phase 1 acceptance criteria.
 """
 
 from polaris.cells.docs.court_workflow.internal.court_mapping import (
@@ -18,52 +18,52 @@ from polaris.cells.docs.court_workflow.internal.models.court import (
 
 
 class TestCourtRoleMapping:
-    """测试宫廷角色映射器."""
+    """Test court role mapper."""
 
     def test_topology_node_count(self):
-        """测试拓扑节点数量：24个可交互角色."""
+        """Test topology node count: 24 interactive roles."""
         topology = court_mapper.get_topology()
         interactive_count = sum(1 for node in topology if node.is_interactive)
 
-        # 当前实现：天子 1 + 中书省 2 + 门下省 2 + 尚书省 1 + 六部 6 + 部属官员 12 = 24
+        # Current implementation: User 1 + Architect 2 + QA 2 + PM 1 + Departments 6 + Department officers 12 = 24
         assert interactive_count == 24, f"Expected 24 interactive roles, got {interactive_count}"
         assert len(topology) == 24, f"Expected total 24 roles, got {len(topology)}"
 
     def test_topology_structure(self):
-        """测试拓扑结构完整性：天子 -> 三省 -> 六部 -> 官员."""
+        """Test topology structure integrity: User -> Top departments -> Departments -> Officers."""
         topology = court_mapper.get_topology()
         role_ids = {node.role_id for node in topology}
 
-        # 必有的关键角色
+        # Required key roles
         required_roles = {
-            "emperor",  # 天子
+            "emperor",  # User
             "zhongshu_ling",
-            "zhongshu_shilang",  # 中书省
+            "zhongshu_shilang",  # Architect
             "menxia_shilang",
-            "menxia_shizhong",  # 门下省
-            "shangshu_ling",  # 尚书省
+            "menxia_shizhong",  # QA
+            "shangshu_ling",  # PM
             "libu_shangshu",
             "hubu_shangshu",
             "libu_shangshu2",
             "bingbu_shangshu",
             "xingbu_shangshu",
-            "gongbu_shangshu",  # 六部
+            "gongbu_shangshu",  # Departments
         }
 
         for role in required_roles:
             assert role in role_ids, f"Required role '{role}' not found in topology"
 
     def test_role_hierarchy(self):
-        """测试角色层级关系."""
+        """Test role hierarchy."""
         topology = court_mapper.get_topology()
 
-        # 天子的父节点应为 None
+        # User's parent should be None
         emperor = next((n for n in topology if n.role_id == "emperor"), None)
         assert emperor is not None
         assert emperor.parent_id is None
         assert emperor.level == 0
 
-        # 三省的父节点应为天子
+        # Top departments' parent should be User
         for role_id in ["zhongshu_ling", "menxia_shilang", "shangshu_ling"]:
             node = next((n for n in topology if n.role_id == role_id), None)
             assert node is not None, f"Role '{role_id}' not found"
@@ -71,7 +71,7 @@ class TestCourtRoleMapping:
             assert node.level == 1
 
     def test_tech_to_court_mapping(self):
-        """测试技术角色到宫廷角色的映射."""
+        """Test technical role to court role mapping."""
         test_cases = [
             ("pm", "emperor"),
             ("director", "emperor"),
@@ -79,7 +79,7 @@ class TestCourtRoleMapping:
             ("reviewer", "menxia_shilang"),
             ("dispatcher", "shangshu_ling"),
             ("executor", "gongbu_shangshu"),
-            ("unknown_role", "gongbu_officer_2"),  # 默认值
+            ("unknown_role", "gongbu_officer_2"),  # Default value
         ]
 
         for tech_role, expected_court_role in test_cases:
@@ -90,23 +90,23 @@ class TestCourtRoleMapping:
 
 
 class TestEngineToCourtStateMapping:
-    """测试引擎状态到宫廷状态的映射."""
+    """Test engine state to court state mapping."""
 
     def test_empty_engine_state(self):
-        """测试空引擎状态映射：所有角色应为 idle."""
+        """Test empty engine state mapping: all roles should be idle."""
         state = court_mapper.map_engine_to_court_state(None)
 
         assert state.phase == CourtScenePhase.COURT_AUDIENCE
         assert state.current_scene == "taiji_hall"
-        assert len(state.actors) == 24  # 24个角色
+        assert len(state.actors) == 24  # 24 roles
 
-        # 所有角色应为 idle
+        # All roles should be idle
         for actor in state.actors.values():
             assert actor.status == ActorStatus.IDLE
-            assert actor.role_name  # 应有显示名称
+            assert actor.role_name  # Should have display name
 
     def test_engine_phase_mapping(self):
-        """测试引擎阶段到宫廷阶段的映射."""
+        """Test engine phase to court phase mapping."""
         phase_mapping = [
             ({"phase": "planning"}, CourtScenePhase.DRAFT, "zhongshu_pavilion"),
             ({"phase": "decomposing"}, CourtScenePhase.DECOMPOSE, "shangshu_hall"),
@@ -124,8 +124,8 @@ class TestEngineToCourtStateMapping:
             )
 
     def test_role_status_priority(self):
-        """测试角色状态优先级：failed > blocked > executing > thinking > success > idle > offline."""
-        # 模拟引擎返回不同状态的单个角色
+        """Test role status priority: failed > blocked > executing > thinking > success > idle > offline."""
+        # Simulate engine returning different statuses for a single role
         test_cases = [
             ({"roles": {"gongbu_shangshu": {"status": "failed"}}}, ActorStatus.FAILED),
             ({"roles": {"gongbu_shangshu": {"status": "blocked"}}}, ActorStatus.BLOCKED),
@@ -146,7 +146,7 @@ class TestEngineToCourtStateMapping:
             )
 
     def test_risk_level_calculation(self):
-        """测试风险等级计算."""
+        """Test risk level calculation."""
         test_cases = [
             ({"recent_errors": []}, RiskLevel.NONE),
             ({"recent_errors": ["e1"]}, RiskLevel.LOW),
@@ -157,14 +157,14 @@ class TestEngineToCourtStateMapping:
 
         for engine_payload, expected_risk in test_cases:
             state = court_mapper.map_engine_to_court_state(engine_payload)
-            # 检查至少一个角色有风险等级
+            # Check that at least one role has a risk level
             risks = {a.risk_level for a in state.actors.values()}
             assert expected_risk in risks, (
                 f"Risk level {expected_risk} not found in state for errors: {len(engine_payload.get('recent_errors', []))}"
             )
 
     def test_deterministic_output(self):
-        """测试输出确定性：给定相同输入，输出必须一致."""
+        """Test output determinism: given the same input, output must be consistent."""
         engine_payload = {
             "phase": "executing",
             "running": True,
@@ -177,7 +177,7 @@ class TestEngineToCourtStateMapping:
         state1 = court_mapper.map_engine_to_court_state(engine_payload)
         state2 = court_mapper.map_engine_to_court_state(engine_payload)
 
-        # 比较关键字段
+        # Compare key fields
         assert state1.phase == state2.phase
         assert state1.current_scene == state2.current_scene
         assert set(state1.actors.keys()) == set(state2.actors.keys())
@@ -191,12 +191,12 @@ class TestEngineToCourtStateMapping:
 
 
 class TestSceneConfigs:
-    """测试场景配置."""
+    """Test scene configuration."""
 
     def test_scene_count(self):
-        """测试场景数量."""
+        """Test scene count."""
         scenes = get_scene_configs()
-        # 文档定义的7个场景
+        # 7 scenes defined in docs
         expected_scenes = [
             "taiji_hall",
             "zhongshu_pavilion",
@@ -209,43 +209,43 @@ class TestSceneConfigs:
             assert scene_id in scenes, f"Scene '{scene_id}' not found"
 
     def test_scene_phase_consistency(self):
-        """测试场景阶段一致性."""
+        """Test scene phase consistency."""
         scenes = get_scene_configs()
         phase_to_scene = {}
 
         for scene_id, config in scenes.items():
             phase = config["phase"]
             if phase in phase_to_scene:
-                # 允许多个场景映射到同一阶段，但每个场景必须有唯一阶段
+                # Multiple scenes may map to the same phase, but each scene must have a unique phase
                 pass
             phase_to_scene[phase] = scene_id
 
-            # 验证必要字段
+            # Verify required fields
             assert "camera_position" in config
             assert "focus_roles" in config
             assert len(config["camera_position"]) == 3
 
     def test_scene_transitions(self):
-        """测试场景切换配置."""
+        """Test scene transition configuration."""
         scenes = get_scene_configs()
 
         for scene_id, config in scenes.items():
             transitions = config.get("transitions", [])
-            # 验证切换目标存在
+            # Verify transition targets exist
             for target in transitions:
                 assert target in scenes, f"Scene '{scene_id}' has invalid transition target '{target}'"
 
 
 class TestAPICompatibility:
-    """测试 API 兼容性函数."""
+    """Test API compatibility functions."""
 
     def test_get_court_topology_api(self):
-        """测试 get_court_topology API 函数."""
+        """Test get_court_topology API function."""
         topology = get_court_topology()
         assert isinstance(topology, list)
-        assert len(topology) == 24  # 24个角色
+        assert len(topology) == 24  # 24 roles
 
-        # 验证返回格式为字典列表
+        # Verify returned format is a list of dicts
         for node in topology:
             assert isinstance(node, dict)
             assert "role_id" in node
@@ -253,7 +253,7 @@ class TestAPICompatibility:
             assert "position" in node
 
     def test_map_engine_to_court_state_api(self):
-        """测试 map_engine_to_court_state API 函数."""
+        """Test map_engine_to_court_state API function."""
         engine_status = {"phase": "planning", "running": True}
         state = map_engine_to_court_state(engine_status)
 
@@ -264,46 +264,46 @@ class TestAPICompatibility:
         assert "updated_at" in state
 
     def test_get_scene_configs_api(self):
-        """测试 get_scene_configs API 函数."""
+        """Test get_scene_configs API function."""
         scenes = get_scene_configs()
         assert isinstance(scenes, dict)
         assert len(scenes) >= 6
 
 
 class TestEdgeCases:
-    """测试边界情况."""
+    """Test edge cases."""
 
     def test_malformed_engine_status(self):
-        """测试损坏的引擎状态输入."""
+        """Test malformed engine state input."""
         malformed_cases = [
-            {"roles": "not_a_dict"},  # roles 不是字典
-            {"phase": 123},  # phase 不是字符串
-            {"running": "maybe"},  # running 不是布尔值
-            {},  # 空字典
+            {"roles": "not_a_dict"},  # roles is not a dict
+            {"phase": 123},  # phase is not a string
+            {"running": "maybe"},  # running is not a boolean
+            {},  # Empty dict
         ]
 
         for case in malformed_cases:
-            # 不应抛出异常
+            # Should not throw exceptions
             state = court_mapper.map_engine_to_court_state(case)
             assert state is not None
-            assert len(state.actors) == 24  # 24个角色
+            assert len(state.actors) == 24  # 24 roles
 
     def test_missing_roles_in_engine(self):
-        """测试引擎中缺少角色信息."""
+        """Test missing role info in engine."""
         engine_payload = {
             "phase": "executing",
             "running": True,
-            # 不包含任何角色信息
+            # Does not contain any role info
         }
 
         state = court_mapper.map_engine_to_court_state(engine_payload)
-        # 所有角色应有默认状态
+        # All roles should have default status
         for actor in state.actors.values():
             assert actor.status in ActorStatus
             assert actor.role_name
 
     def test_case_insensitive_tech_role_mapping(self):
-        """测试技术角色映射大小写不敏感."""
+        """Test case-insensitive technical role mapping."""
         variations = ["PM", "Pm", "pm", "pM", "DIRECTOR", "Director", "director"]
 
         for variation in variations:

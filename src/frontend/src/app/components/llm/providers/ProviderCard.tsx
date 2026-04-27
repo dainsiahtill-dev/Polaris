@@ -164,7 +164,7 @@ export const ProviderCard = memo(function ProviderCard({
 
   const getRoleDisplayName = useCallback((roleId?: string) => {
     if (roleId === 'pm') return 'PM';
-    if (roleId === 'director') return '工部侍郎';
+    if (roleId === 'director') return 'Director';
     if (roleId === 'qa') return 'QA';
     if (roleId === 'architect' || roleId === 'docs') return 'Architect';
     return roleId || '未署名';

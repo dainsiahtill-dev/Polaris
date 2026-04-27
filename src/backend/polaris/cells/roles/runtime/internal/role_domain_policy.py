@@ -50,17 +50,17 @@ class RoleDomainPolicy:
         "pm": "pm",
         "product_manager": "pm",
         "project_manager": "pm",
-        "尚书令": "pm",
+        "PM": "pm",
         "architect": "architect",
         "docs": "architect",
-        "中书令": "architect",
+        "Architect": "architect",
         "chief_engineer": "chief_engineer",
         "chiefengineer": "chief_engineer",
         "chief_enginner": "chief_engineer",
         "chiefenginner": "chief_engineer",
-        "工部尚书": "chief_engineer",
+        "Chief Engineer": "chief_engineer",
         "director": "director",
-        "工部侍郎": "director",
+        "Director": "director",
     }
 
     ROLE_DEFAULT_EXECUTION_DOMAIN: dict[str, str] = {

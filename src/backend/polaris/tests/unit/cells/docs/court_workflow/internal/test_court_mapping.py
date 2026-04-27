@@ -35,7 +35,7 @@ class TestCourtRoleMapping:
         state = mapper.get_role_state("emperor")
         assert state is not None
         assert state.role_id == "emperor"
-        assert state.role_name == "天子"
+        assert state.role_name == "User"
         assert state.status == ActorStatus.IDLE
 
     def test_get_role_state_invalid(self, mapper: CourtRoleMapping) -> None:
@@ -151,16 +151,16 @@ class TestCourtRoleMapping:
         engine = {"phase": "planning", "running": True}
         state = mapper.map_engine_to_court_state(engine)
         emperor = state.actors["emperor"]
-        assert emperor.current_action == "颁诏"
+        assert emperor.current_action == "Issuing orders"
         zhongshu = state.actors["zhongshu_ling"]
-        assert zhongshu.current_action == "草拟圣旨"
+        assert zhongshu.current_action == "Drafting blueprint"
         shangshu = state.actors["shangshu_ling"]
-        assert shangshu.current_action == "统筹"
+        assert shangshu.current_action == "Coordinating"
 
     def test_get_scene_configs(self, mapper: CourtRoleMapping) -> None:
         configs = mapper.get_scene_configs()
         assert "taiji_hall" in configs
-        assert configs["taiji_hall"]["scene_name"] == "太极殿"
+        assert configs["taiji_hall"]["scene_name"] == "Main Hall"
 
 
 class TestModuleLevelFunctions:

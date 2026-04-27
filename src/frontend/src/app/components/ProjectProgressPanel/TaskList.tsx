@@ -33,14 +33,14 @@ function TaskListComponent({
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto pr-1 custom-scrollbar">
             {tasks.length === 0 ? (
                 <div className="col-span-full rounded-xl border border-dashed border-white/10 bg-white/5 p-6 text-center text-sm text-text-dim">
-                    待尚书省出具章奏清单...
+                    待PM Office出具Task清单...
                 </div>
             ) : (
                 tasks.map((task, index) => {
                     const key = taskKey(task);
                     const isCompleted = completedSet.has(key) || isTaskDone(task);
                     const isCurrent = currentTaskKey === key;
-                    const title = task.title || task.goal || task.id || `章奏 ${index + 1}`;
+                    const title = task.title || task.goal || task.id || `Task ${index + 1}`;
                     const goal = task.goal && task.goal !== title ? task.goal : '';
                     const acceptance = Array.isArray(task.acceptance)
                         ? task.acceptance

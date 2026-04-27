@@ -88,21 +88,21 @@ def _bind_docs_wizard_llm_from_architect_role(state: AppState) -> dict[str, Any]
     docs_cfg = roles.get("docs") if isinstance(roles.get("docs"), dict) else None
     role_cfg = architect_cfg or docs_cfg
     if not isinstance(role_cfg, dict):
-        raise HTTPException(status_code=409, detail="中书令角色未配置，请先在 LLM 设置中完成角色绑定。")
+        raise HTTPException(status_code=409, detail="Architect角色未配置，请先在 LLM 设置中完成角色绑定。")
 
     provider_id = str(role_cfg.get("provider_id") or "").strip()
     model = str(role_cfg.get("model") or "").strip()
     if not provider_id or not model:
-        raise HTTPException(status_code=409, detail="中书令角色缺少 provider_id/model，请先完成角色绑定。")
+        raise HTTPException(status_code=409, detail="Architect角色缺少 provider_id/model，请先完成角色绑定。")
 
     providers = config.get("providers") or {}
     provider_cfg = providers.get(provider_id) if isinstance(providers.get(provider_id), dict) else None
     if not isinstance(provider_cfg, dict):
-        raise HTTPException(status_code=409, detail=f"中书令绑定的提供商不存在: {provider_id}")
+        raise HTTPException(status_code=409, detail=f"Architect绑定的提供商不存在: {provider_id}")
 
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
     if not provider_type:
-        raise HTTPException(status_code=409, detail=f"中书令绑定的提供商缺少 type: {provider_id}")
+        raise HTTPException(status_code=409, detail=f"Architect绑定的提供商缺少 type: {provider_id}")
 
     # Keep docs wizard runtime aligned with architect role without restricting provider type.
     state.settings.architect_spec_provider = provider_type
@@ -187,7 +187,7 @@ async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload)
     if not result:
         raise HTTPException(
             status_code=409,
-            detail="中书令角色 LLM 奏对失败：可能是输出被截断或格式不符，请检查 max_tokens、模型输出格式与网络连通性。",
+            detail="Architect role LLM Dialogue failed: output may be truncated or format mismatch; please check max_tokens, model output format, and network connectivity.",
         )
 
     result_fields = result.get("fields")
@@ -271,7 +271,7 @@ async def docs_init_suggest(request: Request, payload: DocsInitSuggestPayload) -
     }
     ai_fields = await generate_docs_ai_fields(workspace_str, state.settings, fields)
     if not ai_fields:
-        raise HTTPException(status_code=409, detail="中书令角色 LLM 不可用，请检查 provider/model 与网络连通性。")
+        raise HTTPException(status_code=409, detail="Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。")
     return {
         "ok": True,
         "fields": {
@@ -307,7 +307,7 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
     }
     ai_fields = await generate_docs_ai_fields(workspace_str, state.settings, fields)  # type: ignore[misc]
     if not ai_fields:
-        raise HTTPException(status_code=409, detail="中书令角色 LLM 不可用，请检查 provider/model 与网络连通性。")
+        raise HTTPException(status_code=409, detail="Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。")
     if ai_fields.get("goal"):
         fields["goal"] = "\n".join(ai_fields.get("goal") or [])
     if ai_fields.get("in_scope"):
@@ -382,7 +382,7 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
 
             # 阶段 3: 调用 LLM 生成字段（流式，实时返回thinking）
             await queue.put(
-                {"type": "stage", "data": {"stage": "llm_start", "message": "中书令正在分析需求...", "progress": 20}}
+                {"type": "stage", "data": {"stage": "llm_start", "message": "Architect正在分析需求...", "progress": 20}}
             )
 
             ai_fields = None
@@ -402,7 +402,7 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
 
             if not ai_fields:
                 await queue.put(
-                    {"type": "error", "data": {"error": "中书令角色 LLM 不可用，请检查 provider/model 与网络连通性。"}}
+                    {"type": "error", "data": {"error": "Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。"}}
                 )
                 return
 

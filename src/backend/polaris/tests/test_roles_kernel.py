@@ -74,7 +74,7 @@ class TestRoleProfileRegistry:
         pm_profile = registry.get_profile("pm")
         assert pm_profile is not None
         assert pm_profile.role_id == "pm"
-        assert pm_profile.display_name == "尚书令 (Prime Minister)"
+        assert pm_profile.display_name == "PM (Prime Minister)"
 
         # 验证策略
         assert pm_profile.prompt_policy.allow_override is False  # 禁止覆盖

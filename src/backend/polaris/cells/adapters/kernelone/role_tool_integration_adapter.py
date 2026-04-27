@@ -23,19 +23,19 @@ class RoleToolIntegrationAdapter(IRoleToolIntegration):
     the abstract port interface defined in KernelOne.
 
     Supported roles:
-        - pm: Project Manager (尚书令)
-        - architect: Architect (中书令)
-        - chief_engineer: Chief Engineer (工部尚书)
-        - director: Director (工部侍郎)
-        - qa: Quality Assurance (门下侍中)
-        - scout: Scout (探子)
+        - pm: Project Manager (PM)
+        - architect: Architect (Architect)
+        - chief_engineer: Chief Engineer (Chief Engineer)
+        - director: Director (Director)
+        - qa: Quality Assurance (QA)
+        - scout: Scout (Scout)
 
     Example:
         >>> from polaris.cells.adapters.kernelone import RoleToolIntegrationAdapter
         >>> adapter = RoleToolIntegrationAdapter()
         >>> integration = adapter.get_role_integration("pm", "/path/to/project")
         >>> print(integration.get_system_prompt()[:100])
-        '你是 PM（尚书令），负责项目管理与规划...'
+        '你是 PM（PM），负责项目管理与规划...'
         >>> adapter.get_supported_roles()
         ('pm', 'architect', 'chief_engineer', 'director', 'qa', 'scout')
     """

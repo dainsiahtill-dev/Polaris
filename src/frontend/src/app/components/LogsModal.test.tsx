@@ -87,12 +87,12 @@ describe('LogsModal', () => {
       render(<LogsModal {...defaultProps} />);
       expect(screen.getByText('PM 子进程')).toBeInTheDocument();
       expect(screen.getByText('PM 禀报')).toBeInTheDocument();
-      expect(screen.getByText('工部子进程')).toBeInTheDocument();
+      expect(screen.getByText('Director subprocess')).toBeInTheDocument();
     });
 
     it('respects initialSourceId prop', () => {
       render(<LogsModal {...defaultProps} initialSourceId="director" />);
-      expect(screen.getByText('工部子进程')).toBeInTheDocument();
+      expect(screen.getByText('Director subprocess')).toBeInTheDocument();
     });
   });
 
@@ -126,7 +126,7 @@ describe('LogsModal', () => {
       expect(screen.getByText('PM 子进程')).toBeInTheDocument();
       expect(screen.getByText('PM 禀报')).toBeInTheDocument();
       expect(screen.getByText('PM 纪要（jsonl）')).toBeInTheDocument();
-      expect(screen.getByText('工部子进程')).toBeInTheDocument();
+      expect(screen.getByText('Director subprocess')).toBeInTheDocument();
       expect(screen.getByText('谋划稿')).toBeInTheDocument();
       expect(screen.getByText('Ollama')).toBeInTheDocument();
       expect(screen.getByText('审校')).toBeInTheDocument();

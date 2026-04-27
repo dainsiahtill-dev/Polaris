@@ -1,4 +1,4 @@
-"""Requirements Tracker - 尚书令需求追踪器
+"""Requirements Tracker - PM需求追踪器
 
 实现需求追踪矩阵，双向追踪需求↔文档↔任务↔代码，
 维护需求实现状态和变更历史。
@@ -109,7 +109,7 @@ class TraceabilityLink:
 
 
 class RequirementsTracker:
-    """尚书令需求追踪器
+    """PM需求追踪器
 
     核心功能：
     1. 需求注册表管理 - 完整的注册和查询接口

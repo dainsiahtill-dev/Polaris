@@ -428,7 +428,7 @@ async function runCourtFlow(window: Page): Promise<{ dialogueReady: boolean; fal
 
   const docsDialog = await resolveVisibleLocator(window, [
     () => window.getByTestId("docs-init-dialog"),
-    () => window.getByRole("dialog", { name: /政\s*事\s*堂|中书令廷议规划/i }),
+    () => window.getByRole("dialog", { name: /Court|Architect Discussion Planning/i }),
   ], 30_000);
   await expect(docsDialog).toBeVisible({ timeout: 30_000 });
 
@@ -451,13 +451,13 @@ async function runCourtFlow(window: Page): Promise<{ dialogueReady: boolean; fal
     if (index > 0) {
       const messageInput = await resolveVisibleLocator(window, [
         () => window.getByTestId("docs-init-message-input"),
-        () => window.getByPlaceholder(/可直接回答中书令追问/i),
+        () => window.getByPlaceholder(/Directly answer Architect follow-up/i),
       ], 10_000);
       await messageInput.fill(replies[index]);
     }
     const runDialogueButton = await resolveVisibleLocator(window, [
       () => window.getByTestId("docs-init-run-dialogue"),
-      () => window.getByRole("button", { name: /发\s*起\s*奏\s*对|奏对中/i }),
+      () => window.getByRole("button", { name: /Initiate Dialogue|In Dialogue/i }),
     ], 30_000);
     await runDialogueButton.click();
     try {
@@ -468,11 +468,11 @@ async function runCourtFlow(window: Page): Promise<{ dialogueReady: boolean; fal
     }
     const statusLocator = await resolveVisibleLocator(window, [
       () => window.getByTestId("docs-init-phase-status"),
-      () => window.getByText(/可拟定条陈|补齐关键信息中/),
+      () => window.getByText(/Can Draft Plan|Supplementing key info/),
     ], 10_000);
     const statusText = await statusLocator.innerText();
     const unresolvedText = await docsDialog.innerText();
-    if (statusText.includes("可拟定条陈") || unresolvedText.includes("已齐备")) {
+    if (statusText.includes("Can Draft Plan") || unresolvedText.includes("已齐备")) {
       dialogueReady = true;
       break;
     }
@@ -480,18 +480,18 @@ async function runCourtFlow(window: Page): Promise<{ dialogueReady: boolean; fal
 
   let applyButton = await tryResolveVisibleLocator(window, [
     () => window.getByTestId("docs-init-apply"),
-    () => window.getByRole("button", { name: /批\s*红\s*\/\s*用\s*印|用印中/i }),
+    () => window.getByRole("button", { name: /Approve|Approving/i }),
   ], 3_000);
 
   if (!applyButton) {
     const buildPreviewButton = await resolveVisibleLocator(window, [
       () => window.getByTestId("docs-init-build-preview"),
-      () => window.getByRole("button", { name: /拟\s*定\s*条\s*陈|拟稿中/i }),
+      () => window.getByRole("button", { name: /Draft Plan|Drafting/i }),
     ], 30_000);
     await buildPreviewButton.click();
     applyButton = await resolveVisibleLocator(window, [
       () => window.getByTestId("docs-init-apply"),
-      () => window.getByRole("button", { name: /批\s*红\s*\/\s*用\s*印|用印中/i }),
+      () => window.getByRole("button", { name: /Approve|Approving/i }),
     ], 8 * 60 * 1000);
   }
 
@@ -536,8 +536,8 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await moreButton.click();
 
   const directorMenuItem = await resolveVisibleLocator(window, [
-    () => window.getByRole("menuitem", { name: /Director\s*工作区|工部侍郎\s*工作区/i }),
-    () => window.getByText(/Director\s*工作区|工部侍郎\s*工作区/i),
+    () => window.getByRole("menuitem", { name: /Director\s*Workspace/i }),
+    () => window.getByText(/Director\s*Workspace/i),
   ], 15_000);
   await directorMenuItem.click();
 }

@@ -1,6 +1,6 @@
 """Workflow Chain Integration Test - 工作流链路集成测试
 
-验证工作流链路完整性: (可选: 中书令/Architect) -> 尚书令/PM -> (可选: 工部尚书/CE) -> 工部侍郎/Director -> 门下侍中/QA
+验证工作流链路完整性: (可选: Architect/Architect) -> PM/PM -> (可选: Chief Engineer/CE) -> Director/Director -> QA/QA
 """
 
 import sys

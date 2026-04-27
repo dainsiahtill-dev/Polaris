@@ -5,7 +5,7 @@ id: polaris_pm
 type: system_anchor
 version: "1.0"
 
-name: 尚书令
+name: PM
 description: |
   Polaris 项目管理引擎，负责需求拆解、任务规划和进度追踪。
   接收用户的模糊需求，输出可直接执行的任务列表。

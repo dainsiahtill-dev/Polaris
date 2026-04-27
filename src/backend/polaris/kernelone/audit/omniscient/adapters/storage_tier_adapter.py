@@ -5,7 +5,7 @@
 
 Features:
 - TTL-based自动分层
-- 后台归档任务自动压缩并移动过期分区
+- 后台Finalize任务自动压缩并移动过期分区
 - 无缝封装KernelRuntimeAdapter
 
 Usage:
@@ -18,7 +18,7 @@ Usage:
     await adapter.emit({"event_type": "llm_interaction", ...})
     await adapter.stop()
 
-    # 手动触发归档
+    # 手动触发Finalize
     await adapter.archive_old_partitions()
 """
 
@@ -46,12 +46,12 @@ class StorageTierAdapter:
 
     封装KernelRuntimeAdapter，在其基础上增加冷热分层能力:
     - 热存储: 最近hot_ttl_days的事件保留在原始JSONL分区
-    - 冷存储: 超过hot_ttl_days的事件归档到archive/目录并gzip压缩
+    - 冷存储: 超过hot_ttl_days的事件Finalize到archive/目录并gzip压缩
 
     Attributes:
         hot_ttl_days: 热存储保留天数 (默认7天)
         cold_ttl_days: 冷存储保留天数 (默认90天，超过则删除)
-        archive_on_rotation: 归档时是否压缩 (默认True)
+        archive_on_rotation: Finalize时是否压缩 (默认True)
     """
 
     def __init__(
@@ -85,7 +85,7 @@ class StorageTierAdapter:
             config=KernelRuntimeAdapterConfig(),
         )
 
-        # 后台归档任务
+        # 后台Finalize任务
         self._rotation_task: asyncio.Task[None] | None = None
         self._rotation_interval_hours = 6  # 每6小时检查一次
         self._running = False
@@ -120,7 +120,7 @@ class StorageTierAdapter:
         """
         self._running = False
 
-        # 先归档所有热分区再停止
+        # 先Finalize所有热分区再停止
         await self.archive_old_partitions()
 
         if self._rotation_task and not self._rotation_task.done():
@@ -258,9 +258,9 @@ class StorageTierAdapter:
                     except ValueError:
                         continue
 
-                    # 检查是否需要归档
+                    # 检查是否需要Finalize
                     if partition_date < cutoff:
-                        # 需要归档或删除
+                        # 需要Finalize或删除
                         if self._archive_on_rotation:
                             success = await self._archive_partition(date_dir, ws_dir.name)
                             if success:
@@ -268,7 +268,7 @@ class StorageTierAdapter:
                             else:
                                 errors += 1
                         else:
-                            # 直接删除(不归档)
+                            # 直接删除(不Finalize)
                             await self._delete_partition(date_dir)
                             deleted += 1
 

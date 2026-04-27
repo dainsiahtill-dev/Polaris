@@ -21,7 +21,7 @@ const DEFAULT_LOG_SOURCES = [
   { id: 'pm-subprocess', label: 'PM 子进程', path: 'runtime/logs/pm.process.log', channel: 'pm_subprocess' },
   { id: 'pm-report', label: 'PM 禀报', path: 'runtime/results/pm.report.md', channel: 'pm_report' },
   { id: 'pm-log', label: 'PM 纪要（jsonl）', path: 'runtime/events/pm.events.jsonl', channel: 'pm_log' },
-  { id: 'director', label: '工部子进程', path: 'runtime/logs/director.process.log', channel: 'director_console' },
+  { id: 'director', label: 'Director 子进程', path: 'runtime/logs/director.process.log', channel: 'director_console' },
   { id: 'planner', label: '谋划稿', path: 'runtime/results/planner.output.md', channel: 'planner' },
   { id: 'ollama', label: 'Ollama', path: 'runtime/results/director_llm.output.md', channel: 'ollama' },
   { id: 'qa', label: '审校', path: 'runtime/results/qa.review.md', channel: 'qa' },
@@ -728,7 +728,7 @@ export function LogsModal({
                 onChange={(event) => setFilter(event.target.value as typeof filter)}
               >
                 <option value="all">全部</option>
-                <option value="error">封驳</option>
+                <option value="error">Reject</option>
                 <option value="exec">执行</option>
                 <option value="tool">器用</option>
               </select>

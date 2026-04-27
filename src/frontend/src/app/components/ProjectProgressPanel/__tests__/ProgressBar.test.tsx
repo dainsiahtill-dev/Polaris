@@ -75,7 +75,7 @@ describe('ProgressBar', () => {
             />
         );
 
-        expect(screen.getByText(/工部侍郎勘验通过率: 85%/)).toBeInTheDocument();
+        expect(screen.getByText(/Director QA Pass Rate: 85%/)).toBeInTheDocument();
     });
 
     it('任务数为 0 时应该显示占位符', () => {

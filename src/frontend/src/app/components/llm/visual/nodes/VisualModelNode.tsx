@@ -2,11 +2,11 @@ import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { VisualModelNodeData } from '../types/visual';
 
 const ROLE_LABELS: Record<string, string> = {
-  pm: '尚书令',
-  director: '工部尚书',
-  qa: '门下侍中',
-  architect: '中书令',
-  docs: '中书令',
+  pm: 'PM',
+  director: 'Chief Engineer',
+  qa: 'QA',
+  architect: 'Architect',
+  docs: 'Architect',
 };
 
 export function VisualModelNode({ data }: NodeProps<Node<VisualModelNodeData>>) {

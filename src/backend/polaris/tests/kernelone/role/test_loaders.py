@@ -27,7 +27,7 @@ class TestAnchorLoader:
 
         assert anchor is not None
         assert anchor.id == "polaris_director"
-        assert anchor.name == "工部侍郎"
+        assert anchor.name == "Director"
         assert "workflow_orchestration" in anchor.capabilities
         assert anchor.macro_workflow.get("type") == "blueprint_then_execute"
 
@@ -81,9 +81,9 @@ class TestPersonaLoader:
 
         assert persona is not None
         assert persona.id == "gongbu_shilang"
-        assert persona.name == "工部侍郎"
+        assert persona.name == "Director"
         assert len(persona.vocabulary) >= 3
-        assert "臣已核实" in persona.vocabulary
+        assert "Verified" in persona.vocabulary
 
     def test_load_all_polaris_personas(self) -> None:
         """Test loading all Polaris personas."""
@@ -104,7 +104,7 @@ class TestPersonaLoader:
         persona = self.loader.load("gongbu_shilang")
 
         assert persona is not None
-        assert persona.expression.get("greeting") == "臣听令。"
+        assert persona.expression.get("greeting") == "Awaiting orders."
         assert persona.expression.get("thinking_prefix") == "<thinking>"
         assert persona.expression.get("thinking_suffix") == "</thinking>"
 

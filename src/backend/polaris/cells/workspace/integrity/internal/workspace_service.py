@@ -267,7 +267,7 @@ def _build_interface_contract_markdown(goal_text: str, in_scope_items: list[str]
         "## 能力边界\n"
         f"{_format_list(key_scopes)}\n\n"
         "## 核心能力契约\n"
-        "- 验证执行与证据归档\n"
+        "- 验证执行与证据Finalize\n"
         "- 实时事件流接入、排序校验与幂等处理\n"
         "- 状态快照与增量广播的一致性策略\n\n"
         "## 交付约束\n"

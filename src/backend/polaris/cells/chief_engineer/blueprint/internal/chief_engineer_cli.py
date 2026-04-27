@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chief Engineer (工部尚书) Standalone CLI.
+"""Chief Engineer (Chief Engineer) Standalone CLI.
 
 Migration note (Task #48 Phase 2):
     This CLI now routes through RoleRuntimeService instead of the deprecated
@@ -46,7 +46,7 @@ async def main() -> int:
     elif args.mode == "interactive":
         welcome = """
 ╔══════════════════════════════════════════════════════════════╗
-║  Chief Engineer (工部尚书) - Implementation Planning Agent     ║
+║  Chief Engineer (Chief Engineer) - Implementation Planning Agent     ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Responsibilities:                                          ║
 ║    • Analyze codebase structure                              ║

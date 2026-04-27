@@ -206,15 +206,15 @@ def _meeting_improvement_hint(
     if "missing_evidence" in reason_token:
         return "增强证据规划与 required_evidence 生成规则，减少缺证据失败。"
     if "failed_gates" in reason_token:
-        return "加强 Director 前置自检与工部尚书施工图对齐，降低硬门禁失败率。"
+        return "加强 Director 前置自检与Chief Engineer施工图对齐，降低硬门禁失败率。"
     if "tri_council_round_limit_reached" in reason_token:
         return "升级链路耗尽：需要人工复盘该失败模式并更新 Polaris 策略模板。"
     if str(next_role or "").strip() == "Architect":
-        return "需求/验收契约存在歧义，需中书令补充文档契约与边界定义。"
+        return "需求/验收契约存在歧义，需Architect补充文档契约与边界定义。"
     if str(next_role or "").strip() == "PM":
         return "当前由 PM 进行任务重排与策略重规划。"
     if str(next_role or "").strip() == "ChiefEngineer":
-        return "由工部尚书补齐施工图（模块/文件/方法）并缩小修复范围。"
+        return "由Chief Engineer补齐施工图（模块/文件/方法）并缩小修复范围。"
     return "记录该会议样本并纳入 Polaris 改进知识库。"
 
 

@@ -1,7 +1,7 @@
-"""宫廷投影系统模型定义.
+"""Role Projection System Model Definitions.
 
-本模块定义了宫廷化 3D UI 投影所需的数据模型，包括角色状态、场景拓扑、
-证据引用等类型。所有文本字段使用 UTF-8 编码。
+This module defines the data models required for the 3D UI role projection, including role states, scene topology,
+evidence references, and other types. All text fields use UTF-8 encoding.
 """
 
 from dataclasses import dataclass, field
@@ -11,24 +11,24 @@ from typing import Any
 
 
 class CourtRole(str, Enum):
-    """宫廷角色枚举."""
+    """Role Enumeration."""
 
-    # 天子
+    # User
     EMPEROR = "emperor"
-    # 三省
-    ZHONGSHU_LING = "zhongshu_ling"  # 中书令
-    ZHONGSHU_SHILANG = "zhongshu_shilang"  # 中书侍郎
-    MENXIA_SHILANG = "menxia_shilang"  # 门下侍郎
-    MENXIA_SHIZHONG = "menxia_shizhong"  # 门下侍中
-    SHANGBG_LING = "shangshu_ling"  # 尚书令
-    # 六部
-    LIBU_SHANGSHU = "libu_shangshu"  # 吏部尚书
-    HUBU_SHANGSHU = "hubu_shangshu"  # 户部尚书
-    LIBU_SHANGSHU2 = "libu_shangshu2"  # 礼部尚书
-    BINGBU_SHANGSHU = "bingbu_shangshu"  # 兵部尚书
-    XINGBU_SHANGSHU = "xingbu_shangshu"  # 刑部尚书
-    GONGBU_SHANGSHU = "gongbu_shangshu"  # 工部尚书
-    # 部属官员（每部2名）
+    # Top departments
+    ZHONGSHU_LING = "zhongshu_ling"  # Architect
+    ZHONGSHU_SHILANG = "zhongshu_shilang"  # Architect Deputy
+    MENXIA_SHILANG = "menxia_shilang"  # QA Deputy
+    MENXIA_SHIZHONG = "menxia_shizhong"  # QA
+    SHANGBG_LING = "shangshu_ling"  # PM
+    # Departments
+    LIBU_SHANGSHU = "libu_shangshu"  # HR Lead
+    HUBU_SHANGSHU = "hubu_shangshu"  # FinOps Lead
+    LIBU_SHANGSHU2 = "libu_shangshu2"  # Protocol Lead
+    BINGBU_SHANGSHU = "bingbu_shangshu"  # Security Lead
+    XINGBU_SHANGSHU = "xingbu_shangshu"  # Policy Lead
+    GONGBU_SHANGSHU = "gongbu_shangshu"  # Chief Engineer
+    # Department officers (2 per department)
     LIBU_OFFICER_1 = "libu_officer_1"
     LIBU_OFFICER_2 = "libu_officer_2"
     HUBU_OFFICER_1 = "hubu_officer_1"
@@ -44,37 +44,37 @@ class CourtRole(str, Enum):
 
 
 class CourtScenePhase(str, Enum):
-    """宫廷场景阶段枚举."""
+    """Scene Phase Enumeration."""
 
-    COURT_AUDIENCE = "court_audience"  # 太极殿听政
-    DRAFT = "draft"  # 中书省制诏
-    DECOMPOSE = "decompose"  # 尚书省拆解任务
-    BLUEPRINT = "blueprint"  # 工部蓝图
-    BUILD = "build"  # 营造司施工
-    REVIEW = "review"  # 门下省审议
-    FINALIZE = "finalize"  # 回朝复命
+    COURT_AUDIENCE = "court_audience"  # User command center
+    DRAFT = "draft"  # Architect office drafts blueprints
+    DECOMPOSE = "decompose"  # PM office decomposes tasks
+    BLUEPRINT = "blueprint"  # Engineering blueprint
+    BUILD = "build"  # Construction site
+    REVIEW = "review"  # QA office reviews
+    FINALIZE = "finalize"  # Return and report completion
 
 
 class ActorStatus(str, Enum):
-    """角色状态枚举.
+    """Actor status enumeration.
 
-    优先级: failed > blocked > executing > thinking > success > idle > offline
+    Priority: failed > blocked > executing > thinking > success > idle > offline
     """
 
     OFFLINE = "offline"
     IDLE = "idle"
     THINKING = "thinking"
     EXECUTING = "executing"
-    DISPATCHING = "dispatching"  # 新增：派发中
-    REVIEWING = "reviewing"  # 新增：审议中
-    APPROVING = "approving"  # 新增：审核中
+    DISPATCHING = "dispatching"  # New: dispatching
+    REVIEWING = "reviewing"  # New: reviewing
+    APPROVING = "approving"  # New: approving
     BLOCKED = "blocked"
     SUCCESS = "success"
     FAILED = "failed"
 
 
 class RiskLevel(str, Enum):
-    """风险等级枚举."""
+    """Risk level enumeration."""
 
     NONE = "none"
     LOW = "low"
@@ -85,14 +85,14 @@ class RiskLevel(str, Enum):
 
 @dataclass
 class CourtEvidenceRef:
-    """证据引用定义.
+    """Evidence reference definition.
 
     Attributes:
-        path: 证据文件路径
-        channel: 来源通道
-        run_id: 运行ID
-        task_id: 任务ID
-        event_id: 事件ID
+        path: Evidence file path
+        channel: Source channel
+        run_id: Run ID
+        task_id: Task ID
+        event_id: Event ID
     """
 
     path: str
@@ -113,18 +113,18 @@ class CourtEvidenceRef:
 
 @dataclass
 class CourtActorState:
-    """宫廷角色状态定义.
+    """Court actor state definition.
 
     Attributes:
-        role_id: 角色唯一标识
-        role_name: 角色显示名称
-        status: 当前状态
-        current_action: 当前动作描述
-        task_id: 关联任务ID
-        risk_level: 风险等级
-        evidence_refs: 证据引用列表
-        metadata: 额外元数据
-        updated_at: 更新时间戳
+        role_id: Unique role identifier
+        role_name: Role display name
+        status: Current status
+        current_action: Current action description
+        task_id: Associated task ID
+        risk_level: Risk level
+        evidence_refs: Evidence reference list
+        metadata: Additional metadata
+        updated_at: Update timestamp
     """
 
     role_id: str
@@ -153,16 +153,16 @@ class CourtActorState:
 
 @dataclass
 class CourtTopologyNode:
-    """宫廷拓扑节点定义.
+    """Court topology node definition.
 
     Attributes:
-        role_id: 角色唯一标识
-        role_name: 角色显示名称
-        parent_id: 父节点角色ID
-        position: 3D场景位置坐标 [x, y, z]
-        department: 所属部门
-        level: 层级（用于排序和显示）
-        is_interactive: 是否可交互
+        role_id: Unique role identifier
+        role_name: Role display name
+        parent_id: Parent role ID
+        position: 3D scene position coordinates [x, y, z]
+        department: Department
+        level: Level (for sorting and display)
+        is_interactive: Whether interactive
     """
 
     role_id: str
@@ -187,15 +187,15 @@ class CourtTopologyNode:
 
 @dataclass
 class CourtActionEvent:
-    """宫廷动作事件定义.
+    """Court action event definition.
 
     Attributes:
-        action_type: 动作类型
-        from_role: 发起角色ID
-        to_role: 目标角色ID
-        payload: 动作负载数据
-        ts: 时间戳
-        evidence_refs: 关联证据引用
+        action_type: Action type
+        from_role: Source role ID
+        to_role: Target role ID
+        payload: Action payload data
+        ts: Timestamp
+        evidence_refs: Associated evidence references
     """
 
     action_type: str
@@ -218,16 +218,16 @@ class CourtActionEvent:
 
 @dataclass
 class CourtSceneConfig:
-    """宫廷场景配置定义.
+    """Court scene configuration definition.
 
     Attributes:
-        scene_id: 场景唯一标识
-        scene_name: 场景显示名称
-        phase: 场景阶段
-        description: 场景描述
-        camera_position: 相机位置
-        focus_roles: 焦点角色列表
-        transitions: 可切换的目标场景
+        scene_id: Unique scene identifier
+        scene_name: Scene display name
+        phase: Scene phase
+        description: Scene description
+        camera_position: Camera position
+        focus_roles: Focus role list
+        transitions: Switchable target scenes
     """
 
     scene_id: str
@@ -252,17 +252,17 @@ class CourtSceneConfig:
 
 @dataclass
 class CourtState:
-    """完整宫廷状态定义.
+    """Full court state definition.
 
-    这是 WebSocket 推送和 GET /court/state 返回的完整数据结构。
+    This is the complete data structure returned by WebSocket push and GET /court/state.
 
     Attributes:
-        phase: 当前场景阶段
-        current_scene: 当前场景ID
-        actors: 所有角色状态映射
-        topology: 拓扑结构（可选，通常静态）
-        recent_events: 最近事件列表
-        updated_at: 更新时间戳
+        phase: Current scene phase
+        current_scene: Current scene ID
+        actors: All role state mapping
+        topology: Topology structure (optional, usually static)
+        recent_events: Recent event list
+        updated_at: Update timestamp
     """
 
     phase: CourtScenePhase

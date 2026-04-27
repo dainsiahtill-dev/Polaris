@@ -72,9 +72,9 @@ export function RunHistoryModal({ isOpen, onClose }: RunHistoryModalProps) {
               <ScrollArea className="flex-1">
                 <div className="p-2 space-y-1">
                   {loading ? (
-                    <div className="text-center text-gray-500 py-8">正在调阅案卷...</div>
+                    <div className="text-center text-gray-500 py-8">Loading history...</div>
                   ) : runs.length === 0 ? (
-                    <div className="text-center text-gray-500 py-8">暂无历史案卷。</div>
+                    <div className="text-center text-gray-500 py-8">No history yet.</div>
                   ) : (
                     runs.map((run) => (
                       <div
@@ -99,7 +99,7 @@ export function RunHistoryModal({ isOpen, onClose }: RunHistoryModalProps) {
                           )}
                         </div>
                         <div className="text-xs text-gray-300 truncate mb-1">
-                          {run.task_id || '（无章奏编号）'}
+                          {run.task_id || '（No task ID）'}
                         </div>
                         <div className="text-[10px] text-gray-500 flex justify-between">
                           <span>{run.timestamp?.split(' ')[1] || '-'}</span>
@@ -145,13 +145,13 @@ export function RunHistoryModal({ isOpen, onClose }: RunHistoryModalProps) {
 
                       {/* Task Info */}
                       <div className="bg-gray-800/30 rounded-lg p-4 border border-gray-800">
-                        <h3 className="text-sm font-medium text-gray-300 mb-2">章奏</h3>
+                        <h3 className="text-sm font-medium text-gray-300 mb-2">Task</h3>
                         <div className="text-sm text-gray-200 font-mono bg-black/20 p-2 rounded">
-                          {selectedRun.task_id || '未记载'}
+                          {selectedRun.task_id || 'Not recorded'}
                         </div>
                         {selectedRun.error_code && (
                           <div className="mt-3">
-                            <div className="text-xs text-red-400 font-semibold mb-1">黜落缘由</div>
+                            <div className="text-xs text-red-400 font-semibold mb-1">Failure Reason</div>
                             <div className="text-sm text-red-300">{selectedRun.error_code}</div>
                           </div>
                         )}
@@ -180,7 +180,7 @@ export function RunHistoryModal({ isOpen, onClose }: RunHistoryModalProps) {
                           className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500"
                         >
                           <FileText className="h-4 w-4" />
-                          调阅物证与卷宗
+                          View Logs & Artifacts
                         </Button>
                       </div>
                     </div>
@@ -189,7 +189,7 @@ export function RunHistoryModal({ isOpen, onClose }: RunHistoryModalProps) {
               ) : (
                 <div className="flex-1 flex items-center justify-center text-gray-500 flex-col gap-2">
                   <ArrowRight className="h-8 w-8 opacity-20" />
-                  <p>请选择一份案卷以查看详情</p>
+                  <p>Select a history item to view details</p>
                 </div>
               )}
             </div>

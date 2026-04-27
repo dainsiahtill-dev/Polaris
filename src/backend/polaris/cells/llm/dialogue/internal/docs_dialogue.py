@@ -288,7 +288,7 @@ def build_dialogue_prompt(
     unresolved_text = ", ".join(unresolved) if unresolved else "(none)"
 
     return (
-        "You are 中书令 assisting a planning council session (廷议) for software implementation.\n"
+        "You are Architect assisting a planning council session (Discussion) for software implementation.\n"
         "Return ONLY a JSON object with keys:\n"
         "reply (string), questions (string array), tiaochen (string array), fields (object), meta (object), handoffs (object).\n"
         "fields keys: goal,in_scope,out_of_scope,constraints,definition_of_done,backlog; each value must be an array of short strings.\n"
@@ -343,12 +343,12 @@ def finalize_dialogue_payload(
     reply = str(data.get("reply") or "").strip()
     if not reply:
         reply = (
-            "准奏。廷议要项已齐备，可据此拟定条陈并入卷。"
+            "Approved. Discussion items are ready; you may draft the Plan and file it."
             if not unresolved_ids
-            else "准奏。已收圣意，尚有关键事项待明示，请补答下列问题。"
+            else "Approved. We have received your instructions, but key items need clarification; please answer the following questions."
         )
 
-    # 构建条陈
+    # Build Plan
     tiaochen = normalize_list(data.get("tiaochen"))[:_MAX_DIALOGUE_ITEMS]
     if not tiaochen:
         tiaochen = defaults.get("backlog", [])[:5]
@@ -387,10 +387,10 @@ def generate_dialogue_fallback(
 
     if unresolved_ids:
         questions = next_questions[:3] if next_questions else ["请补充更多信息"]
-        reply = "准奏。已收圣意，尚有关键事项待明示，请补答下列问题。"
+        reply = "Approved. We have received your instructions, but key items need clarification; please answer the following questions."
     else:
         questions = []
-        reply = "准奏。廷议要项已齐备，可据此拟定条陈并入卷。"
+        reply = "Approved. Discussion items are ready; you may draft the Plan and file it."
 
     defaults = _default_dialogue_fields(fields, message)
 

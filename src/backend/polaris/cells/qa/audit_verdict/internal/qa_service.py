@@ -1,4 +1,4 @@
-"""QA Service (门下省) - Quality Assurance as a Service.
+"""QA Service - Quality Assurance as a Service.
 
 This module implements the QA/Auditor role as a proper service in the Polaris v2 architecture.
 Responsible for reviewing code, running tests, and ensuring quality standards.

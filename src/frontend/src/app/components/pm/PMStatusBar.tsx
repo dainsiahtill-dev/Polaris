@@ -33,12 +33,12 @@ export function PMStatusBar({
           {pmRunning ? (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-emerald-400 font-medium">尚书令运行中</span>
+              <span className="text-emerald-400 font-medium">PM Running</span>
             </>
           ) : (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-              <span className="text-slate-500">尚书令已停止</span>
+              <span className="text-slate-500">PM Stopped</span>
             </>
           )}
         </div>

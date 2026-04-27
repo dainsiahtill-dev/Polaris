@@ -1,4 +1,4 @@
-"""QA Node implementation (门下侍中).
+"""QA Node implementation (QA).
 
 This module implements the QA role node for quality auditing
 and integration verification.
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class QANode(BaseRoleNode):
-    """QA Node - 门下侍中 (Censor).
+    """QA Node - QA (Censor).
 
     Responsible for:
     - Running integration QA after task execution

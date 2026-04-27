@@ -159,7 +159,7 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
     if docs_exit is not None:
         return docs_exit
 
-    # Initialize 尚书令PM system
+    # Initialize PMPM system
     from polaris.delivery.cli.pm.orchestration_core import ensure_shangshuling_pm_initialized
 
     ensure_shangshuling_pm_initialized(workspace_full)

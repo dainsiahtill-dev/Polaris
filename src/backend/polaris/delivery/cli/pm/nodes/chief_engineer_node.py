@@ -1,4 +1,4 @@
-"""ChiefEngineer Node implementation (工部尚书).
+"""ChiefEngineer Node implementation (Chief Engineer).
 
 This module implements the ChiefEngineer role node for generating
 construction blueprints from tasks.
@@ -14,7 +14,7 @@ from polaris.delivery.cli.pm.nodes.protocols import RoleContext, RoleResult
 
 
 class ChiefEngineerNode(BaseRoleNode):
-    """ChiefEngineer Node - 工部尚书 (Minister of Works).
+    """ChiefEngineer Node - Chief Engineer (Minister of Works).
 
     Responsible for:
     - Analyzing tasks and generating construction blueprints

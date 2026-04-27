@@ -1440,7 +1440,7 @@ export function InteractiveInterviewHall({
                           <div className={`rounded-lg border border-amber-400/40 bg-amber-500/10 ${compactMode ? 'p-2' : 'p-3'}`}>
                             <div className="flex items-center gap-2 mb-1.5">
                               <Brain className="size-3 text-amber-300" />
-                              <span className="text-[10px] uppercase tracking-wide text-amber-300 font-semibold">中书令自言自语</span>
+                              <span className="text-[10px] uppercase tracking-wide text-amber-300 font-semibold">Architect thinking aloud</span>
                               {isThinkingActive ? (
                                 <Loader2 className="size-3 text-amber-300 animate-spin" />
                               ) : null}

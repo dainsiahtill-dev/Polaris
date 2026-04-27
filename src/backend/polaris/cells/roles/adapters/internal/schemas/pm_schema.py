@@ -1,4 +1,4 @@
-"""PM (尚书令) Output Schema - Task list generation.
+"""PM (PM) Output Schema - Task list generation.
 
 Defines the structured output format for project management task planning.
 """

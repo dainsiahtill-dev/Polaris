@@ -1,4 +1,4 @@
-"""Architect Service (中书令) - Architecture design as a Service.
+"""Architect Service (Architect) - Architecture design as a Service.
 
 This module implements the Architect role as a proper service in the Polaris v2 architecture.
 Responsible for creating project documentation, ADRs, and interface contracts.

@@ -1,6 +1,6 @@
 """Orchestration module for PM workflow.
 
-This module provides the orchestration logic for the PM (尚书令) workflow,
+This module provides the orchestration logic for the PM (PM) workflow,
 including document generation, blueprint analysis, and core execution control.
 
 Module Structure:

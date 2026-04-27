@@ -1,4 +1,4 @@
-"""Architect (中书令) Output Schema - Architecture design.
+"""Architect (Architect) Output Schema - Architecture design.
 
 Defines the structured output format for system architecture and technology decisions.
 """

@@ -1,6 +1,6 @@
-"""PM State Manager - 尚书令数据空间管理器
+"""PM State Manager - PM数据空间管理器
 
-统一管理尚书令的数据空间，提供原子化的状态读写接口，
+统一管理PM的数据空间，提供原子化的状态读写接口，
 维护项目元数据、配置和统计信息。
 """
 
@@ -99,7 +99,7 @@ class ProjectMetadata:
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
     version: str = "1.0.0"
-    pm_version: str = "2.0"  # 尚书令系统版本
+    pm_version: str = "2.0"  # PM系统版本
     workspace_path: str = ""
 
 
@@ -133,7 +133,7 @@ class PMState:
 
 
 class PMStateManager:
-    """尚书令数据空间管理器
+    """PM数据空间管理器
 
     统一管理PM的数据空间，包括：
     - PM数据目录初始化

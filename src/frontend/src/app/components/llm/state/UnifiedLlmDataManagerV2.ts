@@ -159,10 +159,10 @@ export class ListViewAdapter implements ViewAdapter<ListViewData> {
 
   private getRoleLabel(roleId: string): string {
     const labels: Record<string, string> = {
-      pm: '尚书令',
-      director: '工部尚书',
-      qa: '门下侍中',
-      architect: '中书令',
+      pm: 'PM',
+      director: 'Chief Engineer',
+      qa: 'QA',
+      architect: 'Architect',
     };
     return labels[roleId] || roleId;
   }
@@ -250,10 +250,10 @@ export class VisualGraphViewAdapter implements ViewAdapter<VisualGraphViewData> 
 
   private getRoleLabel(roleId: string): string {
     const labels: Record<string, string> = {
-      pm: '尚书令',
-      director: '工部尚书',
-      qa: '门下侍中',
-      architect: '中书令',
+      pm: 'PM',
+      director: 'Chief Engineer',
+      qa: 'QA',
+      architect: 'Architect',
     };
     return labels[roleId] || roleId;
   }

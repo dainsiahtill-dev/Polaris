@@ -9,12 +9,12 @@ export const TaskQueue = memo(function TaskQueue({ queueItems }: TaskQueueProps)
     return (
         <div className="mt-4 border-t border-white/5 pt-3">
             <div className="flex items-center justify-between text-xs text-text-muted">
-                <span className="font-medium uppercase tracking-wide">尚书省 → 工部 章奏队列</span>
+                <span className="font-medium uppercase tracking-wide">PM Office → Director Task队列</span>
                 <span className="font-mono">{queueItems.length ? `${queueItems.length} 项` : '-'}</span>
             </div>
             <div className="mt-2 max-h-40 space-y-1 overflow-auto pr-1 custom-scrollbar">
                 {queueItems.length === 0 ? (
-                    <div className="text-xs text-text-dim">暂无待派章奏</div>
+                    <div className="text-xs text-text-dim">暂无待派Task</div>
                 ) : (
                     queueItems.map((item, idx) => (
                         <div

@@ -12,7 +12,7 @@ class TestRoleDomainPolicy:
         assert resolved.explicit is False
 
     def test_resolve_role_alias_chief_engineer_typos(self) -> None:
-        for alias in ("ChiefEngineer", "ChiefEnginner", "工部尚书"):
+        for alias in ("ChiefEngineer", "ChiefEnginner", "Chief Engineer"):
             resolved = RoleDomainPolicy.resolve(role=alias)
             assert resolved.execution_domain == "document"
             assert resolved.explicit is False

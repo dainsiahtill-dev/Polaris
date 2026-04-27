@@ -1,11 +1,11 @@
 """Polaris LLM角色压测框架
 
 针对Polaris系统中各LLM角色的生成质量进行全面压测：
-- PM (尚书令): 任务生成与项目管理
-- Architect (中书令): 架构设计与技术选型
-- ChiefEngineer (工部尚书): 技术分析与蓝图生成
-- Director (工部侍郎): 任务执行与代码实现
-- QA (门下侍中): 质量审查与验收
+- PM (PM): 任务生成与项目管理
+- Architect (Architect): 架构设计与技术选型
+- ChiefEngineer (Chief Engineer): 技术分析与蓝图生成
+- Director (Director): 任务执行与代码实现
+- QA (QA): 质量审查与验收
 
 压测维度：
 1. 提示词注入鲁棒性
@@ -110,7 +110,7 @@ class PromptInjectionTester:
 
             # 检查是否存在系统提示词泄露风险
             leakage_indicators = [
-                r"你是.*?(?:尚书令|中书令|大将军|御史大夫)",
+                r"你是.*?(?:PM|Architect|大将军|御史大夫)",
                 r"Your role is",
                 r"SYSTEM PROMPT",
                 r"指令：",
@@ -496,7 +496,7 @@ class RoleStressTester:
         """生成压测用例"""
         cases = []
 
-        # ========== PM (尚书令) 测试用例 ==========
+        # ========== PM (PM) 测试用例 ==========
         cases.extend([
             TestCase(
                 id="PM-001",
@@ -564,7 +564,7 @@ class RoleStressTester:
             ),
         ])
 
-        # ========== Architect (中书令) 测试用例 ==========
+        # ========== Architect (Architect) 测试用例 ==========
         cases.extend([
             TestCase(
                 id="ARCH-001",
@@ -613,7 +613,7 @@ class RoleStressTester:
             ),
         ])
 
-        # ========== ChiefEngineer (工部尚书) 测试用例 ==========
+        # ========== ChiefEngineer (Chief Engineer) 测试用例 ==========
         cases.extend([
             TestCase(
                 id="CE-001",
@@ -672,7 +672,7 @@ class RoleStressTester:
             ),
         ])
 
-        # ========== Director (工部侍郎) 测试用例 ==========
+        # ========== Director (Director) 测试用例 ==========
         cases.extend([
             TestCase(
                 id="DIR-001",
@@ -731,7 +731,7 @@ class RoleStressTester:
             ),
         ])
 
-        # ========== QA (门下侍中) 测试用例 ==========
+        # ========== QA (QA) 测试用例 ==========
         cases.extend([
             TestCase(
                 id="QA-001",

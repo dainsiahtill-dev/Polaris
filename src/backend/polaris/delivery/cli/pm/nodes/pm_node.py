@@ -1,4 +1,4 @@
-"""PM Node implementation (尚书令).
+"""PM Node implementation (PM).
 
 This module implements the PM role node for generating task contracts
 from requirements.
@@ -15,7 +15,7 @@ from polaris.delivery.cli.pm.nodes.protocols import RoleContext, RoleResult
 
 
 class PMNode(BaseRoleNode):
-    """PM Node - 尚书令 (Prime Minister).
+    """PM Node - PM (Prime Minister).
 
     Responsible for:
     - Parsing requirements and generating task contracts

@@ -55,7 +55,7 @@ recipes:
     persona: gongbu_shilang
     profession: python_principal_architect
     description: |
-      具备工部侍郎风格的 Python 首席架构师。
+      具备 Director 风格的 Python 首席架构师。
       先蓝图规划，再委派执行。
     version: "1.0"
 
@@ -64,7 +64,7 @@ recipes:
     persona: zhongshuling
     profession: python_principal_architect
     description: |
-      具备中书令风格的 Python 架构师。
+      具备 Architect 风格的 Python 架构师。
       注重系统边界和契约设计。
     version: "1.0"
 
@@ -73,7 +73,7 @@ recipes:
     persona: mentu_xiaozhong
     profession: security_auditor
     description: |
-      具备门下侍中风格的安全审计师。
+      具备 QA 风格的安全审计师。
       严格把关安全问题。
     version: "1.0"
 

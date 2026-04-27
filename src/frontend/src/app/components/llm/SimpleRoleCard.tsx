@@ -30,46 +30,46 @@ interface SimpleRoleCardProps {
 
 const ROLE_META: Record<string, { label: string; color: string; badge: string; description: string }> = {
   pm: {
-    label: '尚书令',
+    label: 'PM',
     color: 'text-cyan-300',
     badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
-    description: '奉承诏旨，总领全局，统筹任务与节奏。'
+    description: '总领全局，统筹任务与节奏。'
   },
   director: {
-    label: '工部侍郎',
+    label: 'Director',
     color: 'text-emerald-300',
     badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30',
-    description: '奉诏动工，负责实现、调度与技术裁断（实际编码）。'
+    description: '负责实现、调度与技术裁断（实际编码）。'
   },
   chief_engineer: {
-    label: '工部尚书',
+    label: 'Chief Engineer',
     color: 'text-emerald-400',
     badge: 'bg-emerald-600/20 text-emerald-300 border-emerald-600/30',
-    description: '绘制《营造法式》蓝图，定体例与纲目（设计不编码）。'
+    description: '绘制技术蓝图，定体例与纲目（设计不编码）。'
   },
   qa: {
-    label: '门下侍中',
+    label: 'QA',
     color: 'text-blue-200',
     badge: 'bg-blue-500/20 text-blue-200 border-blue-500/30',
-    description: '掌封驳复核，稽核质量与风险。'
+    description: '掌审核复核，稽核质量与风险。'
   },
   architect: {
-    label: '中书令',
+    label: 'Architect',
     color: 'text-amber-300',
     badge: 'bg-amber-500/20 text-amber-200 border-amber-500/30',
-    description: '承受诏旨，草拟《营造法式》（spec.md），定体例与纲目。'
+    description: '草拟项目规格与架构文档，定体例与纲目。'
   },
   cfo: {
-    label: '户部尚书',
+    label: 'CFO',
     color: 'text-purple-300',
     badge: 'bg-purple-500/20 text-purple-200 border-purple-500/30',
     description: '核算预算，监控Token用量与成本。'
   },
   hr: {
-    label: '吏部尚书',
+    label: 'HR',
     color: 'text-pink-300',
     badge: 'bg-pink-500/20 text-pink-200 border-pink-500/30',
-    description: '管理LLM配置与人员（模型）任免。'
+    description: '管理LLM配置与模型任免。'
   },
 };
 
@@ -98,7 +98,7 @@ const ROLE_TEST_DESCRIPTIONS: Record<string, string> = {
   pm: '检验结构化任务输出与验收条款（含 JSON 解析）。',
   director: '检验证据与执行指令输出（不直接生成补丁）。',
   chief_engineer: '检验蓝图设计与体例规划的完整性。',
-  qa: '检验 PASS/FAIL 封驳结论与理由完整性。',
+  qa: '检验 PASS/FAIL Reject结论与理由完整性。',
   architect: '检验 spec.md 草拟质量与结构完整度。',
   cfo: '检验预算核算与 Token 用量监控能力。',
   hr: '检验 LLM 配置与模型管理能力。'

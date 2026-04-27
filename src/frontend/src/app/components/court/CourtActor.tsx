@@ -1,7 +1,7 @@
 /**
- * 宫廷角色实体组件
+ * Court Role Entity Component
  *
- * 在3D场景中渲染单个宫廷角色，支持状态颜色、动画和交互
+ * Render a single court role in 3D scene，支持状态颜色、动画和交互
  */
 
 import React, { useRef, useState, useMemo } from 'react';
@@ -18,28 +18,28 @@ export interface CourtActorProps {
   onClick: () => void;
 }
 
-// 角色几何体缓存
+// Role geometry cache
 const geometryCache = new Map<string, THREE.BufferGeometry>();
 
 function getGeometry(department: string): THREE.BufferGeometry {
   if (!geometryCache.has(department)) {
     let geometry: THREE.BufferGeometry;
 
-    // 根据部门创建不同形状
+    // Create different shapes based on department
     switch (department) {
-      case 'imperial': // 天子 - 圆柱体（高台）
+      case 'imperial': // User - Cylinder (Platform)
         geometry = new THREE.CylinderGeometry(0.5, 0.6, 1.5, 8);
         break;
-      case 'zhongshu': // 中书省 - 立方体
+      case 'zhongshu': // Architect Office - Cube
         geometry = new THREE.BoxGeometry(0.8, 1, 0.8);
         break;
-      case 'menxia': // 门下省 - 八面体
+      case 'menxia': // QA Office - Octahedron
         geometry = new THREE.OctahedronGeometry(0.6);
         break;
-      case 'shangshu': // 尚书省 - 十二面体
+      case 'shangshu': // PM Office - Dodecahedron
         geometry = new THREE.DodecahedronGeometry(0.6);
         break;
-      case 'gongbu': // 工部 - 锥体（施工）
+      case 'gongbu': // Engineering - Cone (Construction)
         geometry = new THREE.ConeGeometry(0.5, 1.2, 6);
         break;
       default: // 其他部门 - 球体
@@ -162,7 +162,7 @@ export function CourtActor({ node, actor, isSelected, onClick }: CourtActorProps
                     className="text-xs mt-1"
                     style={{ color: RISK_COLORS[actor.risk_level] }}
                   >
-                    风险: {actor.risk_level}
+                    Risk: {actor.risk_level}
                   </div>
                 )}
               </>

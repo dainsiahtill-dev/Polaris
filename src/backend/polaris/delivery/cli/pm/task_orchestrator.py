@@ -1,6 +1,6 @@
-"""Task Orchestrator - 尚书令任务编排器
+"""Task Orchestrator - PM Task Orchestrator
 
-尚书令维护的任务状态真相源，智能任务分配，DAG依赖管理，多维度完成验证。
+PM-maintained source of truth for task states，智能任务分配，DAG依赖管理，多维度完成验证。
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class TaskAssignment:
 
 @dataclass
 class Task:
-    """任务实体 - 尚书令维护的真相源"""
+    """任务实体 - PM-maintained source of truth"""
 
     id: str
     title: str
@@ -118,10 +118,10 @@ class ExecutorStats:
 
 
 class TaskOrchestrator:
-    """尚书令任务编排器
+    """PM Task Orchestrator
 
     核心功能：
-    1. 任务注册表 - 尚书令维护的唯一真相源
+    1. 任务注册表 - PM-maintained sole source of truth
     2. 智能任务分配 - 基于执行者负载和能力
     3. DAG依赖解析 - 任务依赖图管理
     4. 任务完成验证 - 多维度验证
@@ -455,7 +455,7 @@ class TaskOrchestrator:
     ) -> Task | None:
         """Complete a task with verification.
 
-        这是尚书令维护真相的关键方法。只有通过验证的任务才能标记为完成。
+        Key method for PM to maintain truth. Only verified tasks can be marked as completed.
 
         Args:
             task_id: Task ID

@@ -84,17 +84,17 @@ export function StatusBar({
       <div className="flex items-center gap-2 pr-3 border-r border-white/10">
         <div className="flex items-center gap-1.5">
           <div className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${pmRunning ? 'bg-status-success text-status-success animate-pulse' : 'bg-text-dim text-text-dim'}`} />
-          <span className="text-[10px] text-text-muted font-bold tracking-tight">尚书令</span>
+          <span className="text-[10px] text-text-muted font-bold tracking-tight">PM</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${directorRunning ? 'bg-status-secondary text-status-secondary animate-pulse' : 'bg-text-dim text-text-dim'}`} />
-          <span className="text-[10px] text-text-muted font-bold tracking-tight">工部尚书</span>
+          <span className="text-[10px] text-text-muted font-bold tracking-tight">Chief Engineer</span>
         </div>
       </div>
 
       {/* 统计信息 */}
       <div className="flex items-center gap-3 pr-3 border-r border-white/10">
-        <div className="flex items-center gap-1" title="勘验通过率">
+        <div className="flex items-center gap-1" title="QA Pass Rate">
           <CheckCircle className="size-3 text-status-success" />
           <span className="text-[10px] text-text-main font-bold">{successLabel}</span>
         </div>
@@ -109,13 +109,13 @@ export function StatusBar({
         {onPingHealth && (
           <button onClick={onPingHealth} className="p-1 px-1.5 rounded-full hover:bg-white/10 text-text-dim hover:text-white transition-colors flex items-center gap-1">
             <ActivityIcon className="size-3" />
-            <span className="text-[9px] uppercase font-bold">{healthStatus === 'ok' ? '在线' : healthStatus || '探活'}</span>
+            <span className="text-[9px] uppercase font-bold">{healthStatus === 'ok' ? '在线' : healthStatus || 'Ping'}</span>
           </button>
         )}
         {onOpenLogs && (
           <button onClick={onOpenLogs} className="p-1 px-1.5 rounded-full hover:bg-white/10 text-text-dim hover:text-white transition-colors flex items-center gap-1">
             <FileText className="size-3" />
-            <span className="text-[9px] uppercase font-bold">案牍</span>
+            <span className="text-[9px] uppercase font-bold">Logs</span>
           </button>
         )}
       </div>

@@ -141,7 +141,7 @@ class ConstructionStore:
 
 
 class ChiefEngineerAgent(RoleAgent):
-    """Chief Engineer role agent (`工部尚书`).
+    """Chief Engineer role agent (`Chief Engineer`).
 
     Capabilities:
     - impact_analysis: Analyzes change impact across files/modules

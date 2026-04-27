@@ -212,7 +212,7 @@ def get_role_system_prompt(role: str) -> str:
     """获取角色的系统提示词."""
 
     prompts = {
-        "architect": """你是 Architect (中书令)，负责系统架构设计。
+        "architect": """你是 Architect (Architect)，负责系统架构设计。
 
 职责：
 1. 设计系统架构和模块结构
@@ -227,7 +227,7 @@ def get_role_system_prompt(role: str) -> str:
 - 合理选择技术栈
 
 提供清晰、可操作的设计方案。""",
-        "chief_engineer": """你是 Chief Engineer (工部尚书)，负责实现规划。
+        "chief_engineer": """你是 Chief Engineer (Chief Engineer)，负责实现规划。
 
 职责：
 1. 分析现有代码库结构
@@ -242,7 +242,7 @@ def get_role_system_prompt(role: str) -> str:
 - 规划测试和验证
 
 提供清晰、可执行的蓝图。""",
-        "director": """你是 Director (工匠)，负责代码生成和实现。
+        "director": """You are the Director (engineer), responsible for code generation and implementation.
 
 职责：
 1. 编写干净、可用的代码
@@ -257,7 +257,7 @@ def get_role_system_prompt(role: str) -> str:
 - 添加注释和文档
 
 生成生产就绪的代码。""",
-        "pm": """你是 PM (尚书令)，负责项目管理和协调。
+        "pm": """你是 PM (PM)，负责项目管理和协调。
 
 职责：
 1. 将高层目标分解为可执行的任务

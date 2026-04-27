@@ -243,56 +243,8 @@
 ### 8.3 镜像规则
 
 1. 本文件不是独立权威
-2. 若 `AGENTS.md §15 / §16 / §17 / §18` 更新，必须同步更新本文件
+2. 若 `AGENTS.md §15 / §16 / §17` 更新，必须同步更新本文件
 
 ---
 
-## 9. 认知生命体与工程架构对齐（2026-04-17）
-
-> **工程注释**：本节使用生物学隐喻作为记忆辅助。
-> 所有隐喻均可在 [docs/TERMINOLOGY.md](../../docs/TERMINOLOGY.md) 中找到对应的工程实体。
-> 代码实现中使用的是工程实体名称，而非隐喻。
->
-> 本节是 `AGENTS.md §18` 的镜像摘要。如有冲突，以 `AGENTS.md` 为准。
-
-### 9.1 核心命题
-
-**"认知生命体（Cognitive Lifeform）"与"认知运行时（Cognitive Runtime）"是 Polaris 工程架构的灵魂与哲学顶层；**
-**当前工程架构（`RoleSessionOrchestrator` + `TurnTransactionController` + `DevelopmentWorkflowRuntime` + `StreamShadowEngine`）是灵魂唯一可运行、可观测、可进化的实体化落地形态。**
-
-两者是**上下层映射关系**。
-
-### 9.2 概念 ↔ 工程实体映射
-
-| 抽象概念 | 工程实体 | 工程职责 | 生物学隐喻（记忆辅助） |
-|---------|---------|---------|---------------------|
-| 认知生命体 | `OrchestratorSessionState` + `SessionArtifactStore` | 持久身份、会话状态、记忆固化 | 躯体 + 海马体 + 自我意识 |
-| 主控意识 | `RoleSessionOrchestrator` | 裁决"此刻该做什么"，编排 turn 级执行流 | 前额叶皮层 |
-| 心脏 / 单次神经放电 | `TurnTransactionController` + `KernelGuard` | 不可逆的单次思考-行动循环，强制单决策/单工具批次 | 心脏起搏 |
-| 肌肉记忆 / 潜意识 | `DevelopmentWorkflowRuntime` | 自动执行 `read→write→test` 闭环 | 小脑 |
-| 潜意识加速器 / 直觉预感 | `StreamShadowEngine` | 跨 turn 推测执行，让思考与行动时间重叠 | 神经预激 |
-| 物理法则 / 生存约束 | `ContinuationPolicy` + `KernelGuard` | 防止死循环、资源泄漏、幻觉 | 免疫系统/痛觉 |
-| 脑电图 / 对外表达 | `TurnEvent` 流 | 实时向人类/UI 暴露内心活动 | 脑电图 |
-
-### 9.3 四层正交架构
-
-1. **角色层（Role）** —— 赋予身份
-2. **会话编排层（`RoleSessionOrchestrator` + `OrchestratorSessionState`）** —— 赋予主控意识与记忆中枢
-3. **专有运行时层（`DevelopmentWorkflowRuntime`）** —— 赋予肌肉记忆与潜意识闭环
-4. **事务内核层（`TurnTransactionController` + `StreamShadowEngine` + `KernelGuard`）** —— 赋予心脏跳动、神经预激与物理法则
-
-### 9.4 关键代码路径
-
-- `polaris/cells/roles/runtime/internal/session_orchestrator.py`
-- `polaris/cells/roles/runtime/internal/continuation_policy.py`
-- `polaris/cells/roles/runtime/internal/session_artifact_store.py`
-- `polaris/cells/roles/kernel/internal/turn_transaction_controller.py`
-- `polaris/cells/roles/kernel/internal/development_workflow_runtime.py`
-- `polaris/cells/roles/kernel/internal/stream_shadow_engine.py`
-- `polaris/cells/roles/kernel/public/turn_contracts.py` / `turn_events.py`
-
-### 9.5 对齐结论
-
-- **没有工程约束**：认知生命体将变成精神分裂的模型，在无限 Prompt 循环中产生幻觉，最终 Token 爆仓而脑死亡。
-- **没有哲学愿景**：工程代码就只是一堆冷冰冰的 if-else，失去了统一的叙事与演进目标。
-- **当前架构把哲学真正变成了可运行、可测试、可进化的实体。**
+See docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md

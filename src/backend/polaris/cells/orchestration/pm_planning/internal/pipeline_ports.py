@@ -417,10 +417,10 @@ def _build_pm_prompt_impl(
     if is_zh:
         role_boundary_rules = (
             "\n角色权限边界（必遵守）：\n"
-            "- 天子/用户仅通过 UI 指令入口（廷议/快驿）下达意图，不生成直接写文件任务。\n"
-            "- 中书令任务仅允许读写 `docs/`。\n"
+            "- User/用户仅通过 UI 指令入口（Discussion/快驿）下达意图，不生成直接写文件任务。\n"
+            "- Architect任务仅允许读写 `docs/`。\n"
             "- PM 只负责规划与契约编排，不直接执行代码实现。\n"
-            "- 工部尚书（ChiefEngineer）负责生成代码施工图与方法级蓝图，不直接提交业务代码。\n"
+            "- Chief Engineer（ChiefEngineer）负责生成代码施工图与方法级蓝图，不直接提交业务代码。\n"
             '- Director 任务必须声明代码作用域，默认 `scope_mode: "module"` + `scope_paths`。\n'
             "- QA/Auditor 为读多写少，仅可写审计结论与缺陷票据等验收产物。\n"
             "- 禁止自动回滚；回滚只允许人工确认触发。\n"

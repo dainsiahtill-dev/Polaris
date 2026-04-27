@@ -49,7 +49,7 @@ export interface UseRoleChatReturn {
  *   sendMessage,
  * } = useRoleChat({
  *   role: 'pm',
- *   welcomeMessage: '尚书令已就绪',
+ *   welcomeMessage: 'PM ready',
  *   context: { workspace, taskCount },
  * });
  * ```

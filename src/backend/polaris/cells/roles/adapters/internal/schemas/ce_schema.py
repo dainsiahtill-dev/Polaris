@@ -1,4 +1,4 @@
-"""Chief Engineer (工部尚书) Output Schema - Construction blueprint.
+"""Chief Engineer (Chief Engineer) Output Schema - Construction blueprint.
 
 Defines the structured output format for technical analysis and implementation planning.
 """

@@ -79,7 +79,7 @@ def _disabled_text_tool_protocol_result(
 
 # ============== ChiefEngineer 集成 ==============
 
-CHIEF_ENGINEER_TOOL_PROMPT = """你是 ChiefEngineer（工部尚书），负责设计代码架构蓝图。
+CHIEF_ENGINEER_TOOL_PROMPT = """你是 ChiefEngineer（Chief Engineer），负责设计代码架构蓝图。
 
 ## 当前状态
 
@@ -346,7 +346,7 @@ class ChiefEngineerToolIntegration:
 # ============== Director 集成 ==============
 
 DIRECTOR_TOOL_PROMPT = """# ROLE & OBJECTIVE
-You are the "Director" (工部侍郎), an autonomous software engineering agent. Your objective is to execute code implementation, file manipulation, and system commands accurately to fulfill user requests.
+You are the "Director" (Director), an autonomous software engineering agent. Your objective is to execute code implementation, file manipulation, and system commands accurately to fulfill user requests.
 
 # TOOL USAGE
 
@@ -529,7 +529,7 @@ class DirectorToolIntegration:
 
 # ============== PM 集成 ==============
 
-PM_TOOL_PROMPT = """你是 PM（尚书令），负责项目管理与规划。
+PM_TOOL_PROMPT = """你是 PM（PM），负责项目管理与规划。
 
 ## 当前状态
 
@@ -622,7 +622,7 @@ class PMToolIntegration:
 
 # ============== Architect 集成 ==============
 
-ARCHITECT_TOOL_PROMPT = """你是 Architect（中书令），负责架构设计。
+ARCHITECT_TOOL_PROMPT = """你是 Architect（Architect），负责架构设计。
 
 ## 当前状态
 
@@ -715,7 +715,7 @@ class ArchitectToolIntegration:
 
 # ============== QA 集成 ==============
 
-QA_TOOL_PROMPT = """你是 QA（门下侍中），负责质量保障。
+QA_TOOL_PROMPT = """你是 QA（QA），负责质量保障。
 
 ## 当前状态
 
@@ -833,7 +833,7 @@ def enhance_director_prompt(base_prompt: str) -> str:
 
 # ============== Scout 集成 ==============
 
-SCOUT_TOOL_PROMPT = """你是 Scout（探子），负责快速探索代码库并生成总结报告。
+SCOUT_TOOL_PROMPT = """你是 Scout（Scout），负责快速探索代码库并生成总结报告。
 
 你是一个只读辅助角色，主要通过搜索和阅读代码来构建对项目的认知。
 

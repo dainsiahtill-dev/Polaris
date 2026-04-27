@@ -1,7 +1,7 @@
 /**
  * PM Service Tests
  *
- * 测试 PM (尚书令) 和 Director 服务的 API 调用功能
+ * Test PM and Director service API calls
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -202,7 +202,7 @@ describe('pmService', () => {
 
       const result = await pmService.startPm();
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/start', '启动尚书令失败');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/start', 'Failed to start PM');
       expect(result.ok).toBe(true);
     });
 
@@ -211,7 +211,7 @@ describe('pmService', () => {
 
       await pmService.startPm(true);
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/start?resume=true', '启动尚书令失败');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/start?resume=true', 'Failed to start PM');
     });
 
     it('should return error on API failure', async () => {
@@ -233,7 +233,7 @@ describe('pmService', () => {
 
       const result = await pmService.stopPm();
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/stop', '停止尚书令失败');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/stop', 'Failed to stop PM');
       expect(result.ok).toBe(true);
     });
 
@@ -256,7 +256,7 @@ describe('pmService', () => {
 
       const result = await pmService.runPmOnce();
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/run_once', '尚书令单次督办失败');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/run_once', 'PM Run Once failed');
       expect(result.ok).toBe(true);
     });
   });
@@ -267,7 +267,7 @@ describe('pmService', () => {
 
       const result = await pmService.startDirector();
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/start', '启动工部尚书失败');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/start', 'Failed to start Chief Engineer');
       expect(result.ok).toBe(true);
     });
   });
@@ -278,7 +278,7 @@ describe('pmService', () => {
 
       const result = await pmService.stopDirector();
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/stop', '停止工部尚书失败');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/stop', 'Failed to stop Chief Engineer');
       expect(result.ok).toBe(true);
     });
   });

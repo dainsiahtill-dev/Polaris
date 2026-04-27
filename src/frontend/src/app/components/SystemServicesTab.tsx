@@ -1,8 +1,8 @@
 /**
  * System Services Tab — displays status of backend services:
- * - MCP Policy Server (大理寺 MCP)
- * - Code Search Engine (经籍搜索)
- * - Director Capabilities (工部权限)
+ * - MCP Policy Server (MCP Policy)
+ * - Code Search Engine (Code Search)
+ * - Director Capabilities (Director Capabilities)
  * - Vision Service (视觉服务)
  */
 import { useState, useEffect, useCallback } from 'react';
@@ -48,7 +48,7 @@ export function SystemServicesTab() {
       const res = await apiFetch('/arsenal/mcp/status');
       const data = await res.json();
       results.push({
-        name: '大理寺政令服务',
+        name: 'MCP Policy Service',
         icon: <Shield className="w-4 h-4" />,
         status: data.available ? 'online' : 'offline',
         detail: data.available
@@ -58,7 +58,7 @@ export function SystemServicesTab() {
       });
     } catch {
       results.push({
-        name: '大理寺政令服务',
+        name: 'MCP Policy Service',
         icon: <Shield className="w-4 h-4" />,
         status: 'unknown',
         detail: '暂无法核验',
@@ -70,7 +70,7 @@ export function SystemServicesTab() {
       const res = await apiFetch('/arsenal/director/capabilities');
       const data = await res.json();
       results.push({
-        name: '工部权限总览',
+        name: 'Director Capabilities Overview',
         icon: <Cpu className="w-4 h-4" />,
         status: data.capabilities?.length > 0 ? 'online' : 'offline',
         detail: data.capabilities?.length
@@ -80,7 +80,7 @@ export function SystemServicesTab() {
       });
     } catch {
       results.push({
-        name: '工部权限总览',
+        name: 'Director Capabilities Overview',
         icon: <Cpu className="w-4 h-4" />,
         status: 'unknown',
         detail: '暂无法核验',
@@ -113,10 +113,10 @@ export function SystemServicesTab() {
 
     // Code Search
     results.push({
-      name: '经籍搜索引擎',
+      name: 'Code Search Engine',
       icon: <Search className="w-4 h-4" />,
       status: 'online',
-      detail: '已就绪，先为疆域建索后可检索',
+      detail: '已就绪，先为 workspace 索引后可检索',
     });
 
     setServices(results);
@@ -234,7 +234,7 @@ export function SystemServicesTab() {
       <div className="bg-black/40 backdrop-blur-sm rounded-lg border border-cyan-500/20 p-4 space-y-3">
         <div className="flex items-center gap-2">
           <FileCode className="w-4 h-4 text-cyan-400" />
-          <h4 className="text-xs font-semibold text-cyan-300">经籍搜索</h4>
+          <h4 className="text-xs font-semibold text-cyan-300">Code Search</h4>
         </div>
 
         <div className="flex gap-2">
@@ -244,7 +244,7 @@ export function SystemServicesTab() {
             className="text-xs bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 px-3 py-1.5 rounded border border-purple-500/30 flex items-center gap-1 transition-colors disabled:opacity-50"
           >
             {indexing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-            {indexing ? '建索中...' : '为疆域建索'}
+            {indexing ? '索引中...' : '为 Workspace 索引'}
           </button>
         </div>
 

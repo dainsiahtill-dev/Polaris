@@ -1,4 +1,4 @@
-"""Director Node implementation (工部侍郎).
+"""Director Node implementation (Director).
 
 This module implements the Director role node for executing tasks
 using PolarisEngine.
@@ -17,7 +17,7 @@ from polaris.delivery.cli.pm.nodes.protocols import RoleContext, RoleResult
 
 
 class DirectorNode(BaseRoleNode):
-    """Director Node - 工部侍郎 (Director of Works).
+    """Director Node - Director (Director of Works).
 
     Responsible for:
     - Dispatching tasks to PolarisEngine
@@ -93,7 +93,7 @@ class DirectorNode(BaseRoleNode):
         pm_tasks_paths = self._collect_path_list(metadata.get("pm_tasks_paths"))
         progress_payload_paths = self._collect_path_list(metadata.get("progress_payload_paths"))
 
-        # 尚书令PM 深度集成：同步并优先使用就绪任务子集
+        # PMPM 深度集成：同步并优先使用就绪任务子集
         shang_meta: dict[str, Any] = {"sync_count": 0, "ready_count": 0, "selected_count": len(tasks)}
         dispatch_tasks = list(tasks)
         try:
@@ -156,7 +156,7 @@ class DirectorNode(BaseRoleNode):
         if has_failures or has_blocked:
             next_role = ""
 
-        # 回写尚书令任务完成状态（支持 legacy_id）
+        # 回写PM任务完成状态（支持 legacy_id）
         shang_recorded = 0
         for task_id, raw_status in status_updates.items():
             normalized_status = normalize_task_status(raw_status)

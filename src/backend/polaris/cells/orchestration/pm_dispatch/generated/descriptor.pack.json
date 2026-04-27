@@ -480,7 +480,7 @@
     {
       "type": "class",
       "name": "ShangshulingPort",
-      "description": "Port for 尚书令 (shangshuling) task-registry operations.",
+      "description": "Port for PM task-registry operations.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py",
       "methods": [
         {

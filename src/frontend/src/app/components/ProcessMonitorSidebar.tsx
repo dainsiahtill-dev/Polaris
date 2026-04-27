@@ -10,11 +10,11 @@ import type { UsageStats } from './UsageHUD';
 function getReadableBackendName(mode: string): { label: string; icon: React.ReactNode; description: string } {
   const modeMap: Record<string, { label: string; icon: React.ReactNode; description: string }> = {
     // 角色相关
-    pm: { label: '尚书令', icon: <Bot className="size-3 text-blue-400" />, description: 'PM 任务规划' },
-    director: { label: '工部尚书', icon: <Server className="size-3 text-purple-400" />, description: '代码执行' },
-    architect: { label: '中书令', icon: <BookOpen className="size-3 text-emerald-400" />, description: '架构设计' },
-    chief_engineer: { label: '工部侍郎', icon: <Shield className="size-3 text-amber-400" />, description: '技术审查' },
-    qa: { label: '门下侍中', icon: <Shield className="size-3 text-red-400" />, description: '质量审查' },
+    pm: { label: 'PM', icon: <Bot className="size-3 text-blue-400" />, description: 'PM 任务规划' },
+    director: { label: 'Chief Engineer', icon: <Server className="size-3 text-purple-400" />, description: '代码执行' },
+    architect: { label: 'Architect', icon: <BookOpen className="size-3 text-emerald-400" />, description: '架构设计' },
+    chief_engineer: { label: 'Director', icon: <Shield className="size-3 text-amber-400" />, description: '技术审查' },
+    qa: { label: 'QA', icon: <Shield className="size-3 text-red-400" />, description: '质量审查' },
     
     // Provider 类型
     generic: { label: '通用 Provider', icon: <Sparkles className="size-3 text-cyan-400" />, description: '默认运行时 Provider' },
@@ -67,7 +67,7 @@ export function ProcessMonitorSidebar({
       <div className="flex flex-col border-b border-white/5 bg-[linear-gradient(165deg,rgba(50,35,18,0.40),rgba(28,18,48,0.65))]">
         <div className="px-3 py-2 flex items-center gap-2">
             <Activity className="size-4 text-cyan-400" />
-            <span className="text-xs font-bold tracking-wide text-amber-200">中 枢 监 测</span>
+            <span className="text-xs font-bold tracking-wide text-amber-200">System Monitor</span>
             {(usageLoading || activeTab === 'usage') && usageStats === null && !usageError && (
               <RefreshCw className="size-3 text-cyan-400/50 animate-spin ml-auto" />
             )}
@@ -82,7 +82,7 @@ export function ProcessMonitorSidebar({
                 }`}
             >
                 <Terminal className="size-3" />
-                PM 案牍
+                PM Logs
             </button>
             <button
                 onClick={() => setActiveTab('director')}
@@ -93,7 +93,7 @@ export function ProcessMonitorSidebar({
                 }`}
             >
                 <Terminal className="size-3" />
-                工部尚书
+                Chief Engineer
             </button>
              <button
                 onClick={() => setActiveTab('files')}
@@ -104,7 +104,7 @@ export function ProcessMonitorSidebar({
                 }`}
             >
                 <Folder className="size-3" />
-                卷宗
+                Artifacts
             </button>
              <button
                 onClick={() => setActiveTab('usage')}
@@ -115,7 +115,7 @@ export function ProcessMonitorSidebar({
                 }`}
             >
                 <PieChart className="size-3" />
-                用度
+                Usage
             </button>
         </div>
       </div>
@@ -141,12 +141,12 @@ export function ProcessMonitorSidebar({
             <div className="p-4 space-y-6">
                 {/* Header with refresh button */}
                 <div className="flex items-center justify-between">
-                   <h3 className="text-xs uppercase font-bold text-amber-200/50 tracking-wider">用 度 统 计</h3>
+                   <h3 className="text-xs uppercase font-bold text-amber-200/50 tracking-wider">Usage Stats</h3>
                    {onRefreshUsage && (
                      <button 
                        onClick={onRefreshUsage}
                        className="p-1.5 rounded hover:bg-white/5 text-amber-200/50 hover:text-cyan-400 transition-colors"
-                       title="刷新用度数据"
+                       title="刷新Usage数据"
                      >
                        <RefreshCw className="size-3" />
                      </button>
@@ -157,7 +157,7 @@ export function ProcessMonitorSidebar({
                 {usageLoading && (
                   <div className="flex items-center justify-center py-8">
                     <RefreshCw className="size-5 text-cyan-400 animate-spin" />
-                    <span className="ml-2 text-sm text-amber-200/50">加载用度数据...</span>
+                    <span className="ml-2 text-sm text-amber-200/50">加载Usage数据...</span>
                   </div>
                 )}
 
@@ -175,7 +175,7 @@ export function ProcessMonitorSidebar({
                            <div className="bg-white/5 p-4 rounded-xl border border-cyan-500/20 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
                                <div className="flex items-center gap-2 mb-2">
                                    <Cpu className="size-4 text-cyan-400" />
-                                   <div className="text-[10px] text-cyan-500/70 uppercase tracking-wider">词元耗用</div>
+                                   <div className="text-[10px] text-cyan-500/70 uppercase tracking-wider">Token Usage</div>
                                </div>
                                <div className="text-3xl font-mono font-bold text-cyan-100">{usageStats.totals.total_tokens.toLocaleString()}</div>
                                <div className="text-[9px] text-cyan-500/50 mt-1">
@@ -185,7 +185,7 @@ export function ProcessMonitorSidebar({
                            <div className="bg-white/5 p-4 rounded-xl border border-purple-500/20 shadow-[0_0_10px_rgba(168,85,247,0.1)]">
                                <div className="flex items-center gap-2 mb-2">
                                    <Zap className="size-4 text-purple-400" />
-                                   <div className="text-[10px] text-purple-500/70 uppercase tracking-wider">大模型调用</div>
+                                   <div className="text-[10px] text-purple-500/70 uppercase tracking-wider">LLM Calls</div>
                                </div>
                                <div className="text-3xl font-mono font-bold text-purple-100">{usageStats.calls.toLocaleString()}</div>
                                <div className="text-[9px] text-purple-500/50 mt-1">
@@ -197,7 +197,7 @@ export function ProcessMonitorSidebar({
                 {/* Cost Estimation - Optional */}
                 {usageStats.totals.total_tokens > 0 && (
                     <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
-                        <div className="text-[10px] uppercase tracking-wider text-amber-200/50 mb-1">成本估算</div>
+                        <div className="text-[10px] uppercase tracking-wider text-amber-200/50 mb-1">Cost Estimate</div>
                         <div className="flex items-baseline gap-2">
                             <span className="text-lg font-mono text-amber-200">${(usageStats.totals.total_tokens / 1000 * 0.003).toFixed(3)}</span>
                             <span className="text-[10px] text-amber-200/40">≈ $3/1M tokens (Claude)</span>
@@ -207,7 +207,7 @@ export function ProcessMonitorSidebar({
 
                 {usageStats?.by_mode && Object.keys(usageStats.by_mode).length > 0 && (
                      <div className="space-y-2">
-                        <h3 className="text-xs uppercase font-bold text-amber-200/50 tracking-wider">分 阶 明 细</h3>
+                        <h3 className="text-xs uppercase font-bold text-amber-200/50 tracking-wider">Breakdown</h3>
                         <div className="space-y-1.5">
                             {Object.entries(usageStats.by_mode)
                                 .sort(([, a], [, b]) => b.total_tokens - a.total_tokens)
@@ -239,7 +239,7 @@ export function ProcessMonitorSidebar({
                 {!usageStats && !usageLoading && !usageError && (
                    <div className="flex flex-col items-center justify-center py-12 text-center">
                        <PieChart className="size-10 text-amber-200/20 mb-3" />
-                       <div className="text-sm text-amber-200/40 italic">暂无用度记录</div>
+                       <div className="text-sm text-amber-200/40 italic">暂无Usage记录</div>
                        <div className="text-[10px] text-amber-200/25 mt-1">运行 PM/Director 后将显示统计数据</div>
                    </div>
                 )}

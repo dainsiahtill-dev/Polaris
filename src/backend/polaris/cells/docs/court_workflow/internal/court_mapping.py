@@ -1,7 +1,7 @@
-"""宫廷角色映射服务.
+"""Role Mapping Service.
 
-本模块实现技术角色到古制角色的映射逻辑，是宫廷投影系统的核心映射层。
-遵循"纯古制展示优先"原则，技术角色在映射层吸收，不直接暴露给最终用户。
+This module implements the mapping logic from technical roles to display roles, and is the core mapping layer of the court projection system.
+Follows the "pure display-role priority" principle; technical roles are absorbed at the mapping layer and not directly exposed to end users.
 """
 
 from datetime import datetime
@@ -16,115 +16,115 @@ from .models.court import (
     RiskLevel,
 )
 
-# 固定宫廷拓扑定义
+# Fixed court topology definition
 COURT_TOPOLOGY: list[CourtTopologyNode] = [
-    # 天子
-    CourtTopologyNode("emperor", "天子", None, [0, 2, 0], "imperial", 0, True),
-    # 三省（中书省、门下省、尚书省）
-    CourtTopologyNode("zhongshu_ling", "中书令", "emperor", [-4, 1, 2], "zhongshu", 1, True),
-    CourtTopologyNode("zhongshu_shilang", "中书侍郎", "zhongshu_ling", [-5, 0.5, 3], "zhongshu", 2, True),
-    CourtTopologyNode("menxia_shilang", "门下侍郎", "emperor", [4, 1, 2], "menxia", 1, True),
-    CourtTopologyNode("menxia_shizhong", "门下侍中", "menxia_shilang", [5, 0.5, 3], "menxia", 2, True),
-    CourtTopologyNode("shangshu_ling", "尚书令", "emperor", [0, 1, 4], "shangshu", 1, True),
-    # 六部
-    CourtTopologyNode("libu_shangshu", "吏部尚书", "shangshu_ling", [-6, 0.5, 6], "libu", 2, True),
-    CourtTopologyNode("hubu_shangshu", "户部尚书", "shangshu_ling", [-3.6, 0.5, 6], "hubu", 2, True),
-    CourtTopologyNode("libu_shangshu2", "礼部尚书", "shangshu_ling", [-1.2, 0.5, 6], "libu2", 2, True),
-    CourtTopologyNode("bingbu_shangshu", "兵部尚书", "shangshu_ling", [1.2, 0.5, 6], "bingbu", 2, True),
-    CourtTopologyNode("xingbu_shangshu", "刑部尚书", "shangshu_ling", [3.6, 0.5, 6], "xingbu", 2, True),
-    CourtTopologyNode("gongbu_shangshu", "工部尚书", "shangshu_ling", [6, 0.5, 6], "gongbu", 2, True),
-    # 部属官员（每部2名）
-    CourtTopologyNode("libu_officer_1", "吏部员外郎", "libu_shangshu", [-7, 0, 8], "libu", 3, True),
-    CourtTopologyNode("libu_officer_2", "吏部主事", "libu_shangshu", [-5, 0, 8], "libu", 3, True),
-    CourtTopologyNode("hubu_officer_1", "户部员外郎", "hubu_shangshu", [-4.6, 0, 8], "hubu", 3, True),
-    CourtTopologyNode("hubu_officer_2", "户部主事", "hubu_shangshu", [-2.6, 0, 8], "hubu", 3, True),
-    CourtTopologyNode("libu2_officer_1", "礼部员外郎", "libu_shangshu2", [-2.2, 0, 8], "libu2", 3, True),
-    CourtTopologyNode("libu2_officer_2", "礼部主事", "libu_shangshu2", [-0.2, 0, 8], "libu2", 3, True),
-    CourtTopologyNode("bingbu_officer_1", "兵部员外郎", "bingbu_shangshu", [0.2, 0, 8], "bingbu", 3, True),
-    CourtTopologyNode("bingbu_officer_2", "兵部主事", "bingbu_shangshu", [2.2, 0, 8], "bingbu", 3, True),
-    CourtTopologyNode("xingbu_officer_1", "刑部员外郎", "xingbu_shangshu", [2.6, 0, 8], "xingbu", 3, True),
-    CourtTopologyNode("xingbu_officer_2", "刑部主事", "xingbu_shangshu", [4.6, 0, 8], "xingbu", 3, True),
-    CourtTopologyNode("gongbu_officer_1", "工部员外郎", "gongbu_shangshu", [5, 0, 8], "gongbu", 3, True),
-    CourtTopologyNode("gongbu_officer_2", "工部主事", "gongbu_shangshu", [7, 0, 8], "gongbu", 3, True),
+    # User
+    CourtTopologyNode("emperor", "User", None, [0, 2, 0], "imperial", 0, True),
+    # Top departments (Architect, QA, PM)
+    CourtTopologyNode("zhongshu_ling", "Architect", "emperor", [-4, 1, 2], "zhongshu", 1, True),
+    CourtTopologyNode("zhongshu_shilang", "Architect Deputy", "zhongshu_ling", [-5, 0.5, 3], "zhongshu", 2, True),
+    CourtTopologyNode("menxia_shilang", "QA Deputy", "emperor", [4, 1, 2], "menxia", 1, True),
+    CourtTopologyNode("menxia_shizhong", "QA", "menxia_shilang", [5, 0.5, 3], "menxia", 2, True),
+    CourtTopologyNode("shangshu_ling", "PM", "emperor", [0, 1, 4], "shangshu", 1, True),
+    # Departments
+    CourtTopologyNode("libu_shangshu", "HR Lead", "shangshu_ling", [-6, 0.5, 6], "libu", 2, True),
+    CourtTopologyNode("hubu_shangshu", "FinOps Lead", "shangshu_ling", [-3.6, 0.5, 6], "hubu", 2, True),
+    CourtTopologyNode("libu_shangshu2", "Protocol Lead", "shangshu_ling", [-1.2, 0.5, 6], "libu2", 2, True),
+    CourtTopologyNode("bingbu_shangshu", "Security Lead", "shangshu_ling", [1.2, 0.5, 6], "bingbu", 2, True),
+    CourtTopologyNode("xingbu_shangshu", "Policy Lead", "shangshu_ling", [3.6, 0.5, 6], "xingbu", 2, True),
+    CourtTopologyNode("gongbu_shangshu", "Chief Engineer", "shangshu_ling", [6, 0.5, 6], "gongbu", 2, True),
+    # Department officers (2 per department)
+    CourtTopologyNode("libu_officer_1", "HR Officer", "libu_shangshu", [-7, 0, 8], "libu", 3, True),
+    CourtTopologyNode("libu_officer_2", "HR Clerk", "libu_shangshu", [-5, 0, 8], "libu", 3, True),
+    CourtTopologyNode("hubu_officer_1", "FinOps Officer", "hubu_shangshu", [-4.6, 0, 8], "hubu", 3, True),
+    CourtTopologyNode("hubu_officer_2", "FinOps Clerk", "hubu_shangshu", [-2.6, 0, 8], "hubu", 3, True),
+    CourtTopologyNode("libu2_officer_1", "Protocol Officer", "libu_shangshu2", [-2.2, 0, 8], "libu2", 3, True),
+    CourtTopologyNode("libu2_officer_2", "Protocol Clerk", "libu_shangshu2", [-0.2, 0, 8], "libu2", 3, True),
+    CourtTopologyNode("bingbu_officer_1", "Security Officer", "bingbu_shangshu", [0.2, 0, 8], "bingbu", 3, True),
+    CourtTopologyNode("bingbu_officer_2", "Security Clerk", "bingbu_shangshu", [2.2, 0, 8], "bingbu", 3, True),
+    CourtTopologyNode("xingbu_officer_1", "Policy Officer", "xingbu_shangshu", [2.6, 0, 8], "xingbu", 3, True),
+    CourtTopologyNode("xingbu_officer_2", "Policy Clerk", "xingbu_shangshu", [4.6, 0, 8], "xingbu", 3, True),
+    CourtTopologyNode("gongbu_officer_1", "Engineering Officer", "gongbu_shangshu", [5, 0, 8], "gongbu", 3, True),
+    CourtTopologyNode("gongbu_officer_2", "Engineering Clerk", "gongbu_shangshu", [7, 0, 8], "gongbu", 3, True),
 ]
 
 
-# 技术角色到宫廷角色的映射表
+# Technical role to court role mapping table
 TECH_TO_COURT_ROLE_MAPPING: dict[str, str] = {
-    # PM/Director 映射到天子（统筹全局）
+    # PM/Director mapped to User (oversees all)
     "pm": "emperor",
     "director": "emperor",
     "orchestrator": "emperor",
-    # 规划类角色映射到中书省
+    # Planning roles mapped to Architect
     "planner": "zhongshu_ling",
     "architect": "zhongshu_shilang",
-    # 审核类角色映射到门下省
+    # Review roles mapped to QA
     "reviewer": "menxia_shilang",
     "auditor": "menxia_shizhong",
-    # 任务编排映射到尚书省
+    # Task orchestration mapped to PM
     "dispatcher": "shangshu_ling",
     "coordinator": "shangshu_ling",
-    # 执行类角色映射到工部
+    # Execution roles mapped to Engineering
     "executor": "gongbu_shangshu",
     "builder": "gongbu_shangshu",
     "worker": "gongbu_officer_1",
-    # 默认映射
+    # Default mapping
     "default": "gongbu_officer_2",
 }
 
 
-# 场景配置定义
+# Scene configuration definitions
 COURT_SCENE_CONFIGS: dict[str, Any] = {
     "taiji_hall": {
         "scene_id": "taiji_hall",
-        "scene_name": "太极殿",
+        "scene_name": "Main Hall",
         "phase": CourtScenePhase.COURT_AUDIENCE,
-        "description": "天子听政之所，全局总览中心",
+        "description": "User command center, global overview hub",
         "camera_position": [0, 8, 15],
         "focus_roles": ["emperor"],
         "transitions": ["zhongshu_pavilion", "shangshu_hall", "menxia_tower"],
     },
     "zhongshu_pavilion": {
         "scene_id": "zhongshu_pavilion",
-        "scene_name": "中书省·制诏阁",
+        "scene_name": "Architect Drafting Pavilion",
         "phase": CourtScenePhase.DRAFT,
-        "description": "中书令草拟圣旨之处",
+        "description": "Where Architect drafts blueprints",
         "camera_position": [-6, 5, 8],
         "focus_roles": ["zhongshu_ling", "zhongshu_shilang"],
         "transitions": ["taiji_hall", "shangshu_hall"],
     },
     "shangshu_hall": {
         "scene_id": "shangshu_hall",
-        "scene_name": "尚书省·政务厅",
+        "scene_name": "PM Affairs Hall",
         "phase": CourtScenePhase.DECOMPOSE,
-        "description": "尚书令拆解任务、派发令牌之所",
+        "description": "Where PM decomposes tasks and dispatches tokens",
         "camera_position": [0, 5, 10],
         "focus_roles": ["shangshu_ling"],
         "transitions": ["taiji_hall", "gongbu_blueprint"],
     },
     "gongbu_blueprint": {
         "scene_id": "gongbu_blueprint",
-        "scene_name": "工部·蓝图台",
+        "scene_name": "Engineering Blueprint Desk",
         "phase": CourtScenePhase.BLUEPRINT,
-        "description": "工部尚书绘制施工图之所",
+        "description": "Where Chief Engineer draws construction blueprints",
         "camera_position": [6, 4, 8],
         "focus_roles": ["gongbu_shangshu", "gongbu_officer_1", "gongbu_officer_2"],
         "transitions": ["shangshu_hall", "construction_site"],
     },
     "construction_site": {
         "scene_id": "construction_site",
-        "scene_name": "营造司·施工现场",
+        "scene_name": "Engineering Construction Site",
         "phase": CourtScenePhase.BUILD,
-        "description": "工匠施工之地，代码即建筑",
+        "description": "Where engineers build; code is the building",
         "camera_position": [8, 3, 6],
         "focus_roles": ["gongbu_officer_1", "gongbu_officer_2"],
         "transitions": ["gongbu_blueprint", "menxia_tower"],
     },
     "menxia_tower": {
         "scene_id": "menxia_tower",
-        "scene_name": "门下省·审议台",
+        "scene_name": "QA Review Bench",
         "phase": CourtScenePhase.REVIEW,
-        "description": "门下侍郎初审、侍中终审之所",
+        "description": "Where QA Deputy does preliminary review and QA does final review",
         "camera_position": [6, 5, 8],
         "focus_roles": ["menxia_shilang", "menxia_shizhong"],
         "transitions": ["taiji_hall", "construction_site"],
@@ -133,9 +133,9 @@ COURT_SCENE_CONFIGS: dict[str, Any] = {
 
 
 class CourtRoleMapping:
-    """宫廷角色映射器.
+    """Court role mapper.
 
-    负责将技术运行态数据映射为古制宫廷状态，是投影系统的核心逻辑层。
+    Responsible for mapping technical runtime data to display court states; it is the core logic layer of the projection system.
     """
 
     def __init__(self) -> None:
@@ -143,11 +143,11 @@ class CourtRoleMapping:
         self._role_display_names: dict[str, str] = {node.role_id: node.role_name for node in COURT_TOPOLOGY}
 
     def get_topology(self) -> list[CourtTopologyNode]:
-        """获取完整宫廷拓扑."""
+        """Get full court topology."""
         return COURT_TOPOLOGY.copy()
 
     def get_role_state(self, role_id: str) -> CourtActorState | None:
-        """获取指定角色的默认状态."""
+        """Get default state for a specified role."""
         if role_id not in self._topology_map:
             return None
         return CourtActorState(
@@ -158,20 +158,20 @@ class CourtRoleMapping:
         )
 
     def map_tech_role_to_court(self, tech_role: str) -> str:
-        """将技术角色映射到宫廷角色.
+        """Map technical role to court role.
 
         Args:
-            tech_role: 技术角色标识
+            tech_role: technical role identifier
 
         Returns:
-            宫廷角色ID
+            court role ID
         """
         return TECH_TO_COURT_ROLE_MAPPING.get(tech_role.lower(), "gongbu_officer_2")
 
     def _determine_status_from_engine(self, engine_payload: dict[str, Any], role_id: str) -> ActorStatus:
-        """根据引擎状态确定角色状态.
+        """Determine role status from engine state.
 
-        优先级: failed > blocked > executing > thinking > success > idle > offline
+        Priority: failed > blocked > executing > thinking > success > idle > offline
         """
         roles = engine_payload.get("roles", {})
         if role_id in roles:
@@ -192,7 +192,7 @@ class CourtRoleMapping:
             elif status_str == "idle":
                 return ActorStatus.IDLE
 
-        # 检查引擎整体状态
+        # Check overall engine status
         phase = str(engine_payload.get("phase", "")).lower()
         running = bool(engine_payload.get("running", False))
 
@@ -204,7 +204,7 @@ class CourtRoleMapping:
         return ActorStatus.IDLE
 
     def _determine_risk_level(self, engine_payload: dict[str, Any], role_id: str) -> RiskLevel:
-        """根据引擎数据确定风险等级."""
+        """Determine risk level from engine data."""
         error_count = 0
         recent_errors = engine_payload.get("recent_errors", [])
         if isinstance(recent_errors, list):
@@ -226,17 +226,17 @@ class CourtRoleMapping:
         pm_status: dict[str, Any] | None = None,
         director_status: dict[str, Any] | None = None,
     ) -> CourtState:
-        """将引擎状态映射为完整宫廷状态.
+        """Map engine state to full court state.
 
         Args:
-            engine_status: 引擎状态JSON
-            pm_status: PM状态
-            director_status: Director状态
+            engine_status: engine status JSON
+            pm_status: PM status
+            director_status: Director status
 
         Returns:
-            完整宫廷状态对象
+            full court state object
         """
-        # 确定当前阶段
+        # Determine current phase
         phase = CourtScenePhase.COURT_AUDIENCE
         current_scene = "taiji_hall"
 
@@ -256,7 +256,7 @@ class CourtRoleMapping:
             }
             phase = phase_mapping.get(engine_phase, CourtScenePhase.COURT_AUDIENCE)
 
-            # 根据阶段确定场景
+            # Determine scene based on phase
             scene_mapping = {
                 CourtScenePhase.DRAFT: "zhongshu_pavilion",
                 CourtScenePhase.DECOMPOSE: "shangshu_hall",
@@ -267,7 +267,7 @@ class CourtRoleMapping:
             }
             current_scene = scene_mapping.get(phase, "taiji_hall")
 
-        # 构建所有角色状态
+        # Build all actor states
         actors: dict[str, CourtActorState] = {}
         for node in COURT_TOPOLOGY:
             status = ActorStatus.IDLE
@@ -279,27 +279,27 @@ class CourtRoleMapping:
                 status = self._determine_status_from_engine(engine_status, node.role_id)
                 risk = self._determine_risk_level(engine_status, node.role_id)
 
-                # 根据角色和阶段确定动作
+                # Determine action based on role and phase
                 if node.role_id == "emperor":
                     if phase == CourtScenePhase.COURT_AUDIENCE:
-                        action = "听政"
+                        action = "Reviewing"
                     elif phase == CourtScenePhase.FINALIZE:
-                        action = "裁决"
+                        action = "Deciding"
                     else:
-                        action = "颁诏"
+                        action = "Issuing orders"
                 elif node.role_id in ["zhongshu_ling", "zhongshu_shilang"]:
-                    action = "草拟圣旨" if phase == CourtScenePhase.DRAFT else "待诏"
+                    action = "Drafting blueprint" if phase == CourtScenePhase.DRAFT else "On call"
                 elif node.role_id == "shangshu_ling":
-                    action = "拆解政务" if phase == CourtScenePhase.DECOMPOSE else "统筹"
+                    action = "Decomposing tasks" if phase == CourtScenePhase.DECOMPOSE else "Coordinating"
                 elif node.department == "gongbu":
                     if phase == CourtScenePhase.BLUEPRINT:
-                        action = "绘制蓝图"
+                        action = "Drawing blueprint"
                     elif phase == CourtScenePhase.BUILD:
-                        action = "监督施工"
+                        action = "Supervising construction"
                     else:
-                        action = "待命"
+                        action = "On standby"
                 elif node.department in ["menxia"]:
-                    action = "审议" if phase == CourtScenePhase.REVIEW else "待审"
+                    action = "Reviewing" if phase == CourtScenePhase.REVIEW else "Pending review"
 
             actors[node.role_id] = CourtActorState(
                 role_id=node.role_id,
@@ -322,16 +322,16 @@ class CourtRoleMapping:
         )
 
     def get_scene_configs(self) -> dict[str, Any]:
-        """获取所有场景配置."""
+        """Get all scene configs."""
         return COURT_SCENE_CONFIGS.copy()
 
 
-# 全局映射器实例
+# Global mapper instance
 court_mapper = CourtRoleMapping()
 
 
 def get_court_topology() -> list[dict[str, Any]]:
-    """获取宫廷拓扑（API 兼容函数）."""
+    """Get court topology (API compatibility function)."""
     return [node.to_dict() for node in court_mapper.get_topology()]
 
 
@@ -340,11 +340,11 @@ def map_engine_to_court_state(
     pm_status: dict[str, Any] | None = None,
     director_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """映射引擎状态到宫廷状态（API 兼容函数）."""
+    """Map engine state to court state (API compatibility function)."""
     state = court_mapper.map_engine_to_court_state(engine_status, pm_status, director_status)
     return state.to_dict()
 
 
 def get_scene_configs() -> dict[str, Any]:
-    """获取场景配置（API 兼容函数）."""
+    """Get scene configs (API compatibility function)."""
     return court_mapper.get_scene_configs()

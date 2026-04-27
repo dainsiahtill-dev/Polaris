@@ -99,7 +99,7 @@ class TestCellLayerMigration:
         with PMToolIntegration("/tmp") as integration:
             assert integration is not None
             prompt = integration.get_system_prompt()
-            assert "PM" in prompt or "尚书令" in prompt
+            assert "PM" in prompt or "PM" in prompt
 
     def test_kernelone_toolkit_no_role_exports(self):
         """验证 KernelOne toolkit 不再导出角色集成."""

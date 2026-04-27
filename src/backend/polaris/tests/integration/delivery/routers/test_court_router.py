@@ -96,7 +96,7 @@ class TestCourtRouter:
             },
         }
         mock_topology = [
-            {"role_id": "pm", "name": "尚书令"},
+            {"role_id": "pm", "name": "PM"},
         ]
         with (
             patch(
@@ -125,7 +125,7 @@ class TestCourtRouter:
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["status"] == "active"
-        assert payload["topology"]["name"] == "尚书令"
+        assert payload["topology"]["name"] == "PM"
 
     def test_get_actor_detail_not_found(self) -> None:
         """GET /court/actors/{role_id} returns 404 for unknown role."""
@@ -183,7 +183,7 @@ class TestCourtRouter:
     def test_get_role_mapping_happy_path(self) -> None:
         """GET /court/mapping returns 200 with role mapping."""
         client = _build_client()
-        mock_mapping = {"pm": "尚书令"}
+        mock_mapping = {"pm": "PM"}
         mock_topology = [MagicMock(role_id="pm")]
         with (
             patch(

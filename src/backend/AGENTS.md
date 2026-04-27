@@ -312,7 +312,7 @@ Cell 是最小自治边界。
 ## 13. 镜像同步规则
 
 1. `CLAUDE.md` 与 `GEMINI.md` 只是镜像摘要
-2. 修改 `§15 / §16 / §17 / §18` 时，必须同步三个指令文件
+2. 修改 `§15 / §16 / §17` 时，必须同步三个指令文件
 3. 若存在冲突，以本文件为准并立即修复镜像漂移
 
 ## 14. 执行自检
@@ -477,61 +477,4 @@ Cell 是最小自治边界。
 
 ---
 
-## 18. 认知生命体与工程架构对齐（2026-04-17）
-
-> **工程注释**：本节使用生物学隐喻作为记忆辅助。
-> 所有隐喻均可在 [docs/TERMINOLOGY.md](../../docs/TERMINOLOGY.md) 中找到对应的工程实体。
-> 代码实现中使用的是工程实体名称，而非隐喻。
->
-> 本节是 `docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md` 的权威摘要。修改须同步 `CLAUDE.md` 与 `GEMINI.md`。
-
-### 18.1 核心命题
-
-**"认知生命体（Cognitive Lifeform）"与"认知运行时（Cognitive Runtime）"是 Polaris 工程架构的灵魂与哲学顶层；**
-**当前工程架构（`RoleSessionOrchestrator` + `TurnTransactionController` + `DevelopmentWorkflowRuntime` + `StreamShadowEngine`）是灵魂唯一可运行、可观测、可进化的实体化落地形态。**
-
-两者是**上下层映射关系**，不是平行关系，更不是冲突关系。
-
-### 18.2 概念 ↔ 工程实体映射
-
-| 抽象概念 | 工程实体（代码基线） | 工程职责 | 生物学隐喻（记忆辅助） |
-|---------|-------------------|---------|---------------------|
-| 认知生命体 | `OrchestratorSessionState` + `SessionArtifactStore` | 持久身份、会话状态、记忆固化 | 躯体 + 海马体 + 自我意识 |
-| 主控意识 | `RoleSessionOrchestrator.execute_stream()` | 裁决"此刻该做什么"，编排 turn 级执行流 | 前额叶皮层 |
-| 心脏 / 单次神经放电 | `TurnTransactionController` + `KernelGuard` | 不可逆的单次思考-行动循环，强制单决策/单工具批次 | 心脏起搏 |
-| 肌肉记忆 / 潜意识 | `DevelopmentWorkflowRuntime` | 自动执行 `read→write→test` 闭环 | 小脑 |
-| 潜意识加速器 / 直觉预感 | `StreamShadowEngine`（跨 Turn 推测） | 跨 turn 推测执行，让思考与行动时间重叠 | 神经预激 |
-| 物理法则 / 生存约束 | `ContinuationPolicy` + `KernelGuard` | 防止死循环、资源泄漏、幻觉 | 免疫系统/痛觉 |
-| 脑电图 / 对外表达 | `TurnEvent` 流 | 实时向人类/UI 暴露内心活动 | 脑电图 |
-
-### 18.3 四层正交架构
-
-1. **角色层（Role）** —— 赋予身份
-2. **会话编排层（`RoleSessionOrchestrator` + `OrchestratorSessionState`）** —— 赋予主控意识与记忆中枢
-3. **专有运行时层（`DevelopmentWorkflowRuntime`）** —— 赋予肌肉记忆与潜意识闭环
-4. **事务内核层（`TurnTransactionController` + `StreamShadowEngine` + `KernelGuard`）** —— 赋予心脏跳动、神经预激与物理法则
-
-### 18.4 关键代码路径
-
-- `polaris/cells/roles/runtime/internal/session_orchestrator.py` — 会话编排器（主控意识）
-- `polaris/cells/roles/runtime/internal/continuation_policy.py` — 理智中枢
-- `polaris/cells/roles/runtime/internal/session_artifact_store.py` — 海马体（Artifact 记忆固化）
-- `polaris/cells/roles/kernel/internal/turn_transaction_controller.py` — 事务内核（心脏）
-- `polaris/cells/roles/kernel/internal/development_workflow_runtime.py` — 开发运行时（肌肉记忆）
-- `polaris/cells/roles/kernel/internal/stream_shadow_engine.py` — 推测引擎（直觉预感）
-- `polaris/cells/roles/kernel/public/turn_contracts.py` / `turn_events.py` — 公开契约与事件流
-
-### 18.5 物理法则（不可违背的约束）
-
-1. **单次决策法则**：每个 Turn 只能产生 `1` 个决策（`len(TurnDecisions) == 1`）
-2. **单次工具批次法则**：每个 Turn 最多 `1` 个工具批次（`len(ToolBatches) <= 1`）
-3. **无隐藏连续法则**：禁止状态轨迹中出现非法循环（`hidden_continuation == 0`）
-4. **最大自动回合法则**：超过 `max_auto_turns` 必须停止
-5. **Stagnation 检测法则**：最近 2 个 Turn 的 artifact hash 未变化且无 speculative hints 时，强制终止
-6. **重复失败熔断法则**：最近 3 个 Turn 连续发生相同错误时，强制终止
-
-### 18.6 对齐结论
-
-- **没有工程约束**：认知生命体将变成精神分裂的模型，在无限 Prompt 循环中产生幻觉，最终 Token 爆仓而脑死亡。
-- **没有哲学愿景**：工程代码就只是一堆冷冰冰的 if-else，失去了统一的叙事与演进目标。
-- **当前架构把哲学真正变成了可运行、可测试、可进化的实体。**
+See docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md

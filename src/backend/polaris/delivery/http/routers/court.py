@@ -1,7 +1,7 @@
-"""宫廷投影 API 路由.
+"""Court projection API router.
 
-本模块提供宫廷化 3D UI 投影的后端接口，包括拓扑查询、状态获取等功能。
-所有接口为只读，不修改现有执行闭环与写入路径。
+This module provides backend interfaces for the court-style 3D UI projection, including topology queries and state retrieval.
+All interfaces are read-only and do not modify existing execution loops or write paths.
 """
 
 from typing import Any
@@ -59,13 +59,13 @@ async def _get_director_status(app_state: AppState) -> dict[str, Any]:
 
 @router.get("/topology")
 async def get_topology() -> dict[str, Any]:
-    """获取宫廷拓扑结构.
+    """Get court topology structure.
 
-    返回固定宫廷拓扑（天子/三省/六部/官员席位），包含角色层级关系和3D位置坐标。
+    Returns fixed court topology (User/Top departments/Departments/Officer seats), including role hierarchy and 3D position coordinates.
 
     Returns:
         {
-            "nodes": [...],  # 拓扑节点列表
+            "nodes": [...],  # Topology node list
             "count": 22,     # 可交互角色数量
             "scenes": {...}  # 场景配置
         }
@@ -88,18 +88,18 @@ async def get_topology() -> dict[str, Any]:
 async def get_state(
     request: Request,
 ) -> dict[str, Any]:
-    """获取当前宫廷状态.
+    """Get current court state.
 
-    根据引擎实时状态返回每个宫廷角色的状态、任务摘要、风险级别、证据索引。
-    这是纯投影层，读取现有 engine_status/snapshot 数据并映射为古制角色状态。
+    Returns the status, task summary, risk level, and evidence index for each court role based on real-time engine status.
+    This is a pure projection layer that reads existing engine_status/snapshot data and maps it to display role states.
 
     Returns:
         {
-            "phase": "draft",           # 当前阶段
-            "current_scene": "...",     # 当前场景ID
-            "actors": {...},            # 角色状态映射
-            "recent_events": [...],     # 最近事件列表
-            "updated_at": 1234567890    # 更新时间戳
+            "phase": "draft",           # Current phase
+            "current_scene": "...",     # Current scene ID
+            "actors": {...},            # Role state mapping
+            "recent_events": [...],     # Recent event list
+            "updated_at": 1234567890    # Update timestamp
         }
     """
     request_state = get_runtime_state(request)
@@ -121,13 +121,13 @@ async def get_actor_detail(
     role_id: str,
     request: Request,
 ) -> dict[str, Any]:
-    """获取单个角色的详细信息.
+    """Get detailed information for a single role.
 
     Args:
-        role_id: 角色唯一标识
+        role_id: Unique role identifier
 
     Returns:
-        角色详细信息，包含状态、任务、证据链
+        Detailed role information, including status, tasks, and evidence chain
     """
     request_state = get_runtime_state(request)
     # 获取完整状态
@@ -157,13 +157,13 @@ async def get_actor_detail(
 
 @router.get("/scenes/{scene_id}")
 async def get_scene_detail(scene_id: str) -> dict[str, Any]:
-    """获取单个场景的详细配置.
+    """Get detailed configuration for a single scene.
 
     Args:
-        scene_id: 场景唯一标识
+        scene_id: Unique scene identifier
 
     Returns:
-        场景配置，包含相机位置、焦点角色、可切换场景等
+        Scene configuration, including camera position, focus roles, switchable scenes, etc.
     """
     scenes = get_scene_configs()
 
@@ -175,18 +175,18 @@ async def get_scene_detail(scene_id: str) -> dict[str, Any]:
 
 @router.get("/mapping")
 async def get_role_mapping() -> dict[str, Any]:
-    """获取技术角色到宫廷角色的映射表.
+    """Get technical role to court role mapping table.
 
     Returns:
         {
-            "tech_to_court": {...},  # 技术角色 -> 宫廷角色
-            "court_roles": [...],    # 所有宫廷角色列表
-            "version": "1.0"         # 映射表版本
+            "tech_to_court": {...},  # Technical role -> Court role
+            "court_roles": [...],    # All court role list
+            "version": "1.0"         # Mapping version
         }
     """
     return {
         "tech_to_court": TECH_TO_COURT_ROLE_MAPPING,
         "court_roles": [node.role_id for node in COURT_TOPOLOGY],
         "version": "1.0",
-        "description": "技术角色到古制角色的唯一映射表",
+        "description": "Unique mapping table from technical roles to display roles",
     }

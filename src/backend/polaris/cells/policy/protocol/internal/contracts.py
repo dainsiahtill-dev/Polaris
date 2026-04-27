@@ -6,13 +6,13 @@ from public/contracts.py and adds internal-only helpers that live exclusively
 in this subtree.  No internal module may be imported by a public module.
 
 Phase semantics:
-  1. hp_start_run  (拟诏)  - goal / acceptance criteria
+  1. hp_start_run  (Define goals)  - goal / acceptance criteria
   2. hp_create_blueprint (制图) - mode, budget
-  3. hp_record_approval (廷议) - policy gate / budget approval
+  3. hp_record_approval (Discussion) - policy gate / budget approval
   4. hp_create_snapshot (快照) - backup (skipped for S1 fast-lane)
-  5. hp_allow_implementation (动工) - authorize LLM code generation
-  6. hp_run_verify  (勘验)  - Director self-check (compile/type lint)
-  7. hp_finalize_run (归档) - record results
+  5. hp_allow_implementation (Execute) - authorize LLM code generation
+  6. hp_run_verify  (Verify)  - Director self-check (compile/type lint)
+  7. hp_finalize_run (Finalize) - record results
 
 See public/contracts.py for the authoritative phase documentation.
 """

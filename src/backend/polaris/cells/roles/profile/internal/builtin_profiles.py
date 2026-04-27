@@ -8,11 +8,11 @@ from typing import Any
 # 5个核心角色的内置配置
 BUILTIN_PROFILES: list[dict[str, Any]] = [
     # ═══════════════════════════════════════════════════════════════════════
-    # PM - 尚书令 (项目管理)
+    # PM - PM (项目管理)
     # ═══════════════════════════════════════════════════════════════════════
     {
         "role_id": "pm",
-        "display_name": "尚书令 (Prime Minister)",
+        "display_name": "PM (Prime Minister)",
         "description": "项目管理系统的核心角色，负责任务拆解和规划",
         "responsibilities": [
             "分析用户需求，拆解为可执行的任务列表",
@@ -119,11 +119,11 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
         "version": "1.0.0",
     },
     # ═══════════════════════════════════════════════════════════════════════
-    # Architect - 中书令 (架构设计)
+    # Architect - Architect (架构设计)
     # ═══════════════════════════════════════════════════════════════════════
     {
         "role_id": "architect",
-        "display_name": "中书令 (Architect)",
+        "display_name": "Architect (Architect)",
         "description": "架构设计角色，负责技术选型和系统架构",
         "responsibilities": [
             "分析系统需求，设计整体架构",
@@ -196,11 +196,11 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
         "version": "1.0.0",
     },
     # ═══════════════════════════════════════════════════════════════════════
-    # Chief Engineer - 工部尚书 (技术分析/蓝图生成)
+    # Chief Engineer - Chief Engineer (技术分析/蓝图生成)
     # ═══════════════════════════════════════════════════════════════════════
     {
         "role_id": "chief_engineer",
-        "display_name": "工部尚书 (Chief Engineer)",
+        "display_name": "Chief Engineer (Chief Engineer)",
         "description": "技术分析角色，生成施工蓝图",
         "responsibilities": [
             "分析需求并设计实现方案",
@@ -273,11 +273,11 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
         "version": "1.0.0",
     },
     # ═══════════════════════════════════════════════════════════════════════
-    # Director - 工部侍郎 (代码执行)
+    # Director - Director (代码执行)
     # ═══════════════════════════════════════════════════════════════════════
     {
         "role_id": "director",
-        "display_name": "工部侍郎 (Director)",
+        "display_name": "Director (Director)",
         "description": "代码执行角色，负责代码修改和验证",
         "responsibilities": [
             "根据蓝图执行代码修改",
@@ -373,11 +373,11 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
         "version": "1.0.0",
     },
     # ═══════════════════════════════════════════════════════════════════════
-    # QA - 门下侍中 (质量审查)
+    # QA - QA (质量审查)
     # ═══════════════════════════════════════════════════════════════════════
     {
         "role_id": "qa",
-        "display_name": "门下侍中 (QA)",
+        "display_name": "QA (QA)",
         "description": "质量审查角色，负责代码审查和验收",
         "responsibilities": [
             "审查代码修改的正确性",
@@ -451,11 +451,11 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
         "version": "1.0.0",
     },
     # ═══════════════════════════════════════════════════════════════════════
-    # Scout - 探子 (只读代码探索)
+    # Scout - Scout (只读代码探索)
     # ═══════════════════════════════════════════════════════════════════════
     {
         "role_id": "scout",
-        "display_name": "探子 (Scout)",
+        "display_name": "Scout (Scout)",
         "description": "代码探索与文档阅读角色，负责初步认知和总结",
         "responsibilities": [
             "快速扫描项目结构和文件列表",

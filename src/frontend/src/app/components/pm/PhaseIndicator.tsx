@@ -31,11 +31,11 @@ interface PhaseIndicatorProps {
 }
 
 const PHASES: { id: Phase; label: string; description: string }[] = [
-  { id: 'agents', label: 'AGENTS', description: '卷宗设立' },
-  { id: 'planning', label: 'Planning', description: '尚书省规划' },
-  { id: 'chief_engineer', label: 'CE', description: '工部侍郎设计' },
-  { id: 'director', label: 'Director', description: '工部施工' },
-  { id: 'qa', label: 'QA', description: '门下侍中审查' },
+  { id: 'agents', label: 'AGENTS', description: 'Docs Setup' },
+  { id: 'planning', label: 'Planning', description: 'PM Office Planning' },
+  { id: 'chief_engineer', label: 'CE', description: 'Director Design' },
+  { id: 'director', label: 'Director', description: 'Engineering Execution' },
+  { id: 'qa', label: 'QA', description: 'QA Review' },
 ];
 
 export function PhaseIndicator({

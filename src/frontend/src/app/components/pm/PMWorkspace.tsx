@@ -143,7 +143,7 @@ export function PMWorkspace({
 
   return (
     <div data-testid="pm-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
-      {/* PM Header - 尚书令主题 */}
+      {/* PM Header - PM 主题 */}
       <header className="h-14 flex items-center justify-between px-4 border-b border-amber-500/20 bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/20">
         <div className="flex items-center gap-4">
           <Button
@@ -166,7 +166,7 @@ export function PMWorkspace({
               <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-amber-100">尚书令</h1>
+              <h1 className="text-sm font-semibold text-amber-100">PM</h1>
               <p className="text-[10px] text-amber-500/70 uppercase tracking-wider">PM Console</p>
             </div>
           </div>
@@ -265,7 +265,7 @@ export function PMWorkspace({
             className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/20"
           >
             {isStarting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
-            单次督办
+            单次 Run
           </Button>
 
           <Button

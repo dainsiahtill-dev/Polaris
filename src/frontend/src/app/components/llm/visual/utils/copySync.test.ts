@@ -16,10 +16,10 @@ describe('visual copy sync', () => {
         .map((node) => [node.id, String((node.data as { label?: string }).label || '')])
     );
 
-    expect(roleLabels.get('role:pm')).toBe('尚书令');
-    expect(roleLabels.get('role:director')).toBe('工部侍郎');
-    expect(roleLabels.get('role:qa')).toBe('门下侍中');
-    expect(roleLabels.get('role:architect')).toBe('中书令');
+    expect(roleLabels.get('role:pm')).toBe('PM');
+    expect(roleLabels.get('role:director')).toBe('Director');
+    expect(roleLabels.get('role:qa')).toBe('QA');
+    expect(roleLabels.get('role:architect')).toBe('Architect');
   });
 
   it('uses updated role and provider wording in validation copy', () => {
@@ -31,13 +31,13 @@ describe('visual copy sync', () => {
     const { issues } = validateVisualGraph(config);
     expect(issues.length).toBeGreaterThan(0);
     expect(issues.some((issue) => issue.message.includes('Provider'))).toBe(false);
-    expect(issues.some((issue) => issue.message.includes('尚书令'))).toBe(true);
+    expect(issues.some((issue) => issue.message.includes('PM'))).toBe(true);
     expect(issues.some((issue) => issue.message.includes('提供商'))).toBe(true);
 
-    expect(getRoleLabel('pm')).toBe('尚书令');
-    expect(getRoleLabel('director')).toBe('工部侍郎');
-    expect(getRoleLabel('qa')).toBe('门下侍中');
-    expect(getRoleLabel('architect')).toBe('中书令');
-    expect(getRoleLabel('docs')).toBe('中书令');
+    expect(getRoleLabel('pm')).toBe('PM');
+    expect(getRoleLabel('director')).toBe('Director');
+    expect(getRoleLabel('qa')).toBe('QA');
+    expect(getRoleLabel('architect')).toBe('Architect');
+    expect(getRoleLabel('docs')).toBe('Architect');
   });
 });

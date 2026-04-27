@@ -396,7 +396,7 @@
     {
       "type": "class",
       "name": "AntiPattern",
-      "description": "已识别的架构反模式。检测到即触发封驳。",
+      "description": "Identified architecture anti-pattern. Triggers rejection when detected.",
       "defined_in": "polaris/cells/roles/kernel/internal/constitution_rules.py",
       "methods": []
     },

@@ -6,7 +6,7 @@ interface ArchitectAIDialoguePanelProps {
 }
 
 /**
- * Architect AI 对话面板（中书令）
+ * Architect AI 对话面板
  *
  * 基于通用 AIDialoguePanel 组件，预配置为 Architect 角色。
  * 用于文档编写和技术架构讨论。
@@ -18,13 +18,13 @@ export function ArchitectAIDialoguePanel({
   return (
     <AIDialoguePanel
       dialogueRole="architect"
-      roleDisplayName="中书令"
+      roleDisplayName="Architect"
       roleTheme={{
         primary: 'purple',
         secondary: 'purple-400',
         gradient: 'from-purple-500 to-purple-700',
       }}
-      welcomeMessage="中书令 Architecture 系统已就绪。您可以讨论技术方案、审查架构设计，或协助文档编写。"
+      welcomeMessage="Architecture 系统已就绪。您可以讨论技术方案、审查架构设计，或协助文档编写。"
       context={{
         workspace,
         document_path: documentPath,

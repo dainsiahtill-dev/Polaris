@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 AUDIT_TECH_ROLE_ID = "qa"
-AUDIT_COURT_DEPARTMENT = "门下省"
+AUDIT_COURT_DEPARTMENT = "QA Department"
 AUDIT_COURT_ROLE_ID = "menxia_shizhong"
-AUDIT_COURT_ROLE_NAME = "门下侍中"
+AUDIT_COURT_ROLE_NAME = "QA"
 
 _DEFAULT_NON_LOCAL_PROVIDER_TYPES = frozenset(
     {

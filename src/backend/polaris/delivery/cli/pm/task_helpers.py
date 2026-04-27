@@ -41,7 +41,7 @@ def normalize_assigned_to(value: Any) -> str:
         "chiefengineer": "ChiefEngineer",
         "chief_engineer": "ChiefEngineer",
         "chief-engineer": "ChiefEngineer",
-        "工部尚书": "ChiefEngineer",
+        "Chief Engineer": "ChiefEngineer",
         "pm": "PM",
         "director": "Director",
         "auditor": "Auditor",

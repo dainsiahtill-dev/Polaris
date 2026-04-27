@@ -86,7 +86,7 @@ export function DirectorHeader({
             )}
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-indigo-100">工部侍郎</h1>
+            <h1 className="text-sm font-semibold text-indigo-100">Director</h1>
             <p className="text-[10px] text-indigo-500/70 uppercase tracking-wider">Director Console</p>
           </div>
         </div>

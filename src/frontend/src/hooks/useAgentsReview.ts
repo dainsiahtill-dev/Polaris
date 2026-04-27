@@ -73,7 +73,7 @@ export function useAgentsReview(options: UseAgentsReviewOptions) {
         holdRef.current = draftMtime;
       }
 
-      toast.info('反馈已提交，正在等待尚书令重新生成草稿...');
+      toast.info('反馈已提交，正在等待PM重新生成草稿...');
       return true;
     } else {
       toast.error(result.error || 'Failed to save feedback');

@@ -982,12 +982,29 @@ class StreamOrchestrator:
 
         shadow_engine = self.build_stream_shadow_engine(workspace=".", turn_id=turn_id)
         llm_response: RawLLMResponse | None = None
+        # FIX-20260427: In SUPER mode, force tool_choice="required" ONLY for Director
+        # to prevent the LLM from generating text-only analysis instead of calling write tools.
+        # Architect/PM/CE use "auto" since they may legitimately produce text analysis.
+        _super_tool_choice_override: Any | None = None
+        for _msg in context:
+            if not isinstance(_msg, dict):
+                continue
+            _content = str(_msg.get("content", ""))
+            if "[SUPER_MODE_DIRECTOR_TASK_HANDOFF]" in _content or "[SUPER_MODE_DIRECTOR_CONTINUE]" in _content:
+                _super_tool_choice_override = "required"
+                break
         _call_llm_stream = (
             call_llm_for_decision_stream
             if call_llm_for_decision_stream is not None
             else self._call_llm_for_decision_stream_impl
         )
-        async for event in _call_llm_stream(context, tool_definitions, ledger, shadow_engine=shadow_engine):
+        async for event in _call_llm_stream(
+            context,
+            tool_definitions,
+            ledger,
+            shadow_engine=shadow_engine,
+            tool_choice_override=_super_tool_choice_override,
+        ):
             if isinstance(event, dict) and event.get("type") == "_internal_materialize":
                 llm_response = event.get("response")
                 continue

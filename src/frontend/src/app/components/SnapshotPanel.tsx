@@ -30,7 +30,7 @@ export function SnapshotPanel({ timestamp, fileStatus, filePaths, directorState 
 
           {directorPhase || directorStatus || directorIter !== null ? (
             <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-bg-tertiary border border-border animate-pulse-slow">
-              <span className="text-status-secondary font-bold">工部尚书</span>
+              <span className="text-status-secondary font-bold">Chief Engineer</span>
               <span className="w-px h-3 bg-border mx-1"></span>
               <span className="text-text-main">{directorPhase || directorStatus || ''}</span>
               {directorIter !== null ? <span className="text-accent"> #{directorIter}</span> : ''}

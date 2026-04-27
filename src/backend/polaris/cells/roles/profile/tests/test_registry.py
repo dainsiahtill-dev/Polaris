@@ -244,7 +244,7 @@ class TestLoadBuiltinProfiles:
         assert reg.has_role("scout")
         rp = reg.get_profile("scout")
         assert rp is not None
-        assert rp.display_name == "探子 (Scout)"
+        assert rp.display_name == "Scout (Scout)"
 
     def test_director_builtin_profile_exposes_canonical_repo_tools(self) -> None:
         reg = RoleProfileRegistry()

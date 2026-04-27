@@ -31,7 +31,7 @@ def test_refresh_back_mapping_detects_added_method_and_impacted_cell(tmp_path: P
         RunProjectionExperimentCommandV1(
             workspace=str(workspace),
             scenario_id="record_cli_app",
-            requirement="生成一个本地 JSON 持久化的记录管理项目, 支持新增、列表、搜索、归档和测试。",
+            requirement="生成一个本地 JSON 持久化的记录管理项目, 支持新增、列表、搜索、Finalize和测试。",
             project_slug="record_cli_change_lab",
             run_verification=True,
             overwrite=False,

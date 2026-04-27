@@ -156,7 +156,7 @@ export function InterventionCenter({ isOpen, onClose }: InterventionCenterProps)
           <div className="flex items-center justify-between">
             <DialogTitle className="text-xl font-semibold flex items-center gap-2">
               <ShieldAlert className="h-5 w-5 text-emerald-500" />
-              廷议介入中枢
+              Intervention Center
             </DialogTitle>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-[200px]">
               <TabsList className="grid w-full grid-cols-2 bg-gray-800">

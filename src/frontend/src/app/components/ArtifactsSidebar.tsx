@@ -19,18 +19,18 @@ interface ArtifactGroup {
 
 const artifactGroups: ArtifactGroup[] = [
   {
-    name: '尚书省案卷',
+    name: 'PM Office Archives',
     items: [
-      { id: 'pm-tasks', name: 'pm_tasks.contract.json', icon: FileJson, path: 'runtime/contracts/pm_tasks.contract.json', badge: '章奏' },
+      { id: 'pm-tasks', name: 'pm_tasks.contract.json', icon: FileJson, path: 'runtime/contracts/pm_tasks.contract.json', badge: 'Task' },
       { id: 'pm-report', name: 'pm.report.md', icon: FileText, path: 'runtime/results/pm.report.md' },
       { id: 'plan', name: 'plan.md', icon: FileText, path: 'runtime/contracts/plan.md' },
       { id: 'pm-state', name: 'pm.state.json', icon: FileJson, path: 'runtime/state/pm.state.json' },
     ],
   },
   {
-    name: '工部案卷',
+    name: 'Engineering Archives',
     items: [
-      { id: 'director-result', name: 'director.result.json', icon: FileJson, path: 'runtime/results/director.result.json', badge: '奏报' },
+      { id: 'director-result', name: 'director.result.json', icon: FileJson, path: 'runtime/results/director.result.json', badge: 'Report' },
       { id: 'planner', name: 'planner.output.md', icon: FileText, path: 'runtime/results/planner.output.md' },
       { id: 'ollama', name: 'director_llm.output.md', icon: FileText, path: 'runtime/results/director_llm.output.md' },
       { id: 'runlog', name: 'director.runlog.md', icon: FileText, path: 'runtime/logs/director.runlog.md' },
@@ -38,15 +38,15 @@ const artifactGroups: ArtifactGroup[] = [
     ],
   },
   {
-    name: '门下封驳',
+    name: 'QA Rejections',
     items: [
-      { id: 'qa', name: 'qa.review.md', icon: FileText, path: 'runtime/results/qa.review.md', badge: '封驳' },
+      { id: 'qa', name: 'qa.review.md', icon: FileText, path: 'runtime/results/qa.review.md', badge: 'Reject' },
       { id: 'review', name: 'auditor.review.md', icon: FileText, path: 'runtime/results/auditor.review.md' },
       { id: 'gap', name: 'gap_report.md', icon: FileText, path: 'runtime/contracts/gap_report.md' },
     ],
   },
   {
-    name: '事件流',
+    name: 'Event Stream',
     items: [
       { id: 'dialogue', name: 'dialogue.transcript.jsonl', icon: MessageSquare, path: 'runtime/events/dialogue.transcript.jsonl' },
       { id: 'events', name: 'runtime.events.jsonl', icon: Activity, path: 'runtime/events/runtime.events.jsonl' },
@@ -54,7 +54,7 @@ const artifactGroups: ArtifactGroup[] = [
     ],
   },
   {
-    name: '律令与记忆',
+    name: 'Policy & Memory',
     items: [
       { id: 'policy', name: 'director.policy.json', icon: FileJson, path: 'runtime/policy/director.policy.json' },
       { id: 'memory', name: 'last_state.json', icon: FileJson, path: 'runtime/memory/last_state.json' },

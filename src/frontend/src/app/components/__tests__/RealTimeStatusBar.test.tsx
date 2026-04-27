@@ -61,10 +61,10 @@ describe('RealTimeStatusBar', () => {
       );
 
       // Should have idle states for both PM and Director
-      expect(screen.getAllByText(/休朝/i)).toHaveLength(4);
-      // Should have idle states for both 尚书令 and 工部侍郎
-      expect(screen.getAllByText(/尚书令/i)).toHaveLength(2);
-      expect(screen.getAllByText(/工部侍郎/i)).toHaveLength(2);
+      expect(screen.getAllByText(/Idle/i)).toHaveLength(4);
+      // Should have idle states for both PM and Director
+      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
+      expect(screen.getAllByText(/Director/i)).toHaveLength(2);
     });
 
     it('should show active PM status with duration when running', () => {
@@ -80,8 +80,8 @@ describe('RealTimeStatusBar', () => {
       );
 
       // PM label with active status
-      expect(screen.getByText(/尚书令/i)).toBeInTheDocument();
-      expect(screen.getByText(/在值/i)).toBeInTheDocument();
+      expect(screen.getByText(/PM/i)).toBeInTheDocument();
+      expect(screen.getByText(/Active/i)).toBeInTheDocument();
     });
 
     it('should show active Director status when running', () => {
@@ -97,8 +97,8 @@ describe('RealTimeStatusBar', () => {
       );
 
       // Director label with active status
-      expect(screen.getByText(/工部侍郎/i)).toBeInTheDocument();
-      expect(screen.getByText(/在值/i)).toBeInTheDocument();
+      expect(screen.getByText(/Director/i)).toBeInTheDocument();
+      expect(screen.getByText(/Active/i)).toBeInTheDocument();
     });
 
     it('should display iteration count when provided', () => {
@@ -189,7 +189,7 @@ describe('RealTimeStatusBar', () => {
       );
 
       // Should render without errors
-      expect(screen.getAllByText(/尚书令/i)).toHaveLength(2);
+      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
     });
 
     it('should handle future timestamps gracefully', () => {
@@ -239,7 +239,7 @@ describe('RealTimeStatusBar', () => {
       );
 
       expect(screen.getByText(/LLM/i)).toBeInTheDocument();
-      expect(screen.getByText(/留中/i)).toBeInTheDocument();
+      expect(screen.getByText(/Blocked/i)).toBeInTheDocument();
     });
 
     it('should display LLM unknown status', () => {
@@ -287,7 +287,7 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.getByText(/经籍库/i)).toBeInTheDocument();
+      expect(screen.getByText(/Code Search DB/i)).toBeInTheDocument();
       expect(screen.getByText(/就绪/i)).toBeInTheDocument();
     });
 
@@ -303,7 +303,7 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.getByText(/经籍库/i)).toBeInTheDocument();
+      expect(screen.getByText(/Code Search DB/i)).toBeInTheDocument();
       expect(screen.getByText(/离线/i)).toBeInTheDocument();
     });
 
@@ -318,7 +318,7 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.queryByText(/经籍库/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Code Search DB/i)).not.toBeInTheDocument();
     });
   });
 
@@ -334,7 +334,7 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.getByText(/漏刻时辰/i)).toBeInTheDocument();
+      expect(screen.getByText(/System Time/i)).toBeInTheDocument();
     });
 
     it('should update time every second', () => {
@@ -364,7 +364,7 @@ describe('RealTimeStatusBar', () => {
       );
 
       // Component should still render without errors
-      expect(screen.getAllByText(/尚书令/i)).toHaveLength(2);
+      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
     });
   });
 
@@ -386,15 +386,15 @@ describe('RealTimeStatusBar', () => {
       );
 
       // PM active
-      expect(screen.getAllByText(/尚书令/i)).toHaveLength(1);
-      // Director active (工部侍郎 when running)
-      expect(screen.getByText(/工部侍郎/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/PM/i)).toHaveLength(1);
+      // Director active (Director when running)
+      expect(screen.getByText(/Director/i)).toBeInTheDocument();
       // Iteration
       expect(screen.getByText('#005')).toBeInTheDocument();
       // LLM ready
       expect(screen.getByText(/LLM/i)).toBeInTheDocument();
       // Database ready
-      expect(screen.getByText(/经籍库/i)).toBeInTheDocument();
+      expect(screen.getByText(/Code Search DB/i)).toBeInTheDocument();
     });
 
     it('should handle mixed running states', () => {
@@ -412,10 +412,10 @@ describe('RealTimeStatusBar', () => {
       );
 
       // PM should have at least one idle state
-      expect(screen.getAllByText(/尚书令/i)).toHaveLength(2);
+      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
       // Director active
-      expect(screen.getByText(/工部侍郎/i)).toBeInTheDocument();
-      expect(screen.getByText(/在值/i)).toBeInTheDocument();
+      expect(screen.getByText(/Director/i)).toBeInTheDocument();
+      expect(screen.getByText(/Active/i)).toBeInTheDocument();
     });
   });
 

@@ -25,7 +25,7 @@ interface DirectorWorkbenchPanelProps {
 /**
  * Director Workbench Panel - Director 角色工作台
  *
- * 基于 AIDialoguePanel，预配置为 Director（工部侍郎）角色。
+ * 基于 AIDialoguePanel，预配置为 Director 角色。
  * 支持 RoleSession 多宿主架构，可创建独立的编码工作台会话。
  * 
  * 特性：
@@ -137,13 +137,13 @@ export function DirectorWorkbenchPanel({
 
   const dialoguePanelProps: AIDialoguePanelProps = {
     dialogueRole: 'director',
-    roleDisplayName: '工部侍郎',
+    roleDisplayName: 'Director',
     roleTheme: {
       primary: 'emerald',
       secondary: 'emerald-400',
       gradient: 'from-emerald-500 to-emerald-700',
     },
-    welcomeMessage: '工部侍郎执行系统已就绪。您可以查看代码、编写文件、运行命令，或导出执行建议到正式流程。',
+    welcomeMessage: 'Director 执行系统已就绪。您可以查看代码、编写文件、运行命令，或导出执行建议到正式流程。',
     context: {
       workspace,
       tasks_count: tasksCount,

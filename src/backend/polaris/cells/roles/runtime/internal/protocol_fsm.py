@@ -69,7 +69,7 @@ class ProtocolFSM:
     - plan_approval: PM/Director 提交计划，QA/Architect 审批
     - shutdown: 任何角色请求其他角色优雅关机
     - takeover: 请求人工接管
-    - budget_check: CFO (户部) 预算审批
+    - budget_check: CFO (CFO) 预算审批
     - policy_check: PolicyGate 策略检查
     """
 

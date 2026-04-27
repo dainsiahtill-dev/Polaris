@@ -1,4 +1,4 @@
-"""QA (门下侍中) Output Schema - Quality assurance report.
+"""QA (QA) Output Schema - Quality assurance report.
 
 Defines the structured output format for code review and quality assessment.
 """

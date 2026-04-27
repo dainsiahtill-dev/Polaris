@@ -27,14 +27,14 @@ class TestAuditConstants:
     def test_tech_role_id_is_qa(self) -> None:
         assert AUDIT_TECH_ROLE_ID == "qa"
 
-    def test_court_department_is_menxia(self) -> None:
-        assert AUDIT_COURT_DEPARTMENT == "门下省"
+    def test_court_department_is_qa(self) -> None:
+        assert AUDIT_COURT_DEPARTMENT == "QA Department"
 
     def test_court_role_id_is_menxia_shizhong(self) -> None:
         assert AUDIT_COURT_ROLE_ID == "menxia_shizhong"
 
     def test_court_role_name_is_menxia_shizhong(self) -> None:
-        assert AUDIT_COURT_ROLE_NAME == "门下侍中"
+        assert AUDIT_COURT_ROLE_NAME == "QA"
 
 
 class TestAuditLLMBindingConfig:

@@ -11,7 +11,7 @@ export const CurrentTaskCard = memo(function CurrentTaskCard({ currentSummary, l
     return (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md hover:border-accent/30 transition-all">
             <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">当前工部差事</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">当前Director Task</div>
                 <ArrowRight className="size-4 text-accent animate-pulse" />
             </div>
             {currentSummary ? (
@@ -22,7 +22,7 @@ export const CurrentTaskCard = memo(function CurrentTaskCard({ currentSummary, l
                     <div className="min-w-0">
                         <div className="text-sm font-semibold text-text-main">{currentSummary}</div>
                         <div className="mt-1 text-xs text-text-dim font-mono">
-                            {lastTaskId ? <span>ID: {lastTaskId}</span> : <span>待{UI_TERMS.roles.pm}分派章奏</span>}
+                            {lastTaskId ? <span>ID: {lastTaskId}</span> : <span>待{UI_TERMS.roles.pm}分派Task</span>}
                         </div>
                     </div>
                 </div>

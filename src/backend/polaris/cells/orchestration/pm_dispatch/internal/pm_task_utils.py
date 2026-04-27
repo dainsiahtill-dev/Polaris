@@ -186,7 +186,7 @@ def append_pm_report(path: str, content: str) -> None:
 
 @runtime_checkable
 class ShangshulingPort(Protocol):
-    """Port for 尚书令 (shangshuling) task-registry operations.
+    """Port for PM (shangshuling) task-registry operations.
 
     The Cell depends on this abstract interface; the concrete implementation
     lives in the delivery layer and is injected at runtime.

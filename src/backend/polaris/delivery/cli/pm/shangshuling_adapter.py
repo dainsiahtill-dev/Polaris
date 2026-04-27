@@ -29,7 +29,7 @@ class DeliveryShangshulingPort:
         workspace_full: str,
         tasks: list[dict[str, Any]],
     ) -> int:
-        """Sync tasks to 尚书令PM registry.
+        """Sync tasks to PMPM registry.
 
         Args:
             workspace_full: Absolute workspace path.

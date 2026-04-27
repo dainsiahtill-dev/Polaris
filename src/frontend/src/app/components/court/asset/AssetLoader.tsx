@@ -1,5 +1,5 @@
 /**
- * 宫廷资产加载器
+ * Court Asset Loader
  *
  * 支持 GLB/GLTF 格式角色资产加载，包含：
  * - LOD（细节层次）管理
@@ -30,13 +30,13 @@ export interface LODConfig {
 
 // 角色资产配置
 export const ROLE_ASSET_CONFIG: Record<string, LODConfig[]> = {
-  // 天子 - 最高细节
+  // User - Highest detail
   emperor: [
     { level: 0, distance: 0, url: '/assets/court/emperor_lod0.glb', geometryCount: 15000 },
     { level: 1, distance: 10, url: '/assets/court/emperor_lod1.glb', geometryCount: 5000 },
     { level: 2, distance: 20, url: '/assets/court/emperor_lod2.glb', geometryCount: 1000 },
   ],
-  // 三省六部 - 中等细节
+  // Offices - Medium detail
   zhongshu_ling: [
     { level: 0, distance: 0, url: '/assets/court/official_lod0.glb', geometryCount: 8000 },
     { level: 1, distance: 15, url: '/assets/court/official_lod1.glb', geometryCount: 3000 },

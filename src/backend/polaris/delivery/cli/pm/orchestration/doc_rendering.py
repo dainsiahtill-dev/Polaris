@@ -61,7 +61,7 @@ def _build_architect_doc_prompt(
     }
     context_json = json.dumps(context_payload, ensure_ascii=False, indent=2)
     return (
-        "你是 Polaris 的中书令（架构文档作者）。\n"
+        "你是 Polaris 的Architect（架构文档作者）。\n"
         "只输出 Markdown 文档正文，不要解释，不要代码块围栏，不要 JSON。\n"
         "要求：\n"
         "- 内容必须具体、可审查、可执行，避免空泛模板腔。\n"

@@ -43,7 +43,7 @@ describe('ContextSidebar', () => {
       render(<ContextSidebar {...baseProps} />);
 
       // Check for all tab buttons by title
-      expect(screen.getByRole('button', { name: /廷议/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Discussion/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /备忘/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /忆库/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /快照/i })).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe('ContextSidebar', () => {
     it('should hide memory tab when settingsShowMemory is false', () => {
       render(<ContextSidebar {...baseProps} settingsShowMemory={false} />);
 
-      expect(screen.getByRole('button', { name: /廷议/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Discussion/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /备忘/i })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /忆库/i })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: /快照/i })).toBeInTheDocument();
@@ -63,8 +63,8 @@ describe('ContextSidebar', () => {
     it('should render dialogue tab button with correct title attribute', () => {
       render(<ContextSidebar {...baseProps} />);
 
-      const dialogueButton = screen.getByRole('button', { name: /廷议/i });
-      expect(dialogueButton).toHaveAttribute('title', '廷议');
+      const dialogueButton = screen.getByRole('button', { name: /Discussion/i });
+      expect(dialogueButton).toHaveAttribute('title', 'Discussion');
     });
   });
 
@@ -72,20 +72,20 @@ describe('ContextSidebar', () => {
     it('should have dialogue tab as initially active', () => {
       render(<ContextSidebar {...baseProps} />);
 
-      const dialogueButton = screen.getByRole('button', { name: /廷议/i });
+      const dialogueButton = screen.getByRole('button', { name: /Discussion/i });
       expect(dialogueButton).toHaveClass('bg-white/10');
     });
 
     it('should display dialogue tab header text', () => {
       render(<ContextSidebar {...baseProps} />);
 
-      expect(screen.getByText(/廷议录/i)).toBeInTheDocument();
+      expect(screen.getByText(/Discussion录/i)).toBeInTheDocument();
     });
 
     it('should display connection status badge', () => {
       const { rerender } = render(<ContextSidebar {...baseProps} live={true} />);
 
-      expect(screen.getByText(/在值/i)).toBeInTheDocument();
+      expect(screen.getByText(/Active/i)).toBeInTheDocument();
 
       rerender(<ContextSidebar {...baseProps} live={false} />);
       // Use getAllByText since offline appears in multiple places
@@ -115,7 +115,7 @@ describe('ContextSidebar', () => {
       render(<ContextSidebar {...baseProps} />);
 
       // Dialogue button should have an SVG icon
-      const dialogueButton = screen.getByRole('button', { name: /廷议/i });
+      const dialogueButton = screen.getByRole('button', { name: /Discussion/i });
       expect(dialogueButton.querySelector('svg')).toBeInTheDocument();
     });
 

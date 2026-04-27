@@ -118,7 +118,7 @@ ARCHITECT_KEYWORDS = [
 CHIEF_ENGINEER_KEYWORDS = [
     "chief engineer",
     "chiefengineer",
-    "工部尚书",
+    "Chief Engineer",
     "module graph",
     "dependency graph",
     "import graph",

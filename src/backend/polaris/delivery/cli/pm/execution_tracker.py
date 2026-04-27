@@ -1,6 +1,6 @@
-"""Execution Tracker - 尚书令执行追踪器
+"""Execution Tracker - PM执行追踪器
 
-执行历史归档、执行者性能分析、预测性调度。
+执行历史Finalize、执行者性能分析、预测性调度。
 """
 
 from __future__ import annotations
@@ -81,10 +81,10 @@ class ExecutionTrend:
 
 
 class ExecutionTracker:
-    """尚书令执行追踪器
+    """PM执行追踪器
 
     核心功能：
-    1. 执行历史归档 - 完整的执行记录
+    1. 执行历史Finalize - 完整的执行记录
     2. 执行者性能分析 - ChiefEngineer/Director成功率
     3. 预测性调度 - 基于历史预测最佳执行者
     4. 趋势分析 - 执行效率趋势

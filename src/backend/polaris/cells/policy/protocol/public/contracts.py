@@ -24,13 +24,13 @@ from polaris.kernelone.utils.time_utils import utc_now_iso
 # HP Protocol - 7 Phase Ritual (符节状态机)
 # Each phase must complete in sequence before proceeding to the next
 HP_PIPELINE: list[str] = [
-    "start_run",  # 拟诏 - Define goals and acceptance criteria
+    "start_run",  # Define goals - Define goals and acceptance criteria
     "blueprint",  # 制图 - Create implementation plan
-    "policy_check",  # 廷议 - Policy and budget approval
+    "policy_check",  # Discussion - Policy and budget approval
     "snapshot",  # 快照 - Backup current state
-    "implementation",  # 动工 - Execute code generation
-    "verify",  # 勘验 - Self-check (compile/type check)
-    "finalize",  # 归档 - Complete and record results
+    "implementation",  # Execute - Execute code generation
+    "verify",  # Verify - Self-check (compile/type check)
+    "finalize",  # Finalize - Complete and record results
 ]
 
 
@@ -187,7 +187,7 @@ class PolicyRuntime:
         }
         _write_json(self.state_path, payload)
 
-    # ── Phase 1: 拟诏 ────────────────────────────────────────────────────────────
+    # ── Phase 1: Define goals ────────────────────────────────────────────────────────────
     def hp_start_run(self, goal: str, acceptance_criteria: list[str]) -> dict[str, Any]:
         if not str(goal or "").strip():
             raise PolicyContractError("goal is required")
@@ -231,7 +231,7 @@ class PolicyRuntime:
             },
         )
 
-    # ── Phase 3: 廷议 ────────────────────────────────────────────────────────────
+    # ── Phase 3: Discussion ────────────────────────────────────────────────────────────
     def hp_record_approval(self, approved: bool, ref: str, reason: str = "") -> dict[str, Any]:
         self.state.seq += 1
         self.state.approved = bool(approved)
@@ -274,7 +274,7 @@ class PolicyRuntime:
             {"snapshot_id": snapshot_id, "snapshot_path": snapshot_path},
         )
 
-    # ── Phase 5: 动工 ───────────────────────────────────────────────────────────
+    # ── Phase 5: Execute ───────────────────────────────────────────────────────────
     def hp_allow_implementation(
         self,
         implementation_token: str,
@@ -349,7 +349,7 @@ class PolicyRuntime:
         self._persist_state()
         return event
 
-    # ── Phase 6: 勘验 ──────────────────────────────────────────────────────────
+    # ── Phase 6: Verify ──────────────────────────────────────────────────────────
     def hp_run_verify(
         self,
         nonce: str,
@@ -384,7 +384,7 @@ class PolicyRuntime:
         )
         return event
 
-    # ── Phase 7: 归档 ────────────────────────────────────────────────────────────
+    # ── Phase 7: Finalize ────────────────────────────────────────────────────────────
     def hp_finalize_run(self, status: str, summary: str) -> dict[str, Any]:
         if not self.state.verification_set:
             raise PolicyContractError("finalize blocked: verification missing")

@@ -63,7 +63,7 @@ export function MemoPanel({
       <div className="px-4 py-3 border-b border-gray-800 bg-[#252526] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <FileText className="size-4 text-blue-400" />
-          <h2 className="text-sm font-semibold text-gray-300">尚书令备忘录</h2>
+          <h2 className="text-sm font-semibold text-gray-300">PM Memos</h2>
         </div>
         <div className="flex items-center gap-3 text-xs text-gray-500">
           <div className="flex items-center gap-1">

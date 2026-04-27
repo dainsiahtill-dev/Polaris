@@ -326,13 +326,13 @@ function DeepTestPanel({
   const roles = useMemo(() => {
     const roleIds: RoleId[] = ['pm', 'director', 'chief_engineer', 'qa', 'architect', 'cfo', 'hr'];
     const roleMeta: Record<RoleId, { label: string; description: string }> = {
-      pm: { label: '尚书令', description: '承受诏旨，统筹章奏、节次与推进。' },
-      director: { label: '工部侍郎', description: '奉诏动工，负责实现、调度与技术裁断（实际编码）。' },
-      chief_engineer: { label: '工部尚书', description: '绘制《营造法式》蓝图，定体例与纲目（设计不编码）。' },
-      qa: { label: '门下侍中', description: '主司封驳与勘验，确保证据链完备。' },
-      architect: { label: '中书令', description: '承受诏旨，草拟《营造法式》（spec.md），定体例与纲目。' },
-      cfo: { label: '户部尚书', description: '核算预算，监控Token用量与成本。' },
-      hr: { label: '吏部尚书', description: '管理LLM配置与人员（模型）任免。' },
+      pm: { label: 'PM', description: '统筹任务、节奏与推进。' },
+      director: { label: 'Director', description: '负责实现、调度与技术裁断（实际编码）。' },
+      chief_engineer: { label: 'Chief Engineer', description: '绘制技术蓝图，定体例与纲目（设计不编码）。' },
+      qa: { label: 'QA', description: '主司审核与勘验，确保证据链完备。' },
+      architect: { label: 'Architect', description: '草拟项目规格与架构文档，定体例与纲目。' },
+      cfo: { label: 'CFO', description: '核算预算，监控Token用量与成本。' },
+      hr: { label: 'HR', description: '管理LLM配置与模型任免。' },
     };
     
     return roleIds.map((roleId) => {

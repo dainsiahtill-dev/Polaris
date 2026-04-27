@@ -89,7 +89,7 @@ export function ContextSidebar({
                     active={activeTab === 'dialogue'}
                     onClick={() => setActiveTab('dialogue')}
                     icon={<MessageSquare className="size-5" />}
-                    label="廷议"
+                    label="Discussion"
                 />
                 <TabButton
                     active={activeTab === 'memos'}
@@ -102,7 +102,7 @@ export function ContextSidebar({
                         active={activeTab === 'memory'}
                         onClick={() => setActiveTab('memory')}
                         icon={showCognition ? <Brain className="size-5" /> : <Database className="size-5" />}
-                        label="忆库"
+                        label="Memory"
                     />
                 )}
                 <TabButton
@@ -134,10 +134,10 @@ export function ContextSidebar({
                             <div className="flex-none p-3 border-b border-white/5 flex items-center justify-between bg-white/5 backdrop-blur-md">
                                 <div className="flex items-center gap-2">
                                     <MessageSquare className="size-4 text-blue-400" />
-                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">廷议录</span>
+                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">Discussion录</span>
                                 </div>
                                 <div className="text-[10px] text-text-dim px-2 py-0.5 rounded-full bg-black/30 border border-white/5">
-                                    {live ? '在值' : '离线'}
+                                    {live ? 'Active' : '离线'}
                                 </div>
                             </div>
                             <div className="flex-1 min-h-0 relative">
@@ -185,20 +185,20 @@ export function ContextSidebar({
                             <div className="flex-none p-2 border-b border-white/5 flex items-center justify-between bg-white/5 backdrop-blur-md">
                                 <div className="flex items-center gap-2">
                                     {showCognition ? <Brain className="size-4 text-purple-400" /> : <Database className="size-4 text-blue-400" />}
-                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">忆库</span>
+                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">Memory</span>
                                 </div>
                                 <div className="flex bg-black/30 p-0.5 rounded-lg border border-white/5">
                                     <button
                                         onClick={() => setShowCognition(true)}
                                         className={`px-2 py-1 text-[10px] rounded transition-all ${showCognition ? 'bg-purple-500/20 text-purple-300' : 'text-gray-500 hover:text-gray-300'}`}
                                     >
-                                        心镜
+                                        Cognition
                                     </button>
                                     <button
                                         onClick={() => setShowCognition(false)}
                                         className={`px-2 py-1 text-[10px] rounded transition-all ${!showCognition ? 'bg-blue-500/20 text-blue-300' : 'text-gray-500 hover:text-gray-300'}`}
                                     >
-                                        原文
+                                        Raw
                                     </button>
                                 </div>
                             </div>
@@ -229,7 +229,7 @@ export function ContextSidebar({
                             <div className="flex-none p-3 border-b border-white/5 flex items-center bg-white/5 backdrop-blur-md">
                                 <div className="flex items-center gap-2">
                                     <Camera className="size-4 text-green-400" />
-                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">朝堂快照</span>
+                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">Workspace Snapshot</span>
                                 </div>
                             </div>
                             <div className="flex-1 min-h-0 relative overflow-auto">

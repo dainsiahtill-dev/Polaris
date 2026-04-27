@@ -854,7 +854,7 @@ class AgentStressRunner:
             chief_ready = self._is_role_probe_ready(role_map.get("chief_engineer") or {})
             if not chief_ready:
                 self.run_chief_engineer_stage = False
-                messages.append("  ⚠️ chief_engineer 未就绪，按可选策略自动跳过工部尚书阶段")
+                messages.append("  ⚠️ chief_engineer 未就绪，按可选策略自动跳过Chief Engineer阶段")
 
         if not messages:
             messages.append("  ✅ 链路角色策略检查通过")
@@ -1382,16 +1382,16 @@ class AgentStressRunner:
         # 根据失败点推断根因
         failure_analysis_map = {
             "architect": "架构设计阶段 LLM 输出格式不符合预期",
-            "docs_generation": "架构文档生成阶段失败，可能是奏对/条陈或 docs 写入链路异常",
+            "docs_generation": "Architecture document generation failed; possible Dialogue/Plan or docs write chain exception",
             "pm": "PM 任务分解失败或输出格式错误",
             "pm_planning": "PM 规划阶段失败，可能是 PM run 生命周期、任务合同或运行状态同步异常",
             "chief_engineer": "技术分析阶段未能生成有效施工蓝图",
-            "chief_engineer_review": "工部尚书阶段失败，技术蓝图审查未通过或证据缺失",
+            "chief_engineer_review": "Chief Engineer阶段失败，技术蓝图审查未通过或证据缺失",
             "director": "代码执行阶段失败，可能是补丁应用错误或运行时异常",
             "director_dispatch": "Director 调度阶段失败，可能是任务血缘、执行权限或工具调用异常",
             "qa": "QA 审查发现严重质量问题",
             "quality_gate": "质量门禁阶段失败，可能是 integration QA 或验收门禁未通过",
-            "chain_stage_sequence_invalid": "主链阶段顺序异常，未满足中书令->PM->Director->QA 的固定执行顺序",
+            "chain_stage_sequence_invalid": "主链阶段顺序异常，未满足Architect->PM->Director->QA 的固定执行顺序",
             "chain_stage_artifacts_missing": "主链阶段声称完成但未产出可审计产物，链路证据缺失",
             "pm_contract_incomplete": "PM 任务合同缺少目标/作用域/执行步骤/可测验收，无法指导有效执行",
             "project_output_placeholder_code": "项目产物包含 TODO/FIXME/stub 等占位实现，未形成可交付业务逻辑",
@@ -2546,22 +2546,22 @@ async def main(argv: list[str] | None = None):
     parser.add_argument(
         "--skip-architect-stage",
         action="store_true",
-        help="主链从 PM 起跑（跳过可选中书令阶段）",
+        help="主链从 PM 起跑（跳过可选Architect阶段）",
     )
     parser.add_argument(
         "--run-chief-engineer-stage",
         action="store_true",
-        help="启用可选工部尚书阶段（仅基于公开 API 证据判定）",
+        help="启用可选Chief Engineer阶段（仅基于公开 API 证据判定）",
     )
     parser.add_argument(
         "--require-architect-stage",
         action="store_true",
-        help="将中书令阶段设为必需（未观测到成功即失败）",
+        help="将Architect阶段设为必需（未观测到成功即失败）",
     )
     parser.add_argument(
         "--require-chief-engineer-stage",
         action="store_true",
-        help="将工部尚书阶段设为必需（未观测到成功即失败）",
+        help="将Chief Engineer阶段设为必需（未观测到成功即失败）",
     )
     parser.add_argument(
         "--backend-url",

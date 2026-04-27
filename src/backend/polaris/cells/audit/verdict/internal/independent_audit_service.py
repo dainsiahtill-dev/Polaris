@@ -1,4 +1,4 @@
-"""Independent Audit Service - Chancellery (门下省) for governance.
+"""Independent Audit Service - QA for governance.
 
 Provides separation of powers by running QA review independently of the
 Director who produced the work. Uses a different LLM role configuration
@@ -85,11 +85,11 @@ class AuditContext:
 
 
 class IndependentAuditService:
-    """Independent audit service providing Chancellery (门下省) review.
+    """Independent audit service providing QA review.
 
         This service implements the separation of powers principle:
-        - The Director (工部) builds/executes
-        - The Auditor (门下省) reviews independently
+        - The Director (Engineering) builds/executes
+        - The Auditor (QA) reviews independently
 
         The auditor uses a DIFFERENT LLM role configuration than the Director
     to ensure genuine independence and prevent self-review.
@@ -193,7 +193,7 @@ Evidence Summary:
 - Critical issues: {context.evidence_package.has_critical_issues()}
 """
 
-        return f"""你是门下省 QA 审核官。请对以下工作进行独立审核。
+        return f"""You are a QA auditor. Please conduct an independent audit of the following work.
 
 === 任务计划 ===
 {context.plan_text[:2000] if context.plan_text else "(no plan)"}
@@ -233,7 +233,7 @@ Evidence Summary:
         """Build prompt to finalize inconclusive verdict."""
         files_text = "\n".join(f"- {path}" for path in context.changed_files) if context.changed_files else "- (none)"
 
-        return f"""你是门下省 QA 审核官。上一条输出未给出可解析的最终验收结论。
+        return f"""You are a QA auditor. The previous output did not provide a parseable final acceptance conclusion.
 现在必须给出最终裁定，且只能输出单个 JSON 对象（禁止 Markdown、禁止额外文本）。
 
 输出格式（必填）：
@@ -268,7 +268,7 @@ Evidence Summary:
         planner_preview = context.planner_output[:1200] if context.planner_output else ""
         executor_preview = context.executor_output[:1200] if context.executor_output else ""
 
-        return f"""你是门下省 QA 审核官。上一条结论与已知证据状态存在冲突，需重新裁定。
+        return f"""You are a QA auditor. The previous conclusion conflicts with the known evidence state and needs to be re-adjudicated.
 事实：planner_output 与 executor_output 均已提供，不能再声称"输出为空"。
 请基于以下证据重新输出单个 JSON（禁止 Markdown/额外文本）：
 {{"acceptance":"PASS|FAIL","summary":"...","next":"...","findings":["..."]}}

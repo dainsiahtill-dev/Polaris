@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Architect (中书令) Standalone CLI.
+"""Architect (Architect) Standalone CLI.
 
 Migration note (Task #48 Phase 2):
     This CLI now routes through RoleRuntimeService instead of the deprecated

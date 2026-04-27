@@ -164,10 +164,10 @@ interface ProviderValidationResult {
 }
 
 const ROLE_META: Record<string, { label: string; color: string; badge: string }> = {
-  pm: { label: '尚书令', color: 'text-cyan-300', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' },
-  director: { label: '工部尚书', color: 'text-purple-300', badge: 'bg-purple-500/20 text-purple-200 border-purple-500/30' },
-  qa: { label: '门下侍中', color: 'text-blue-200', badge: 'bg-blue-500/20 text-blue-200 border-blue-500/30' },
-  architect: { label: '中书令', color: 'text-emerald-300', badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30' },
+  pm: { label: 'PM', color: 'text-cyan-300', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' },
+  director: { label: 'Director', color: 'text-purple-300', badge: 'bg-purple-500/20 text-purple-200 border-purple-500/30' },
+  qa: { label: 'QA', color: 'text-blue-200', badge: 'bg-blue-500/20 text-blue-200 border-blue-500/30' },
+  architect: { label: 'Architect', color: 'text-emerald-300', badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30' },
 };
 
 const normalizeJsonLogPath = (value: string | null | undefined): string => {
@@ -1923,7 +1923,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                       <option value="generic">generic (通用)</option>
                     </select>
                     <p className="text-[10px] text-text-dim mt-1.5">
-                      定义多角色协作提示词模板（尚书令、工部尚书、门下侍中等）。
+                      定义多角色协作提示词模板（PM、Director、QA 等）。
                     </p>
                   </div>
                 </div>
@@ -1963,11 +1963,11 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                   </div>
                 </div>
 
-                {/* 尚书令运行设置 */}
+                {/* PM 运行设置 */}
                 <div className="bg-white/5 rounded-xl p-4 border border-white/5">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
-                    尚书令运行设置
+                    PM 运行设置
                   </h3>
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
@@ -2003,7 +2003,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
                         />
                         <label htmlFor="pm-show-output" className="text-sm text-text-muted cursor-pointer select-none">
-                          显示尚书令输出
+                          显示 PM 输出
                         </label>
                       </div>
 
@@ -2016,7 +2016,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
                         />
                         <label htmlFor="pm-runs-director" className="text-sm text-text-muted cursor-pointer select-none">
-                          尚书令触发工部尚书
+                          PM 触发 Director
                         </label>
                       </div>
 
@@ -2030,14 +2030,14 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50 disabled:opacity-50"
                         />
                         <label htmlFor="pm-director-output" className="text-sm text-text-muted cursor-pointer select-none">
-                          显示工部尚书输出
+                          显示 Director 输出
                         </label>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 pt-2 border-t border-white/5">
                       <div>
-                        <label className="block text-xs text-text-muted mb-1.5 font-medium">工部尚书结果超时</label>
+                        <label className="block text-xs text-text-muted mb-1.5 font-medium">Director 结果超时</label>
                         <input
                           type="number"
                           min="1"
@@ -2048,7 +2048,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-text-muted mb-1.5 font-medium">工部尚书尝试次数</label>
+                        <label className="block text-xs text-text-muted mb-1.5 font-medium">Director 尝试次数</label>
                         <input
                           type="number"
                           min="1"
@@ -2061,7 +2061,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                     </div>
 
                     <div>
-                      <label className="block text-xs text-text-muted mb-1.5 font-medium">工部尚书结果匹配模式</label>
+                      <label className="block text-xs text-text-muted mb-1.5 font-medium">Director 结果匹配模式</label>
                       <select
                         value={pmDirectorMatchMode}
                         onChange={(e) => setPmDirectorMatchMode(e.target.value)}
@@ -2077,11 +2077,11 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                   </div>
                 </div>
 
-                {/* 尚书令限制 */}
+                {/* PM 限制 */}
                 <div className="bg-white/5 rounded-xl p-4 border border-white/5">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
-                    尚书令限制
+                    PM 限制
                   </h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -2159,11 +2159,11 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                   </div>
                 </div>
 
-                {/* 工部尚书设置 */}
+                {/* Director 设置 */}
                 <div className="bg-white/5 rounded-xl p-4 border border-white/5">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
-                    工部尚书设置
+                    Director 设置
                   </h3>
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
@@ -2175,7 +2175,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="director-qa" className="text-sm text-text-muted cursor-pointer select-none">
-                        启用门下侍中封驳
+                        启用 QA 审核
                       </label>
                     </div>
 
@@ -2292,7 +2292,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="director-output" className="text-sm text-text-muted cursor-pointer select-none">
-                        显示工部尚书输出
+                        显示 Director 输出
                       </label>
                     </div>
 
@@ -2382,7 +2382,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all font-mono"
                       />
                       <p className="text-[10px] text-text-dim mt-1.5">
-                        相对疆域（Workspace）的路径。默认：{DEFAULT_JSON_LOG_PATH}
+                        相对 Workspace 的路径。默认：{DEFAULT_JSON_LOG_PATH}
                       </p>
                     </div>
 

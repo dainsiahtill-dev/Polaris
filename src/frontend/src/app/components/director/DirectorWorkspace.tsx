@@ -1,4 +1,4 @@
-/** DirectorWorkspace - 工部侍郎执行工作区
+/** DirectorWorkspace - Director 执行工作区
  *
  * 角色特性：
  * - 任务执行与代码实现
@@ -788,7 +788,7 @@ export function DirectorWorkspace({
 
   return (
     <div data-testid="director-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
-      {/* Director Header - 工部侍郎主题 */}
+      {/* Director Header - Director 主题 */}
       <header className="h-14 flex items-center justify-between px-4 border-b border-indigo-500/20 bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/20">
         <div className="flex items-center gap-4">
           <Button
@@ -812,7 +812,7 @@ export function DirectorWorkspace({
               )}
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-indigo-100">工部侍郎</h1>
+              <h1 className="text-sm font-semibold text-indigo-100">Director</h1>
               <p className="text-[10px] text-indigo-500/70 uppercase tracking-wider">Director Console</p>
             </div>
           </div>
@@ -1035,7 +1035,7 @@ export function DirectorWorkspace({
                     secondary: 'indigo-400',
                     gradient: 'from-indigo-500 to-indigo-700',
                   }}
-                  welcomeMessage="工部侍郎执行系统已就绪。我可以帮您执行代码、调试问题、运行测试。"
+                  welcomeMessage="Director 执行系统已就绪。我可以帮您执行代码、调试问题、运行测试。"
                   context={{
                     workspace,
                     session_id: session.id,
@@ -1067,7 +1067,7 @@ export function DirectorWorkspace({
         </div>
         <div className="flex items-center gap-4">
           <span>工作区: {workspace}</span>
-          <span className="text-indigo-500/70">工部侍郎控制台 v1.0</span>
+          <span className="text-indigo-500/70">Director Console v1.0</span>
         </div>
       </footer>
     </div>

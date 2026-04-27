@@ -32,7 +32,7 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   }
 
   await window.getByRole("button", { name: /更多功能/ }).click();
-  await window.getByRole("menuitem", { name: /Director\s*工作区|工部侍郎\s*工作区/i }).click();
+  await window.getByRole("menuitem", { name: /Director\s*Workspace/i }).click();
 }
 
 test("PM + Director show current task/progress visibility", async ({ window }) => {

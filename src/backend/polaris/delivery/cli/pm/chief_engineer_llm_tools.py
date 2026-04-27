@@ -246,7 +246,7 @@ class ChiefEngineerToolEnabledAnalysis:
         # 调用带工具的 LLM
         result = await self.llm_client.invoke_with_tools(
             prompt=prompt,
-            system_prompt="你是 ChiefEngineer（工部尚书），负责设计代码架构蓝图。",
+            system_prompt="你是 ChiefEngineer（Chief Engineer），负责设计代码架构蓝图。",
         )
 
         return {

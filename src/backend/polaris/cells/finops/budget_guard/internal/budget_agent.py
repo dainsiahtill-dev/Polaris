@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class CFOAgent(RoleAgent):
-    """CFO role agent (``户部尚书``).
+    """CFO role agent (FinOps).
 
     All persistent state flows through ``BudgetKFSStore``.  The agent accepts
     an optional ``fs`` parameter so tests can inject a ``KernelFileSystem``

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Director (工匠) Standalone CLI - Code Generation Agent.
+"""Director (engineer) Standalone CLI - Code Generation Agent.
 
 Migration note (Task #48 Phase 2):
     This CLI now routes through RoleRuntimeService instead of the deprecated
@@ -79,7 +79,7 @@ async def main() -> int:
     elif args.mode == "interactive":
         welcome = """
 ╔══════════════════════════════════════════════════════════════╗
-║  Director (工匠) - Code Generation Agent                      ║
+║  Director (engineer) - Code Generation Agent                      ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Responsibilities:                                          ║
 ║    • Write clean, working code                             ║

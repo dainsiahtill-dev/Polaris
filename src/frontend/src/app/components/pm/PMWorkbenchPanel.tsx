@@ -23,7 +23,7 @@ interface PMWorkbenchPanelProps {
 /**
  * PM Workbench Panel - PM 角色工作台
  *
- * 基于 AIDialoguePanel，预配置为 PM（尚书令）角色。
+ * 基于 AIDialoguePanel，预配置为 PM 角色。
  * 支持 RoleSession 多宿主架构，可创建独立的工作台会话。
  * 
  * 与普通 PMAIDialoguePanel 的区别：
@@ -136,13 +136,13 @@ export function PMWorkbenchPanel({
 
   const dialoguePanelProps: AIDialoguePanelProps = {
     dialogueRole: 'pm',
-    roleDisplayName: '尚书令',
+    roleDisplayName: 'PM',
     roleTheme: {
       primary: 'amber',
       secondary: 'amber-400',
       gradient: 'from-amber-500 to-amber-700',
     },
-    welcomeMessage: '尚书令 PM 工作台已就绪。您可以创建任务计划、分析项目状态，或导出工作建议到正式流程。',
+    welcomeMessage: 'PM 工作台已就绪。您可以创建任务计划、分析项目状态，或导出工作建议到正式流程。',
     context: {
       workspace,
       task_count: taskCount,
