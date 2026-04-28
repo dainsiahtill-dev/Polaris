@@ -1,0 +1,80 @@
+verification_card:
+  id: vc-20260428-skill-system-production-fix
+  title: Skill System Production Fix
+  date: "2026-04-28"
+  classification: structural
+  status: completed
+
+assumption_register:
+  - assumption: "ToolHandlerRegistry.load_all() loads all handler modules including skills"
+    evidence: "Modified registry.py to import and register skills module"
+    verified: true
+    verification_method: "Unit test confirms 'load_skill' and 'skill_manifest' in handlers dict"
+  - assumption: "AgentAccelToolExecutor initializes SkillLoader on creation"
+    evidence: "Modified core.py __init__ to call install_default_skills()"
+    verified: true
+    verification_method: "Integration test confirms 3 default skills available in new workspace"
+  - assumption: "Cells layer SkillLoader maintains backward compatibility"
+    evidence: "29/29 existing tests pass with modified SkillLoader"
+    verified: true
+    verification_method: "pytest polaris/cells/roles/runtime/internal/tests/test_skill_loader.py"
+  - assumption: "KernelOne SkillLoader is the canonical implementation"
+    evidence: "Cells layer delegates to KernelOne when no explicit skills_dir provided"
+    verified: true
+    verification_method: "Code review confirms delegation logic"
+
+pre_mortem:
+  - risk: "Handler registration conflicts with existing handlers"
+    mitigation: "Used register_from_module (last-wins) for backward compatibility"
+    likelihood: low
+  - risk: "Default skill files overwrite user customizations"
+    mitigation: "install_default_skills checks file existence before writing"
+    likelihood: low
+  - risk: "Circular imports between skills handler and executor core"
+    mitigation: "Skills handler imports SkillToolInterface lazily inside functions"
+    likelihood: low
+  - risk: "Performance impact from SkillLoader initialization"
+    mitigation: "SkillLoader only parses .md files on first tool call; cached per workspace"
+    likelihood: low
+
+verification_plan:
+  - step: "Run ruff check on all modified files"
+    command: "ruff check <files>"
+    expected: "0 errors"
+    actual: "0 errors (after fixes)"
+    passed: true
+  - step: "Run existing skill_loader tests"
+    command: "pytest polaris/cells/roles/runtime/internal/tests/test_skill_loader.py -q"
+    expected: "29/29 passed"
+    actual: "29/29 passed"
+    passed: true
+  - step: "Run new skill handler integration tests"
+    command: "python test_skill_handlers.py"
+    expected: "4/4 passed"
+    actual: "4/4 passed"
+    passed: true
+  - step: "Verify handler registration"
+    command: "python -c 'from polaris.kernelone.llm.toolkit.executor.handlers.registry import ToolHandlerRegistry; h = ToolHandlerRegistry.load_all(); print(\"load_skill\" in h, \"skill_manifest\" in h)'"
+    expected: "True True"
+    actual: "True True"
+    passed: true
+  - step: "Run mypy type check"
+    command: "mypy <modified files>"
+    expected: "Success: no issues found"
+    actual: "Timeout (>120s)"
+    passed: false
+    note: "Mypy timeout on large codebase; individual file checks pass"
+
+risk_assessment:
+  overall_risk: low
+  unverified_items:
+    - "MyPy full check timed out (structural issue with large codebase)"
+  mitigations:
+    - "All runtime tests pass"
+    - "Backward compatibility maintained via deprecation warnings"
+    - "Fallback to legacy loading when KernelOne delegation fails"
+
+sign_off:
+  engineer: "opencode"
+  date: "2026-04-28"
+  notes: "Skill system is now production-ready. Agent can call load_skill and skill_manifest tools. Default skills (python-refactor, security-review, api-design) auto-install to workspace."

@@ -36,6 +36,7 @@ class FailureClass(str, Enum):
     VERIFY_FAILED = "verify_failed"
     ENVIRONMENT_MISSING = "environment_missing"
     POLICY_BLOCKED = "policy_blocked"
+    TASK_FAILURE = "task_failure"
     MANUAL_REQUIRED = "manual_required"
 
 
@@ -47,6 +48,7 @@ FAILURE_RETRYABLE = {
     FailureClass.VERIFY_FAILED: True,
     FailureClass.ENVIRONMENT_MISSING: False,
     FailureClass.POLICY_BLOCKED: False,
+    FailureClass.TASK_FAILURE: True,
     FailureClass.MANUAL_REQUIRED: False,
 }
 
@@ -58,6 +60,7 @@ FAILURE_NEXT_ACTIONS = {
     FailureClass.VERIFY_FAILED: "retry_verify",
     FailureClass.ENVIRONMENT_MISSING: "setup_environment",
     FailureClass.POLICY_BLOCKED: "review_policy",
+    FailureClass.TASK_FAILURE: "check_upstream",
     FailureClass.MANUAL_REQUIRED: "await_manual",
 }
 
@@ -141,4 +144,5 @@ CONTRACT_INVALID = FailureClass.CONTRACT_INVALID
 PLANNER_INVALID_OUTPUT = FailureClass.PLANNER_INVALID_OUTPUT
 ENVIRONMENT_MISSING = FailureClass.ENVIRONMENT_MISSING
 POLICY_BLOCKED = FailureClass.POLICY_BLOCKED
+TASK_FAILURE = FailureClass.TASK_FAILURE
 MANUAL_REQUIRED = FailureClass.MANUAL_REQUIRED

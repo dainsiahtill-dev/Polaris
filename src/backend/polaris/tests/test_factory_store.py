@@ -29,7 +29,7 @@ import pytest
 
 def _load_factory_store_module():
     """Load factory_store.py without triggering the full package __init__ chain."""
-    module_path = Path(__file__).parent.parent / "polaris/cells/factory/pipeline/internal/factory_store.py"
+    module_path = Path(__file__).parent.parent / "cells/factory/pipeline/internal/factory_store.py"
     spec = importlib.util.spec_from_file_location(
         "polaris.cells.factory.pipeline.internal.factory_store",
         module_path,

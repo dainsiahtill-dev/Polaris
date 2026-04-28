@@ -1,3 +1,7 @@
+import importlib.util, pytest
+if importlib.util.find_spec("core") is None:
+    pytest.skip("Legacy module not available: core.orchestration", allow_module_level=True)
+
 """Tests for RuntimeOrchestrator - unified process orchestration.
 
 This module tests the orchestration functionality introduced

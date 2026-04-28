@@ -3,11 +3,29 @@
 This package provides the canonical session-level context operating substrate:
 truth-log projection, structured working state, artifact offload, episode
 sealing, budget planning, and memory restore/query primitives.
+
+ContextOS 3.0 Enhancements:
+- Context Decision Log (Audit/Replay Layer)
+- Multi-Resolution Store (Phase 1)
+- Phase-Aware Budgeting (Phase 2)
+- Attention Scoring V1 (Phase 3)
 """
 
 from __future__ import annotations
 
+from .attention import AttentionScorer, CandidateRanker, ReasonCodeGenerator
+from .attention.graph import Edge, EdgeType, EventGraph
+from .attention.propagation import GraphPropagator, PropagationConfig, PropagationResult
 from .classifier import DialogActClassifier
+from .decision_log import (
+    AttentionScore,
+    ContextDecision,
+    ContextDecisionLog,
+    ContextDecisionType,
+    ProjectionReport,
+    ReasonCode,
+    create_decision,
+)
 from .domain_adapters import (
     CodeContextDomainAdapter,
     ContextDomainAdapter,
@@ -41,6 +59,8 @@ from .evaluation import (
 )
 from .introspection import summarize_context_os_payload
 from .invariants import ContextOSInvariantViolationError, validate_context_os_persisted_projection
+from .memory import ConflictChecker, ConflictStatus, MemoryCandidate, MemoryCandidateProvider, MemoryManager
+from .metrics import MetricsCollector, MetricsExporter
 from .metrics_collector import (
     CognitiveRuntimeMetrics,
     CognitiveRuntimeMetricsCollectionResult,
@@ -67,7 +87,28 @@ from .models_v2 import (
     UserProfileStateV2 as UserProfileState,
     WorkingStateV2 as WorkingState,
 )
+from .multi_resolution_store import (
+    MultiResolutionContent,
+    MultiResolutionStore,
+    ResolutionEntry,
+    ResolutionLevel,
+    create_extractive_content,
+    create_structured_content,
+    create_stub_content,
+)
+from .phase_budget_planner import (
+    BudgetProfile,
+    PhaseAwareBudgetPlan,
+    PhaseAwareBudgetPlanner,
+)
+from .phase_detection import (
+    TaskPhase,
+    TaskPhaseDetector,
+)
+from .pipeline.attention_aware_stages import AttentionAwareWindowCollector
+from .pipeline.phase_aware_stages import PhaseAwareBudgetPlannerStage
 from .policies import StateFirstContextOSPolicy
+from .predictive import PredictionResult, PredictionStrategy, PredictiveCompressor
 from .replay_suite_generator import (
     create_multi_turn_case,
     create_short_session_case,
@@ -86,23 +127,32 @@ from .schemas import (
 )
 
 __all__ = [
-    "REPORT_SCHEMA",
     # Schema validation
+    "REPORT_SCHEMA",
     "SUITE_SCHEMA",
     "ArtifactRecord",
-    "AttentionObservabilityTrace",
+    # Attention Scoring (ContextOS 3.0 Phase 3)
+    "AttentionAwareWindowCollector",
     "AttentionRuntimeEvalReport",
     "AttentionRuntimeEvalSuite",
     # Attention Runtime evaluation
     "AttentionRuntimeMetrics",
     "AttentionRuntimeQualityCase",
     "AttentionRuntimeQualityResult",
+    "AttentionScore",
+    "AttentionScorer",
     "BudgetPlan",
+    "BudgetProfile",
+    "CandidateRanker",
     "CodeContextDomainAdapter",
     # Cognitive Runtime metrics collection
     "CognitiveRuntimeMetrics",
     "CognitiveRuntimeMetricsCollectionResult",
     "CognitiveRuntimeMetricsCollector",
+    # Context Decision Log (ContextOS 3.0 Phase 0)
+    "ContextDecision",
+    "ContextDecisionLog",
+    "ContextDecisionType",
     "ContextDomainAdapter",
     "ContextOSGateFailure",
     "ContextOSInvariantViolationError",
@@ -115,29 +165,67 @@ __all__ = [
     "ContextOSSnapshot",
     "ContextSlicePlan",
     "ContextSliceSelection",
+    "ConflictChecker",
+    "ConflictStatus",
     "DecisionEntry",
     "DialogAct",
     "DialogActClassifier",
     "DialogActResult",
     "DomainRoutingDecision",
     "DomainStatePatchHints",
+    "Edge",
+    "EdgeType",
     "EpisodeCard",
+    "EventGraph",
     "GenericContextDomainAdapter",
+    "GraphPropagator",
+    # Memory (ContextOS 3.0 P1)
+    "MemoryCandidate",
+    "MemoryCandidateProvider",
+    "MemoryManager",
+    # Metrics (ContextOS 3.0 P2)
+    "MetricsCollector",
+    "MetricsExporter",
+    # Multi-Resolution Store (ContextOS 3.0 Phase 1)
+    "MultiResolutionContent",
+    "MultiResolutionStore",
     "PendingFollowUp",
+    # Phase-Aware Budgeting (ContextOS 3.0 Phase 2)
+    "PhaseAwareBudgetPlan",
+    "PhaseAwareBudgetPlanner",
+    "PhaseAwareBudgetPlannerStage",
+    "PredictionResult",
+    "PredictionStrategy",
+    "PredictiveCompressor",
+    "ProjectionReport",
+    "PropagationConfig",
+    "PropagationResult",
+    "ReasonCode",
+    "ReasonCodeGenerator",
+    "ResolutionEntry",
+    "ResolutionLevel",
     "RoutingClass",
     "RunCard",
     "StateEntry",
     "StateFirstContextOS",
     "StateFirstContextOSPolicy",
+    "TaskPhase",
+    "TaskPhaseDetector",
     "TaskStateView",
     "TranscriptEvent",
     "UserProfileState",
     "ValidationResult",
     "WorkingState",
     "collect_cognitive_runtime_metrics",
+    # Decision log factory
+    "create_decision",
+    # Multi-Resolution helpers
+    "create_extractive_content",
     # Replay suite generation
     "create_multi_turn_case",
     "create_short_session_case",
+    "create_structured_content",
+    "create_stub_content",
     "evaluate_attention_runtime_case",
     "evaluate_attention_runtime_suite",
     "evaluate_context_os_case",

@@ -38,7 +38,7 @@ def _clone_namespace(args: argparse.Namespace) -> argparse.Namespace:
 
 def _build_runner_command(args: argparse.Namespace) -> list[str]:
     """构建 runner 子进程的命令行参数。"""
-    command = [sys.executable, "-u", "-B", "-m", "tests.agent_stress.runner"]
+    command = [sys.executable, "-u", "-B", "-m", "polaris.tests.agent_stress.runner"]
     if args.workspace:
         command.extend(["--workspace", str(args.workspace)])
     if getattr(args, "rounds", None) is not None:
@@ -118,7 +118,7 @@ def _build_runner_command(args: argparse.Namespace) -> list[str]:
 
 def _build_observer_command(args: argparse.Namespace) -> list[str]:
     """构建 observer 子进程的命令行参数（用于弹出新窗口）。"""
-    command = [sys.executable, "-u", "-B", "-m", "tests.agent_stress.observer"]
+    command = [sys.executable, "-u", "-B", "-m", "polaris.tests.agent_stress.observer"]
     if args.workspace:
         command.extend(["--workspace", str(args.workspace)])
     if getattr(args, "rounds", None) is not None:

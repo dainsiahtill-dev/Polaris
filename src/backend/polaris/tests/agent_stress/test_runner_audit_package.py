@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from tests.agent_stress.engine import RoundResult, StageExecution, StageResult
-from tests.agent_stress.project_pool import PROJECT_POOL
+from .engine import RoundResult, StageExecution, StageResult
+from .project_pool import PROJECT_POOL
 
 
 def _utc_now_iso() -> str:
@@ -64,7 +64,7 @@ def _build_round_result(
 
 
 def test_generate_json_report_includes_forensics_sections(tmp_path: Path) -> None:
-    from tests.agent_stress.runner import AgentStressRunner
+    from .runner import AgentStressRunner
 
     workspace = tmp_path / "stress-workspace"
     result_workspace = workspace / "projects" / PROJECT_POOL[0].id
@@ -86,7 +86,7 @@ def test_generate_json_report_includes_forensics_sections(tmp_path: Path) -> Non
 
 
 def test_collect_artifact_integrity_detects_missing_stage_artifact(tmp_path: Path) -> None:
-    from tests.agent_stress.runner import AgentStressRunner
+    from .runner import AgentStressRunner
 
     workspace = tmp_path / "stress-workspace"
     result_workspace = workspace / "projects" / PROJECT_POOL[0].id
@@ -104,7 +104,7 @@ def test_collect_artifact_integrity_detects_missing_stage_artifact(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_save_intermediate_results_writes_audit_checkpoint(tmp_path: Path) -> None:
-    from tests.agent_stress.runner import AgentStressRunner
+    from .runner import AgentStressRunner
 
     workspace = tmp_path / "stress-workspace"
     result_workspace = workspace / "projects" / PROJECT_POOL[0].id

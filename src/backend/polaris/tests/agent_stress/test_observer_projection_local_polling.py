@@ -7,12 +7,12 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from polaris.kernelone.storage import resolve_runtime_path
-from tests.agent_stress.observer.projection import RuntimeProjection
-from tests.agent_stress.observer.renderers import (
+from .observer.projection import RuntimeProjection
+from .observer.renderers import (
     _format_taskboard_execution_backend_label,
     _map_taskboard_status_label,
 )
-from tests.agent_stress.observer.state import ObserverState
+from .observer.state import ObserverState
 
 
 def _write_jsonl(path: Path, payload: dict) -> None:

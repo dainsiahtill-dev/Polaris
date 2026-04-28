@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 
-observer_main = importlib.import_module("tests.agent_stress.observer.main")
+observer_main = importlib.import_module("polaris.tests.agent_stress.observer.main")
 
 
 def test_should_spawn_new_console_for_terminal_hosted_local_sessions(

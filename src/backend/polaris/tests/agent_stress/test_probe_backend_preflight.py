@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.agent_stress.probe import (
+from .probe import (
     ProbeReport,
     ProbeStatus,
     RoleProbeResult,

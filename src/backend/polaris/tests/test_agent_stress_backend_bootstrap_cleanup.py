@@ -10,8 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests.agent_stress.backend_bootstrap import ManagedBackendSession
-from tests.agent_stress.backend_context import BackendContext
+from polaris.tests.agent_stress.backend_bootstrap import ManagedBackendSession
+from polaris.tests.agent_stress.backend_context import BackendContext
 
 
 @pytest.mark.asyncio

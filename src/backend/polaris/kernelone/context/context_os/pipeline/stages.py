@@ -942,6 +942,7 @@ class WindowCollector:
         patcher_out: StatePatcherOutput,
         canon_out: CanonicalizerOutput,
         inp: PipelineInput,
+        decision_log: Any | None = None,  # ContextDecisionLog
     ) -> WindowCollectorOutput:
         transcript = canon_out.transcript
         working_state = patcher_out.working_state
@@ -950,6 +951,15 @@ class WindowCollector:
 
         if not transcript:
             return WindowCollectorOutput(active_window=())
+
+        # Import decision log types if logging is enabled
+        _log_decisions = decision_log is not None
+        if _log_decisions:
+            from polaris.kernelone.context.context_os.decision_log import (
+                ContextDecisionType,
+                ReasonCode,
+                create_decision,
+            )
 
         min_recent_floor = max(1, int(self._policy.min_recent_messages_pinned or 1))
         min_recent_floor = min(self._policy.max_active_window_messages, min_recent_floor)
@@ -980,7 +990,21 @@ class WindowCollector:
 
         for item in reversed(transcript):
             if item.route == RoutingClass.CLEAR and item.event_id not in forced_recent_ids:
+                # Log: excluded due to CLEAR route
+                if _log_decisions:
+                    decision_log.record(
+                        create_decision(
+                            decision_type=ContextDecisionType.EXCLUDE,
+                            target_event_id=item.event_id,
+                            reason="route_cleared",
+                            reason_codes=(ReasonCode.ROUTE_CLEARED,),
+                            token_budget_before=token_budget,
+                            token_budget_after=token_budget,
+                            explanation="Event excluded because route is CLEAR and not in forced recent IDs.",
+                        )
+                    )
                 continue
+
             is_reopened = bool(str(get_metadata_value(item.metadata, "reopen_hold") or "").strip())
             is_root = (
                 item.sequence in pinned_sequences
@@ -988,14 +1012,40 @@ class WindowCollector:
                 or is_reopened
                 or item.event_id in forced_recent_ids
             )
+
+            # Determine reason codes for root status
+            root_reasons: list[ReasonCode] = []
+            if item.sequence in pinned_sequences:
+                root_reasons.append(ReasonCode.PINNED_BY_SYSTEM)
+            if item.artifact_id in active_artifact_ids:
+                root_reasons.append(ReasonCode.ACTIVE_ARTIFACT)
+            if is_reopened:
+                root_reasons.append(ReasonCode.OPEN_LOOP_REFERENCE)
+            if item.event_id in forced_recent_ids:
+                root_reasons.append(ReasonCode.FORCED_RECENT)
+
             can_add = is_root or len(pinned_events) < self._policy.max_active_window_messages
             if not can_add:
+                # Log: excluded due to max window messages reached
+                if _log_decisions:
+                    decision_log.record(
+                        create_decision(
+                            decision_type=ContextDecisionType.EXCLUDE,
+                            target_event_id=item.event_id,
+                            reason="max_window_messages_reached",
+                            reason_codes=(ReasonCode.NOT_IN_ACTIVE_WINDOW,),
+                            token_budget_before=token_budget,
+                            token_budget_after=token_budget,
+                            explanation=f"Non-root event excluded because max_active_window_messages ({self._policy.max_active_window_messages}) reached.",
+                        )
+                    )
                 continue
 
             item_content = item.content
             estimated = _estimate_tokens(item_content)
 
             compressed_via_jit = False
+            compression_reason: ReasonCode | None = None
             if token_count + estimated > token_budget and is_root:
                 remaining_budget = token_budget - token_count
                 remaining_chars = max(512, remaining_budget * 4)
@@ -1012,6 +1062,7 @@ class WindowCollector:
                                 content_type=content_type,
                             )
                             compressed_via_jit = True
+                            compression_reason = ReasonCode.JIT_SEMANTIC_COMPRESSION
                             logger.info(
                                 "JIT semantic compression: event_id=%s "
                                 "original=%d chars → compressed=%d chars "
@@ -1037,6 +1088,7 @@ class WindowCollector:
                             remaining_chars = int(remaining_chars * 0.8)
                             item_content = _trim_text(item_content, max_chars=remaining_chars)
                             truncated_tokens = _estimate_tokens(item_content)
+                        compression_reason = ReasonCode.BRUTE_FORCE_TRUNCATION
                         logger.warning(
                             "Root event content truncated due to token budget: event_id=%s, "
                             "original_tokens=%d, truncated_to=%d, token_budget=%d",
@@ -1058,6 +1110,20 @@ class WindowCollector:
                         token_count,
                         token_budget,
                     )
+                    # Log: root event still over budget after compression
+                    if _log_decisions:
+                        decision_log.record(
+                            create_decision(
+                                decision_type=ContextDecisionType.INCLUDE_FULL,
+                                target_event_id=item.event_id,
+                                reason="root_over_budget",
+                                reason_codes=tuple(root_reasons),
+                                token_budget_before=token_budget,
+                                token_budget_after=token_budget,
+                                token_cost=estimated,
+                                explanation="Root event included despite exceeding budget (after compression).",
+                            )
+                        )
                 else:
                     logger.debug(
                         "Skipping non-root event due to token budget: event_id=%s, sequence=%d, "
@@ -1068,6 +1134,20 @@ class WindowCollector:
                         token_count,
                         token_budget,
                     )
+                    # Log: excluded due to token budget
+                    if _log_decisions:
+                        decision_log.record(
+                            create_decision(
+                                decision_type=ContextDecisionType.EXCLUDE,
+                                target_event_id=item.event_id,
+                                reason="token_budget_exceeded",
+                                reason_codes=(ReasonCode.TOKEN_BUDGET_EXCEEDED,),
+                                token_budget_before=token_budget,
+                                token_budget_after=token_budget,
+                                token_cost=estimated,
+                                explanation="Non-root event excluded because token budget exceeded.",
+                            )
+                        )
                     continue
 
             if item.event_id in pinned_events:
@@ -1088,6 +1168,27 @@ class WindowCollector:
                 pinned_item = item
             pinned_events[item.event_id] = pinned_item
             token_count += estimated
+
+            # Log: included event
+            if _log_decisions:
+                decision_type = ContextDecisionType.INCLUDE_FULL
+                if compressed_via_jit or compression_reason == ReasonCode.BRUTE_FORCE_TRUNCATION:
+                    decision_type = ContextDecisionType.COMPRESS
+
+                decision_log.record(
+                    create_decision(
+                        decision_type=decision_type,
+                        target_event_id=item.event_id,
+                        reason="included_in_active_window",
+                        reason_codes=tuple(root_reasons) if root_reasons else (ReasonCode.NOT_IN_ACTIVE_WINDOW,),
+                        token_budget_before=token_budget,
+                        token_budget_after=token_budget,
+                        token_cost=estimated,
+                        content_source=item.kind or "unknown",
+                        resolution_used="full" if not compressed_via_jit else "compressed",
+                        explanation=f"Event included in active window. Root={is_root}, Compressed={compressed_via_jit}.",
+                    )
+                )
 
         active_window = tuple(sorted(pinned_events.values(), key=lambda item: (item.sequence, item.event_id)))
         return WindowCollectorOutput(active_window=active_window)

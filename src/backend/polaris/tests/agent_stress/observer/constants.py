@@ -9,7 +9,7 @@ import logging
 import os
 import subprocess
 
-from tests.agent_stress.paths import BACKEND_ROOT, ensure_backend_root_on_syspath
+from ..paths import BACKEND_ROOT, ensure_backend_root_on_syspath
 
 logger = logging.getLogger("observer.projection")
 

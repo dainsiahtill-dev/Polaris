@@ -125,6 +125,7 @@ class ToolHandlerRegistry:
             repo,
             search,
             session_memory,
+            skills,
         )
 
         cls.register_from_module(command.register_handlers())
@@ -133,6 +134,7 @@ class ToolHandlerRegistry:
         cls.register_from_module(repo.register_handlers())
         cls.register_from_module(search.register_handlers())
         cls.register_from_module(session_memory.register_handlers())
+        cls.register_from_module(skills.register_handlers())
 
         return cls.get_all()
 

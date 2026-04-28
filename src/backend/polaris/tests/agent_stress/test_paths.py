@@ -8,10 +8,10 @@ from polaris.kernelone.storage import (
     clear_storage_roots_cache,
     resolve_storage_roots,
 )
-from tests.agent_stress.backend_bootstrap import BACKEND_SERVER_SCRIPT
-from tests.agent_stress.observer.constants import BACKEND_DIR, PROJECT_ROOT
-from tests.agent_stress.paths import BACKEND_ROOT, REPO_ROOT
-from tests.agent_stress.stress_path_policy import (
+from .backend_bootstrap import BACKEND_SERVER_SCRIPT
+from .observer.constants import BACKEND_DIR, PROJECT_ROOT
+from .paths import BACKEND_ROOT, REPO_ROOT
+from .stress_path_policy import (
     default_stress_runtime_root,
     default_stress_workspace_base,
 )
@@ -35,7 +35,7 @@ def test_agent_stress_registers_polaris_storage_layout(tmp_path: Path) -> None:
     clear_storage_roots_cache()
     set_workspace_metadata_dir_name(original_metadata_dir)
     try:
-        from tests.agent_stress.paths import ensure_backend_root_on_syspath
+        from .paths import ensure_backend_root_on_syspath
 
         ensure_backend_root_on_syspath()
         roots = resolve_storage_roots(

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from tests.agent_stress.paths import (
+from .paths import (
     BACKEND_ROOT,
     REPO_ROOT,
     ensure_backend_root_on_syspath,
@@ -26,13 +26,13 @@ ensure_backend_root_on_syspath()
 
 PROJECT_ROOT = BACKEND_ROOT
 
-from tests.agent_stress.backend_context import (
+from .backend_context import (
     BackendContext,
     get_desktop_backend_info_path,
     resolve_backend_context,
 )
-from tests.agent_stress.preflight import BackendPreflightProbe, BackendPreflightStatus
-from tests.agent_stress.stress_path_policy import (
+from .preflight import BackendPreflightProbe, BackendPreflightStatus
+from .stress_path_policy import (
     default_stress_runtime_root,
     default_stress_workspace_base,
     ensure_stress_runtime_root,
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 BOOTSTRAP_CONTEXT_SOURCE = "terminal-auto-bootstrap"
 DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 30.0
 DEFAULT_BOOTSTRAP_WORKSPACE_PREFIX = "tests-agent-stress-backend"
-DEFAULT_BOOTSTRAP_RAMDISK = ensure_stress_runtime_root(default_stress_runtime_root("tests-agent-stress-runtime"))
+DEFAULT_BOOTSTRAP_RAMDISK = default_stress_runtime_root("tests-agent-stress-runtime")
 BACKEND_SERVER_SCRIPT = BACKEND_ROOT / "server.py"
 
 

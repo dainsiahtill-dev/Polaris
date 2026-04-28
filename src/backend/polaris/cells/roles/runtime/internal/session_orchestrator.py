@@ -542,6 +542,19 @@ class RoleSessionOrchestrator:
                     else:
                         parts.append("You do NOT have permission to write or modify files.")
 
+                # Inject skill system information
+                try:
+                    from polaris.kernelone.single_agent.skill_system import SkillLoader
+                    skill_loader = SkillLoader(self.workspace)
+                    skill_section = skill_loader.get_system_prompt_section()
+                    if skill_section and skill_section != "(No skills available)":
+                        parts.append("")
+                        parts.append("## Available Skills")
+                        parts.append("You can load these skills for detailed guidance using the load_skill tool:")
+                        parts.append(skill_section)
+                except Exception:  # noqa: BLE001
+                    pass
+
                 role_def = "\n".join(parts)
 
                 # Build tool definitions from role whitelist

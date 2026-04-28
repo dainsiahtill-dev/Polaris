@@ -16,6 +16,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Module-level reference for test patching support
+KernelAuditRuntime: Any = None
+
+
+def _ensure_runtime_class() -> Any:
+    global KernelAuditRuntime
+    if KernelAuditRuntime is None:
+        from polaris.kernelone.audit.runtime import KernelAuditRuntime as _RuntimeCls
+
+        KernelAuditRuntime = _RuntimeCls
+    return KernelAuditRuntime
+
 
 class LLMuditBridge:
     """Bridges llm/toolkit/audit.py sessions into KernelAuditRuntime.
@@ -29,9 +41,8 @@ class LLMuditBridge:
     @property
     def runtime(self) -> Any:
         if self._runtime is None:
-            from polaris.kernelone.audit.runtime import KernelAuditRuntime
-
-            self._runtime = KernelAuditRuntime.get_instance(Path.cwd())
+            cls = _ensure_runtime_class()
+            self._runtime = cls.get_instance(Path.cwd())
         return self._runtime
 
     def replay_session(self, session_path: Path) -> int:

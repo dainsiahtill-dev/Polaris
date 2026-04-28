@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from polaris.kernelone.context.context_os.decision_log import ProjectionReport
     from polaris.kernelone.context.context_os.models_v2 import (
         ArtifactRecordV2 as ArtifactRecord,
         BudgetPlanV2 as BudgetPlan,

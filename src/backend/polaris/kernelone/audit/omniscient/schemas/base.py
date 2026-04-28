@@ -210,6 +210,13 @@ class AuditEvent(BaseModel, frozen=True):
     # Validators
     # -------------------------------------------------------------------------
 
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _validate_priority(cls, v: Any) -> AuditPriority:
+        if isinstance(v, str):
+            return AuditPriority[v.upper()]
+        return v
+
     @field_validator("trace_id", "run_id", "span_id", "parent_span_id", mode="before")
     @classmethod
     def _strip_whitespace(cls, v: str) -> str:

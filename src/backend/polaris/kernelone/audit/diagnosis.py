@@ -95,7 +95,7 @@ BUILTIN_PATTERNS: list[ErrorPattern] = [
         regex=r"can only concatenate str \(not '(.+)'\) to str",
         description="字符串拼接类型错误",
         root_cause_template="尝试将 '{group_0}' 与字符串拼接",
-        fix_suggestion_template="使用 str() 转换或检查变量类型",
+        fix_suggestion_template="使用 str() 转换或检查变量类型 (拼接类型: {group_0})",
         search_keywords=['"', "+"],
         priority=3,
     ),

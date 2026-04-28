@@ -27,32 +27,41 @@ def _emit_audit_internal_failure(error_type: str, error_details: dict) -> None:
             KernelAuditEventType.INTERNAL_AUDIT_FAILURE,
             {"source_module": "evidence_paths", "error_type": error_type, **error_details},
         )
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError, TypeError):
         _logger.warning("Audit internal failure (degraded): %s %s", error_type, error_details)
 
 
 def _is_within_path(parent: str, child: str) -> bool:
     try:
-        parent_abs = os.path.abspath(parent)
-        child_abs = os.path.abspath(child)
-        return os.path.commonpath([parent_abs, child_abs]) == parent_abs
-    except (RuntimeError, ValueError) as exc:
+        if not parent or not child:
+            return False
+        parent_path = Path(parent).resolve()
+        child_path = Path(child).resolve()
+        return child_path == parent_path or parent_path in child_path.parents
+    except (RuntimeError, ValueError, OSError) as exc:
         _emit_audit_internal_failure("path_check_error", {"parent": parent, "child": child, "error": str(exc)})
         return False
 
 
 def _logical_path_from_absolute(workspace: str, absolute_path: str) -> str:
     roots = resolve_storage_roots(workspace)
-    candidates = (
-        ("runtime", roots.runtime_root),
-        ("workspace", roots.workspace_persistent_root),
-        ("config", roots.config_root),
-    )
+    workspace_path = Path(workspace).resolve()
+    candidates = [
+        ("runtime", Path(roots.runtime_root).resolve()),
+        ("workspace", Path(roots.workspace_persistent_root).resolve()),
+        ("config", Path(roots.config_root).resolve()),
+    ]
+    # Also allow workspace root itself for evidence artifacts
+    if candidates[1][1] != workspace_path:
+        candidates.append(("workspace", workspace_path))
     for prefix, root in candidates:
-        if not _is_within_path(root, absolute_path):
+        if not _is_within_path(str(root), absolute_path):
             continue
-        rel = os.path.relpath(os.path.abspath(absolute_path), os.path.abspath(root))
-        rel_norm = rel.replace("\\", "/")
+        try:
+            rel = Path(absolute_path).resolve().relative_to(root)
+        except ValueError:
+            continue
+        rel_norm = str(rel).replace("\\", "/")
         if rel_norm in {".", ""}:
             return prefix
         return f"{prefix}/{rel_norm}"
@@ -74,6 +83,11 @@ def resolve_evidence_artifact_reference(workspace: str, artifact_path: str) -> t
         absolute = os.path.abspath(raw)
         logical = _logical_path_from_absolute(workspace_value, absolute)
         return absolute, logical
+
+    # If relative path lacks a valid prefix, treat it as workspace-relative
+    first_part = raw.replace("\\", "/").lstrip("/").split("/", 1)[0]
+    if first_part not in ("runtime", "workspace", "config"):
+        raw = "workspace/" + raw
 
     logical = normalize_logical_rel_path(raw)
     absolute = os.path.abspath(resolve_logical_path(workspace_value, logical))
@@ -100,7 +114,12 @@ def ensure_runtime_scoped_directory(workspace: str, directory: str) -> str:
     if not raw:
         raise ValueError("run_dir is required")
     run_dir = os.path.abspath(raw)
-    runtime_root = resolve_storage_roots(workspace).runtime_root
-    if not _is_within_path(runtime_root, run_dir):
-        raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {directory}")
-    return run_dir
+    roots = resolve_storage_roots(workspace)
+    runtime_root = roots.runtime_root
+    if _is_within_path(runtime_root, run_dir):
+        return run_dir
+    # Also allow workspace-local runtime directories
+    workspace_local_runtime = str(Path(workspace).resolve() / ".polaris" / "runtime")
+    if _is_within_path(workspace_local_runtime, run_dir):
+        return run_dir
+    raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {directory}")

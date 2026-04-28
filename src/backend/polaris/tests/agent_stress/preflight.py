@@ -237,7 +237,7 @@ class BackendPreflightProbe:
             }
 
     async def _probe_runtime_v2(self, settings_result: dict[str, Any]) -> dict[str, Any]:
-        from tests.agent_stress.observer.projection import RuntimeProjection
+        from .observer.projection import RuntimeProjection
 
         settings_payload = settings_result.get("payload")
         settings_payload = settings_payload if isinstance(settings_payload, dict) else {}

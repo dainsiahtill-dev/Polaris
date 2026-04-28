@@ -17,7 +17,7 @@ tests.agent_stress.runner 的实时输出，并支持在 Windows
 from __future__ import annotations
 
 # 从新包导入所有公开接口，保持完全向后兼容
-from tests.agent_stress.observer import (
+from .observer import (
     # 常量
     BACKEND_DIR,
     CREATE_NEW_CONSOLE_FLAG,

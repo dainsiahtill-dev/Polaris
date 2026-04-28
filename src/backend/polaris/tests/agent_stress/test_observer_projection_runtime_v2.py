@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from polaris.kernelone.storage import resolve_storage_roots
-from tests.agent_stress.observer.projection import RuntimeProjection
+from .observer.projection import RuntimeProjection
 
 
 class _FakeWebSocket:
@@ -59,7 +59,7 @@ async def test_connect_ws_subscribes_runtime_v2_with_jetstream(
         del args, kwargs
         return fake_ws
 
-    monkeypatch.setattr("tests.agent_stress.observer.projection.websockets.connect", _fake_connect)
+    monkeypatch.setattr("polaris.tests.agent_stress.observer.projection.websockets.connect", _fake_connect)
 
     projection = RuntimeProjection(
         backend_url="http://127.0.0.1:49977",
@@ -105,7 +105,7 @@ async def test_connect_ws_fails_when_runtime_v2_has_no_jetstream(
         del args, kwargs
         return fake_ws
 
-    monkeypatch.setattr("tests.agent_stress.observer.projection.websockets.connect", _fake_connect)
+    monkeypatch.setattr("polaris.tests.agent_stress.observer.projection.websockets.connect", _fake_connect)
 
     projection = RuntimeProjection(
         backend_url="http://127.0.0.1:49977",

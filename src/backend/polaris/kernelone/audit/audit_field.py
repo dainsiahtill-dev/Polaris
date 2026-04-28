@@ -161,10 +161,12 @@ def audit_len(
     except (TypeError, AttributeError):
         pass
 
-    # 回退：使用字符串长度
+    # 回退：使用字符串长度（仅当对象有自定义 __str__ 时）
     try:
+        if type(obj).__str__ is object.__str__:
+            return default
         return len(str(obj))
-    except (TypeError, AttributeError):
+    except (TypeError, AttributeError, RuntimeError):
         return default
 
 
@@ -192,10 +194,10 @@ def audit_str(
 
     try:
         result = str(obj)
-    except (TypeError, AttributeError):
+    except (TypeError, AttributeError, RuntimeError):
         try:
             result = repr(obj)
-        except (TypeError, AttributeError):
+        except (TypeError, AttributeError, RuntimeError):
             result = f"<{type(obj).__name__} conversion failed>"
 
     if max_length and len(result) > max_length:
@@ -217,10 +219,10 @@ def audit_repr(
 
     try:
         return repr(obj)
-    except (TypeError, AttributeError):
+    except (TypeError, AttributeError, RuntimeError):
         try:
             return str(obj)
-        except (TypeError, AttributeError):
+        except (TypeError, AttributeError, RuntimeError):
             return f"<{type(obj).__name__} repr failed>"
 
 
@@ -255,7 +257,7 @@ def safe_value(
     # bytes: 转为字符串
     if isinstance(obj, bytes):
         try:
-            return obj.decode("utf-8", errors="replace")
+            return obj.decode("utf-8")
         except (UnicodeDecodeError, TypeError):
             return "<bytes decode failed>"
 
@@ -274,7 +276,7 @@ def safe_value(
                         "error": "recursive safe_value failed",
                     }
                 )
-        return result if isinstance(obj, list) else tuple(result)
+        return result
 
     # set/frozenset: 转为 list
     if isinstance(obj, (set, frozenset)):
@@ -321,7 +323,8 @@ def safe_value(
     if _has_dict_attr(obj):
         try:
             obj_dict = obj.__dict__  # type: ignore[union-attr]
-            return safe_value(dict(obj_dict), field_path=field_path, allow_methods=allow_methods)
+            if obj_dict:
+                return safe_value(dict(obj_dict), field_path=field_path, allow_methods=allow_methods)
         except (TypeError, AttributeError) as e:
             logger.debug("safe_value: __dict__ access failed for %s at %s: %s", type(obj).__name__, field_path, e)
 
@@ -364,6 +367,10 @@ class TypeSafeList(list):
         for _i, item in enumerate(self):
             try:
                 result.append(fn(item))
-            except (RuntimeError, ValueError):  # Defensive: user's function may raise, we skip failed elements
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+            ):  # Defensive: user's function may raise, we skip failed elements
                 result.append(default)
         return result

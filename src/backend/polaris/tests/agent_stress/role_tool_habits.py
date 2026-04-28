@@ -21,16 +21,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tests.agent_stress.paths import ensure_backend_root_on_syspath
+from .paths import ensure_backend_root_on_syspath
 
 ensure_backend_root_on_syspath()
 
 import httpx
-from tests.agent_stress.backend_bootstrap import (
+from .backend_bootstrap import (
     BackendBootstrapError,
     ensure_backend_session,
 )
-from tests.agent_stress.stress_path_policy import (
+from .stress_path_policy import (
     default_stress_runtime_root,
     default_stress_workspace_base,
     ensure_stress_runtime_root,

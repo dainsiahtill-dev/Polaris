@@ -1,3 +1,7 @@
+import importlib.util, pytest
+if importlib.util.find_spec("anthropomorphic") is None:
+    pytest.skip("Legacy module not available: core.polaris_loop.anthropomorphic.schema", allow_module_level=True)
+
 # ruff: noqa: E402
 import os
 import sys

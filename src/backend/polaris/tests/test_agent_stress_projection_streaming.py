@@ -20,8 +20,8 @@ if tests_pkg is None:
     sys.modules["tests"] = tests_pkg
 tests_pkg.__path__ = [str(TESTS_ROOT)]
 
-import tests.agent_stress.observer as observer_module
-from tests.agent_stress.observer import (
+import polaris.tests.agent_stress.observer as observer_module
+from polaris.tests.agent_stress.observer import (
     ObserverState,
     RuntimeProjection,
     _extract_runtime_root_from_settings_line,

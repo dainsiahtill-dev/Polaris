@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from tests.agent_stress.preflight import BackendPreflightProbe, BackendPreflightStatus
+from .preflight import BackendPreflightProbe, BackendPreflightStatus
 
 
 @pytest.mark.asyncio

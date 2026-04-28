@@ -665,11 +665,213 @@ class PredictiveCompressor(PipelineStage):
 
 ---
 
-## 5. Implementation Roadmap
+## 5. Implementation Roadmap (Revised: Audit-First, Intelligence-Later)
 
-### Phase 1: Foundation (Week 1-2)
+### 5.0 ContextOS 3.0-MVP Definition
 
-**Goal**: Build infrastructure without changing existing behavior.
+```text
+ContextOS 3.0-MVP =
+  Context Decision Log          (Layer 3: Audit/Replay)
++ Multi-Resolution Store        (Layer 1: Deterministic Kernel)
++ Phase-Aware Budgeting         (Layer 1 + Layer 2)
++ Attention Scoring V1          (Layer 2: Intelligence Advisory)
+```
+
+**MVP Goal**: 让每一次上下文投影都能回答三件事：
+1. 当前处于什么阶段？
+2. 为什么这些内容进入了 prompt？
+3. 为什么那些内容被压缩/排除了？
+
+**Explicitly NOT in MVP**:
+- PageRank Graph (too complex for V1)
+- Predictive Compression (needs Decision Log first)
+- Complex cross-session memory fusion (needs conflict detection first)
+
+---
+
+### Phase 0: Context Decision Log (Week 1-2) — **P0: Do This First**
+
+**Rationale**: 后面所有智能能力都需要它来验证。没有 Decision Log，就无法证明 Attention Graph 有没有变好，也无法判断 Phase Budget 有没有误伤。
+
+**Goal**: Every projection produces a structured, inspectable decision trace.
+
+| Task | File | Description |
+|------|------|-------------|
+| T0.1 | `context_os/decision_log.py` | Create `ContextDecision`, `ContextDecisionLog`, `ProjectionReport` |
+| T0.2 | `context_os/pipeline/runner.py` | Integrate decision logging into pipeline (mandatory, not optional) |
+| T0.3 | `context_os/models_v2.py` | Add `ProjectionReport` to `ContextOSProjection` |
+| T0.4 | `context_os/tests/test_decision_log.py` | Unit tests |
+| T0.5 | `context_gateway/gateway.py` | Surface `projection_report` for debugging |
+
+**Deliverables**:
+- `context_decisions.jsonl` — per-candidate decision trace
+- `projection_report.json` — per-projection summary
+
+**Acceptance Criteria**:
+- [ ] Every included/compressed/excluded candidate has reason code
+- [ ] Every projection is reproducible (same input + config → same decisions)
+- [ ] Decision log is mandatory (not optional audit)
+- [ ] No performance regression (<5ms overhead per projection)
+
+---
+
+### Phase 1: Multi-Resolution Store (Week 3-4) — **P0: Foundation**
+
+**Rationale**: 让 ContextOS 从二元选择 (include/drop) 升级为多分辨率选择 (full/extractive/structured/stub/drop)。
+
+**Goal**: Content stored at 4 resolutions; projection selects resolution based on budget pressure.
+
+| Task | File | Description |
+|------|------|-------------|
+| T1.1 | `context_os/content_store.py` | Extend `MultiResolutionStore` with L0_FULL/L1_EXTRACTIVE/L2_STRUCTURED/L3_STUB |
+| T1.2 | `context_os/summarizers/` | Ensure all summarizers produce multi-resolution output |
+| T1.3 | `context_os/pipeline/resolution_selector.py` | Implement `ResolutionSelector` (selects resolution per candidate) |
+| T1.4 | `context_os/tests/test_multi_resolution.py` | Unit tests |
+| T1.5 | `context_os/models_v2.py` | Add `MultiResolutionContent` model |
+
+**Deliverables**:
+```json
+{
+  "content_id": "sha256:abc",
+  "resolutions": {
+    "full": { "token_count": 4200, "ref": "cas://sha256:abc" },
+    "extractive": { "token_count": 900, "ref": "cas://sha256:def" },
+    "structured": { "token_count": 350, "ref": "cas://sha256:ghi" },
+    "stub": { "token_count": 60, "ref": "cas://sha256:jkl" }
+  }
+}
+```
+
+**Acceptance Criteria**:
+- [ ] Original content never lost (INV-6)
+- [ ] Summaries traceable to original content_id
+- [ ] Projection records which resolution was used per candidate
+- [ ] Memory usage reduced 30-50% under pressure
+
+---
+
+### Phase 2: Phase-Aware Budgeting (Week 5-6) — **High ROI, Low Risk**
+
+**Rationale**: 收益高、风险低、容易测。比 Attention Graph 更容易落地。
+
+**Goal**: Budget allocation adapts to detected task phase.
+
+| Task | File | Description |
+|------|------|-------------|
+| T2.1 | `context_os/phase_detection.py` | Implement `detect_task_phase()` with deterministic signals |
+| T2.2 | `context_os/pipeline/phase_budget_planner.py` | Implement `PhaseAwareBudgetPlanner` |
+| T2.3 | `context_os/policies.py` | Add `BudgetProfile` per phase |
+| T2.4 | `context_os/tests/test_phase_detection.py` | Unit tests |
+| T2.5 | `context_os/decision_log.py` | Log phase transitions with reason |
+
+**Phase Enum** (converged to 7):
+```python
+class TaskPhase(str, Enum):
+    INTAKE = "intake"              # 需求理解/合同读取
+    PLANNING = "planning"          # 方案设计
+    EXPLORATION = "exploration"    # 代码/文档探索
+    IMPLEMENTATION = "implementation"  # 修改代码
+    VERIFICATION = "verification"  # 测试/验收
+    DEBUGGING = "debugging"        # 失败定位
+    REVIEW = "review"              # 总结/审查/交付
+```
+
+**Acceptance Criteria**:
+- [ ] Different phases produce visibly different context compositions
+- [ ] Phase transitions have reason codes
+- [ ] Contracts and evidence never budget-squeezed
+- [ ] Phase hysteresis prevents oscillation (min 2 turns)
+
+---
+
+### Phase 3: Attention Scoring V1 (Week 7-8) — **Multi-Signal, NOT PageRank**
+
+**Rationale**: 第一版不要直接上 PageRank。先做多信号打分，确保每条内容的选中/排除都可解释。
+
+**Goal**: Every context candidate has a multi-dimensional attention score.
+
+| Task | File | Description |
+|------|------|-------------|
+| T3.1 | `context_os/attention/scorer.py` | Implement `AttentionScorer` with multi-signal scoring |
+| T3.2 | `context_os/attention/ranker.py` | Implement `CandidateRanker` |
+| T3.3 | `context_os/attention/reason_codes.py` | Implement `ReasonCodeGenerator` |
+| T3.4 | `context_os/pipeline/attention_router.py` | Replace/enhance WindowCollector |
+| T3.5 | `context_os/tests/test_attention_scoring.py` | Unit tests |
+
+**V1 Scoring Formula** (NOT PageRank):
+```python
+attention_score =
+  semantic_similarity   * 0.35   # embedding-based relevance to current intent
++ recency_score         * 0.15   # time decay
++ contract_overlap      * 0.20   # overlap with current goal/acceptance_criteria
++ evidence_weight       * 0.15   # is this an evidence event?
++ phase_affinity        * 0.10   # does this content type match current phase?
++ user_pin_boost        * 0.05   # explicitly pinned by user
+```
+
+**Acceptance Criteria**:
+- [ ] Relevant error logs rank high during DEBUGGING phase
+- [ ] Relevant code files rank high during IMPLEMENTATION phase
+- [ ] Old but critical contracts don't get recency-squeezed
+- [ ] Every score is explainable (breakdown available in Decision Log)
+
+---
+
+### Phase 4: Akashic Memory Integration (Week 9-10) — **With Conflict Detection**
+
+**Rationale**: 跨会话记忆必须经过 relevance → freshness → conflict_check → projection 四层门。
+
+**Goal**: Cross-session memories enter context only after passing conflict and freshness checks.
+
+| Task | File | Description |
+|------|------|-------------|
+| T4.1 | `context_os/memory/candidate_provider.py` | Implement `MemoryCandidateProvider` |
+| T4.2 | `context_os/memory/conflict_checker.py` | Implement `MemoryConflictChecker` |
+| T4.3 | `context_os/memory/capsule.py` | Implement `ProjectedMemoryCapsule` with lineage |
+| T4.4 | `context_os/pipeline/memory_gate.py` | Pipeline stage for memory filtering |
+| T4.5 | `context_os/tests/test_memory_integration.py` | Unit tests |
+
+**Memory Capsule Schema**:
+```json
+{
+  "memory_id": "...",
+  "claim": "...",
+  "source_event_refs": ["..."],
+  "freshness": "current | stale | unknown",
+  "conflict_status": "none | possible | confirmed",
+  "superseded_by": null | "event_id",
+  "projection_reason": "..."
+}
+```
+
+**Acceptance Criteria**:
+- [ ] Old memories cannot override current facts
+- [ ] Memories must carry source references
+- [ ] Recalled memories must explain why they're relevant
+- [ ] `conflict_status: "confirmed"` memories are NEVER projected
+
+---
+
+### Phase 5: Predictive Compression (Week 11-12) — **Last, Most Complex**
+
+**Rationale**: 最复杂的，因为它会引入"未来需求预测"。必须在 Decision Log 和 Multi-Resolution Store 稳定后才做。
+
+**Goal**: Pre-compress context based on predicted future needs, without losing original content.
+
+| Task | File | Description |
+|------|------|-------------|
+| T5.1 | `context_os/pattern_store.py` | Implement `TaskPatternStore` with similarity search |
+| T5.2 | `context_os/predictive.py` | Implement full `PredictiveCompressor` |
+| T5.3 | `context_os/pipeline/predictive_compressor.py` | Pipeline stage integration |
+| T5.4 | `context_os/tests/test_predictive.py` | Unit tests |
+
+**Critical Constraint**: Predictive Compression is NOT "pre-deletion". It is "pre-computation of multiple projection resolutions".
+
+**Acceptance Criteria**:
+- [ ] Task success rate does not decrease after compression
+- [ ] Token peak usage decreases
+- [ ] Full content can be recalled when needed
+- [ ] Decision Log explains why pre-compression occurred
 
 | Task | File | Description |
 |------|------|-------------|
@@ -893,6 +1095,33 @@ This blueprint explicitly does NOT include:
 
 ---
 
+---
+
+## 11. Appendix: Architecture Review Integration (v1.1.0)
+
+This version integrates the architecture-level review feedback. Key changes from v1.0.0:
+
+| Change | Rationale |
+|--------|-----------|
+| Added **Section 0: Inviable Invariant** | "Attention is advisory, Contract is authoritative" must be the first thing anyone reads |
+| Added **Section 1.5: Hard Invariants** | 7 invariants that ContextOS 3.0 MUST preserve |
+| Added **Section 2.2: Three-Layer Architecture** | Deterministic Kernel / Intelligence Advisory / Audit & Replay |
+| Added **Section 8: Failure Modes** | 7 failure modes with explicit defenses |
+| **Reordered implementation roadmap** | Context Decision Log → Multi-Resolution Store → Phase-Aware Budgeting → Attention Scoring → Memory Integration → Predictive Compression |
+| Added **Section 5.0: MVP Definition** | Context Decision Log + Multi-Resolution Store + Phase-Aware Budgeting + Attention Scoring V1 |
+| Updated **Attention Scoring V1** | Multi-signal scoring (NOT PageRank) for first version |
+| Updated **Phase-Aware Budgeting** | Added `BudgetProfile` with 7 phase-specific allocations |
+| Added **Phase Transition Guards** | Allowed transitions, minimum phase duration, confidence threshold |
+| Updated **Memory Integration** | Added conflict detection, freshness check, superseded_by |
+| Updated **Industry Positioning** | More rigorous: "different system route" instead of "surpassed" |
+
+**Key Insight from Review**:
+> ContextOS 3.0 不是单纯的上下文压缩系统，而是一个可审计的上下文注意力操作系统。
+> 它真正补上的不是"更省 token"，而是：知道当前任务需要什么、知道为什么选择这些内容、知道哪些内容被降级了、知道如何恢复完整信息、知道长期记忆什么时候可以相信、知道上下文错误发生在哪一层。
+
+---
+
 **Blueprint Author**: Principal Architect
-**Review Status**: Pending
-**Next Milestone**: T1.1-T1.5 Foundation Phase Completion
+**Architecture Reviewer**: [Pending]
+**Review Status**: v1.1.0 — Architecture Review Integrated
+**Next Milestone**: Phase 0 — Context Decision Log (T0.1-T0.5)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.agent_stress.role_tool_habits import (
+from .role_tool_habits import (
     ToolInteraction,
     TurnRecord,
     allocate_fresh_workspace,

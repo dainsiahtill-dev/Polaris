@@ -38,7 +38,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Path resolution
 # ---------------------------------------------------------------------------
-BACKEND_ROOT = Path(__file__).resolve().parents[3]  # tests/architecture -> tests -> src/backend
+BACKEND_ROOT = Path(__file__).resolve().parents[4]  # tests/architecture/governance -> tests/architecture -> tests -> polaris -> src/backend
 
 # Add scripts directory to path for imports (must be before imports)
 sys.path.insert(0, str(BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts"))

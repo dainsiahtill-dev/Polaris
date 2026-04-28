@@ -427,6 +427,7 @@ _HELP_TEXT = """Commands:
   /prompt [style]    Show/switch prompt style (plain|omp)
   /keymode [mode]    Show/switch keyboard mode (vi|emacs)
   /dryrun [on|off]   Toggle or query dry-run mode (no tool execution)
+  /skill [command]   Skill management (list|load <name>|reload)
   /exit              Exit console
 
 Launch option:
@@ -3176,6 +3177,55 @@ def run_role_console(
                 print(f"dry_run={current_dry_run}")
             else:
                 print("[error] unsupported dryrun value; use /dryrun [on|off]", file=sys.stderr)
+            continue
+        if message.startswith("/skill"):
+            skill_cmd = _safe_text(message.removeprefix("/skill")).strip().lower()
+            if not skill_cmd or skill_cmd == "list":
+                # List available skills
+                try:
+                    from polaris.kernelone.single_agent.skill_system import SkillLoader
+                    loader = SkillLoader(str(workspace_path))
+                    skills = loader.list_skills()
+                    if skills:
+                        print("\nAvailable Skills:")
+                        for skill in skills:
+                            name = skill.get("name", "unknown")
+                            desc = skill.get("description", "No description")
+                            tags = skill.get("tags", [])
+                            tags_str = f" [{', '.join(tags)}]" if tags else ""
+                            print(f"  • {name}: {desc}{tags_str}")
+                            print("\nUse '/skill load <name>' to view full content\n")
+                    else:
+                        print("(no skills available)")
+                except Exception as exc:
+                    print(f"[error] failed to list skills: {exc}", file=sys.stderr)
+                continue
+            if skill_cmd.startswith("load "):
+                skill_name = skill_cmd.removeprefix("load ").strip()
+                if not skill_name:
+                    print("[error] skill name required; use /skill load <name>", file=sys.stderr)
+                    continue
+                try:
+                    from polaris.kernelone.single_agent.skill_system import SkillLoader
+                    loader = SkillLoader(str(workspace_path))
+                    content = loader.load_skill_content(skill_name)
+                    if content.startswith("Error:"):
+                        print(f"[error] {content}", file=sys.stderr)
+                    else:
+                        print(f"\n{content}\n")
+                except Exception as exc:
+                    print(f"[error] failed to load skill: {exc}", file=sys.stderr)
+                continue
+            if skill_cmd == "reload":
+                try:
+                    from polaris.kernelone.single_agent.skill_system import SkillLoader
+                    loader = SkillLoader(str(workspace_path))
+                    # Force reload by creating a new instance
+                    print(f"[skill] Reloaded {len(loader.list_skills())} skills")
+                except Exception as exc:
+                    print(f"[error] failed to reload skills: {exc}", file=sys.stderr)
+                continue
+            print("[error] unknown skill command; use /skill [list|load <name>|reload]", file=sys.stderr)
             continue
 
         try:

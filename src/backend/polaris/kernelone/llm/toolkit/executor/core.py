@@ -5,6 +5,7 @@ This module contains the main AgentAccelToolExecutor class.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections import OrderedDict
 from collections.abc import ItemsView, KeysView, ValuesView
@@ -133,6 +134,12 @@ class AgentAccelToolExecutor:
 
         self._kernel_fs = KernelFileSystem(self.workspace, get_default_adapter())
         self._command_executor = CommandExecutionService(self.workspace)
+
+        # Initialize skill system (lazy: only installs default skills, actual loading on first use)
+        from polaris.kernelone.single_agent.skill_system import install_default_skills
+
+        with contextlib.suppress(RuntimeError):
+            install_default_skills(self.workspace, explicit=True)
 
         from polaris.kernelone.llm.toolkit.executor.handlers.treesitter import (
             TreeSitterSymbolHandler,

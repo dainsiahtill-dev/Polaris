@@ -24,8 +24,8 @@ echo $KERNELONE_TOKEN
 # 方式三：运行预检，确认 backend 可达
 python -c "
 import asyncio
-from tests.agent_stress.preflight import BackendPreflightProbe
-from tests.agent_stress.backend_context import resolve_backend_context
+from .preflight import BackendPreflightProbe
+from .backend_context import resolve_backend_context
 
 ctx = resolve_backend_context()
 print('URL:', ctx.backend_url, '| Source:', ctx.source)
@@ -149,8 +149,8 @@ print('URL:', ctx.backend_url, '| Source:', ctx.source)
 # 预检 backend（区分不可达/鉴权失败/settings不可用）
 python -c "
 import asyncio
-from tests.agent_stress.preflight import BackendPreflightProbe
-from tests.agent_stress.backend_context import resolve_backend_context
+from .preflight import BackendPreflightProbe
+from .backend_context import resolve_backend_context
 
 async def main():
     ctx = resolve_backend_context()

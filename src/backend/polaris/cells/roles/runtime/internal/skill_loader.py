@@ -1,6 +1,9 @@
 """
 Skill Module - 两层技能加载系统.
 
+DEPRECATED: This module is being unified with KernelOne skill system.
+Use polaris.kernelone.single_agent.skill_system instead.
+
 Layer 1 (System Prompt): 技能元数据 (name, description, tags)
 Layer 2 (On Demand): 完整技能内容 (按需加载)
 """
@@ -9,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Skill:
-    """技能数据模型"""
+    """技能数据模型 (兼容层)"""
 
     name: str
     description: str
@@ -30,18 +34,51 @@ class Skill:
 
 class SkillLoader:
     """
-    两层技能加载器
+    两层技能加载器 (兼容层，委托给 KernelOne 实现)
 
-    Layer 1: 技能元数据列表 (用于 System Prompt)
-    Layer 2: 完整技能内容 (按需加载)
+    DEPRECATED: Use polaris.kernelone.single_agent.skill_system.SkillLoader instead.
     """
 
     def __init__(self, skills_dir: Path | None = None) -> None:
+        warnings.warn(
+            "cells.runtime.internal.skill_loader.SkillLoader is deprecated. "
+            "Use kernelone.single_agent.skill_system.SkillLoader instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.skills_dir = skills_dir
         self.skills: dict[str, Skill] = {}
+        self._kernel_loader: Any = None
 
         if skills_dir and skills_dir.exists():
-            self._load_all()
+            # When skills_dir is provided, use legacy loading for backward compat
+            self._load_all_legacy()
+        else:
+            # Try to delegate to KernelOne implementation when no explicit dir
+            try:
+                from polaris.kernelone.single_agent.skill_system import (
+                    SkillLoader as KernelSkillLoader,
+                )
+
+                workspace = str(skills_dir.parent) if skills_dir else "."
+                self._kernel_loader = KernelSkillLoader(workspace)
+                self._sync_from_kernel()
+            except (ImportError, RuntimeError, OSError):
+                pass
+
+    def _sync_from_kernel(self) -> None:
+        """Sync skills from KernelOne loader to compatible format."""
+        if not self._kernel_loader:
+            return
+        for name, skill in self._kernel_loader._skills.items():
+            self.skills[name] = Skill(
+                name=skill.name,
+                description=skill.description,
+                body=skill.body,
+                tags=skill.tags,
+                path=skill.path,
+                metadata=skill.meta,
+            )
 
     @staticmethod
     def resolve_default_skills_dir(workspace: str) -> Path:
@@ -49,13 +86,7 @@ class SkillLoader:
 
     @staticmethod
     def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-        """
-        Parse markdown frontmatter.
-
-        Accepts:
-        - tags: a, b
-        - tags: [a, b]
-        """
+        """Parse markdown frontmatter."""
         match = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", text, re.DOTALL)
         if not match:
             return {}, text.strip()
@@ -81,8 +112,8 @@ class SkillLoader:
         tags = [part.strip(" '\"\t") for part in token.split(",")]
         return [tag for tag in tags if tag]
 
-    def _load_all(self) -> None:
-        """加载所有技能"""
+    def _load_all_legacy(self) -> None:
+        """Legacy skill loading (fallback)."""
         if not self.skills_dir:
             return
 
@@ -114,8 +145,18 @@ class SkillLoader:
 
         self.skills[skill.name] = skill
 
+    def _load_all(self) -> None:
+        """加载所有技能"""
+        if self._kernel_loader:
+            self._sync_from_kernel()
+        elif self.skills_dir and self.skills_dir.exists():
+            self._load_all_legacy()
+
     def get_manifest(self) -> list[dict]:
         """Layer 1: 获取技能清单 (元数据)"""
+        if self._kernel_loader:
+            return self._kernel_loader.list_skills()
+
         manifest = [
             {
                 "name": s.name,
@@ -129,6 +170,11 @@ class SkillLoader:
 
     def get_manifest_text(self) -> str:
         """Layer 1: 获取技能清单文本 (用于 System Prompt)"""
+        if self._kernel_loader:
+            text = self._kernel_loader.get_system_prompt_section()
+            # Normalize case for backward compatibility
+            return text.replace("(No skills available)", "(no skills available)")
+
         if not self.skills:
             return "(no skills available)"
 
@@ -143,6 +189,9 @@ class SkillLoader:
 
     def get_content(self, name: str) -> str:
         """Layer 2: 获取完整技能内容"""
+        if self._kernel_loader:
+            return self._kernel_loader.load_skill_content(name)
+
         skill = self.skills.get(name)
         if not skill:
             return f"Error: Unknown skill '{name}'. Available: {', '.join(self.skills.keys())}"
@@ -151,10 +200,18 @@ class SkillLoader:
 
     def has_skill(self, name: str) -> bool:
         """检查技能是否存在"""
+        if self._kernel_loader:
+            return self._kernel_loader.get_skill(name) is not None
         return name in self.skills
 
     def list_skills(self, tag: str | None = None) -> list[str]:
         """列出技能名称"""
+        if self._kernel_loader:
+            skills = self._kernel_loader.list_skills()
+            if tag:
+                return [s["name"] for s in skills if tag in s.get("tags", [])]
+            return [s["name"] for s in skills]
+
         if tag:
             return [s.name for s in self.skills.values() if tag in s.tags]
         return list(self.skills.keys())
@@ -164,7 +221,7 @@ class RoleSkillManager:
     """
     角色技能管理器
 
-    为不同角色预配置不同技能集
+    DEPRECATED: Use kernelone skill system instead.
     """
 
     DEFAULT_SKILLS = {
@@ -179,6 +236,11 @@ class RoleSkillManager:
     }
 
     def __init__(self, skills_dir: Path | None = None) -> None:
+        warnings.warn(
+            "RoleSkillManager is deprecated. Use kernelone skill system instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.loader = SkillLoader(skills_dir)
         self._role_skills: dict[str, list[str]] = {}
 
@@ -210,10 +272,10 @@ class RoleSkillManager:
 
 
 def create_skill_loader(skills_dir: Path) -> SkillLoader:
-    """创建技能加载器"""
+    """创建技能加载器 (兼容层)"""
     return SkillLoader(skills_dir)
 
 
 def create_role_skill_manager(skills_dir: Path) -> RoleSkillManager:
-    """创建角色技能管理器"""
+    """创建角色技能管理器 (兼容层)"""
     return RoleSkillManager(skills_dir)

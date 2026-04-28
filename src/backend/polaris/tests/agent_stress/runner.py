@@ -29,28 +29,28 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.storage import resolve_runtime_path
-from tests.agent_stress.paths import ensure_backend_root_on_syspath
+from .paths import ensure_backend_root_on_syspath
 
 ensure_backend_root_on_syspath()
 
-from tests.agent_stress.backend_bootstrap import (
+from .backend_bootstrap import (
     BackendBootstrapError,
     ManagedBackendSession,
     ensure_backend_session,
 )
-from tests.agent_stress.backend_context import resolve_backend_context
-from tests.agent_stress.contracts import normalize_status
-from tests.agent_stress.engine import RoundResult, StageResult, StressEngine
-from tests.agent_stress.preflight import BackendPreflightProbe, BackendPreflightStatus
-from tests.agent_stress.probe import ProbeStatus, RoleAvailabilityProbe
-from tests.agent_stress.project_pool import (
+from .backend_context import resolve_backend_context
+from .contracts import normalize_status
+from .engine import RoundResult, StageResult, StressEngine
+from .preflight import BackendPreflightProbe, BackendPreflightStatus
+from .probe import ProbeStatus, RoleAvailabilityProbe
+from .project_pool import (
     PROJECT_POOL,
     ProjectCategory,
     ProjectDefinition,
     select_stress_rounds,
     validate_round_sequence,
 )
-from tests.agent_stress.stress_path_policy import (
+from .stress_path_policy import (
     default_stress_runtime_root,
     default_stress_workspace_base,
     ensure_stress_workspace_path,
@@ -1033,7 +1033,7 @@ class AgentStressRunner:
             data = json.loads(results_path.read_text(encoding="utf-8"))
             results_data = data.get("results", [])
 
-            from tests.agent_stress.project_pool import get_project_by_id
+            from .project_pool import get_project_by_id
 
             loaded_results: list[RoundResult] = []
             for r_data in results_data:
@@ -2718,7 +2718,7 @@ async def main(argv: list[str] | None = None):
                 flush=True,
             )
             return 2
-        from tests.agent_stress.observer import observe_runner
+        from .observer import observe_runner
 
         try:
             return await observe_runner(args, spawn_window=True)

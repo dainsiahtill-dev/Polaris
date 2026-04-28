@@ -26,11 +26,9 @@ def has_memory_refs(context: dict[str, Any] | None) -> bool:
             return True
 
     nested_refs = context.get("refs")
-    if isinstance(nested_refs, dict):
-        for key in ref_keys:
-            if nested_refs.get(key):
-                return True
-    return False
+    return (isinstance(nested_refs, dict) and bool(nested_refs)) or (
+        isinstance(nested_refs, list) and bool(nested_refs)
+    )
 
 
 __all__ = ["has_memory_refs"]

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.context.context_os.decision_log import (
+    ContextDecisionLog,
+    ProjectionReport,
+)
 from polaris.kernelone.context.context_os.helpers import _utc_now_iso
 from polaris.kernelone.context.context_os.models_v2 import (
     ContextOSProjectionV2 as ContextOSProjection,
@@ -42,9 +48,15 @@ class PipelineRunner:
     2. Canonicalizer      - Dialog act classification, routing, artifact offload
     3. StatePatcher       - Extract state hints and build WorkingState
     4. BudgetPlanner      - Compute token budgets and validate invariants
-    5. WindowCollector    - Collect pinned active window events
+    5. WindowCollector    - Collect pinned active window events (with decision logging)
     6. EpisodeSealer      - Seal closed episodes based on active window
     7. ArtifactSelector   - Select artifacts and episodes for prompt injection
+
+    ContextOS 3.0 Enhancement
+    ========================
+    - Every projection produces a ProjectionReport (Audit/Replay Layer)
+    - WindowCollector logs every include/exclude/compress decision
+    - Decision logs are mandatory (not optional audit)
     """
 
     def __init__(
@@ -70,17 +82,60 @@ class PipelineRunner:
         self,
         inp: PipelineInput,
         adapter_id: str = "",
-    ) -> PipelineOutput:
+        decision_log: ContextDecisionLog | None = None,
+    ) -> tuple[PipelineOutput, ProjectionReport]:
+        """Run the pipeline and return output + decision report.
+
+        Args:
+            inp: Pipeline input (messages + existing snapshot)
+            adapter_id: Adapter identifier
+            decision_log: Optional decision log (creates new one if None)
+
+        Returns:
+            Tuple of (PipelineOutput, ProjectionReport)
+        """
+        if decision_log is None:
+            decision_log = ContextDecisionLog()
+
+        projection_id = f"ctxproj_{uuid.uuid4().hex[:12]}"
+        stage_durations: dict[str, float] = {}
+
+        # Stage 1: TranscriptMerger
+        t0 = time.monotonic()
         merger_out = self._run_stage("TranscriptMerger", self._merger.process, inp)
+        stage_durations["TranscriptMerger"] = (time.monotonic() - t0) * 1000
+
+        # Stage 2: Canonicalizer
+        t0 = time.monotonic()
         canon_out = self._run_stage("Canonicalizer", self._canonicalizer.process, inp, merger_out)
+        stage_durations["Canonicalizer"] = (time.monotonic() - t0) * 1000
+
+        # Stage 3: StatePatcher
+        t0 = time.monotonic()
         patcher_out = self._run_stage("StatePatcher", self._patcher.process, canon_out)
+        stage_durations["StatePatcher"] = (time.monotonic() - t0) * 1000
+
+        # Stage 4: BudgetPlanner
+        t0 = time.monotonic()
         budget_out = self._run_stage("BudgetPlanner", self._budget_planner.process, patcher_out, canon_out)
+        stage_durations["BudgetPlanner"] = (time.monotonic() - t0) * 1000
+
+        # Stage 5: WindowCollector (with decision logging)
+        t0 = time.monotonic()
         window_out = self._run_stage(
-            "WindowCollector", self._window_collector.process, budget_out, patcher_out, canon_out, inp
+            "WindowCollector", self._window_collector.process, budget_out, patcher_out, canon_out, inp, decision_log
         )
+        stage_durations["WindowCollector"] = (time.monotonic() - t0) * 1000
+
+        # Stage 6: EpisodeSealer
+        t0 = time.monotonic()
         episode_out = self._run_stage(
             "EpisodeSealer", self._episode_sealer.process, window_out, patcher_out, canon_out, inp
         )
+        stage_durations["EpisodeSealer"] = (time.monotonic() - t0) * 1000
+
+        # Stage 7: ArtifactSelector
+        t0 = time.monotonic()
         selector_out = self._run_stage(
             "ArtifactSelector",
             self._artifact_selector.process,
@@ -91,8 +146,17 @@ class PipelineRunner:
             canon_out,
             inp,
         )
+        stage_durations["ArtifactSelector"] = (time.monotonic() - t0) * 1000
 
-        return PipelineOutput(
+        # Build projection report
+        report = decision_log.build_projection_report(
+            projection_id=projection_id,
+            run_id=adapter_id,
+            budget_plan=budget_out.budget_plan,
+            stage_durations_ms=stage_durations,
+        )
+
+        pipe_out = PipelineOutput(
             snapshot_transcript=canon_out.transcript,
             snapshot_working_state=patcher_out.working_state,
             snapshot_artifacts=canon_out.artifacts,
@@ -108,6 +172,8 @@ class PipelineRunner:
             context_slice_plan=selector_out.context_slice_plan,
         )
 
+        return pipe_out, report
+
     def _run_stage(self, stage_name: str, stage_fn: Callable[..., Any], *args: Any) -> Any:
         """Run a pipeline stage.
 
@@ -122,9 +188,19 @@ class PipelineRunner:
         self,
         inp: PipelineInput,
         adapter_id: str = "",
-    ) -> ContextOSProjection:
-        """Run the pipeline and return a ContextOSProjection."""
-        pipe_out = self.run(inp, adapter_id)
+        decision_log: ContextDecisionLog | None = None,
+    ) -> tuple[ContextOSProjection, ProjectionReport]:
+        """Run the pipeline and return a ContextOSProjection + ProjectionReport.
+
+        Args:
+            inp: Pipeline input
+            adapter_id: Adapter identifier
+            decision_log: Optional decision log
+
+        Returns:
+            Tuple of (ContextOSProjection, ProjectionReport)
+        """
+        pipe_out, report = self.run(inp, adapter_id, decision_log)
 
         new_snapshot = ContextOSSnapshot(
             adapter_id=adapter_id,
@@ -137,7 +213,7 @@ class PipelineRunner:
             pending_followup=pipe_out.snapshot_pending_followup,
         )
 
-        return ContextOSProjection(
+        projection = ContextOSProjection(
             snapshot=new_snapshot,
             head_anchor=pipe_out.head_anchor,
             tail_anchor=pipe_out.tail_anchor,
@@ -147,3 +223,5 @@ class PipelineRunner:
             run_card=pipe_out.run_card,
             context_slice_plan=pipe_out.context_slice_plan,
         )
+
+        return projection, report

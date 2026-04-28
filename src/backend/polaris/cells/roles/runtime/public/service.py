@@ -96,9 +96,6 @@ from polaris.cells.roles.runtime.internal.sequential_engine import (
 )
 
 # Re-export RoleSessionOrchestrator for Cell boundary compliance
-from polaris.cells.roles.runtime.internal.session_orchestrator import (
-    RoleSessionOrchestrator,
-)
 from polaris.cells.roles.runtime.internal.skill_loader import (
     RoleSkillManager,
     SkillLoader,
@@ -153,6 +150,8 @@ from polaris.kernelone.context.runtime_feature_flags import (
     CognitiveRuntimeMode,
     resolve_cognitive_runtime_mode,
 )
+
+# Skill system: prefer KernelOne implementation, keep Cells layer for backward compat
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 if TYPE_CHECKING:

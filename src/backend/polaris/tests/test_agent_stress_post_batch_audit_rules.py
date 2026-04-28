@@ -1,4 +1,29 @@
-from tests.agent_stress.engine import StressEngine
+"""Tests for agent stress post-batch audit rules."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+# Try normal import first; fall back to dynamic load if package resolution fails
+try:
+    from polaris.tests.agent_stress.engine import StressEngine
+except ImportError:
+    # Load StressEngine directly to avoid package import issues
+    _engine_path = Path(__file__).parent / "agent_stress" / "engine.py"
+    _spec = importlib.util.spec_from_file_location("agent_stress_engine", _engine_path)
+    if _spec is None or _spec.loader is None:
+        pytest.skip(f"Cannot load StressEngine from {_engine_path}", allow_module_level=True)
+    _agent_stress_engine = importlib.util.module_from_spec(_spec)
+    sys.modules["agent_stress_engine"] = _agent_stress_engine
+    # Set up package context for relative imports in engine.py
+    sys.modules["agent_stress"] = type(sys)("agent_stress")
+    sys.modules["agent_stress"].__path__ = [str(_engine_path.parent)]
+    _spec.loader.exec_module(_agent_stress_engine)
+    StressEngine = _agent_stress_engine.StressEngine
 
 
 def test_empty_function_rule_ignores_non_empty_python_function_with_docstring() -> None:

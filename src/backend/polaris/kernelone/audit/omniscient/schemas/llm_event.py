@@ -184,13 +184,13 @@ class LLMEvent(AuditEvent, frozen=True):  # type: ignore[call-arg]  # frozen=Tru
     prompt_preview: str = Field(
         default="",
         description="First 500 chars of prompt (sanitized)",
-        max_length=500,
+        max_length=4096,
     )
 
     completion_preview: str = Field(
         default="",
         description="First 500 chars of completion (sanitized)",
-        max_length=500,
+        max_length=4096,
     )
 
     # -------------------------------------------------------------------------

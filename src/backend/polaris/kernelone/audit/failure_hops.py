@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -23,7 +24,7 @@ def _emit_audit_internal_failure(error_type: str, error_details: dict) -> None:
             KernelAuditEventType.INTERNAL_AUDIT_FAILURE,
             {"source_module": "failure_hops", "error_type": error_type, **error_details},
         )
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError, TypeError):
         _logger.warning("Audit internal failure (degraded): %s %s", error_type, error_details)
 
 
@@ -91,7 +92,8 @@ def _collect_events(
             try:
                 event = json.loads(line)
             except (RuntimeError, ValueError) as exc:
-                _emit_audit_internal_failure("json_parse_error", {"line_preview": line[:200], "error": str(exc)})
+                with contextlib.suppress(TypeError):
+                    _emit_audit_internal_failure("json_parse_error", {"line_preview": line[:200], "error": str(exc)})
                 continue
             if not isinstance(event, dict):
                 continue
@@ -238,6 +240,7 @@ def build_failure_hops(
         refs = {}
 
     related_action_seq: int | None = None
+    related_action_phase = ""
     failure_name = _get_str(failure_event, "name", "")
     for event in reversed(events):
         seq = _safe_int(event.get("seq"), 0)
@@ -249,13 +252,17 @@ def build_failure_hops(
         if failure_name and event_name != failure_name:
             continue
         related_action_seq = seq
+        action_refs = event.get("refs")
+        if _is_dict(action_refs):
+            related_action_phase = str(action_refs.get("phase") or "")
         break
 
     payload["has_failure"] = True
     payload["failure_event_seq"] = failure_seq
     payload["failure_code"] = _derive_failure_code(failure_event, fallback_failure_code)
+    phase = refs.get("phase") or related_action_phase or "unknown" if refs else related_action_phase or "unknown"
     payload["hop1_phase"] = {
-        "phase": refs.get("phase") or "unknown" if refs else "unknown",  # type: ignore[union-attr]
+        "phase": phase,  # type: ignore[union-attr]
         "seq": failure_seq,
         "actor": _get_str(failure_event, "actor", ""),
         "name": failure_name,

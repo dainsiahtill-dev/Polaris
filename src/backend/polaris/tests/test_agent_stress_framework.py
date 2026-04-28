@@ -12,9 +12,9 @@ import httpx
 import pytest
 from rich.console import Console
 
-import tests.agent_stress as agent_stress_package
-import tests.agent_stress.observer as agent_stress_observer_module
-import tests.agent_stress.runner as agent_stress_runner_module
+import polaris.tests.agent_stress as agent_stress_package
+import polaris.tests.agent_stress.observer as agent_stress_observer_module
+import polaris.tests.agent_stress.runner as agent_stress_runner_module
 
 # Skip this module if core.polaris_loop is not available (migrated to polaris)
 try:
@@ -29,20 +29,20 @@ try:
     )
 except ImportError:
     pytest.importorskip("core.polaris_loop.storage_layout")
-from tests.agent_stress.engine import RoundResult, StageExecution, StageResult, StressEngine
-from tests.agent_stress.backend_bootstrap import ManagedBackendSession
-from tests.agent_stress.backend_context import BackendContext, get_desktop_backend_info_path, resolve_backend_context
-from tests.agent_stress.observer import ObserverState
-from tests.agent_stress.observability import (
+from polaris.tests.agent_stress.engine import RoundResult, StageExecution, StageResult, StressEngine
+from polaris.tests.agent_stress.backend_bootstrap import ManagedBackendSession
+from polaris.tests.agent_stress.backend_context import BackendContext, get_desktop_backend_info_path, resolve_backend_context
+from polaris.tests.agent_stress.observer import ObserverState
+from polaris.tests.agent_stress.observability import (
     DiagnosticReport,
     FailureCategory,
     ObservabilityCollector,
 )
-from tests.agent_stress.preflight import BackendPreflightProbe, BackendPreflightStatus
-from tests.agent_stress.probe import ProbeStatus, RoleAvailabilityProbe, RoleProbeResult
-from tests.agent_stress.project_pool import PROJECT_POOL, build_rotation_order, select_stress_rounds
-from tests.agent_stress.runner import AgentStressRunner
-from tests.agent_stress.tracer import QAConclusion, RoundTrace, RuntimeTracer, TaskLineage
+from polaris.tests.agent_stress.preflight import BackendPreflightProbe, BackendPreflightStatus
+from polaris.tests.agent_stress.probe import ProbeStatus, RoleAvailabilityProbe, RoleProbeResult
+from polaris.tests.agent_stress.project_pool import PROJECT_POOL, build_rotation_order, select_stress_rounds
+from polaris.tests.agent_stress.runner import AgentStressRunner
+from polaris.tests.agent_stress.tracer import QAConclusion, RoundTrace, RuntimeTracer, TaskLineage
 
 DEFAULT_STRESS_WORKSPACE = default_stress_workspace_base("tests-agent-stress")
 DEFAULT_STRESS_RAMDISK = default_stress_runtime_root("tests-agent-stress-runtime")
@@ -1886,7 +1886,7 @@ async def test_runner_probe_only_prints_migration_and_exits(
 
     assert exit_code == 2
     captured_err = capsys.readouterr().err
-    assert "tests.agent_stress.probe" in captured_err
+    assert "polaris.tests.agent_stress.probe" in captured_err
     assert "no longer supports" in captured_err
 
 
@@ -1896,7 +1896,7 @@ async def test_probe_main_stops_immediately_when_backend_context_is_unresolved(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    import tests.agent_stress.probe as probe_module
+    import polaris.tests.agent_stress.probe as probe_module
 
     async def fake_ensure_backend_session(**kwargs):
         return ManagedBackendSession(
@@ -1933,7 +1933,7 @@ async def test_probe_main_stops_immediately_when_backend_context_is_unresolved(
 
 @pytest.mark.asyncio
 async def test_probe_main_auto_bootstraps_backend_context(monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    import tests.agent_stress.probe as probe_module
+    import polaris.tests.agent_stress.probe as probe_module
 
     captured_kwargs: dict[str, object] = {}
 
@@ -2206,7 +2206,7 @@ def test_observer_runner_command_does_not_recurse_into_observer_flags(tmp_path: 
 
     command = agent_stress_observer_module._build_runner_command(args)
 
-    assert command[:5] == [sys.executable, "-u", "-B", "-m", "tests.agent_stress.runner"]
+    assert command[:5] == [sys.executable, "-u", "-B", "-m", "polaris.tests.agent_stress.runner"]
     assert "--observe" not in command
     assert "--observe-window" not in command
 
@@ -2344,7 +2344,7 @@ def test_observer_redacts_token_in_log_command() -> None:
     command = [
         sys.executable,
         "-m",
-        "tests.agent_stress.runner",
+        "polaris.tests.agent_stress.runner",
         "--token",
         "secret-token",
         "--backend-url",

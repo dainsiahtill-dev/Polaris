@@ -18,11 +18,11 @@ from typing import Any
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from tests.agent_stress.backend_bootstrap import (
+from ..backend_bootstrap import (
     BackendBootstrapError,
     ensure_backend_session,
 )
-from tests.agent_stress.stress_path_policy import (
+from ..stress_path_policy import (
     default_stress_workspace_base,
     ensure_stress_workspace_path,
 )

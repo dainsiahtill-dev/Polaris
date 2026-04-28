@@ -39,6 +39,8 @@ def compute_contract_fingerprint(pm_payload: dict[str, Any] | None) -> str:
                     "acceptance": item.get("acceptance") or item.get("acceptance_criteria"),
                 }
             )
+    if not contract["overall_goal"] and not contract["focus"] and not contract["tasks"]:
+        return ""
     return _hash_payload(contract)
 
 
@@ -63,6 +65,9 @@ def load_contract_fingerprint(pm_task_path: str) -> str:
 def _check_events_append_only(
     events_path: str,
     *,
+    run_id: str = "",
+    event_seq_start: int = 0,
+    event_seq_end: int = 0,
     start_seq: int = 0,
     start_size: int = 0,
 ) -> dict[str, Any] | None:

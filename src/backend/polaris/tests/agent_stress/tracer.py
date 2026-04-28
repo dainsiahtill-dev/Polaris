@@ -20,12 +20,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Self
 
-from tests.agent_stress.paths import ensure_backend_root_on_syspath
+from .paths import ensure_backend_root_on_syspath
 
 ensure_backend_root_on_syspath()
 
 import httpx
-from tests.agent_stress.contracts import (
+from .contracts import (
     director_task_claimed_by,
     director_task_id,
     director_task_pm_task_id,

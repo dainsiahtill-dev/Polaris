@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from tests.agent_stress.backend_bootstrap import ManagedBackendSession
-from tests.agent_stress.backend_context import BackendContext
-from tests.agent_stress.engine import RoundResult
-from tests.agent_stress.project_pool import PROJECT_POOL, ProjectDefinition
+from .backend_bootstrap import ManagedBackendSession
+from .backend_context import BackendContext
+from .engine import RoundResult
+from .project_pool import PROJECT_POOL, ProjectDefinition
 
 
 def _utc_now_iso() -> str:
@@ -44,7 +44,7 @@ async def test_project_serial_skips_batch_audit_when_disabled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.agent_stress.runner import AgentStressRunner
+    from .runner import AgentStressRunner
 
     runner = AgentStressRunner(
         workspace=tmp_path,
@@ -77,7 +77,7 @@ async def test_project_serial_runs_batch_audit_when_enabled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.agent_stress.runner import AgentStressRunner
+    from .runner import AgentStressRunner
 
     runner = AgentStressRunner(
         workspace=tmp_path,
@@ -110,7 +110,7 @@ async def test_runner_forwards_fresh_workspace_to_backend_bootstrap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.agent_stress.runner import DEFAULT_STRESS_RAMDISK, AgentStressRunner
+    from .runner import DEFAULT_STRESS_RAMDISK, AgentStressRunner
 
     workspace = tmp_path / "stress-workspace"
     runner = AgentStressRunner(
@@ -132,7 +132,7 @@ async def test_runner_forwards_fresh_workspace_to_backend_bootstrap(
             ramdisk_root=str(kwargs["ramdisk_root"]),
         )
 
-    monkeypatch.setattr("tests.agent_stress.runner.ensure_backend_session", _fake_ensure_backend_session)
+    monkeypatch.setattr("polaris.tests.agent_stress.runner.ensure_backend_session", _fake_ensure_backend_session)
 
     await runner._ensure_backend_session()
 

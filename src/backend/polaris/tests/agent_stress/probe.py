@@ -18,16 +18,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Self
 
-from tests.agent_stress.paths import ensure_backend_root_on_syspath
+from .paths import ensure_backend_root_on_syspath
 
 ensure_backend_root_on_syspath()
 
 import httpx
-from tests.agent_stress.backend_bootstrap import (
+from .backend_bootstrap import (
     BackendBootstrapError,
     ensure_backend_session,
 )
-from tests.agent_stress.preflight import BackendPreflightProbe, BackendPreflightStatus
+from .preflight import BackendPreflightProbe, BackendPreflightStatus
 
 DEFAULT_GENERATION_CHECK_ATTEMPTS = 2
 MAX_GENERATION_CHECK_ATTEMPTS = 3

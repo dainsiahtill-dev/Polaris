@@ -397,6 +397,220 @@ tags: [api, design, rest]
   {"error": "message", "code": "ERROR_CODE", "details": {}}
   ```
 """,
+    "code-review": """---
+description: Code review checklist and best practices
+tags: [review, quality, teamwork]
+---
+
+# Code Review
+
+## Before Starting
+- [ ] Understand the requirements and context
+- [ ] Check related issues/tickets
+- [ ] Review tests first (if TDD)
+
+## Checklist
+
+### Functionality
+- [ ] Code meets requirements
+- [ ] Edge cases handled
+- [ ] Error handling appropriate
+- [ ] No obvious bugs
+
+### Code Quality
+- [ ] Clear naming (functions, variables, classes)
+- [ ] Single responsibility principle
+- [ ] DRY (Don't Repeat Yourself)
+- [ ] No dead code or comments
+
+### Testing
+- [ ] Unit tests cover happy path
+- [ ] Edge cases tested
+- [ ] Integration tests if needed
+- [ ] Test names describe behavior
+
+### Documentation
+- [ ] Complex logic explained
+- [ ] Public APIs documented
+- [ ] README updated if needed
+
+## Review Tone
+- Be constructive, not critical
+- Ask questions rather than dictate
+- Suggest, don't demand
+- Acknowledge good practices
+""",
+    "test-driven-development": """---
+description: TDD practices and patterns
+tags: [testing, tdd, methodology]
+---
+
+# Test-Driven Development
+
+## The Cycle
+1. **Red**: Write a failing test
+2. **Green**: Write minimal code to pass
+3. **Refactor**: Improve code without changing behavior
+
+## Rules
+- Write tests BEFORE implementation
+- Tests should fail for the right reason
+- Implementation should be minimal
+- Refactor only with passing tests
+
+## Test Structure (Arrange-Act-Assert)
+```python
+def test_user_can_login_with_valid_credentials():
+    # Arrange
+    user = create_user("alice", "secret123")
+    
+    # Act
+    result = login("alice", "secret123")
+    
+    # Assert
+    assert result.success is True
+    assert result.user_id == user.id
+```
+
+## Anti-patterns
+- Testing implementation details
+- Tests depending on each other
+- Slow/flaky tests
+- Testing getters/setters without logic
+""",
+    "error-handling": """---
+description: Error handling patterns and best practices
+tags: [error-handling, reliability, patterns]
+---
+
+# Error Handling
+
+## Principles
+1. **Fail Fast**: Detect errors as early as possible
+2. **Fail Loud**: Log errors with context
+3. **Fail Safe**: Maintain system integrity
+
+## Patterns
+
+### Result Type
+```python
+from dataclasses import dataclass
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
+@dataclass
+class Result(Generic[T]):
+    success: bool
+    value: T | None = None
+    error: str = ""
+    
+    @classmethod
+    def ok(cls, value: T) -> "Result[T]":
+        return cls(success=True, value=value)
+    
+    @classmethod
+    def fail(cls, error: str) -> "Result[T]":
+        return cls(success=False, error=error)
+```
+
+### Early Return
+```python
+def process_order(order):
+    if not order.is_valid():
+        return Result.fail("Invalid order")
+    
+    if not has_inventory(order.items):
+        return Result.fail("Out of stock")
+    
+    # Process valid order
+    return Result.ok(complete_order(order))
+```
+
+## Guidelines
+- Use exceptions for exceptional cases
+- Use result types for expected failures
+- Always log with context (request_id, user_id)
+- Never swallow exceptions silently
+""",
+    "git-workflow": """---
+description: Git workflow best practices
+tags: [git, workflow, collaboration]
+---
+
+# Git Workflow
+
+## Branch Strategy
+- `main`: Production-ready code
+- `feature/*`: New features
+- `bugfix/*`: Bug fixes
+- `hotfix/*`: Urgent production fixes
+
+## Commit Messages
+```
+type(scope): subject
+
+body (optional)
+
+footer (optional)
+```
+
+Types: feat, fix, docs, style, refactor, test, chore
+
+## Best Practices
+- Commit often, commit small
+- Write descriptive messages
+- Use present tense ("Add feature" not "Added feature")
+- Reference issues (#123)
+- Rebase feature branches before merge
+- Squash trivial commits
+
+## Code Review Integration
+- Create PR from feature branch
+- Ensure CI passes
+- Require 1+ approvals
+- Squash and merge to main
+""",
+    "documentation-writing": """---
+description: Technical documentation writing guidelines
+tags: [docs, writing, communication]
+---
+
+# Documentation Writing
+
+## Principles
+1. **Audience-aware**: Write for the reader
+2. **Purpose-driven**: Every doc has a goal
+3. **Maintainable**: Easy to keep updated
+
+## Types
+
+### README
+- Project name and description
+- Installation instructions
+- Quick start guide
+- Usage examples
+- Contributing guidelines
+
+### API Documentation
+- Endpoint description
+- Request/response examples
+- Error codes
+- Authentication requirements
+
+### Code Comments
+- Explain WHY, not WHAT
+- Document complex algorithms
+- Warn about side effects
+- TODO/FIXME with issue references
+
+## Style
+- Use active voice
+- Be concise
+- Use examples
+- Keep it scannable (headers, lists)
+- Update when code changes
+""",
 }
 
 

@@ -1,91 +1,152 @@
-"""Result type alias for legacy backward compatibility.
-
-.. deprecated::
-    This module is DEPRECATED. It contains the legacy ``Result`` type
-    that existed before the ACGA 2.0 contract unification (2026-03-22).
-
-    **Migration path**::
-
-        # Old — this module (deprecated)
-        from polaris.kernelone.runtime.result import Result, ErrorCodes
-        Result.err("message", code=ErrorCodes.NOT_FOUND)
-
-        # New — canonical (master_types.py)
-        from polaris.kernelone.contracts.technical import Result, TaggedError
-        Result.err(TaggedError("NOT_FOUND", "message"))
-
-    The canonical ``Result[T, E]`` lives in
-    ``polaris.kernelone.contracts.technical.master_types``.
-    It is re-exported via ``polaris.kernelone.runtime`` and
-    ``polaris.kernelone.contracts.technical``.
-
-    This module is retained ONLY to avoid breaking existing code that
-    imports directly from it (e.g. ``tests/test_unified_result_and_error_handling.py``).
-    DO NOT add new usages. All production code must use the canonical Result.
-
-    Key differences from canonical Result[T, E]:
-    - Single type param ``Result[T]`` (no error type parameter)
-    - ``Result.err(message, *, code, details)`` instead of
-      ``Result.err(error_tag, message="")`` / ``Result.err(kernel_error)``
-    - Extra fields: ``error_code`` (str), ``error_details`` (dict)
-    - Extra methods: ``and_then()``, ``log()``, ``ok_value`` / ``err_value`` properties,
-      ``from_exception()``, ``from_dict()`` classmethod
-    - ``ErrorCodes`` class (deprecated; use ``TaggedError`` / ``KernelError`` instead)
-
-Migration (2026-04-05):
-    The legacy ``Result`` class has been replaced with a type alias pointing
-    to the canonical ``Result[T, E]`` in ``master_types.py``. The legacy
-    factory methods (``Result.ok()``, ``Result.err()``) are no longer available.
-    Use ``Result.ok(value)`` and ``Result.err(error, message)`` from the
-    canonical module instead.
-"""
+# Result type for legacy backward compatibility.
+#
+# DEPRECATED: This module is DEPRECATED.
+# Use polaris.kernelone.contracts.technical.Result instead.
 
 from __future__ import annotations
 
-import warnings
-from typing import Any
+import logging
+from typing import Any, Generic, TypeVar
 
+T = TypeVar("T")
 
-def __getattr__(name: str) -> Any:
-    """Module-level getattr to emit deprecation warnings for legacy access."""
-    if name == "Result":
-        warnings.warn(
-            "polaris.kernelone.runtime.Result is deprecated. "
-            "Use polaris.kernelone.contracts.technical.Result instead. "
-            "The canonical Result[T, E] uses TaggedError/KernelError for errors.",
-            DeprecationWarning,
-            stacklevel=2,
+class Result(Generic[T]):
+    # Legacy Result type with backward-compatible API.
+    # DEPRECATED: Use polaris.kernelone.contracts.technical.Result instead.
+
+    def __init__(
+        self,
+        is_ok: bool,
+        value: T | None = None,
+        error_message: str = "",
+        error_code: str = "UNKNOWN_ERROR",
+        error_details: dict[str, Any] | None = None,
+    ) -> None:
+        self.is_ok = is_ok
+        self.value = value
+        self.error_message = error_message
+        self.error_code = error_code
+        self.error_details = error_details or {}
+
+    @property
+    def is_err(self) -> bool:
+        return not self.is_ok
+
+    @property
+    def ok_value(self) -> T:
+        if self.is_err:
+            raise RuntimeError("Cannot get ok_value from Err")
+        return self.value  # type: ignore[return-value]
+
+    @property
+    def err_value(self) -> tuple[str, str]:
+        if self.is_ok:
+            raise RuntimeError("Cannot get err_value from Ok")
+        return (self.error_code, self.error_message)
+
+    def unwrap_or(self, default: T) -> T:
+        return self.value if self.is_ok else default  # type: ignore[return-value]
+
+    def unwrap_or_else(self, fn: Any) -> T:
+        return self.value if self.is_ok else fn()
+
+    def map(self, fn: Any) -> Result[Any]:
+        if self.is_err:
+            return Result(
+                is_ok=False,
+                error_message=self.error_message,
+                error_code=self.error_code,
+                error_details=dict(self.error_details),
+            )
+        try:
+            new_val = fn(self.value)
+            return Result(is_ok=True, value=new_val)
+        except Exception as exc:  # pragma: no cover - defensive
+            return Result(is_ok=False, error_message=str(exc))
+
+    def and_then(self, fn: Any) -> Result[Any]:
+        if self.is_err:
+            return Result(
+                is_ok=False,
+                error_message=self.error_message,
+                error_code=self.error_code,
+                error_details=dict(self.error_details),
+            )
+        try:
+            return fn(self.value)
+        except Exception as exc:  # pragma: no cover - defensive
+            return Result(is_ok=False, error_message=str(exc))
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.is_ok:
+            return {"ok": True, "value": self.value}
+        result: dict[str, Any] = {
+            "ok": False,
+            "error": self.error_message,
+            "error_code": self.error_code,
+        }
+        if self.error_details:
+            result["error_details"] = dict(self.error_details)
+        return result
+
+    @classmethod
+    def ok(cls, value: T | None = None) -> Result[T]:
+        return cls(is_ok=True, value=value)
+
+    @classmethod
+    def err(
+        cls,
+        message: str,
+        code: str = "UNKNOWN_ERROR",
+        details: dict[str, Any] | None = None,
+    ) -> Result[Any]:
+        return cls(
+            is_ok=False,
+            error_message=message,
+            error_code=code,
+            error_details=details,
         )
-        # Return the canonical Result class
-        from polaris.kernelone.contracts.technical.master_types import Result as CanonicalResult
 
-        return CanonicalResult
-
-    if name == "ErrorCodes":
-        warnings.warn(
-            "polaris.kernelone.runtime.ErrorCodes is deprecated. "
-            "Use TaggedError or KernelError from "
-            "polaris.kernelone.contracts.technical instead.",
-            DeprecationWarning,
-            stacklevel=2,
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Result[Any]:
+        is_ok = bool(data.get("ok", False))
+        if is_ok:
+            return cls.ok(data.get("value"))
+        return cls.err(
+            message=str(data.get("error", "")),
+            code=str(data.get("error_code", "UNKNOWN_ERROR")),
+            details=dict(data.get("error_details", {})),
         )
-        # Return the ErrorCodes class
-        return _ErrorCodes
 
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    @classmethod
+    def from_exception(
+        cls,
+        exc: BaseException,
+        code: str = "EXCEPTION",
+        context: dict[str, Any] | None = None,
+    ) -> Result[Any]:
+        details: dict[str, Any] = {"exception_type": type(exc).__name__}
+        if context:
+            details.update(context)
+        return cls.err(message=str(exc), code=code, details=details)
 
+    def log(self, level: int = logging.DEBUG, include_details: bool = True) -> Result[T]:
+        logger = logging.getLogger("polaris.kernelone.runtime.result")
+        if self.is_err:
+            msg = self.error_message
+            if include_details and self.error_details:
+                msg += f" | details={self.error_details}"
+            logger.warning(msg)
+        else:
+            logger.log(level, "Result.ok: %s", self.value)
+        return self
 
 class _ErrorCodes:
-    """Legacy error codes class.
-
-    .. deprecated::
-        ErrorCodes is deprecated. Use ``TaggedError`` or ``KernelError``
-        from ``polaris.kernelone.contracts.technical`` instead.
-    """
+    # Legacy error codes class.
+    # DEPRECATED: Use TaggedError or KernelError instead.
 
     __slots__ = ()
 
-    # Generic errors
     UNKNOWN_ERROR = "UNKNOWN_ERROR"
     INVALID_ARGUMENT = "INVALID_ARGUMENT"
     NOT_FOUND = "NOT_FOUND"
@@ -99,27 +160,20 @@ class _ErrorCodes:
     INTERNAL_ERROR = "INTERNAL_ERROR"
     UNAVAILABLE = "UNAVAILABLE"
     DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED"
-
-    # Domain-specific errors
     AGENT_NOT_FOUND = "AGENT_NOT_FOUND"
     AGENT_ALREADY_REGISTERED = "AGENT_ALREADY_REGISTERED"
     AGENT_INITIALIZATION_FAILED = "AGENT_INITIALIZATION_FAILED"
     AGENT_START_FAILED = "AGENT_START_FAILED"
     AGENT_STOP_FAILED = "AGENT_STOP_FAILED"
-
     TASK_NOT_FOUND = "TASK_NOT_FOUND"
     TASK_ALREADY_EXISTS = "TASK_ALREADY_EXISTS"
     TASK_INVALID_STATE = "TASK_INVALID_STATE"
-
     REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
     REVIEW_INVALID_STATE = "REVIEW_INVALID_STATE"
-
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
     MESSAGE_QUEUE_ERROR = "MESSAGE_QUEUE_ERROR"
 
-
-# Backward compatibility alias - ErrorCodes accessible directly
 ErrorCodes = _ErrorCodes
 
+__all__ = ["Result", "ErrorCodes"]
 
-__all__ = ["ErrorCodes"]

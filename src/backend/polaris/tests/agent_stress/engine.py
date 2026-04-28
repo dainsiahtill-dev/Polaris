@@ -23,25 +23,25 @@ from typing import Any, Self
 
 import httpx
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
-from tests.agent_stress.paths import ensure_backend_root_on_syspath
+from .paths import ensure_backend_root_on_syspath
 
 ensure_backend_root_on_syspath()
-from tests.agent_stress.contracts import (
+from .contracts import (
     factory_failure_evidence,
     factory_failure_info,
     is_generic_failure_point,
     normalize_status,
     resolve_factory_stage_index,
 )
-from tests.agent_stress.observability import DiagnosticReport, ObservabilityCollector
-from tests.agent_stress.project_pool import ProjectDefinition
-from tests.agent_stress.stress_path_policy import (
+from .observability import DiagnosticReport, ObservabilityCollector
+from .project_pool import ProjectDefinition
+from .stress_path_policy import (
     default_stress_runtime_root,
     ensure_stress_runtime_root,
     ensure_stress_workspace_path,
     runtime_layout_policy_violations,
 )
-from tests.agent_stress.tracer import RoundTrace, RuntimeTracer, TaskLineage
+from .tracer import RoundTrace, RuntimeTracer, TaskLineage
 import contextlib
 
 MAX_NON_LLM_CONTROL_PLANE_STALL_SECONDS = 120.0
