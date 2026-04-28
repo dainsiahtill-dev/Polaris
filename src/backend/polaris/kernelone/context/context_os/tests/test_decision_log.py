@@ -1,9 +1,8 @@
 """Tests for Context Decision Log (ContextOS 3.0 Phase 0)."""
 
-import pytest
-import time
 from pathlib import Path
 
+import pytest
 from polaris.kernelone.context.context_os.decision_log import (
     AttentionScore,
     ContextDecision,
@@ -259,24 +258,30 @@ class TestContextDecisionLog:
 
     def test_get_decisions_by_event_id(self) -> None:
         log = ContextDecisionLog()
-        log.record(create_decision(
-            decision_type=ContextDecisionType.INCLUDE_FULL,
-            target_event_id="evt_001",
-            reason="test1",
-            reason_codes=(),
-        ))
-        log.record(create_decision(
-            decision_type=ContextDecisionType.EXCLUDE,
-            target_event_id="evt_002",
-            reason="test2",
-            reason_codes=(),
-        ))
-        log.record(create_decision(
-            decision_type=ContextDecisionType.INCLUDE_FULL,
-            target_event_id="evt_001",
-            reason="test3",
-            reason_codes=(),
-        ))
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.INCLUDE_FULL,
+                target_event_id="evt_001",
+                reason="test1",
+                reason_codes=(),
+            )
+        )
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.EXCLUDE,
+                target_event_id="evt_002",
+                reason="test2",
+                reason_codes=(),
+            )
+        )
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.INCLUDE_FULL,
+                target_event_id="evt_001",
+                reason="test3",
+                reason_codes=(),
+            )
+        )
 
         results = log.get_decisions(event_id="evt_001")
         assert len(results) == 2
@@ -284,18 +289,22 @@ class TestContextDecisionLog:
 
     def test_get_decisions_by_type(self) -> None:
         log = ContextDecisionLog()
-        log.record(create_decision(
-            decision_type=ContextDecisionType.INCLUDE_FULL,
-            target_event_id="evt_001",
-            reason="test",
-            reason_codes=(),
-        ))
-        log.record(create_decision(
-            decision_type=ContextDecisionType.EXCLUDE,
-            target_event_id="evt_002",
-            reason="test",
-            reason_codes=(),
-        ))
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.INCLUDE_FULL,
+                target_event_id="evt_001",
+                reason="test",
+                reason_codes=(),
+            )
+        )
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.EXCLUDE,
+                target_event_id="evt_002",
+                reason="test",
+                reason_codes=(),
+            )
+        )
 
         results = log.get_decisions(decision_type=ContextDecisionType.EXCLUDE)
         assert len(results) == 1
@@ -303,18 +312,22 @@ class TestContextDecisionLog:
 
     def test_get_decisions_by_reason_code(self) -> None:
         log = ContextDecisionLog()
-        log.record(create_decision(
-            decision_type=ContextDecisionType.INCLUDE_FULL,
-            target_event_id="evt_001",
-            reason="test",
-            reason_codes=(ReasonCode.FORCED_RECENT,),
-        ))
-        log.record(create_decision(
-            decision_type=ContextDecisionType.EXCLUDE,
-            target_event_id="evt_002",
-            reason="test",
-            reason_codes=(ReasonCode.TOKEN_BUDGET_EXCEEDED,),
-        ))
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.INCLUDE_FULL,
+                target_event_id="evt_001",
+                reason="test",
+                reason_codes=(ReasonCode.FORCED_RECENT,),
+            )
+        )
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.EXCLUDE,
+                target_event_id="evt_002",
+                reason="test",
+                reason_codes=(ReasonCode.TOKEN_BUDGET_EXCEEDED,),
+            )
+        )
 
         results = log.get_decisions(reason_code=ReasonCode.TOKEN_BUDGET_EXCEEDED)
         assert len(results) == 1
@@ -323,12 +336,14 @@ class TestContextDecisionLog:
     def test_get_last_n(self) -> None:
         log = ContextDecisionLog()
         for i in range(10):
-            log.record(create_decision(
-                decision_type=ContextDecisionType.INCLUDE_FULL,
-                target_event_id=f"evt_{i:03d}",
-                reason="test",
-                reason_codes=(),
-            ))
+            log.record(
+                create_decision(
+                    decision_type=ContextDecisionType.INCLUDE_FULL,
+                    target_event_id=f"evt_{i:03d}",
+                    reason="test",
+                    reason_codes=(),
+                )
+            )
 
         results = log.get_last_n(3)
         assert len(results) == 3
@@ -336,12 +351,14 @@ class TestContextDecisionLog:
 
     def test_clear(self) -> None:
         log = ContextDecisionLog()
-        log.record(create_decision(
-            decision_type=ContextDecisionType.INCLUDE_FULL,
-            target_event_id="evt_001",
-            reason="test",
-            reason_codes=(),
-        ))
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.INCLUDE_FULL,
+                target_event_id="evt_001",
+                reason="test",
+                reason_codes=(),
+            )
+        )
         assert log.count == 1
         log.clear()
         assert log.count == 0
@@ -349,34 +366,42 @@ class TestContextDecisionLog:
     def test_max_decisions(self) -> None:
         log = ContextDecisionLog(max_decisions=5)
         for i in range(10):
-            log.record(create_decision(
-                decision_type=ContextDecisionType.INCLUDE_FULL,
-                target_event_id=f"evt_{i:03d}",
-                reason="test",
-                reason_codes=(),
-            ))
+            log.record(
+                create_decision(
+                    decision_type=ContextDecisionType.INCLUDE_FULL,
+                    target_event_id=f"evt_{i:03d}",
+                    reason="test",
+                    reason_codes=(),
+                )
+            )
         assert log.count == 5
 
     def test_build_projection_report(self) -> None:
         log = ContextDecisionLog()
-        log.record(create_decision(
-            decision_type=ContextDecisionType.INCLUDE_FULL,
-            target_event_id="evt_001",
-            reason="test",
-            reason_codes=(),
-        ))
-        log.record(create_decision(
-            decision_type=ContextDecisionType.EXCLUDE,
-            target_event_id="evt_002",
-            reason="test",
-            reason_codes=(),
-        ))
-        log.record(create_decision(
-            decision_type=ContextDecisionType.COMPRESS,
-            target_event_id="evt_003",
-            reason="test",
-            reason_codes=(),
-        ))
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.INCLUDE_FULL,
+                target_event_id="evt_001",
+                reason="test",
+                reason_codes=(),
+            )
+        )
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.EXCLUDE,
+                target_event_id="evt_002",
+                reason="test",
+                reason_codes=(),
+            )
+        )
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.COMPRESS,
+                target_event_id="evt_003",
+                reason="test",
+                reason_codes=(),
+            )
+        )
 
         report = log.build_projection_report(
             projection_id="ctxproj_test",
@@ -391,12 +416,14 @@ class TestContextDecisionLog:
 
     def test_to_jsonl(self, tmp_path: Path) -> None:
         log = ContextDecisionLog()
-        log.record(create_decision(
-            decision_type=ContextDecisionType.INCLUDE_FULL,
-            target_event_id="evt_001",
-            reason="test",
-            reason_codes=(ReasonCode.FORCED_RECENT,),
-        ))
+        log.record(
+            create_decision(
+                decision_type=ContextDecisionType.INCLUDE_FULL,
+                target_event_id="evt_001",
+                reason="test",
+                reason_codes=(ReasonCode.FORCED_RECENT,),
+            )
+        )
 
         filepath = tmp_path / "decisions.jsonl"
         log.to_jsonl(filepath)

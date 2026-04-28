@@ -1,7 +1,5 @@
 """Tests for Multi-Resolution Store (ContextOS 3.0 Phase 1)."""
 
-import pytest
-
 from polaris.kernelone.context.context_os.content_store import ContentStore, RefTracker
 from polaris.kernelone.context.context_os.multi_resolution_store import (
     MultiResolutionContent,
@@ -9,8 +7,8 @@ from polaris.kernelone.context.context_os.multi_resolution_store import (
     ResolutionEntry,
     ResolutionLevel,
     create_extractive_content,
-    create_stub_content,
     create_structured_content,
+    create_stub_content,
 )
 
 
@@ -175,7 +173,7 @@ class TestMultiResolutionStore:
 
         # Get full content
         result = store.get_content(
-            content_id=list(store._multi_resolution_map.keys())[0],
+            content_id=next(iter(store._multi_resolution_map.keys())),
             preferred_level=ResolutionLevel.L0_FULL,
         )
         assert result == full_content
@@ -188,7 +186,7 @@ class TestMultiResolutionStore:
         store.intern_with_resolutions(content=full_content)
 
         # Get with fallback (only full available)
-        content_id = list(store._multi_resolution_map.keys())[0]
+        content_id = next(iter(store._multi_resolution_map.keys()))
         result = store.get_content(
             content_id=content_id,
             preferred_level=ResolutionLevel.L3_STUB,
@@ -201,7 +199,7 @@ class TestMultiResolutionStore:
         store = MultiResolutionStore(content_store)
 
         store.intern_with_resolutions(content="test content")
-        content_id = list(store._multi_resolution_map.keys())[0]
+        content_id = next(iter(store._multi_resolution_map.keys()))
 
         assert store.has_content(content_id) is True
         assert store.has_content("nonexistent") is False

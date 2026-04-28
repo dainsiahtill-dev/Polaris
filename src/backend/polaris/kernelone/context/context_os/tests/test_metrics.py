@@ -1,7 +1,5 @@
 """Tests for Prometheus Metrics (ContextOS 3.0 P2)."""
 
-import pytest
-
 from polaris.kernelone.context.context_os.metrics.collectors import MetricsCollector, MetricValue
 from polaris.kernelone.context.context_os.metrics.exporters import MetricsExporter
 

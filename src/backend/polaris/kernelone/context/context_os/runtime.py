@@ -572,9 +572,7 @@ class StateFirstContextOS:
         # _entries contains mutable dict[str, Any] - must deep copy at snapshot time
         # to ensure snapshot isolation even if original dicts are mutated later.
         raw_entries = getattr(self._truth_log, "_entries", ())
-        transcript = tuple(
-            self._truth_log._normalize_entry(entry) for entry in raw_entries
-        )
+        transcript = tuple(self._truth_log._normalize_entry(entry) for entry in raw_entries)
 
         # working_state is already deep-copied by WorkingStateManager.current()
         working_state = self._working_state_manager.current()

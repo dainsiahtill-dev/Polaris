@@ -5,14 +5,13 @@ with the existing pipeline infrastructure.
 """
 
 import pytest
-
 from polaris.kernelone.context.context_os.models_v2 import (
     BudgetPlanV2 as BudgetPlan,
-    TranscriptEventV2 as TranscriptEvent,
-    WorkingStateV2 as WorkingState,
-    TaskStateViewV2 as TaskStateView,
     StateEntryV2 as StateEntry,
+    TaskStateViewV2 as TaskStateView,
+    TranscriptEventV2 as TranscriptEvent,
     UserProfileStateV2 as UserProfileState,
+    WorkingStateV2 as WorkingState,
 )
 from polaris.kernelone.context.context_os.phase_detection import TaskPhase
 from polaris.kernelone.context.context_os.pipeline.contracts import (

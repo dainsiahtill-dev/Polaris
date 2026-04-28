@@ -13,11 +13,10 @@ Environment variables:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import sys
-
-import asyncio
 
 from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import CEConsumer
 

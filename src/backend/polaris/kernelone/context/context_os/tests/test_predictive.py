@@ -1,10 +1,7 @@
 """Tests for Predictive Compression (ContextOS 3.0 P2)."""
 
-import pytest
-
 from polaris.kernelone.context.context_os.predictive import (
     PHASE_CONTENT_PATTERNS,
-    PHASE_TOOL_PATTERNS,
     PredictionResult,
     PredictionStrategy,
     PredictiveCompressor,
@@ -52,7 +49,7 @@ class TestPredictiveCompressor:
     """Test PredictiveCompressor class."""
 
     def test_create_compressor(self) -> None:
-        compressor = PredictiveCompressor()
+        PredictiveCompressor()
         assert len(PHASE_CONTENT_PATTERNS) > 0
 
     def test_predict_implementation(self) -> None:
@@ -71,11 +68,15 @@ class TestPredictiveCompressor:
         compressor = PredictiveCompressor()
 
         # Create mock events with forward references
-        event = type("MockEvent", (), {
-            "content": "Next I'll check the test results",
-            "kind": "assistant_turn",
-            "metadata": {},
-        })()
+        event = type(
+            "MockEvent",
+            (),
+            {
+                "content": "Next I'll check the test results",
+                "kind": "assistant_turn",
+                "metadata": {},
+            },
+        )()
 
         result = compressor.predict(
             current_phase="implementation",

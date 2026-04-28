@@ -1,10 +1,8 @@
 """Tests for Attention Scoring (ContextOS 3.0 Phase 3)."""
 
-import pytest
-
-from polaris.kernelone.context.context_os.attention.scorer import AttentionScorer, ScoringContext
 from polaris.kernelone.context.context_os.attention.ranker import CandidateRanker, RankedCandidate
 from polaris.kernelone.context.context_os.attention.reason_codes import ReasonCodeGenerator
+from polaris.kernelone.context.context_os.attention.scorer import AttentionScorer, ScoringContext
 from polaris.kernelone.context.context_os.decision_log import AttentionScore, ReasonCode
 from polaris.kernelone.context.context_os.phase_detection import TaskPhase
 
@@ -54,15 +52,19 @@ class TestAttentionScorer:
 
     def test_score_candidate_basic(self) -> None:
         scorer = AttentionScorer()
-        candidate = type("MockCandidate", (), {
-            "content": "implement feature X",
-            "role": "user",
-            "kind": "user_turn",
-            "sequence": 1,
-            "event_id": "evt_001",
-            "metadata": {},
-            "created_at": "2026-04-28T12:00:00",
-        })()
+        candidate = type(
+            "MockCandidate",
+            (),
+            {
+                "content": "implement feature X",
+                "role": "user",
+                "kind": "user_turn",
+                "sequence": 1,
+                "event_id": "evt_001",
+                "metadata": {},
+                "created_at": "2026-04-28T12:00:00",
+            },
+        )()
 
         context = ScoringContext(
             current_intent="implement feature X",
@@ -74,7 +76,7 @@ class TestAttentionScorer:
         assert score.final_score > 0
 
     def test_score_semantic_similarity(self) -> None:
-        scorer = AttentionScorer()
+        scorer = AttentionScorer(use_embeddings=False)  # Use keyword overlap for predictable scores
 
         # High similarity
         score1 = scorer._score_semantic_similarity("implement feature X", "implement feature X")
@@ -147,15 +149,19 @@ class TestCandidateRanker:
         # Create mock candidates
         candidates = []
         for i in range(5):
-            candidate = type("MockCandidate", (), {
-                "content": f"content {i}",
-                "role": "user" if i % 2 == 0 else "assistant",
-                "kind": "user_turn" if i % 2 == 0 else "assistant_turn",
-                "sequence": i,
-                "event_id": f"evt_{i:03d}",
-                "metadata": {},
-                "created_at": "2026-04-28T12:00:00",
-            })()
+            candidate = type(
+                "MockCandidate",
+                (),
+                {
+                    "content": f"content {i}",
+                    "role": "user" if i % 2 == 0 else "assistant",
+                    "kind": "user_turn" if i % 2 == 0 else "assistant_turn",
+                    "sequence": i,
+                    "event_id": f"evt_{i:03d}",
+                    "metadata": {},
+                    "created_at": "2026-04-28T12:00:00",
+                },
+            )()
             candidates.append(candidate)
 
         context = ScoringContext(
@@ -179,15 +185,19 @@ class TestCandidateRanker:
         # Create candidates with large content
         candidates = []
         for i in range(10):
-            candidate = type("MockCandidate", (), {
-                "content": f"content {i} " * 100,  # Large content
-                "role": "user",
-                "kind": "user_turn",
-                "sequence": i,
-                "event_id": f"evt_{i:03d}",
-                "metadata": {},
-                "created_at": "2026-04-28T12:00:00",
-            })()
+            candidate = type(
+                "MockCandidate",
+                (),
+                {
+                    "content": f"content {i} " * 100,  # Large content
+                    "role": "user",
+                    "kind": "user_turn",
+                    "sequence": i,
+                    "event_id": f"evt_{i:03d}",
+                    "metadata": {},
+                    "created_at": "2026-04-28T12:00:00",
+                },
+            )()
             candidates.append(candidate)
 
         context = ScoringContext(
@@ -206,9 +216,13 @@ class TestCandidateRanker:
         assert any(not r.selected for r in ranked)
 
     def test_ranked_candidate_to_dict(self) -> None:
-        candidate = type("MockCandidate", (), {
-            "event_id": "evt_001",
-        })()
+        candidate = type(
+            "MockCandidate",
+            (),
+            {
+                "event_id": "evt_001",
+            },
+        )()
         score = AttentionScore(semantic_similarity=0.8, final_score=0.75)
         ranked = RankedCandidate(
             candidate=candidate,

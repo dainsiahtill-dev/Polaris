@@ -253,7 +253,6 @@ class SumySummarizer:
     def is_available(self) -> bool:
         """检查 sumy 是否已安装"""
         try:
-
             return True
         except ImportError:
             return False

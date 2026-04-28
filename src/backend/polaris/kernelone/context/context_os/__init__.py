@@ -14,6 +14,7 @@ ContextOS 3.0 Enhancements:
 from __future__ import annotations
 
 from .attention import AttentionScorer, CandidateRanker, ReasonCodeGenerator
+from .attention.embeddings import EmbeddingProvider
 from .attention.graph import Edge, EdgeType, EventGraph
 from .attention.propagation import GraphPropagator, PropagationConfig, PropagationResult
 from .classifier import DialogActClassifier
@@ -106,6 +107,7 @@ from .phase_detection import (
     TaskPhaseDetector,
 )
 from .pipeline.attention_aware_stages import AttentionAwareWindowCollector
+from .pipeline.enhanced_runner import EnhancedPipelineRunner
 from .pipeline.phase_aware_stages import PhaseAwareBudgetPlannerStage
 from .policies import StateFirstContextOSPolicy
 from .predictive import PredictionResult, PredictionStrategy, PredictiveCompressor
@@ -149,6 +151,8 @@ __all__ = [
     "CognitiveRuntimeMetrics",
     "CognitiveRuntimeMetricsCollectionResult",
     "CognitiveRuntimeMetricsCollector",
+    "ConflictChecker",
+    "ConflictStatus",
     # Context Decision Log (ContextOS 3.0 Phase 0)
     "ContextDecision",
     "ContextDecisionLog",
@@ -165,8 +169,6 @@ __all__ = [
     "ContextOSSnapshot",
     "ContextSlicePlan",
     "ContextSliceSelection",
-    "ConflictChecker",
-    "ConflictStatus",
     "DecisionEntry",
     "DialogAct",
     "DialogActClassifier",
@@ -175,6 +177,8 @@ __all__ = [
     "DomainStatePatchHints",
     "Edge",
     "EdgeType",
+    "EmbeddingProvider",
+    "EnhancedPipelineRunner",
     "EpisodeCard",
     "EventGraph",
     "GenericContextDomainAdapter",

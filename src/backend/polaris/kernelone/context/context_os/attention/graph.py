@@ -38,6 +38,13 @@ class EdgeType(str, Enum):
     DERIVED_FROM_SAME_EVENT = "derived_from_same_event"
     CONTRADICTS = "contradicts"
     SUPERSEDES = "supersedes"
+    # New edge types
+    SAME_ROLE = "same_role"
+    SAME_ROUTE = "same_route"
+    TEMPORAL_ADJACENT = "temporal_adjacent"
+    CONTENT_SIMILAR = "content_similar"
+    ERROR_CHAIN = "error_chain"
+    TOOL_SEQUENCE = "tool_sequence"
 
 
 # Edge weights for propagation
@@ -49,6 +56,13 @@ EDGE_WEIGHTS: dict[EdgeType, float] = {
     EdgeType.DERIVED_FROM_SAME_EVENT: 0.6,
     EdgeType.CONTRADICTS: 0.8,
     EdgeType.SUPERSEDES: 0.7,
+    # New edge weights
+    EdgeType.SAME_ROLE: 0.2,
+    EdgeType.SAME_ROUTE: 0.15,
+    EdgeType.TEMPORAL_ADJACENT: 0.25,
+    EdgeType.CONTENT_SIMILAR: 0.4,
+    EdgeType.ERROR_CHAIN: 0.6,
+    EdgeType.TOOL_SEQUENCE: 0.35,
 }
 
 
@@ -230,6 +244,78 @@ class EventGraph:
                 )
             )
 
+        # Same role
+        event_role = str(metadata.get("role", ""))
+        other_role = str(other_metadata.get("role", ""))
+        if event_role and event_role == other_role:
+            edges.append(
+                Edge(
+                    source_id=event_id,
+                    target_id=other_id,
+                    edge_type=EdgeType.SAME_ROLE,
+                    weight=EDGE_WEIGHTS[EdgeType.SAME_ROLE],
+                )
+            )
+
+        # Same route
+        event_route = str(metadata.get("route", ""))
+        other_route = str(other_metadata.get("route", ""))
+        if event_route and event_route == other_route:
+            edges.append(
+                Edge(
+                    source_id=event_id,
+                    target_id=other_id,
+                    edge_type=EdgeType.SAME_ROUTE,
+                    weight=EDGE_WEIGHTS[EdgeType.SAME_ROUTE],
+                )
+            )
+
+        # Temporal adjacent (sequence numbers differ by 1)
+        event_seq = int(metadata.get("sequence", -1))
+        other_seq = int(other_metadata.get("sequence", -1))
+        if event_seq >= 0 and other_seq >= 0 and abs(event_seq - other_seq) == 1:
+            edges.append(
+                Edge(
+                    source_id=event_id,
+                    target_id=other_id,
+                    edge_type=EdgeType.TEMPORAL_ADJACENT,
+                    weight=EDGE_WEIGHTS[EdgeType.TEMPORAL_ADJACENT],
+                )
+            )
+
+        # Content similar (simple heuristic: share >50% words)
+        if self._detect_content_similarity(content, str(other_metadata.get("content", ""))):
+            edges.append(
+                Edge(
+                    source_id=event_id,
+                    target_id=other_id,
+                    edge_type=EdgeType.CONTENT_SIMILAR,
+                    weight=EDGE_WEIGHTS[EdgeType.CONTENT_SIMILAR],
+                )
+            )
+
+        # Error chain (error followed by error)
+        if self._detect_error_chain(content, str(other_metadata.get("content", ""))):
+            edges.append(
+                Edge(
+                    source_id=event_id,
+                    target_id=other_id,
+                    edge_type=EdgeType.ERROR_CHAIN,
+                    weight=EDGE_WEIGHTS[EdgeType.ERROR_CHAIN],
+                )
+            )
+
+        # Tool sequence (tool call followed by tool result)
+        if self._detect_tool_sequence(metadata, other_metadata):
+            edges.append(
+                Edge(
+                    source_id=event_id,
+                    target_id=other_id,
+                    edge_type=EdgeType.TOOL_SEQUENCE,
+                    weight=EDGE_WEIGHTS[EdgeType.TOOL_SEQUENCE],
+                )
+            )
+
         return edges
 
     @staticmethod
@@ -312,6 +398,50 @@ class EventGraph:
         supersedes_keywords = ["supersede", "replace", "override", "update", "fix"]
         content_lower = content.lower()
         return any(kw in content_lower for kw in supersedes_keywords) and other_id in content
+
+    @staticmethod
+    def _detect_content_similarity(content1: str, content2: str) -> bool:
+        """Detect if two contents are similar (share >50% words)."""
+        if not content1 or not content2:
+            return False
+
+        words1 = set(content1.lower().split())
+        words2 = set(content2.lower().split())
+
+        if not words1 or not words2:
+            return False
+
+        intersection = words1 & words2
+        min_len = min(len(words1), len(words2))
+
+        return len(intersection) / min_len > 0.5 if min_len > 0 else False
+
+    @staticmethod
+    def _detect_error_chain(content1: str, content2: str) -> bool:
+        """Detect if both contents contain errors."""
+        error_keywords = ["error", "exception", "traceback", "failed", "failure"]
+        content1_lower = content1.lower()
+        content2_lower = content2.lower()
+
+        has_error1 = any(kw in content1_lower for kw in error_keywords)
+        has_error2 = any(kw in content2_lower for kw in error_keywords)
+
+        return has_error1 and has_error2
+
+    @staticmethod
+    def _detect_tool_sequence(metadata1: dict[str, Any], metadata2: dict[str, Any]) -> bool:
+        """Detect if events form a tool call -> tool result sequence."""
+        kind1 = str(metadata1.get("kind", "")).lower()
+        kind2 = str(metadata2.get("kind", "")).lower()
+
+        # tool_call followed by tool_result
+        if "tool_call" in kind1 and "tool_result" in kind2:
+            return True
+
+        # Same tool used consecutively
+        tool1 = str(metadata1.get("tool_name", ""))
+        tool2 = str(metadata2.get("tool_name", ""))
+        return bool(tool1 and tool1 == tool2)
 
     @property
     def stats(self) -> dict[str, Any]:

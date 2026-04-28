@@ -1,21 +1,17 @@
 """Tests for Phase Detection and Phase-Aware Budgeting (ContextOS 3.0 Phase 2)."""
 
-import pytest
-
-from polaris.kernelone.context.context_os.phase_detection import (
-    ALLOWED_TRANSITIONS,
-    MINIMUM_PHASE_DURATION,
-    PHASE_CONFIDENCE_THRESHOLD,
-    PhaseDetectionResult,
-    PhaseTransition,
-    TaskPhase,
-    TaskPhaseDetector,
-)
 from polaris.kernelone.context.context_os.phase_budget_planner import (
     PHASE_BUDGET_PROFILES,
     BudgetProfile,
     PhaseAwareBudgetPlan,
     PhaseAwareBudgetPlanner,
+)
+from polaris.kernelone.context.context_os.phase_detection import (
+    ALLOWED_TRANSITIONS,
+    MINIMUM_PHASE_DURATION,
+    PhaseDetectionResult,
+    TaskPhase,
+    TaskPhaseDetector,
 )
 
 
@@ -93,15 +89,23 @@ class TestTaskPhaseDetector:
     def test_detect_intake_no_goal(self) -> None:
         detector = TaskPhaseDetector()
         # Mock working state with no goal
-        working_state = type("MockWS", (), {
-            "task_state": type("MockTS", (), {
-                "current_goal": None,
-                "accepted_plan": (),
-                "open_loops": (),
-                "blocked_on": (),
-                "deliverables": (),
-            })()
-        })()
+        working_state = type(
+            "MockWS",
+            (),
+            {
+                "task_state": type(
+                    "MockTS",
+                    (),
+                    {
+                        "current_goal": None,
+                        "accepted_plan": (),
+                        "open_loops": (),
+                        "blocked_on": (),
+                        "deliverables": (),
+                    },
+                )()
+            },
+        )()
 
         result = detector.detect_phase(working_state)
         assert result.phase == TaskPhase.INTAKE
@@ -110,15 +114,23 @@ class TestTaskPhaseDetector:
     def test_detect_planning_with_goal(self) -> None:
         detector = TaskPhaseDetector()
         # Mock working state with goal but no plan
-        working_state = type("MockWS", (), {
-            "task_state": type("MockTS", (), {
-                "current_goal": type("MockGoal", (), {"value": "Implement feature X"})(),
-                "accepted_plan": (),
-                "open_loops": (),
-                "blocked_on": (),
-                "deliverables": (),
-            })()
-        })()
+        working_state = type(
+            "MockWS",
+            (),
+            {
+                "task_state": type(
+                    "MockTS",
+                    (),
+                    {
+                        "current_goal": type("MockGoal", (), {"value": "Implement feature X"})(),
+                        "accepted_plan": (),
+                        "open_loops": (),
+                        "blocked_on": (),
+                        "deliverables": (),
+                    },
+                )()
+            },
+        )()
 
         # Need to run enough times to overcome hysteresis
         for _ in range(MINIMUM_PHASE_DURATION + 1):
@@ -130,24 +142,36 @@ class TestTaskPhaseDetector:
     def test_detect_exploration_high_read_only(self) -> None:
         detector = TaskPhaseDetector()
         # Mock working state
-        working_state = type("MockWS", (), {
-            "task_state": type("MockTS", (), {
-                "current_goal": type("MockGoal", (), {"value": "Explore codebase"})(),
-                "accepted_plan": (),
-                "open_loops": (),
-                "blocked_on": (),
-                "deliverables": (),
-            })()
-        })()
+        working_state = type(
+            "MockWS",
+            (),
+            {
+                "task_state": type(
+                    "MockTS",
+                    (),
+                    {
+                        "current_goal": type("MockGoal", (), {"value": "Explore codebase"})(),
+                        "accepted_plan": (),
+                        "open_loops": (),
+                        "blocked_on": (),
+                        "deliverables": (),
+                    },
+                )()
+            },
+        )()
 
         # Mock events with high read-only ratio
         events = []
         for i in range(10):
-            event = type("MockEvent", (), {
-                "role": "tool" if i % 2 == 0 else "assistant",
-                "content": "tool result" if i % 2 == 0 else "analysis",
-                "kind": "tool_result" if i % 2 == 0 else "assistant_turn",
-            })()
+            event = type(
+                "MockEvent",
+                (),
+                {
+                    "role": "tool" if i % 2 == 0 else "assistant",
+                    "content": "tool result" if i % 2 == 0 else "analysis",
+                    "kind": "tool_result" if i % 2 == 0 else "assistant_turn",
+                },
+            )()
             events.append(event)
 
         # Need to run enough times to overcome hysteresis
@@ -163,15 +187,23 @@ class TestTaskPhaseDetector:
         assert detector.current_phase == TaskPhase.INTAKE
 
         # Mock working state with goal
-        working_state = type("MockWS", (), {
-            "task_state": type("MockTS", (), {
-                "current_goal": type("MockGoal", (), {"value": "Test"})(),
-                "accepted_plan": (),
-                "open_loops": (),
-                "blocked_on": (),
-                "deliverables": (),
-            })()
-        })()
+        working_state = type(
+            "MockWS",
+            (),
+            {
+                "task_state": type(
+                    "MockTS",
+                    (),
+                    {
+                        "current_goal": type("MockGoal", (), {"value": "Test"})(),
+                        "accepted_plan": (),
+                        "open_loops": (),
+                        "blocked_on": (),
+                        "deliverables": (),
+                    },
+                )()
+            },
+        )()
 
         # First detection - should stay in INTAKE due to hysteresis
         result1 = detector.detect_phase(working_state)

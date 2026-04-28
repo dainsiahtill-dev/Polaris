@@ -100,16 +100,122 @@ class MemoryCandidateProvider:
         Returns:
             List of MemoryCandidate sorted by relevance
         """
-        # TODO: Implement actual session persistence recall
-        # For now, return empty list
+        candidates: list[MemoryCandidate] = []
+
+        try:
+            # Try to load from session persistence
+            from polaris.cells.roles.session.internal.session_persistence import (
+                SessionPersistenceService,
+            )
+
+            persistence = SessionPersistenceService(workspace=self.workspace)
+
+            # Get all session snapshots
+            snapshots = self._load_session_snapshots(persistence)
+
+            for session_id, snapshot in snapshots.items():
+                # Extract memories from snapshot
+                memories = self._extract_memories_from_snapshot(session_id, snapshot)
+
+                for memory in memories:
+                    # Calculate relevance
+                    relevance = self._calculate_relevance(memory.content, query)
+
+                    # Filter by relevance and age
+                    if relevance >= min_relevance:
+                        freshness = self._determine_freshness(memory.created_at)
+                        if freshness in (MemoryFreshness.CURRENT, MemoryFreshness.RECENT):
+                            candidates.append(
+                                MemoryCandidate(
+                                    memory_id=memory.memory_id,
+                                    content=memory.content,
+                                    source_session_id=session_id,
+                                    source_event_ids=memory.source_event_ids,
+                                    created_at=memory.created_at,
+                                    freshness=freshness,
+                                    relevance_score=relevance,
+                                )
+                            )
+
+            # Sort by relevance and limit
+            candidates.sort(key=lambda c: c.relevance_score, reverse=True)
+            candidates = candidates[:limit]
+
+        except ImportError:
+            logger.debug("Session persistence not available")
+        except (RuntimeError, ValueError, TypeError, OSError):
+            logger.warning("Failed to recall memories", exc_info=True)
+
         logger.debug(
-            "Memory recall: query=%s, limit=%d, min_relevance=%.2f, max_age_hours=%d",
+            "Memory recall: query=%s, limit=%d, found=%d",
             query[:50],
             limit,
-            min_relevance,
-            max_age_hours,
+            len(candidates),
         )
-        return []
+        return candidates
+
+    def _load_session_snapshots(self, persistence: Any) -> dict[str, dict[str, Any]]:
+        """Load session snapshots from persistence."""
+        snapshots: dict[str, dict[str, Any]] = {}
+
+        try:
+            # List all session snapshot files
+            manifest_path = persistence._get_manifest_path()
+            if persistence.fs.exists(manifest_path):
+                manifest = persistence.fs.read_json(manifest_path)
+                sessions = manifest.get("sessions", {})
+
+                for session_id, _session_info in sessions.items():
+                    snapshot_path = persistence._get_snapshot_path(session_id)
+                    if persistence.fs.exists(snapshot_path):
+                        snapshot = persistence.fs.read_json(snapshot_path)
+                        snapshots[session_id] = snapshot
+        except (RuntimeError, ValueError, TypeError, OSError):
+            logger.debug("Failed to load session snapshots", exc_info=True)
+
+        return snapshots
+
+    def _extract_memories_from_snapshot(self, session_id: str, snapshot: dict[str, Any]) -> list[MemoryCandidate]:
+        """Extract memory candidates from a session snapshot."""
+        memories: list[MemoryCandidate] = []
+
+        # Extract from transcript
+        transcript = snapshot.get("transcript_log", [])
+        for event in transcript:
+            content = str(event.get("content", "") or "")
+            if len(content) > 50:  # Only consider substantial content
+                event_id = str(event.get("event_id", ""))
+                created_at = str(event.get("created_at", ""))
+
+                memories.append(
+                    MemoryCandidate(
+                        memory_id=f"{session_id}_{event_id}",
+                        content=content,
+                        source_session_id=session_id,
+                        source_event_ids=(event_id,),
+                        created_at=created_at,
+                    )
+                )
+
+        # Extract from working state
+        working_state = snapshot.get("working_state", {})
+        task_state = working_state.get("task_state", {})
+
+        # Extract goal
+        current_goal = task_state.get("current_goal")
+        if current_goal:
+            goal_value = str(current_goal.get("value", "") or "")
+            if goal_value:
+                memories.append(
+                    MemoryCandidate(
+                        memory_id=f"{session_id}_goal",
+                        content=f"Goal: {goal_value}",
+                        source_session_id=session_id,
+                        created_at=snapshot.get("updated_at", ""),
+                    )
+                )
+
+        return memories
 
     def _calculate_relevance(self, content: str, query: str) -> float:
         """Calculate relevance score between content and query.

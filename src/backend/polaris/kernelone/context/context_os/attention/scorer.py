@@ -52,7 +52,7 @@ class AttentionScorer:
     """Multi-signal attention scorer for context candidates.
 
     V1 Implementation: Multi-signal weighted scoring.
-    V2 (Future): Add graph propagation (PageRank-style).
+    V2: Add embedding-based semantic similarity.
 
     Scoring Formula:
         attention_score =
@@ -71,6 +71,19 @@ class AttentionScorer:
     WEIGHT_EVIDENCE = 0.15
     WEIGHT_PHASE = 0.10
     WEIGHT_PIN = 0.05
+
+    def __init__(self, use_embeddings: bool = True) -> None:
+        """Initialize scorer with optional embedding support."""
+        self._use_embeddings = use_embeddings
+        self._embedding_provider = None
+
+        if use_embeddings:
+            try:
+                from .embeddings import EmbeddingProvider
+
+                self._embedding_provider = EmbeddingProvider()
+            except ImportError:
+                logger.warning("EmbeddingProvider not available, using keyword overlap")
 
     # Phase affinity matrix: which content types are important in each phase
     PHASE_AFFINITY: dict[TaskPhase, dict[str, float]] = {
@@ -183,12 +196,19 @@ class AttentionScorer:
         """Score semantic similarity between content and current intent.
 
         V1: Simple keyword overlap (no embeddings).
-        V2 (Future): Use embedding-based cosine similarity.
+        V2: Use embedding-based cosine similarity.
         """
         if not content or not intent:
             return 0.0
 
-        # Normalize
+        # Try embedding-based similarity first
+        if self._embedding_provider is not None:
+            try:
+                return self._embedding_provider.similarity(content, intent)
+            except (RuntimeError, ValueError, TypeError):
+                logger.debug("Embedding similarity failed, falling back to keyword overlap")
+
+        # Fallback: keyword overlap
         content_lower = content.lower()
         intent_lower = intent.lower()
 

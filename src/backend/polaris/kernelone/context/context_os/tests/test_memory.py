@@ -1,7 +1,5 @@
 """Tests for Akashic Memory Integration (ContextOS 3.0 P1)."""
 
-import pytest
-
 from polaris.kernelone.context.context_os.memory.candidates import (
     MemoryCandidate,
     MemoryCandidateProvider,

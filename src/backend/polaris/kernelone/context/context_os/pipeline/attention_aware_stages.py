@@ -290,17 +290,19 @@ class AttentionAwareWindowCollector:
             # Check budget again after compression
             if token_count + estimated > token_budget:
                 if decision_log is not None:
-                    decision_log.record(create_decision(
-                        decision_type=ContextDecisionType.EXCLUDE,
-                        target_event_id=candidate_id,
-                        reason="token_budget_exceeded",
-                        reason_codes=(ReasonCode.TOKEN_BUDGET_EXCEEDED,),
-                        token_budget_before=token_budget,
-                        token_budget_after=token_budget,
-                        token_cost=estimated,
-                        attention_score=ranked_candidate.score,
-                        explanation=f"Candidate excluded: token budget exceeded (score={ranked_candidate.score.final_score:.2f})",
-                    ))
+                    decision_log.record(
+                        create_decision(
+                            decision_type=ContextDecisionType.EXCLUDE,
+                            target_event_id=candidate_id,
+                            reason="token_budget_exceeded",
+                            reason_codes=(ReasonCode.TOKEN_BUDGET_EXCEEDED,),
+                            token_budget_before=token_budget,
+                            token_budget_after=token_budget,
+                            token_cost=estimated,
+                            attention_score=ranked_candidate.score,
+                            explanation=f"Candidate excluded: token budget exceeded (score={ranked_candidate.score.final_score:.2f})",
+                        )
+                    )
                 continue
 
             # Apply content mutation if compressed
@@ -316,22 +318,22 @@ class AttentionAwareWindowCollector:
 
             # Log decision
             if decision_log is not None:
-                decision_log.record(create_decision(
-                    decision_type=ContextDecisionType.INCLUDE_FULL,
-                    target_event_id=candidate_id,
-                    reason="attention_scored",
-                    reason_codes=tuple(ranked_candidate.reason_codes),
-                    token_budget_before=token_budget,
-                    token_budget_after=token_budget,
-                    token_cost=estimated,
-                    attention_score=ranked_candidate.score,
-                    explanation=f"Candidate included: attention_score={ranked_candidate.score.final_score:.2f}, rank={ranked_candidate.rank}",
-                ))
+                decision_log.record(
+                    create_decision(
+                        decision_type=ContextDecisionType.INCLUDE_FULL,
+                        target_event_id=candidate_id,
+                        reason="attention_scored",
+                        reason_codes=tuple(ranked_candidate.reason_codes),
+                        token_budget_before=token_budget,
+                        token_budget_after=token_budget,
+                        token_cost=estimated,
+                        attention_score=ranked_candidate.score,
+                        explanation=f"Candidate included: attention_score={ranked_candidate.score.final_score:.2f}, rank={ranked_candidate.rank}",
+                    )
+                )
 
         # Sort by sequence for consistent output
-        active_window = tuple(
-            sorted(selected_events.values(), key=lambda item: (item.sequence, item.event_id))
-        )
+        active_window = tuple(sorted(selected_events.values(), key=lambda item: (item.sequence, item.event_id)))
 
         logger.info(
             "Attention-aware window: %d candidates scored, %d selected, token_used=%d/%d",
@@ -359,15 +361,17 @@ class AttentionAwareWindowCollector:
         for item in reversed(transcript):
             if item.route == RoutingClass.CLEAR and item.event_id not in forced_recent_ids:
                 if decision_log is not None:
-                    decision_log.record(create_decision(
-                        decision_type=ContextDecisionType.EXCLUDE,
-                        target_event_id=item.event_id,
-                        reason="route_cleared",
-                        reason_codes=(ReasonCode.ROUTE_CLEARED,),
-                        token_budget_before=token_budget,
-                        token_budget_after=token_budget,
-                        explanation="Event excluded because route is CLEAR.",
-                    ))
+                    decision_log.record(
+                        create_decision(
+                            decision_type=ContextDecisionType.EXCLUDE,
+                            target_event_id=item.event_id,
+                            reason="route_cleared",
+                            reason_codes=(ReasonCode.ROUTE_CLEARED,),
+                            token_budget_before=token_budget,
+                            token_budget_after=token_budget,
+                            explanation="Event excluded because route is CLEAR.",
+                        )
+                    )
                 continue
 
             is_reopened = bool(str(get_metadata_value(item.metadata, "reopen_hold") or "").strip())
@@ -391,15 +395,17 @@ class AttentionAwareWindowCollector:
             can_add = is_root or len(pinned_events) < self._policy.max_active_window_messages
             if not can_add:
                 if decision_log is not None:
-                    decision_log.record(create_decision(
-                        decision_type=ContextDecisionType.EXCLUDE,
-                        target_event_id=item.event_id,
-                        reason="max_window_messages_reached",
-                        reason_codes=(ReasonCode.NOT_IN_ACTIVE_WINDOW,),
-                        token_budget_before=token_budget,
-                        token_budget_after=token_budget,
-                        explanation="Non-root event excluded: max_active_window_messages reached.",
-                    ))
+                    decision_log.record(
+                        create_decision(
+                            decision_type=ContextDecisionType.EXCLUDE,
+                            target_event_id=item.event_id,
+                            reason="max_window_messages_reached",
+                            reason_codes=(ReasonCode.NOT_IN_ACTIVE_WINDOW,),
+                            token_budget_before=token_budget,
+                            token_budget_after=token_budget,
+                            explanation="Non-root event excluded: max_active_window_messages reached.",
+                        )
+                    )
                 continue
 
             item_content = item.content
@@ -433,16 +439,18 @@ class AttentionAwareWindowCollector:
                 if is_root:
                     logger.warning("Root event over budget: %s", item.event_id)
                 if decision_log is not None:
-                    decision_log.record(create_decision(
-                        decision_type=ContextDecisionType.EXCLUDE,
-                        target_event_id=item.event_id,
-                        reason="token_budget_exceeded",
-                        reason_codes=(ReasonCode.TOKEN_BUDGET_EXCEEDED,),
-                        token_budget_before=token_budget,
-                        token_budget_after=token_budget,
-                        token_cost=estimated,
-                        explanation="Event excluded: token budget exceeded.",
-                    ))
+                    decision_log.record(
+                        create_decision(
+                            decision_type=ContextDecisionType.EXCLUDE,
+                            target_event_id=item.event_id,
+                            reason="token_budget_exceeded",
+                            reason_codes=(ReasonCode.TOKEN_BUDGET_EXCEEDED,),
+                            token_budget_before=token_budget,
+                            token_budget_after=token_budget,
+                            token_cost=estimated,
+                            explanation="Event excluded: token budget exceeded.",
+                        )
+                    )
                 continue
 
             if item.event_id in pinned_events:
@@ -462,16 +470,18 @@ class AttentionAwareWindowCollector:
             token_count += estimated
 
             if decision_log is not None:
-                decision_log.record(create_decision(
-                    decision_type=ContextDecisionType.INCLUDE_FULL,
-                    target_event_id=item.event_id,
-                    reason="static_rule",
-                    reason_codes=tuple(root_reasons) if root_reasons else (ReasonCode.NOT_IN_ACTIVE_WINDOW,),
-                    token_budget_before=token_budget,
-                    token_budget_after=token_budget,
-                    token_cost=estimated,
-                    explanation=f"Event included by static rules. Root={is_root}, Compressed={compressed_via_jit}.",
-                ))
+                decision_log.record(
+                    create_decision(
+                        decision_type=ContextDecisionType.INCLUDE_FULL,
+                        target_event_id=item.event_id,
+                        reason="static_rule",
+                        reason_codes=tuple(root_reasons) if root_reasons else (ReasonCode.NOT_IN_ACTIVE_WINDOW,),
+                        token_budget_before=token_budget,
+                        token_budget_after=token_budget,
+                        token_cost=estimated,
+                        explanation=f"Event included by static rules. Root={is_root}, Compressed={compressed_via_jit}.",
+                    )
+                )
 
         active_window = tuple(sorted(pinned_events.values(), key=lambda item: (item.sequence, item.event_id)))
         return WindowCollectorOutput(active_window=active_window)

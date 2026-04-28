@@ -1,7 +1,5 @@
 """Tests for Graph Propagation (ContextOS 3.0 P1)."""
 
-import pytest
-
 from polaris.kernelone.context.context_os.attention.graph import Edge, EdgeType, EventGraph
 from polaris.kernelone.context.context_os.attention.propagation import (
     GraphPropagator,
@@ -54,26 +52,38 @@ class TestEventGraph:
 
     def test_add_event(self) -> None:
         graph = EventGraph()
-        event = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "def test_function(): pass",
-            "metadata": {},
-        })()
+        event = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "def test_function(): pass",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event)
         assert "evt_001" in graph._adjacency
 
     def test_same_file_edge(self) -> None:
         graph = EventGraph()
-        event1 = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "File created: test.py",
-            "metadata": {},
-        })()
-        event2 = type("MockEvent", (), {
-            "event_id": "evt_002",
-            "content": "Modified test.py",
-            "metadata": {},
-        })()
+        event1 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "File created: test.py",
+                "metadata": {},
+            },
+        )()
+        event2 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_002",
+                "content": "Modified test.py",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event1)
         graph.add_event(event2)
 
@@ -83,16 +93,24 @@ class TestEventGraph:
 
     def test_same_symbol_edge(self) -> None:
         graph = EventGraph()
-        event1 = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "def test_function(): pass",
-            "metadata": {},
-        })()
-        event2 = type("MockEvent", (), {
-            "event_id": "evt_002",
-            "content": "def test_function(): return True",
-            "metadata": {},
-        })()
+        event1 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "def test_function(): pass",
+                "metadata": {},
+            },
+        )()
+        event2 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_002",
+                "content": "def test_function(): return True",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event1)
         graph.add_event(event2)
 
@@ -102,16 +120,24 @@ class TestEventGraph:
 
     def test_get_neighbors(self) -> None:
         graph = EventGraph()
-        event1 = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "def test_function(): pass",
-            "metadata": {},
-        })()
-        event2 = type("MockEvent", (), {
-            "event_id": "evt_002",
-            "content": "def test_function(): return True",
-            "metadata": {},
-        })()
+        event1 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "def test_function(): pass",
+                "metadata": {},
+            },
+        )()
+        event2 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_002",
+                "content": "def test_function(): return True",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event1)
         graph.add_event(event2)
 
@@ -120,11 +146,15 @@ class TestEventGraph:
 
     def test_stats(self) -> None:
         graph = EventGraph()
-        event1 = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "def test_function(): pass",
-            "metadata": {},
-        })()
+        event1 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "def test_function(): pass",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event1)
 
         stats = graph.stats
@@ -189,16 +219,24 @@ class TestGraphPropagator:
         graph = EventGraph()
 
         # Add events with same symbol (both define test_function)
-        event1 = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "def test_function(): pass",
-            "metadata": {},
-        })()
-        event2 = type("MockEvent", (), {
-            "event_id": "evt_002",
-            "content": "def test_function(): return True",
-            "metadata": {},
-        })()
+        event1 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "def test_function(): pass",
+                "metadata": {},
+            },
+        )()
+        event2 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_002",
+                "content": "def test_function(): return True",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event1)
         graph.add_event(event2)
 
@@ -214,11 +252,15 @@ class TestGraphPropagator:
         propagator = GraphPropagator()
         graph = EventGraph()
 
-        event = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "No related content",
-            "metadata": {},
-        })()
+        event = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "No related content",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event)
 
         base_scores = {"evt_001": 0.5}
@@ -232,16 +274,24 @@ class TestGraphPropagator:
         graph = EventGraph()
 
         # Add events with same symbol (both define test_function)
-        event1 = type("MockEvent", (), {
-            "event_id": "evt_001",
-            "content": "def test_function(): pass",
-            "metadata": {},
-        })()
-        event2 = type("MockEvent", (), {
-            "event_id": "evt_002",
-            "content": "def test_function(): return True",
-            "metadata": {},
-        })()
+        event1 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_001",
+                "content": "def test_function(): pass",
+                "metadata": {},
+            },
+        )()
+        event2 = type(
+            "MockEvent",
+            (),
+            {
+                "event_id": "evt_002",
+                "content": "def test_function(): return True",
+                "metadata": {},
+            },
+        )()
         graph.add_event(event1)
         graph.add_event(event2)
 

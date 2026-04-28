@@ -431,19 +431,16 @@ class TreeSitterSummarizer:
 
             # Check if at least one language module is available
             try:
-
                 return True
             except ImportError:
                 pass
 
             try:
-
                 return True
             except ImportError:
                 pass
 
             try:
-
                 return True
             except ImportError:
                 pass

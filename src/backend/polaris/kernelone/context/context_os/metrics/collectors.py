@@ -163,6 +163,74 @@ class MetricsCollector:
         self._histograms["contextos_pipeline_projection_duration"].append(duration_ms)
 
     # ------------------------------------------------------------------
+    # Graph Propagation Metrics
+    # ------------------------------------------------------------------
+
+    def record_graph_propagation_events(self, count: int) -> None:
+        """Record number of events in graph propagation."""
+        self._gauges["contextos_graph_propagation_events"] = float(count)
+
+    def record_graph_propagation_edges(self, count: int) -> None:
+        """Record number of edges in graph."""
+        self._gauges["contextos_graph_propagation_edges"] = float(count)
+
+    def record_graph_propagation_iterations(self, count: int) -> None:
+        """Record number of propagation iterations."""
+        self._histograms["contextos_graph_propagation_iterations"].append(count)
+
+    def record_graph_propagation_duration(self, duration_ms: float) -> None:
+        """Record graph propagation duration."""
+        self._histograms["contextos_graph_propagation_duration"].append(duration_ms)
+
+    # ------------------------------------------------------------------
+    # Memory Metrics
+    # ------------------------------------------------------------------
+
+    def record_memory_recall_count(self, count: int) -> None:
+        """Record number of memories recalled."""
+        self._counters["contextos_memory_recall_total"] += count
+
+    def record_memory_injection_allowed(self) -> None:
+        """Record memory injection allowed."""
+        self._counters["contextos_memory_injection_allowed"] += 1
+
+    def record_memory_injection_rejected(self) -> None:
+        """Record memory injection rejected."""
+        self._counters["contextos_memory_injection_rejected"] += 1
+
+    def record_memory_conflict_detected(self) -> None:
+        """Record memory conflict detected."""
+        self._counters["contextos_memory_conflict_detected"] += 1
+
+    # ------------------------------------------------------------------
+    # Predictive Compression Metrics
+    # ------------------------------------------------------------------
+
+    def record_prediction_strategy(self, strategy: str) -> None:
+        """Record prediction strategy used."""
+        self._counters[f"contextos_prediction_strategy_{strategy}"] += 1
+
+    def record_prediction_confidence(self, confidence: float) -> None:
+        """Record prediction confidence."""
+        self._histograms["contextos_prediction_confidence"].append(confidence)
+
+    # ------------------------------------------------------------------
+    # Embedding Metrics
+    # ------------------------------------------------------------------
+
+    def record_embedding_cache_hit(self) -> None:
+        """Record embedding cache hit."""
+        self._counters["contextos_embedding_cache_hits"] += 1
+
+    def record_embedding_cache_miss(self) -> None:
+        """Record embedding cache miss."""
+        self._counters["contextos_embedding_cache_misses"] += 1
+
+    def record_embedding_computation_duration(self, duration_ms: float) -> None:
+        """Record embedding computation duration."""
+        self._histograms["contextos_embedding_computation_duration"].append(duration_ms)
+
+    # ------------------------------------------------------------------
     # Collection
     # ------------------------------------------------------------------
 
