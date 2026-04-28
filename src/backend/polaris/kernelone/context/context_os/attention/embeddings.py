@@ -119,6 +119,9 @@ class EmbeddingProvider:
 
     def _compute_local_embedding(self, text: str) -> tuple[float, ...]:
         """Compute embedding using local model."""
+        if self._local_model is None:
+            return self._compute_fallback_embedding(text)
+
         try:
             embedding = self._local_model.encode(text, show_progress_bar=False)
             return tuple(embedding.tolist())

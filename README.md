@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Polaris Logo" width="600">
+</p>
+
 # Polaris
 
 Polaris 是一个面向复杂软件交付场景的 AI Agent 治理与运行时平台。  
