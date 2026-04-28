@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.435844Z",
-  "source_hash": "6e1921dcf9b4d50d",
+  "generated_at": "2026-04-28T08:34:46.709819Z",
+  "source_hash": "a110052659e08521",
   "cell_id": "director.tasking",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -661,6 +661,122 @@
     },
     {
       "type": "class",
+      "name": "TestGetPythonBootstrap",
+      "description": "Tests for Python bootstrap functions.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
+      "methods": [
+        {
+          "name": "test_get_python_bootstrap_files",
+          "doc": "Test get_python_bootstrap_files returns expected structure."
+        },
+        {
+          "name": "test_get_python_bootstrap_has_content",
+          "doc": "Test Python bootstrap files have content."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetTypeScriptBootstrap",
+      "description": "Tests for TypeScript bootstrap functions.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
+      "methods": [
+        {
+          "name": "test_get_typescript_bootstrap_files",
+          "doc": "Test get_typescript_bootstrap_files returns expected structure."
+        },
+        {
+          "name": "test_typescript_bootstrap_has_valid_package_json",
+          "doc": "Test TypeScript bootstrap has valid package.json."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetGenericBootstrap",
+      "description": "Tests for generic bootstrap functions.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
+      "methods": [
+        {
+          "name": "test_get_generic_bootstrap_files",
+          "doc": "Test get_generic_bootstrap_files returns expected structure."
+        },
+        {
+          "name": "test_generic_bootstrap_has_tui_runtime",
+          "doc": "Test generic bootstrap includes tui_runtime.md."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetIntelligentBootstrapFiles",
+      "description": "Tests for intelligent bootstrap selection.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
+      "methods": [
+        {
+          "name": "test_intelligent_python",
+          "doc": "Test intelligent bootstrap for Python."
+        },
+        {
+          "name": "test_intelligent_fastapi",
+          "doc": "Test intelligent bootstrap for FastAPI."
+        },
+        {
+          "name": "test_intelligent_flask",
+          "doc": "Test intelligent bootstrap for Flask."
+        },
+        {
+          "name": "test_intelligent_typescript",
+          "doc": "Test intelligent bootstrap for TypeScript."
+        },
+        {
+          "name": "test_intelligent_javascript",
+          "doc": "Test intelligent bootstrap for JavaScript."
+        },
+        {
+          "name": "test_intelligent_go",
+          "doc": "Test intelligent bootstrap for Go."
+        },
+        {
+          "name": "test_intelligent_rust",
+          "doc": "Test intelligent bootstrap for Rust."
+        },
+        {
+          "name": "test_intelligent_unknown_language_falls_back_to_generic",
+          "doc": "Test unknown language falls back to generic bootstrap."
+        },
+        {
+          "name": "test_intelligent_empty_subject_uses_default",
+          "doc": "Test empty subject uses default value."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBootstrapContent",
+      "description": "Tests for bootstrap content quality.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_bootstrap_template_catalog.py",
+      "methods": [
+        {
+          "name": "test_python_fastapi_has_imports",
+          "doc": "Test FastAPI bootstrap has proper imports."
+        },
+        {
+          "name": "test_rust_has_tokio_dependency",
+          "doc": "Test Rust bootstrap has tokio dependency."
+        },
+        {
+          "name": "test_go_has_flag_package",
+          "doc": "Test Go bootstrap uses flag package."
+        },
+        {
+          "name": "test_typescript_has_interface",
+          "doc": "Test TypeScript bootstrap has interface."
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestCreateTaskCommandV1HappyPath",
       "description": "",
       "defined_in": "polaris/cells/director/tasking/tests/test_contracts.py",
@@ -952,10 +1068,673 @@
       ]
     },
     {
+      "type": "class",
+      "name": "TestGateResult",
+      "description": "Tests for GateResult dataclass.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
+      "methods": [
+        {
+          "name": "test_gate_result_creation",
+          "doc": "Test basic GateResult creation."
+        },
+        {
+          "name": "test_gate_result_as_dict",
+          "doc": "Test GateResult.as_dict() method."
+        },
+        {
+          "name": "test_gate_result_empty_lists",
+          "doc": "Test GateResult with empty lists."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCheckMode",
+      "description": "Tests for check_mode function.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
+      "methods": [
+        {
+          "name": "test_check_mode_all_existing",
+          "doc": "Test check_mode when all target files exist."
+        },
+        {
+          "name": "test_check_mode_all_missing",
+          "doc": "Test check_mode when all target files are missing."
+        },
+        {
+          "name": "test_check_mode_mixed",
+          "doc": "Test check_mode with mixed existing and missing files."
+        },
+        {
+          "name": "test_check_mode_empty_targets",
+          "doc": "Test check_mode with empty target list."
+        },
+        {
+          "name": "test_check_mode_normalizes_paths",
+          "doc": "Test that check_mode normalizes paths correctly."
+        },
+        {
+          "name": "test_check_mode_with_mode_hint_create",
+          "doc": "Test check_mode with explicit 'create' hint."
+        },
+        {
+          "name": "test_check_mode_with_mode_hint_modify",
+          "doc": "Test check_mode with explicit 'modify' hint."
+        },
+        {
+          "name": "test_check_mode_whitespace_handling",
+          "doc": "Test check_mode handles whitespace in paths."
+        },
+        {
+          "name": "test_check_mode_backslash_normalization",
+          "doc": "Test that Windows backslashes are normalized."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHelpers",
+      "description": "Tests for helper functions.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
+      "methods": [
+        {
+          "name": "test_is_pure_create_true",
+          "doc": "Test is_pure_create returns True for pure creation."
+        },
+        {
+          "name": "test_is_pure_create_false_when_mode_not_create",
+          "doc": "Test is_pure_create returns False when mode is not create."
+        },
+        {
+          "name": "test_is_pure_create_false_when_some_exist",
+          "doc": "Test is_pure_create returns False when some files exist."
+        },
+        {
+          "name": "test_is_any_missing_true",
+          "doc": "Test is_any_missing returns True when files are missing."
+        },
+        {
+          "name": "test_is_any_missing_false",
+          "doc": "Test is_any_missing returns False when all exist."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecutionModeType",
+      "description": "Tests for ExecutionMode type alias.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
+      "methods": [
+        {
+          "name": "test_execution_mode_values",
+          "doc": "Test that ExecutionMode accepts valid values."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFileApplyService",
+      "description": "Tests for FileApplyService class.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_file_apply_service.py",
+      "methods": [
+        {
+          "name": "test_service_initialization",
+          "doc": "Test FileApplyService initialization."
+        },
+        {
+          "name": "test_service_with_message_bus",
+          "doc": "Test FileApplyService with message bus."
+        },
+        {
+          "name": "test_write_files_empty_list",
+          "doc": "Test write_files with empty list."
+        },
+        {
+          "name": "test_write_files_skips_empty_entries",
+          "doc": "Test write_files skips entries without path or content."
+        },
+        {
+          "name": "test_collect_workspace_files_empty_list",
+          "doc": "Test collect_workspace_files with empty list."
+        },
+        {
+          "name": "test_collect_workspace_files_nonexistent",
+          "doc": "Test collect_workspace_files with non-existent files."
+        },
+        {
+          "name": "test_collect_workspace_files_existing",
+          "doc": "Test collect_workspace_files with existing files."
+        },
+        {
+          "name": "test_collect_workspace_files_deduplication",
+          "doc": "Test collect_workspace_files deduplicates paths."
+        },
+        {
+          "name": "test_collect_workspace_files_unicode_content",
+          "doc": "Test collect_workspace_files handles unicode content."
+        },
+        {
+          "name": "test_calculate_diff_stats",
+          "doc": "Test calculate_diff_stats method."
+        },
+        {
+          "name": "test_calculate_diff_stats_identical",
+          "doc": "Test calculate_diff_stats with identical content."
+        },
+        {
+          "name": "test_calculate_diff_stats_empty_to_content",
+          "doc": "Test calculate_diff_stats from empty to content."
+        },
+        {
+          "name": "test_apply_response_operations_no_response",
+          "doc": "Test apply_response_operations with empty response."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplyIntegrity",
+      "description": "Tests for ApplyIntegrity dataclass.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
+      "methods": [
+        {
+          "name": "test_apply_integrity_valid",
+          "doc": "Test ApplyIntegrity with valid state."
+        },
+        {
+          "name": "test_apply_integrity_with_errors",
+          "doc": "Test ApplyIntegrity with errors."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestValidateBeforeApply",
+      "description": "Tests for validate_before_apply function.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
+      "methods": [
+        {
+          "name": "test_validate_empty_response",
+          "doc": "Test validation with empty response."
+        },
+        {
+          "name": "test_validate_response_with_operations",
+          "doc": "Test validation with response containing operations."
+        },
+        {
+          "name": "test_validate_unclosed_patch_file",
+          "doc": "Test validation detects unclosed PATCH_FILE block."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestParseOperations",
+      "description": "Tests for parse_*_operations functions.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
+      "methods": [
+        {
+          "name": "test_parse_all_operations_empty",
+          "doc": "Test parse_all_operations with empty input."
+        },
+        {
+          "name": "test_parse_full_file_blocks",
+          "doc": "Test parse_full_file_blocks function."
+        },
+        {
+          "name": "test_parse_search_replace_blocks",
+          "doc": "Test parse_search_replace_blocks function."
+        },
+        {
+          "name": "test_parse_delete_operations",
+          "doc": "Test parse_delete_operations function."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplyOperation",
+      "description": "Tests for apply_operation function.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
+      "methods": [
+        {
+          "name": "test_apply_operation_imports",
+          "doc": "Test that apply_operation can be imported."
+        },
+        {
+          "name": "test_apply_all_operations_imports",
+          "doc": "Test that apply_all_operations can be imported."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplyResult",
+      "description": "Tests for ApplyResult dataclass.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
+      "methods": [
+        {
+          "name": "test_apply_result_creation",
+          "doc": "Test ApplyResult basic creation."
+        },
+        {
+          "name": "test_apply_result_with_failures",
+          "doc": "Test ApplyResult with failed operations."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExports",
+      "description": "Tests for module exports.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_patch_apply_engine.py",
+      "methods": [
+        {
+          "name": "test_all_exports_present",
+          "doc": "Test that expected exports are available."
+        },
+        {
+          "name": "test_edit_type_exports",
+          "doc": "Test that EditType is exported."
+        },
+        {
+          "name": "test_error_code_exports",
+          "doc": "Test that ErrorCode is exported."
+        },
+        {
+          "name": "test_file_operation_exports",
+          "doc": "Test that FileOperation is exported."
+        },
+        {
+          "name": "test_operation_result_exports",
+          "doc": "Test that OperationResult is exported."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRepairResult",
+      "description": "Tests for RepairResult dataclass.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_repair_service.py",
+      "methods": [
+        {
+          "name": "test_repair_result_creation",
+          "doc": "Test basic RepairResult creation."
+        },
+        {
+          "name": "test_repair_result_failure",
+          "doc": "Test RepairResult with failure."
+        },
+        {
+          "name": "test_repair_result_to_dict",
+          "doc": "Test RepairResult.to_dict() method."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRepairContext",
+      "description": "Tests for RepairContext dataclass.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_repair_service.py",
+      "methods": [
+        {
+          "name": "test_repair_context_defaults",
+          "doc": "Test RepairContext default values."
+        },
+        {
+          "name": "test_repair_context_custom_values",
+          "doc": "Test RepairContext with custom values."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRepairService",
+      "description": "Tests for RepairService class.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_repair_service.py",
+      "methods": [
+        {
+          "name": "test_repair_service_initialization",
+          "doc": "Test RepairService initialization."
+        },
+        {
+          "name": "test_repair_service_with_executor",
+          "doc": "Test RepairService with custom executor."
+        },
+        {
+          "name": "executor",
+          "doc": ""
+        },
+        {
+          "name": "test_should_attempt_repair_audit_passed",
+          "doc": "Test should_attempt_repair when audit passed."
+        },
+        {
+          "name": "test_should_attempt_repair_budget_exhausted",
+          "doc": "Test should_attempt_repair when build budget exhausted."
+        },
+        {
+          "name": "test_should_attempt_repair_stalled",
+          "doc": "Test should_attempt_repair when progress is stalled."
+        },
+        {
+          "name": "test_should_attempt_repair_missing_targets",
+          "doc": "Test should_attempt_repair when there are missing targets."
+        },
+        {
+          "name": "test_should_attempt_repair_unresolved_imports",
+          "doc": "Test should_attempt_repair when there are unresolved imports."
+        },
+        {
+          "name": "executor",
+          "doc": ""
+        },
+        {
+          "name": "executor",
+          "doc": ""
+        },
+        {
+          "name": "executor",
+          "doc": ""
+        },
+        {
+          "name": "executor",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_missing_files",
+          "doc": "Test _extract_missing_files method."
+        },
+        {
+          "name": "test_extract_missing_files_empty",
+          "doc": "Test _extract_missing_files with empty input."
+        },
+        {
+          "name": "test_compute_repair_scope",
+          "doc": "Test _compute_repair_scope method."
+        },
+        {
+          "name": "test_build_repair_brief",
+          "doc": "Test _build_repair_brief method."
+        },
+        {
+          "name": "test_get_repair_history",
+          "doc": "Test get_repair_history method."
+        },
+        {
+          "name": "test_get_stats_empty",
+          "doc": "Test get_stats with no history."
+        },
+        {
+          "name": "test_get_stats_with_history",
+          "doc": "Test get_stats with repair history."
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "test_runner_module_exists",
       "description": "Test that the module can be imported.",
       "defined_in": "polaris/cells/director/tasking/tests/test_task_execution_runner.py"
+    },
+    {
+      "type": "class",
+      "name": "TestTaskQueueConfig",
+      "description": "Tests for TaskQueueConfig dataclass.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": "Test TaskQueueConfig default values."
+        },
+        {
+          "name": "test_custom_values",
+          "doc": "Test TaskQueueConfig with custom values."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskService",
+      "description": "Tests for TaskService class.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
+      "methods": [
+        {
+          "name": "mock_deps",
+          "doc": "Create mock dependencies for TaskService."
+        },
+        {
+          "name": "task_service",
+          "doc": "Create TaskService instance for testing."
+        },
+        {
+          "name": "on_complete",
+          "doc": ""
+        },
+        {
+          "name": "on_fail",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDependencyGraph",
+      "description": "Tests for dependency graph functionality.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
+      "methods": [
+        {
+          "name": "mock_deps",
+          "doc": "Create mock dependencies."
+        },
+        {
+          "name": "task_service",
+          "doc": "Create TaskService instance."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationMethods",
+      "description": "Tests for verification methods.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
+      "methods": [
+        {
+          "name": "mock_deps",
+          "doc": "Create mock dependencies."
+        },
+        {
+          "name": "task_service",
+          "doc": "Create TaskService instance."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvidenceCollection",
+      "description": "Tests for evidence collection.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_task_lifecycle_service.py",
+      "methods": [
+        {
+          "name": "mock_deps",
+          "doc": "Create mock dependencies."
+        },
+        {
+          "name": "task_service",
+          "doc": "Create TaskService instance."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCodeGenerationResult",
+      "description": "Tests for CodeGenerationResult dataclass.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "test_creation_success",
+          "doc": "Test CodeGenerationResult creation with success."
+        },
+        {
+          "name": "test_creation_failure",
+          "doc": "Test CodeGenerationResult creation with failure."
+        },
+        {
+          "name": "test_creation_with_duration",
+          "doc": "Test CodeGenerationResult with duration."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkerExecutor",
+      "description": "Tests for WorkerExecutor class.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "test_executor_initialization",
+          "doc": "Test WorkerExecutor initialization."
+        },
+        {
+          "name": "test_executor_with_worker_id",
+          "doc": "Test WorkerExecutor with worker ID."
+        },
+        {
+          "name": "test_executor_with_message_bus",
+          "doc": "Test WorkerExecutor with message bus."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskClassification",
+      "description": "Tests for task classification.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "test_classify_bootstrap_task",
+          "doc": "Test classification of bootstrap task."
+        },
+        {
+          "name": "test_classify_init_task",
+          "doc": "Test classification of init task."
+        },
+        {
+          "name": "test_classify_file_creation",
+          "doc": "Test classification of file creation task."
+        },
+        {
+          "name": "test_classify_code_generation",
+          "doc": "Test classification of code generation task."
+        },
+        {
+          "name": "test_classify_generic",
+          "doc": "Test classification of generic task."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTechStackExtraction",
+      "description": "Tests for technology stack extraction.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "test_extract_python_from_metadata",
+          "doc": "Test extracting Python from metadata."
+        },
+        {
+          "name": "test_extract_fastapi_framework",
+          "doc": "Test extracting FastAPI framework from description."
+        },
+        {
+          "name": "test_extract_typescript",
+          "doc": "Test extracting TypeScript from description."
+        },
+        {
+          "name": "test_extract_go",
+          "doc": "Test extracting Go from description."
+        },
+        {
+          "name": "test_extract_rust",
+          "doc": "Test extracting Rust from description."
+        },
+        {
+          "name": "test_extract_project_type_api",
+          "doc": "Test extracting API project type."
+        },
+        {
+          "name": "test_extract_unknown_language",
+          "doc": "Test with unknown language."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHelperMethods",
+      "description": "Tests for helper methods.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "test_is_probable_file_path_with_extension",
+          "doc": "Test _is_probable_file_path with extension."
+        },
+        {
+          "name": "test_is_probable_file_path_with_slash",
+          "doc": "Test _is_probable_file_path with path separator."
+        },
+        {
+          "name": "test_is_probable_file_path_false",
+          "doc": "Test _is_probable_file_path returns False for non-paths."
+        },
+        {
+          "name": "test_normalize_target_files_from_metadata",
+          "doc": "Test _normalize_target_files from metadata."
+        },
+        {
+          "name": "test_normalize_target_files_deduplication",
+          "doc": "Test _normalize_target_files deduplicates."
+        },
+        {
+          "name": "test_normalize_target_files_from_description",
+          "doc": "Test _normalize_target_files from description."
+        },
+        {
+          "name": "test_compact_prompt_fragment_short_text",
+          "doc": "Test _compact_prompt_fragment with short text."
+        },
+        {
+          "name": "test_compact_prompt_fragment_truncates_long_text",
+          "doc": "Test _compact_prompt_fragment truncates long text."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecutionMethods",
+      "description": "Tests for execution methods.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestPolicyViolation",
+      "description": "Tests for policy violation handling.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "test_raise_code_writing_forbidden",
+          "doc": "Test _raise_code_writing_forbidden raises exception."
+        },
+        {
+          "name": "test_fallback_code_files_raises",
+          "doc": "Test _fallback_code_files raises policy error."
+        },
+        {
+          "name": "test_deterministic_repair_enabled_returns_false",
+          "doc": "Test _deterministic_repair_enabled returns False."
+        }
+      ]
     },
     {
       "type": "class",

@@ -1,0 +1,476 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-28T08:34:45.488514Z",
+  "source_hash": "e150687c389be7c5",
+  "cell_id": "factory.verification_guard",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "SafetyCheckResult",
+      "description": "Result of a command safety check.",
+      "defined_in": "polaris/cells/factory/verification_guard/internal/safe_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SafeExecutor",
+      "description": "Secure command executor with whitelist and sandbox enforcement.",
+      "defined_in": "polaris/cells/factory/verification_guard/internal/safe_executor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the safe executor."
+        },
+        {
+          "name": "validate_command_safety",
+          "doc": "Validate that a command is safe to execute."
+        },
+        {
+          "name": "_detect_shell_injection",
+          "doc": "Detect potential shell injection attempts."
+        },
+        {
+          "name": "_split_command",
+          "doc": "Split command string into list with proper quote and escape handling."
+        },
+        {
+          "name": "execute",
+          "doc": "Execute a command safely with timeout and resource limits."
+        },
+        {
+          "name": "_execute_with_timeout",
+          "doc": "Execute command with timeout enforcement."
+        },
+        {
+          "name": "get_whitelist",
+          "doc": "Return the current command whitelist."
+        },
+        {
+          "name": "is_command_allowed",
+          "doc": "Check if a command is in the whitelist without executing."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "VerificationEngine",
+      "description": "Engine for verifying completion claims.",
+      "defined_in": "polaris/cells/factory/verification_guard/internal/verification_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the verification engine."
+        },
+        {
+          "name": "verify",
+          "doc": "Verify a completion claim and return a detailed report."
+        },
+        {
+          "name": "_collect_evidence",
+          "doc": "Collect evidence from specified paths."
+        },
+        {
+          "name": "_is_path_within_workspace",
+          "doc": "Check if a path is within the allowed workspace."
+        },
+        {
+          "name": "_match_outcome",
+          "doc": "Match claimed outcome against actual results."
+        },
+        {
+          "name": "_determine_status",
+          "doc": "Determine the final verification status."
+        },
+        {
+          "name": "_generate_summary",
+          "doc": "Generate a human-readable summary of verification results."
+        },
+        {
+          "name": "validate_claim_structure",
+          "doc": "Validate the structure of a verification claim."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "VerificationStatus",
+      "description": "Status of a verification attempt.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerificationClaim",
+      "description": "A claim of completion that requires verification before acceptance.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionResult",
+      "description": "Result of executing a single verification command.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerificationReport",
+      "description": "Report of the verification process and its outcome.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerifyCompletionCommandV1",
+      "description": "Command to verify a completion claim.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerifyCompletionResultV1",
+      "description": "Result of a verification command.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerificationCompletedEventV1",
+      "description": "Event emitted when verification completes.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerificationGuardErrorV1",
+      "description": "Error raised by the VerificationGuard Cell.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IVerificationGuardService",
+      "description": "Protocol for the VerificationGuard service.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py",
+      "methods": [
+        {
+          "name": "verify_completion",
+          "doc": "Verify a completion claim and return the result."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "Validate that a string value is non-empty.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_sequence",
+      "description": "Copy a sequence of strings into an immutable tuple.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_mapping",
+      "description": "Copy a mapping into a mutable dict.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationClaim",
+      "description": "Tests for VerificationClaim dataclass validation.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_valid_claim",
+          "doc": "Test creating a valid claim."
+        },
+        {
+          "name": "test_empty_claim_id_raises",
+          "doc": "Test that empty claim_id raises ValueError."
+        },
+        {
+          "name": "test_empty_claimed_outcome_raises",
+          "doc": "Test that empty claimed_outcome raises ValueError."
+        },
+        {
+          "name": "test_invalid_timeout_raises",
+          "doc": "Test that non-positive timeout raises ValueError."
+        },
+        {
+          "name": "test_default_values",
+          "doc": "Test that default values are set correctly."
+        },
+        {
+          "name": "test_sequences_immutable",
+          "doc": "Test that sequences are stored as tuples (immutable)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerifyCompletionCommand",
+      "description": "Tests for VerifyCompletionCommandV1 validation.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_valid_command",
+          "doc": "Test creating a valid verification command."
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_invalid_claim_type_raises",
+          "doc": "Test that non-VerificationClaim raises TypeError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSafeExecutor",
+      "description": "Tests for SafeExecutor security features.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_whitelist_validation",
+          "doc": "Test that whitelisted commands are allowed."
+        },
+        {
+          "name": "test_dangerous_commands_blocked",
+          "doc": "Test that dangerous commands are blocked."
+        },
+        {
+          "name": "test_shell_injection_detection",
+          "doc": "Test detection of shell injection attempts."
+        },
+        {
+          "name": "test_empty_command_blocked",
+          "doc": "Test that empty commands are blocked."
+        },
+        {
+          "name": "test_python_module_execution",
+          "doc": "Test python -m module execution validation."
+        },
+        {
+          "name": "test_custom_whitelist",
+          "doc": "Test custom whitelist configuration."
+        },
+        {
+          "name": "test_successful_execution",
+          "doc": "Test successful command execution."
+        },
+        {
+          "name": "test_timeout_enforcement",
+          "doc": "Test that timeout is enforced."
+        },
+        {
+          "name": "test_blocked_command_raises",
+          "doc": "Test that blocked commands raise VerificationGuardErrorV1."
+        },
+        {
+          "name": "test_output_size_limit",
+          "doc": "Test that large outputs are truncated."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationEngineNormal",
+      "description": "Normal scenario tests for VerificationEngine.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_verify_successful_claim",
+          "doc": "Test verifying a claim with successful commands."
+        },
+        {
+          "name": "test_verify_with_evidence",
+          "doc": "Test verifying a claim with evidence collection."
+        },
+        {
+          "name": "test_verify_multiple_commands",
+          "doc": "Test verifying with multiple commands."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationEngineBoundary",
+      "description": "Boundary scenario tests for VerificationEngine.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_empty_verification_commands",
+          "doc": "Test verifying with no commands (evidence-only)."
+        },
+        {
+          "name": "test_timeout_boundary",
+          "doc": "Test verification with very short timeout."
+        },
+        {
+          "name": "test_command_not_in_whitelist",
+          "doc": "Test that non-whitelisted commands are blocked."
+        },
+        {
+          "name": "test_missing_evidence",
+          "doc": "Test verification with missing evidence files."
+        },
+        {
+          "name": "test_strict_mode_off",
+          "doc": "Test non-strict mode with failing commands."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationEngineException",
+      "description": "Exception scenario tests for VerificationEngine.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_command_execution_failure",
+          "doc": "Test handling of command execution failures."
+        },
+        {
+          "name": "test_invalid_command_syntax",
+          "doc": "Test handling of invalid command syntax."
+        },
+        {
+          "name": "test_evidence_path_traversal",
+          "doc": "Test that path traversal in evidence paths is blocked."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFalseCompletionDetection",
+      "description": "Regression tests for detecting false completion claims.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_claim_tests_pass_but_tests_fail",
+          "doc": "Simulate Superpowers scenario: claims tests pass but they actually fail."
+        },
+        {
+          "name": "test_claim_build_success_but_no_artifact",
+          "doc": "Simulate scenario: claims build success but artifact missing."
+        },
+        {
+          "name": "test_claim_formatted_but_ruff_fails",
+          "doc": "Simulate scenario: claims code is formatted but ruff reports issues."
+        },
+        {
+          "name": "test_claim_all_good_but_timeout",
+          "doc": "Simulate scenario: claims completion but verification times out."
+        },
+        {
+          "name": "test_superpowers_style_false_completion",
+          "doc": "Comprehensive false completion scenario inspired by Superpowers."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationIntegration",
+      "description": "Integration tests for the full verification flow.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_full_verification_pipeline",
+          "doc": "Test the complete verification pipeline end-to-end."
+        },
+        {
+          "name": "test_ruff_verification_scenario",
+          "doc": "Test a realistic ruff verification scenario."
+        },
+        {
+          "name": "test_mypy_verification_scenario",
+          "doc": "Test a realistic mypy verification scenario."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationReport",
+      "description": "Tests for VerificationReport structure and immutability.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_report_creation",
+          "doc": "Test creating a verification report."
+        },
+        {
+          "name": "test_report_sequences_immutable",
+          "doc": "Test that report sequences are stored as tuples."
+        },
+        {
+          "name": "test_report_empty_claim_id_raises",
+          "doc": "Test that empty claim_id raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestErrorHandling",
+      "description": "Tests for error handling and edge cases.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_verification_guard_error",
+          "doc": "Test VerificationGuardErrorV1 creation."
+        },
+        {
+          "name": "test_error_empty_message_raises",
+          "doc": "Test that empty error message raises ValueError."
+        },
+        {
+          "name": "test_error_empty_code_raises",
+          "doc": "Test that empty error code raises ValueError."
+        },
+        {
+          "name": "test_claim_validation",
+          "doc": "Test claim structure validation."
+        },
+        {
+          "name": "test_valid_claim_no_errors",
+          "doc": "Test that valid claims have no validation errors."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "safe_executor",
+      "description": "Create a safe executor with default settings.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "verification_engine",
+      "description": "Create a verification engine with default settings.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "temp_workspace",
+      "description": "Create a temporary workspace directory.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "sample_claim",
+      "description": "Create a sample verification claim.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

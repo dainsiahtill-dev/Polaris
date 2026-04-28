@@ -89,7 +89,7 @@ Polaris 现有的权限控制体系由以下核心组件构成，这些组件形
 
 #### 2.1.1 核心实体定义
 
-**角色（Role）** 是权限的集合载体，每个角色定义了一组操作能力。在 Polaris 中，角色与内置 Profile 概念对应，包括 PM（尚书令）、Director（工部侍郎）、QA（门下侍中）、Architect（中书令）和 ChiefEngineer（工部尚书）。每个角色拥有特定的任务域和工具集。
+**角色（Role）** 是权限的集合载体，每个角色定义了一组操作能力。在 Polaris 中，角色与内置 Profile 概念对应，including PM, Director, QA, Architect, and Chief Engineer。每个角色拥有特定的任务域和工具集。
 
 **权限（Permission）** 是对资源进行操作的能力标识，采用 `resource_type:action:resource_pattern` 的三元组格式。例如 `file:read:*.py` 表示读取所有 Python 文件的权限，`tool:execute:write_file` 表示执行 write_file 工具的权限。
 
@@ -551,7 +551,7 @@ GET /v2/roles
   "roles": [
     {
       "id": "pm",
-      "name": "尚书令",
+      "name": "PM",
       "description": "项目管理角色",
       "permission_count": 12,
       "inherits_from": [],
@@ -559,7 +559,7 @@ GET /v2/roles
     },
     {
       "id": "director",
-      "name": "工部侍郎",
+      "name": "Director",
       "description": "代码执行角色",
       "permission_count": 45,
       "inherits_from": ["pm"],
@@ -580,7 +580,7 @@ GET /v2/roles/{role_id}
 ```json
 {
   "id": "director",
-  "name": "工部侍郎",
+  "name": "Director",
   "description": "代码执行角色",
   "permissions": [
     {

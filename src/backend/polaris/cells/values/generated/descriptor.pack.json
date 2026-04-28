@@ -1,0 +1,47 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-28T08:34:40.874013Z",
+  "source_hash": "9cda7a6d594a3174",
+  "cell_id": "values.alignment",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "ValueDimension",
+      "description": "Four dimensions of value evaluation.",
+      "defined_in": "polaris/cells/values/alignment_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValueEvaluation",
+      "description": "Result of value alignment evaluation.",
+      "defined_in": "polaris/cells/values/alignment_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValueAlignmentResult",
+      "description": "Complete value alignment result with 4D evaluation.",
+      "defined_in": "polaris/cells/values/alignment_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValueAlignmentService",
+      "description": "Implements 4-dimensional value evaluation matrix.",
+      "defined_in": "polaris/cells/values/alignment_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_identify_conflicts",
+          "doc": "Identify conflicts between value dimensions."
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

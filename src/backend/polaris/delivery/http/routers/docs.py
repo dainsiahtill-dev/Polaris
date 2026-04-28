@@ -402,7 +402,10 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
 
             if not ai_fields:
                 await queue.put(
-                    {"type": "error", "data": {"error": "Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。"}}
+                    {
+                        "type": "error",
+                        "data": {"error": "Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。"},
+                    }
                 )
                 return
 

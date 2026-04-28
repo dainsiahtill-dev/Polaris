@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.562128Z",
-  "source_hash": "52c336dbca89388c",
+  "generated_at": "2026-04-28T08:34:43.345244Z",
+  "source_hash": "de1375822ca13f20",
   "cell_id": "orchestration.workflow_activity",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -500,13 +500,6 @@
     },
     {
       "type": "class",
-      "name": "PMWorkflowResult",
-      "description": "Result produced by the top-level PM workflow.",
-      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/models.py",
-      "methods": []
-    },
-    {
-      "type": "class",
       "name": "DirectorWorkflowInput",
       "description": "Input payload for the Director workflow.",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/models.py",
@@ -516,13 +509,6 @@
           "doc": ""
         }
       ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorWorkflowResult",
-      "description": "Aggregated Director workflow result.",
-      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/models.py",
-      "methods": []
     },
     {
       "type": "class",
@@ -612,18 +598,6 @@
     {
       "type": "function",
       "name": "_normalize_mapping",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/models.py"
-    },
-    {
-      "type": "function",
-      "name": "_coerce_positive_int",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/models.py"
-    },
-    {
-      "type": "function",
-      "name": "_coerce_execution_mode",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/models.py"
     },

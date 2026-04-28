@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.314563Z",
-  "source_hash": "717f17becca177d7",
+  "generated_at": "2026-04-28T08:34:42.944438Z",
+  "source_hash": "d7bb55e4557be15c",
   "cell_id": "roles.runtime",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -345,12 +345,16 @@
           "doc": "Snapshot of all dead-letter records."
         },
         {
+          "name": "_pop_and_mark_inflight",
+          "doc": "Atomically pop from inbox and mark as inflight."
+        },
+        {
           "name": "_pop_inbox",
-          "doc": ""
+          "doc": "Pop from inbox without marking inflight (legacy helper)."
         },
         {
           "name": "_mark_inflight",
-          "doc": ""
+          "doc": "Mark envelope as inflight (assumes already popped from inbox)."
         },
         {
           "name": "_add_dead_letter",
@@ -359,6 +363,41 @@
         {
           "name": "get_stats",
           "doc": "Return a diagnostic snapshot. Safe to call at any time."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "InvariantViolationError",
+      "description": "Session State 不变式违规异常。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SessionInvariants",
+      "description": "Session State 不变式守卫。",
+      "defined_in": "polaris/cells/roles/runtime/internal/continuation_policy.py",
+      "methods": [
+        {
+          "name": "freeze",
+          "doc": "在 Turn 0 完成后冻结 Session State。"
+        },
+        {
+          "name": "validate",
+          "doc": "验证当前 Turn 的 Session State 是否违反不变式。"
+        },
+        {
+          "name": "is_frozen",
+          "doc": "检查 Session State 是否已冻结。"
+        },
+        {
+          "name": "to_dict",
+          "doc": "序列化为 dict（用于 checkpoint）。"
+        },
+        {
+          "name": "from_dict",
+          "doc": "从 dict 反序列化（用于 checkpoint 恢复）。"
         }
       ]
     },
@@ -436,8 +475,16 @@
           "doc": "返回 (是否允许继续, 阻止原因)。"
         },
         {
+          "name": "_resolve_failure_class",
+          "doc": "将 FailureClass 映射为 continuation action。"
+        },
+        {
           "name": "_detect_repetitive_failure",
           "doc": "检测最近 3 个 turn 是否连续发生相同的工具失败。"
+        },
+        {
+          "name": "_parse_verification_output",
+          "doc": "解析验证工具输出，要求实际证据才能声称成功。"
         },
         {
           "name": "_detect_stagnation_v2",
@@ -446,6 +493,30 @@
         {
           "name": "_detect_speculative_worthwhile",
           "doc": "判断 ShadowEngine 预热是否值得继续。"
+        },
+        {
+          "name": "_detect_speculative_worthwhile_with_threshold",
+          "doc": "Phase 5.1: 判断 ShadowEngine 预热是否值得继续（使用显式阈值）。"
+        },
+        {
+          "name": "record_session_outcome",
+          "doc": "Phase 5.1: Record session outcome for adaptive threshold learning."
+        },
+        {
+          "name": "_recompute_adaptive_threshold",
+          "doc": "Phase 5.1: Recompute adaptive threshold based on historical performance."
+        },
+        {
+          "name": "get_adaptive_threshold",
+          "doc": "Phase 5.1: Get current adaptive threshold."
+        },
+        {
+          "name": "should_allow_extra_turns",
+          "doc": "Phase 5.1: Determine if complex task should get extra turns."
+        },
+        {
+          "name": "get_recovery_strategy",
+          "doc": "Phase 5.1: Get alternative strategy when stagnation detected."
         }
       ]
     },
@@ -1162,6 +1233,104 @@
       ]
     },
     {
+      "type": "function",
+      "name": "_iso_timestamp",
+      "description": "返回当前 UTC 时间的 ISO 8601 格式字符串。",
+      "defined_in": "polaris/cells/roles/runtime/internal/session_artifact_store.py"
+    },
+    {
+      "type": "class",
+      "name": "SessionStateReducer",
+      "description": "Canonical post-turn reducer for orchestrator session state.",
+      "defined_in": "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+      "methods": [
+        {
+          "name": "modification_contract",
+          "doc": "Compatibility alias used by newer mutation-guard naming."
+        },
+        {
+          "name": "modification_contract",
+          "doc": ""
+        },
+        {
+          "name": "current_phase",
+          "doc": "Return the authoritative session phase."
+        },
+        {
+          "name": "restore_phase_manager",
+          "doc": "Restore PhaseManager from checkpoint payload or fallback progress."
+        },
+        {
+          "name": "restore_task_contract",
+          "doc": "Restore ModificationContract from checkpoint payload (schema >= 5)."
+        },
+        {
+          "name": "restore_modification_contract",
+          "doc": "Compatibility wrapper for old call-sites."
+        },
+        {
+          "name": "mutation_obligation_satisfied",
+          "doc": "Return True when an authoritative write receipt has already been observed."
+        },
+        {
+          "name": "is_successful_read_only_execution",
+          "doc": "Return True only for successful read-only tool execution."
+        },
+        {
+          "name": "_has_successful_write_receipt",
+          "doc": ""
+        },
+        {
+          "name": "_is_materialize_changes_mode",
+          "doc": "Return True when the current session is running in mutation mode."
+        },
+        {
+          "name": "enforce_materialize_changes_guard",
+          "doc": "Prevent premature final answers before a materialized task actually mutates state."
+        },
+        {
+          "name": "apply_turn_outcome",
+          "doc": "Apply a canonical turn outcome to session state and history."
+        },
+        {
+          "name": "checkpoint_payload",
+          "doc": "Build the canonical checkpoint payload."
+        },
+        {
+          "name": "_derive_task_progress",
+          "doc": ""
+        },
+        {
+          "name": "_build_last_failure",
+          "doc": ""
+        },
+        {
+          "name": "_build_turn_record",
+          "doc": ""
+        },
+        {
+          "name": "_remember_read_files",
+          "doc": ""
+        },
+        {
+          "name": "_update_materialize_exploration_streak",
+          "doc": "Track repeated exploration-only turns for mutation workflows."
+        },
+        {
+          "name": "_normalize_batch_receipt",
+          "doc": ""
+        },
+        {
+          "name": "_extract_path_from_payload",
+          "doc": "Extract a file path token from common tool payload shapes."
+        },
+        {
+          "name": "_normalize_progress",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "class",
       "name": "RoleSessionOrchestrator",
       "description": "服务端会话编排器。对外是统一入口，对内负责状态机轮转。",
@@ -1176,12 +1345,40 @@
           "doc": "Get the role definition and tool definitions for the orchestrator's role (cached per role)."
         },
         {
+          "name": "_is_super_materialize_director_session",
+          "doc": "Return True when the current session is a SUPER-mode Director materialize workflow."
+        },
+        {
+          "name": "_apply_read_only_termination_exemption",
+          "doc": "Convert read-only auto-continue turns with visible output into final answers."
+        },
+        {
           "name": "_build_continuation_prompt",
           "doc": "基于降维后的 structured_findings 构建下一 Turn 的 continuation prompt。"
         },
         {
+          "name": "_extract_path",
+          "doc": ""
+        },
+        {
+          "name": "_extract_glob_entries",
+          "doc": ""
+        },
+        {
+          "name": "_extract_search_hits",
+          "doc": ""
+        },
+        {
+          "name": "_truncate_super_mode_goal_for_continuation",
+          "doc": "截断 SUPER_MODE handoff 中的巨型 PM 计划，保留执行所需的最小信息。"
+        },
+        {
           "name": "_is_progression_shortcut",
           "doc": "检测用户输入是否为\"推进类短句\"（如\"开始落地啊\"）。"
+        },
+        {
+          "name": "_is_model_output",
+          "doc": "检测文本是否为模型输出回灌（而非真实用户输入）。"
         },
         {
           "name": "_build_empty_envelope",
@@ -1206,6 +1403,10 @@
         {
           "name": "_predict_next_tools",
           "doc": "基于当前 Envelope 预测下一 Turn 可能的工具调用。"
+        },
+        {
+          "name": "_check_hard_gate",
+          "doc": "检测危险操作，返回操作类型字符串；若无需审批则返回 None。"
         }
       ]
     },
@@ -1550,6 +1751,430 @@
     },
     {
       "type": "class",
+      "name": "TestProtocolFSM",
+      "description": "Tests for ProtocolFSM core logic.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_protocol_fsm.py",
+      "methods": [
+        {
+          "name": "test_create_request_returns_request_id",
+          "doc": ""
+        },
+        {
+          "name": "test_get_status_pending",
+          "doc": ""
+        },
+        {
+          "name": "test_get_status_nonexistent",
+          "doc": ""
+        },
+        {
+          "name": "test_approve_success",
+          "doc": ""
+        },
+        {
+          "name": "test_approve_already_approved",
+          "doc": ""
+        },
+        {
+          "name": "test_approve_nonexistent",
+          "doc": ""
+        },
+        {
+          "name": "test_reject_success",
+          "doc": ""
+        },
+        {
+          "name": "test_reject_nonexistent",
+          "doc": ""
+        },
+        {
+          "name": "test_get_request_returns_request",
+          "doc": ""
+        },
+        {
+          "name": "test_get_request_nonexistent",
+          "doc": ""
+        },
+        {
+          "name": "test_list_pending_filters_by_type",
+          "doc": ""
+        },
+        {
+          "name": "test_list_pending_filters_by_to_role",
+          "doc": ""
+        },
+        {
+          "name": "test_list_pending_combined_filters",
+          "doc": ""
+        },
+        {
+          "name": "test_approve_updates_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_reject_updates_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_concurrent_approve_reject",
+          "doc": "Test thread-safe concurrent access to FSM."
+        },
+        {
+          "name": "approve_thread",
+          "doc": ""
+        },
+        {
+          "name": "reject_thread",
+          "doc": ""
+        },
+        {
+          "name": "test_request_timestamps_updated_on_state_change",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProtocolFSMPersistence",
+      "description": "Tests for ProtocolFSM in-memory behavior (workspace I/O requires KernelOne storage).",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_protocol_fsm.py",
+      "methods": [
+        {
+          "name": "test_load_persistent_ignores_invalid_json",
+          "doc": ""
+        },
+        {
+          "name": "test_cleanup_completed_requests",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProtocolBus",
+      "description": "Tests for ProtocolBus message bus.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_protocol_fsm.py",
+      "methods": [
+        {
+          "name": "test_send_returns_message",
+          "doc": ""
+        },
+        {
+          "name": "test_broadcast_returns_count",
+          "doc": ""
+        },
+        {
+          "name": "test_read_inbox_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_read_inbox_drain",
+          "doc": ""
+        },
+        {
+          "name": "test_read_inbox_no_drain",
+          "doc": ""
+        },
+        {
+          "name": "test_no_workspace_no_io",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProtocolEnums",
+      "description": "Tests for ProtocolType and RequestStatus enums.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_protocol_fsm.py",
+      "methods": [
+        {
+          "name": "test_protocol_type_values",
+          "doc": ""
+        },
+        {
+          "name": "test_request_status_values",
+          "doc": ""
+        },
+        {
+          "name": "test_protocol_request_dataclass",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateProtocolFactory",
+      "description": "Tests for factory functions.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_protocol_fsm.py",
+      "methods": [
+        {
+          "name": "test_create_protocol_fsm_default",
+          "doc": ""
+        },
+        {
+          "name": "test_create_protocol_fsm_with_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_create_protocol_bus_default",
+          "doc": ""
+        },
+        {
+          "name": "test_create_protocol_bus_with_workspace",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEnums",
+      "description": "Tests for termination and step status enums.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_termination_reason_values",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_class_values",
+          "doc": ""
+        },
+        {
+          "name": "test_retry_hint_values",
+          "doc": ""
+        },
+        {
+          "name": "test_step_status_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialBudget",
+      "description": "Tests for SequentialBudget dataclass.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialStats",
+      "description": "Tests for SequentialStats dataclass.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_with_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSeqState",
+      "description": "Tests for SeqState dataclass.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStepDecision",
+      "description": "Tests for StepDecision dataclass.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_creation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStepResult",
+      "description": "Tests for StepResult dataclass.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_creation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConstants",
+      "description": "Tests for module constants.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_reserved_keys_contains_expected",
+          "doc": ""
+        },
+        {
+          "name": "test_default_budget_config",
+          "doc": ""
+        },
+        {
+          "name": "test_write_tool_names",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSequentialStateProxy",
+      "description": "Tests for SequentialStateProxy write protection.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_write_allowed_key",
+          "doc": ""
+        },
+        {
+          "name": "test_write_reserved_key_no_fail_fast",
+          "doc": ""
+        },
+        {
+          "name": "test_write_reserved_key_fail_fast",
+          "doc": ""
+        },
+        {
+          "name": "test_get_state",
+          "doc": ""
+        },
+        {
+          "name": "test_set_context",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSeqProgressDetector",
+      "description": "Tests for SeqProgressDetector.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_default_initialization",
+          "doc": ""
+        },
+        {
+          "name": "test_detect_progress_no_tool_result",
+          "doc": ""
+        },
+        {
+          "name": "test_detect_progress_with_write_tool_success",
+          "doc": ""
+        },
+        {
+          "name": "test_detect_progress_with_failed_write_tool",
+          "doc": ""
+        },
+        {
+          "name": "test_detect_progress_with_tests_passed_delta",
+          "doc": ""
+        },
+        {
+          "name": "test_detect_progress_with_blocker_in_actions",
+          "doc": ""
+        },
+        {
+          "name": "test_detect_progress_info_incremental",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateSequentialBudget",
+      "description": "Tests for create_sequential_budget factory function.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_max_steps",
+          "doc": ""
+        },
+        {
+          "name": "test_partial_override",
+          "doc": ""
+        },
+        {
+          "name": "test_all_overrides",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestShouldEnableSequential",
+      "description": "Tests for should_enable_sequential utility function.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_director_enabled_by_default",
+          "doc": ""
+        },
+        {
+          "name": "test_adaptive_enabled_by_default",
+          "doc": ""
+        },
+        {
+          "name": "test_pm_not_enabled_by_default",
+          "doc": ""
+        },
+        {
+          "name": "test_architect_not_enabled_by_default",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_enabled_roles",
+          "doc": ""
+        },
+        {
+          "name": "test_case_insensitive",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSeqEventType",
+      "description": "Tests for SeqEventType constants.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_sequential_engine.py",
+      "methods": [
+        {
+          "name": "test_event_type_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestSessionArtifactStore",
       "description": "测试 SessionArtifactStore 的增量持久化和 diff 行为。",
       "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_artifact_store.py",
@@ -1584,6 +2209,10 @@
       "methods": [
         {
           "name": "tmp_workspace",
+          "doc": ""
+        },
+        {
+          "name": "_build_envelope",
           "doc": ""
         },
         {
@@ -1645,10 +2274,192 @@
       ]
     },
     {
+      "type": "class",
+      "name": "TestTruncateSuperModeGoal",
+      "description": "测试 SUPER_MODE 目标截断逻辑。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py",
+      "methods": [
+        {
+          "name": "test_short_goal_preserved",
+          "doc": "短目标不应被截断。"
+        },
+        {
+          "name": "test_pm_plan_truncated",
+          "doc": "长 PM 计划应被截断，保留任务列表和原始请求。"
+        },
+        {
+          "name": "test_very_long_goal_hard_truncated",
+          "doc": "超长目标应被硬截断到 3000 字符以内。"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_local_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py"
+    },
+    {
       "type": "function",
       "name": "_make_completion_event",
       "description": "",
       "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSkill",
+      "description": "Tests for Skill dataclass.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_skill_loader.py",
+      "methods": [
+        {
+          "name": "test_creation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSkillLoader",
+      "description": "Tests for SkillLoader两层技能加载系统.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_skill_loader.py",
+      "methods": [
+        {
+          "name": "test_default_initialization",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_skills_dir",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_default_skills_dir",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_frontmatter_simple",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_frontmatter_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_frontmatter_multiline",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_tags_comma_separated_string",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_tags_bracket_format",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_tags_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_tags_with_whitespace",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_tags_single_value",
+          "doc": ""
+        },
+        {
+          "name": "test_get_manifest_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_get_content_unknown_skill",
+          "doc": ""
+        },
+        {
+          "name": "test_has_skill",
+          "doc": ""
+        },
+        {
+          "name": "test_list_skills_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_list_skills_with_tag_filter",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSkillLoaderWithFiles",
+      "description": "Tests for SkillLoader with actual skill files.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_skill_loader.py",
+      "methods": [
+        {
+          "name": "test_load_skill_file_markdown",
+          "doc": ""
+        },
+        {
+          "name": "test_load_skill_file_no_frontmatter",
+          "doc": ""
+        },
+        {
+          "name": "test_load_multiple_skills_sorted",
+          "doc": ""
+        },
+        {
+          "name": "test_get_manifest_text_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_get_manifest_text_with_skills",
+          "doc": ""
+        },
+        {
+          "name": "test_get_content_returns_formatted_skill",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleSkillManager",
+      "description": "Tests for RoleSkillManager.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_skill_loader.py",
+      "methods": [
+        {
+          "name": "test_default_initialization",
+          "doc": ""
+        },
+        {
+          "name": "test_register_role_skills",
+          "doc": ""
+        },
+        {
+          "name": "test_get_role_manifest_unknown_role",
+          "doc": ""
+        },
+        {
+          "name": "test_load_role_skill_noop",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryFunctions",
+      "description": "Tests for factory functions.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_skill_loader.py",
+      "methods": [
+        {
+          "name": "test_create_skill_loader",
+          "doc": ""
+        },
+        {
+          "name": "test_create_role_skill_manager",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",

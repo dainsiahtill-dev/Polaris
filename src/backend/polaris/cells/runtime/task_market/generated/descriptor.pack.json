@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:27.419014Z",
-  "source_hash": "b94604cf614ed9d1",
+  "generated_at": "2026-04-28T08:34:41.238399Z",
+  "source_hash": "2393b37aac0e14a3",
   "cell_id": "runtime.task_market",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -1207,6 +1207,60 @@
     },
     {
       "type": "class",
+      "name": "_WorkItemRecord",
+      "description": "Internal in-memory record for a work item's two-stage lifecycle.",
+      "defined_in": "polaris/cells/runtime/task_market/public/claiming.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StageClaimManager",
+      "description": "Manages two-stage job claiming with in-memory storage.",
+      "defined_in": "polaris/cells/runtime/task_market/public/claiming.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_or_create",
+          "doc": ""
+        },
+        {
+          "name": "try_claim_stage1",
+          "doc": "Attempt to claim stage 1 for *worker_id*."
+        },
+        {
+          "name": "try_claim_stage2",
+          "doc": "Attempt to claim stage 2 for *worker_id*."
+        },
+        {
+          "name": "complete_stage1",
+          "doc": "Mark stage 1 as complete with *result*."
+        },
+        {
+          "name": "complete_stage2",
+          "doc": "Mark stage 2 as complete with *result*."
+        },
+        {
+          "name": "get_state",
+          "doc": "Return the current lifecycle state for *item_id*."
+        },
+        {
+          "name": "get_record",
+          "doc": "Return the internal record for inspection (testing / debugging)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskWorkItemState",
+      "description": "Two-stage job claiming lifecycle states.",
+      "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "PublishTaskWorkItemCommandV1",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
@@ -1341,6 +1395,20 @@
     {
       "type": "class",
       "name": "TaskWorkItemResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ClaimStage1Result",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ClaimStage2Result",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/public/contracts.py",
       "methods": []
@@ -1523,6 +1591,256 @@
       "name": "get_worker_load",
       "description": "Get worker load summary.",
       "defined_in": "polaris/cells/runtime/task_market/public/projection_api.py"
+    },
+    {
+      "type": "class",
+      "name": "TestStageClaimManager",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming.py",
+      "methods": [
+        {
+          "name": "test_get_state_returns_pending_for_unknown_item",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage1_success_on_first_attempt",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage1_fails_when_already_claimed",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage1_fails_after_stage1_complete",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage1_fails_after_stage2_claimed",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_stage1_only_by_claimant",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_stage1_rejected_for_wrong_worker",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_stage1_rejected_when_not_claimed",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage2_success_after_stage1_complete",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage2_fails_when_stage1_not_complete",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage2_fails_when_pending",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage2_fails_when_already_stage2_claimed",
+          "doc": ""
+        },
+        {
+          "name": "test_claim_stage2_fails_when_stage2_complete",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_stage2_only_by_claimant",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_stage2_rejected_for_wrong_worker",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_stage2_rejected_when_not_claimed",
+          "doc": ""
+        },
+        {
+          "name": "test_multiple_items_are_isolated",
+          "doc": ""
+        },
+        {
+          "name": "test_full_lifecycle_happy_path",
+          "doc": ""
+        },
+        {
+          "name": "test_source_chain_and_consolidated_from_defaults",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFullTwoStageLifecycle",
+      "description": "Test complete two-stage lifecycle: publish -> stage1 claim ->",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+      "methods": [
+        {
+          "name": "test_happy_path_full_lifecycle",
+          "doc": "Full happy-path two-stage lifecycle completes successfully."
+        },
+        {
+          "name": "test_stage2_blocked_until_stage1_complete",
+          "doc": "Stage 2 claim is blocked until stage 1 is complete."
+        },
+        {
+          "name": "test_state_transitions_match_lifecycle",
+          "doc": "State transitions follow the expected lifecycle."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeduplicationBehavior",
+      "description": "Test dedup behavior: second stage1 claim returns merged=True.",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+      "methods": [
+        {
+          "name": "test_second_stage1_claim_returns_merged",
+          "doc": "Second stage1 claim returns merged=True for deduplication."
+        },
+        {
+          "name": "test_second_stage1_claim_after_complete_returns_merged",
+          "doc": "Second stage1 claim after completion returns merged=True."
+        },
+        {
+          "name": "test_stage2_dedup_not_possible",
+          "doc": "Stage 2 does not have deduplication - only one claim at a time."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAuthorizationEnforcement",
+      "description": "Test authorization: only original claimant can complete each stage.",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+      "methods": [
+        {
+          "name": "test_stage1_only_by_original_claimant",
+          "doc": "Stage 1 completion requires original claimant."
+        },
+        {
+          "name": "test_stage2_only_by_original_claimant",
+          "doc": "Stage 2 completion requires original claimant."
+        },
+        {
+          "name": "test_complete_stage1_without_claim_fails",
+          "doc": "Cannot complete stage 1 without a prior claim."
+        },
+        {
+          "name": "test_complete_stage2_without_claim_fails",
+          "doc": "Cannot complete stage 2 without a prior claim."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConsolidatedResultAccumulation",
+      "description": "Test consolidated_from accumulates merge sources.",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+      "methods": [
+        {
+          "name": "test_stage1_result_passed_to_stage2",
+          "doc": "Stage 1 result is available to stage 2 claimant."
+        },
+        {
+          "name": "test_stage2_result_overwrites_consolidated",
+          "doc": "Stage 2 result becomes the final consolidated result."
+        },
+        {
+          "name": "test_consolidated_result_none_until_stage1_complete",
+          "doc": "Stage 2 cannot access result until stage 1 is complete."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResultStructures",
+      "description": "Verify ClaimStage1Result and ClaimStage2Result structures.",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+      "methods": [
+        {
+          "name": "test_claim_stage1_result_fields",
+          "doc": "ClaimStage1Result has all required fields."
+        },
+        {
+          "name": "test_claim_stage2_result_fields",
+          "doc": "ClaimStage2Result has all required fields."
+        },
+        {
+          "name": "test_task_work_item_state_values",
+          "doc": "TaskWorkItemState enum has expected values."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMultipleItemsIsolation",
+      "description": "Test that multiple work items are isolated from each other.",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+      "methods": [
+        {
+          "name": "test_independent_items",
+          "doc": "Multiple work items operate independently."
+        },
+        {
+          "name": "test_item_a_claims_do_not_affect_item_b",
+          "doc": "Claims on item A don't affect item B."
+        },
+        {
+          "name": "test_parallel_stages_for_different_items",
+          "doc": "Different items can be in different stages simultaneously."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEdgeCases",
+      "description": "Test edge cases and boundary conditions.",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+      "methods": [
+        {
+          "name": "test_unknown_item_returns_pending",
+          "doc": "Unknown item ID returns PENDING state."
+        },
+        {
+          "name": "test_get_record_returns_none_for_unknown",
+          "doc": "get_record returns None for unknown item."
+        },
+        {
+          "name": "test_complete_stage2_without_stage1_claim_fails",
+          "doc": "Cannot claim stage 2 without stage 1 claim."
+        },
+        {
+          "name": "test_stage1_claim_after_stage2_claimed_fails",
+          "doc": "Stage 1 cannot be claimed after stage 2 is claimed."
+        },
+        {
+          "name": "test_stage2_claim_after_stage2_complete_fails",
+          "doc": "Stage 2 cannot be claimed after stage 2 is complete."
+        },
+        {
+          "name": "test_empty_result_handling",
+          "doc": "Empty results are handled correctly."
+        },
+        {
+          "name": "test_complex_result_handling",
+          "doc": "Complex nested results are preserved."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "manager",
+      "description": "Return a fresh StageClaimManager instance.",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_claiming_integration.py"
     },
     {
       "type": "class",

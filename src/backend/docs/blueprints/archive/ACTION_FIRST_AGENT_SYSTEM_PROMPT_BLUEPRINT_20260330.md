@@ -69,7 +69,7 @@ Current Agent prompts suffer from three critical behavioral issues in production
 **现有系统（必须复用）**：
 - 人格 YAML：`assets/personas.yaml`（100种人格，分5个主题）
 - Personadataclass：`polaris/cells/roles/kernel/internal/prompt_templates.py`
-  - `name`: 显示名称（如"工部侍郎"）
+  - `name`: 显示名称（如"Director"）
   - `traits`: 身份基调
   - `tone`: 语气特点
   - `vocabulary`: 特色词汇列表

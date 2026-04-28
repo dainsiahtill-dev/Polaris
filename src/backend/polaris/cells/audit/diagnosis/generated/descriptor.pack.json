@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.597306Z",
-  "source_hash": "050806733e11c104",
+  "generated_at": "2026-04-28T08:34:47.903989Z",
+  "source_hash": "011d7a049c770dd5",
   "cell_id": "audit.diagnosis",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -164,6 +164,262 @@
       "name": "_normalize_rel_path",
       "description": "",
       "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "TestHelperFunctions",
+      "description": "Helper function tests.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tests/test_diagnosis_engine.py",
+      "methods": [
+        {
+          "name": "test_clamp_within_bounds",
+          "doc": ""
+        },
+        {
+          "name": "test_clamp_below_low",
+          "doc": ""
+        },
+        {
+          "name": "test_clamp_above_high",
+          "doc": ""
+        },
+        {
+          "name": "test_safe_int_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_safe_int_invalid",
+          "doc": ""
+        },
+        {
+          "name": "test_safe_int_with_default",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_iso_timestamp_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_iso_timestamp_with_z",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_iso_timestamp_invalid",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_iso_timestamp_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_time_range_minutes",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_time_range_hours",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_time_range_days",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_time_range_invalid_defaults_to_1h",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_time_range_empty_defaults_to_1h",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_event_error_direct_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_event_error_nested_action",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_event_error_nested_data",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_event_error_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestScanFinding",
+      "description": "ScanFinding dataclass tests.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tests/test_diagnosis_engine.py",
+      "methods": [
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAuditDiagnosisEngine",
+      "description": "AuditDiagnosisEngine tests.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tests/test_diagnosis_engine.py",
+      "methods": [
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "runtime_root",
+          "doc": ""
+        },
+        {
+          "name": "test_init",
+          "doc": ""
+        },
+        {
+          "name": "test_analyze_failure_no_events",
+          "doc": ""
+        },
+        {
+          "name": "test_analyze_failure_depth_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_analyze_failure_depth_below_min",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_scope_validation",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_region_requires_focus",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_region_with_focus",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_full_scan",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_detects_test_files",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_detects_long_lines",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_detects_todo_fixes",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_detects_large_file",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_no_test_files_warning",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_complexity_detection",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_project_max_findings_limit",
+          "doc": ""
+        },
+        {
+          "name": "test_check_region_file_not_found",
+          "doc": ""
+        },
+        {
+          "name": "test_check_region_by_file",
+          "doc": ""
+        },
+        {
+          "name": "test_check_region_by_function",
+          "doc": ""
+        },
+        {
+          "name": "test_check_region_with_line_range",
+          "doc": ""
+        },
+        {
+          "name": "test_get_trace_requires_trace_id",
+          "doc": ""
+        },
+        {
+          "name": "test_get_trace_empty_result",
+          "doc": ""
+        },
+        {
+          "name": "test_build_timeline",
+          "doc": ""
+        },
+        {
+          "name": "test_build_timeline_limit",
+          "doc": ""
+        },
+        {
+          "name": "test_build_scan_summary",
+          "doc": ""
+        },
+        {
+          "name": "test_derive_recommendations_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_derive_recommendations_secrets",
+          "doc": ""
+        },
+        {
+          "name": "test_derive_recommendations_test_coverage",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_rel_path_inside_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_rel_path_outside_workspace",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDiagnosisEngineIntegration",
+      "description": "Integration tests for diagnosis engine.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/tests/test_diagnosis_engine.py",
+      "methods": [
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "runtime_root",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_with_unicode_content",
+          "doc": ""
+        },
+        {
+          "name": "test_scan_with_binary_file_ignored",
+          "doc": ""
+        },
+        {
+          "name": "test_git_changed_files_graceful_fallback",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",

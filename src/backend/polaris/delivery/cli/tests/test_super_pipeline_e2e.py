@@ -1,4 +1,4 @@
-"""SUPER Mode Pipeline E2E Tests — 全链路 & 小闭环.
+﻿"""SUPER Mode Pipeline E2E Tests — 全链路 & 小闭环.
 
 Test matrix (2026-04-27):
   Full pipeline:  Architect → PM → CE → Director → QA
@@ -18,21 +18,17 @@ Each test verifies:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-from types import SimpleNamespace
-
 import pytest
-
 from polaris.delivery.cli import terminal_console
 from polaris.delivery.cli.super_mode import (
     SuperBlueprintItem,
     SuperClaimedTask,
     SuperModeRouter,
-    SuperPipelineContext,
     SuperTaskItem,
     build_chief_engineer_handoff_message,
     build_director_handoff_message,
@@ -43,7 +39,6 @@ from polaris.delivery.cli.super_mode import (
     extract_task_list_from_pm_output,
     write_architect_blueprint_to_disk,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test infrastructure (mirrors test_terminal_console.py _FakeRoleConsoleHost)
@@ -294,7 +289,7 @@ class TestFullPipelineE2E:
             lambda **kw: _yield_complete("ALL_TASKS_COMPLETE"),
         ]
 
-        exit_code = _run_console(monkeypatch, ["执行任务"])
+        exit_code = _run_console(monkeypatch, ["执行任务", "/exit"])
 
         assert exit_code == 0
         host = _PipelineHost.instances[0]
@@ -325,7 +320,7 @@ class TestFullPipelineE2E:
 # ╚══════════════════════════════════════════════════════════════════╝
 
 
-class TestLoopA_ArchitectToPM:
+class TestLoopAArchitectToPM:
     """Verify the handoff from Architect to PM."""
 
     def test_architect_output_flows_to_pm_handoff(self) -> None:
@@ -385,7 +380,7 @@ class TestLoopA_ArchitectToPM:
 # ╚══════════════════════════════════════════════════════════════════╝
 
 
-class TestLoopB_PMToChiefEngineer:
+class TestLoopBPMToChiefEngineer:
     """Verify the handoff from PM to Chief Engineer via TaskMarket."""
 
     def test_ce_handoff_contains_claimed_tasks(self) -> None:
@@ -472,7 +467,7 @@ class TestLoopB_PMToChiefEngineer:
 # ╚══════════════════════════════════════════════════════════════════╝
 
 
-class TestLoopC_CEToDirector:
+class TestLoopCCEToDirector:
     """Verify the handoff from Chief Engineer to Director."""
 
     def test_director_task_handoff_contains_blueprint_context(self) -> None:
@@ -569,7 +564,7 @@ class TestLoopC_CEToDirector:
 # ╚══════════════════════════════════════════════════════════════════╝
 
 
-class TestLoopD_DirectorToQA:
+class TestLoopDDirectorToQA:
     """Verify the handoff from Director to QA."""
 
     def test_director_completion_advances_to_pending_qa(self) -> None:
@@ -701,7 +696,7 @@ class TestPipelineRecovery:
         monkeypatch.setattr(terminal_console, "_persist_super_tasks_to_board", _noop_persist)
         monkeypatch.setattr(terminal_console, "_claim_super_tasks_from_market", _noop_claim)
 
-        exit_code = _run_console(monkeypatch, ["执行任务"])
+        _run_console(monkeypatch, ["执行任务"])
 
         host = _PipelineHost.instances[0]
         roles = [c["role"] for c in host.stream_calls]

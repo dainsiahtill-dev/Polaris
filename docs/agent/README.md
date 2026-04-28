@@ -47,7 +47,7 @@
 | [Sniper Mode v2.0 计划](sniper_mode_v2_plan.md) | 上下文工程优化与成本感知路线图 | 工程师 |
 | [3-Hops 失败定位实现](failure_3hops_implementation.md) | Phase→Evidence→Tool Output 工程落地与测试 | 工程师 |
 | [门下省 QA 验收规范 v1](qa_chancellery_v1.md) | QA 裁决规则、LLM 验收链路选择、`qa_contract`、插件接口与后置流程 | 工程师 / PM |
-| [工部尚书施工图规范](chief_engineer_blueprint.md) | 工部尚书（ChiefEngineer）如何维护项目蓝图、生成方法级施工图并与 Director 协作 | 工程师 / PM / Director |
+| [Chief Engineer Blueprint Spec](chief_engineer_blueprint.md) | Chief Engineer how to maintain project blueprint, generate method-level construction plans, and collaborate with Director | Engineer / PM / Director |
 
 ---
 
@@ -75,30 +75,30 @@
 
 针对 AI/Agent 的端到端执行，必须明确以下两条流程，按场景选其一：
 
-### 流程 A：中书令优先（推荐）
+### Flow A: Architect First (Recommended)
 
 适用：新项目、复杂需求、需求边界未收敛、需要先形成文档契约的任务。
 
-1. 中书令（Architect）先产出项目文档（`workspace/docs/product/requirements.md`、`workspace/docs/product/plan.md` 等）。
+1. Architect first produces project documents（`workspace/docs/product/requirements.md`、`workspace/docs/product/plan.md` 等）。
 2. 同步 `plan.md` 到运行态 `runtime/contracts/plan.md`（`applyDocs` 会自动执行该同步）。
 3. PM 基于文档生成任务合同。
-4. （可选）工部尚书（ChiefEngineer）为复杂任务生成代码施工图（模块/文件/方法级），再交付 Director。
+4. (Optional) Chief Engineer generates code construction plans for complex tasks（模块/文件/方法级），再交付 Director。
 5. Director 按合同与施工图落地实现。
 6. Auditor(QA) 基于证据链与规则引擎给出 PASS/FAIL/INCONCLUSIVE。
 
-### 流程 B：无中书令（PM 直启）
+### Flow B: No Architect (PM Direct Start)
 
 适用：已有稳定需求文档、增量修复、小范围改动、快速迭代。
 
 1. 直接从 PM 开始（可由现有 requirements/plan 或最小输入启动）。
-2. PM 生成任务合同，并按需触发工部尚书（ChiefEngineer）生成施工图。
+2. PM generates task contract, and triggers Chief Engineer to generate construction plans as needed.
 3. Director 执行实现。
 4. Auditor(QA) 进行独立验收并给出裁决。
-5. 若出现需求歧义、验收链路不稳定或连续失败，必须回切到流程 A，由中书令先补齐文档契约再继续。
+5. If requirements ambiguity, unstable acceptance chain, or consecutive failures occur, must switch back to Flow A, with Architect completing document contracts first before continuing.
 
 约束说明：
 - 两条流程最终都必须落到同一闭环：`PM -> (ChiefEngineer 可选) -> Director -> Auditor(QA)`。
-- 仅流程 A 要求“先中书令后 PM”；流程 B 允许 PM 直接启动，但不豁免 QA 与证据要求。
+- 仅流程 A 要求“先Architect后 PM”；流程 B 允许 PM 直接启动，但不豁免 QA 与证据要求。
 - 运行态产物写入 Polaris 运行目录，不得在目标 workspace 下新建 `runtime/`。
 
 ### 命令行一次性指令（内存输入）
@@ -136,18 +136,18 @@ python src/backend/scripts/loop-pm.py \
 ### 拟人化核心的工程目的
 
 - 拟人化不是装饰，而是无人值守的**自我修复控制面**。
-- 当执行遇阻时，角色间可基于证据链协商（PM/工部尚书/Director/QA），把“失败”转成“下一步可执行动作”。
+- 当执行遇阻时，角色间可基于证据链协商（PM/Chief Engineer/Director/QA），把“失败”转成“下一步可执行动作”。
 - 相比单线路定死的自动化流程，该机制更能适配弱模型与复杂场景，核心收益是**减少人工介入频次**并提升长跑稳定性。
 
 ## 🛡️ 角色权限矩阵（强约束）
 
 | 角色 | 可读范围 | 可写范围 | 禁止事项 |
 | --- | --- | --- | --- |
-| 天子（用户） | Dashboard/设置面板等运行态投影 | 仅 UI 入口指令（如“廷议”“快驿”） | 直接改代码/运行态契约文件 |
-| 中书令（Architect） | `docs/` | `docs/` | 写入 `docs/` 之外任何路径 |
-| 尚书令（PM） | `docs/` + 运行态事实/状态 | 运行态任务与协调产物（如 `pm_tasks.json`、状态/报告） | 直接实现业务代码 |
-| 工部尚书（ChiefEngineer） | 需求/计划/任务合同 + 代码现状 | 蓝图产物与施工图产物（`runtime/contracts/chief_engineer.blueprint.json`、`runtime/state/chief_engineer.state.json`） | 直接提交业务代码 |
-| 工部（Director） | PM 下发任务契约 + 被授权代码范围 | PM 授权的代码目录/模块（默认 `scope_mode=module`） | 越权写入未授权路径、自动回滚 |
+| User（用户） | Dashboard/设置面板等运行态投影 | 仅 UI 入口指令（如“Discussion”“快驿”） | 直接改代码/运行态契约文件 |
+| Architect | `docs/` | `docs/` | Write to any path outside `docs/` |
+| PM（PM） | `docs/` + 运行态事实/状态 | 运行态任务与协调产物（如 `pm_tasks.json`、状态/报告） | 直接实现业务代码 |
+| Chief Engineer（ChiefEngineer） | 需求/计划/任务合同 + 代码现状 | 蓝图产物与施工图产物（`runtime/contracts/chief_engineer.blueprint.json`、`runtime/state/chief_engineer.state.json`） | 直接提交业务代码 |
+| Engineering（Director） | PM 下发任务契约 + 被授权代码范围 | PM 授权的代码目录/模块（默认 `scope_mode=module`） | 越权写入未授权路径、自动回滚 |
 | 门下（QA/Auditor） | 全量只读（代码、文档、运行态证据） | 审计产物（QA 结论、缺陷票据、门禁判定） | 代替 Director 实现需求功能 |
 
 补充规则：
@@ -182,7 +182,7 @@ python src/backend/scripts/loop-pm.py \
 
 | 日期 | 更新内容 |
 |------|----------|
-| 2026-02-24 | 新增工部尚书（ChiefEngineer）施工图规范：支持 `off/auto/on` 可选介入，产出模块/文件/方法级施工图并注入 Director 任务合同 |
+| 2026-02-24 | Added Chief Engineer Blueprint Spec: supports `off/auto/on` optional intervention, produces module/file/method-level construction plans and injects into Director task contracts |
 | 2026-02-23 | Tri-Council（三省协调回合）落地：复杂任务/QA非PASS 时触发 PM-Director-Auditor 协调，并写入协调决策产物与对话流 |
 | 2026-02-23 | QA 规范补充：LLM 仅用于验收链路选择，PASS/FAIL/INCONCLUSIVE 仍由规则引擎 + 证据裁决 |
 | 2026-02-23 | 新增门下省 QA 验收规范 v1（契约化裁决与插件接口） |

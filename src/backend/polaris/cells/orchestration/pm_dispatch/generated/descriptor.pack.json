@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.495398Z",
-  "source_hash": "1232f385e66197b8",
+  "generated_at": "2026-04-28T08:34:43.236290Z",
+  "source_hash": "420b02f53849b290",
   "cell_id": "orchestration.pm_dispatch",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -57,7 +57,7 @@
     {
       "type": "function",
       "name": "_get_io_utils",
-      "description": "Lazy import for io_utils to avoid circular imports.",
+      "description": "Lazy import for events to avoid circular imports.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -333,12 +333,6 @@
     },
     {
       "type": "function",
-      "name": "pause_flag_path",
-      "description": "Fallback pause_flag_path implementation.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
-    },
-    {
-      "type": "function",
       "name": "_get_shangshuling_port",
       "description": "Return the cell-local Shangshuling port.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/iteration_state.py"
@@ -480,7 +474,7 @@
     {
       "type": "class",
       "name": "ShangshulingPort",
-      "description": "Port for PM task-registry operations.",
+      "description": "Port for PM (shangshuling) task-registry operations.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/pm_task_utils.py",
       "methods": [
         {

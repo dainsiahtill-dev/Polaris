@@ -38,13 +38,13 @@
 |----|------|------|------|
 | **X轴** | System Anchor | 决定"处于什么流程节点"和"宏观职责" | PM (需求拆解)、Director (调度规划)、QA (质量把控) |
 | **Y轴** | Profession | 决定"具备什么硬核技能"和"微观执行标准" | Python 首席架构师、K8s 运维专家 |
-| **Z轴** | Persona | 决定"用什么语气说话"和"性格特征" | 工部侍郎 (严谨/文言)、赛博朋克 (极客/冷酷) |
+| **Z轴** | Persona | 决定"用什么语气说话"和"性格特征" | Director (严谨/文言)、赛博朋克 (极客/冷酷) |
 
 ### 2.2 组合示例
 
 ```
-工部侍郎 + Director + Python架构师
-= 一个带着"工部侍郎"性格的"Director"，
+Director + Director + Python架构师
+= 一个带着"Director"性格的"Director"，
   正在以"Python 首席架构师"的标准审查代码
 ```
 
@@ -66,10 +66,10 @@ polaris/assets/roles/
 │   └── _base.yaml                    # 专业基类模板
 │
 ├── personas/                         # [Z轴] 人格特征层
-│   ├── gongbu_shilang.yaml          # 工部侍郎
-│   ├── shangshuling.yaml            # 尚书令
-│   ├── zhongshuling.yaml            # 中书令
-│   └── mentu_xiaozhong.yaml         # 门下侍中
+│   ├── gongbu_shilang.yaml          # Director
+│   ├── shangshuling.yaml            # PM
+│   ├── zhongshuling.yaml            # Architect
+│   └── mentu_xiaozhong.yaml         # QA
 │
 └── formats/                          # [公共] 强制输出模板
     ├── architecture_blueprint.yaml
@@ -87,7 +87,7 @@ id: polaris_director
 type: system_anchor
 version: "1.0"
 
-name: 工部侍郎
+name: Director
 description: Polaris 执行引擎，负责任务调度与蓝图规划
 
 capabilities:
@@ -215,7 +215,7 @@ id: gongbu_shilang
 type: persona
 version: "1.0"
 
-name: 工部侍郎
+name: Director
 description: 大国工匠与总工程师，务实严谨
 
 traits: |

@@ -4,7 +4,7 @@
 **日期**: 2026-04-23  
 **状态**: Phase 1 蓝图 — 待 Phase 2 工程落地  
 **适用范围**: `src/backend/polaris/kernelone/` 及下游消费模块  
-**架构师**: Principal Architect (中书令)  
+**架构师**: Principal Architect  
 
 ---
 
@@ -252,7 +252,7 @@ class TaskWorkItemResultV1:
 
 | 工程师 | 代号 | 负责模块 | 交付物 |
 |--------|------|---------|--------|
-| Engineer 1 | 工部主事 | Retry Policy (`retry_policy.py`) | 模块 + 测试 + 与 `self_healing.py` 集成 |
+| Engineer 1 | Engineering Lead | Retry Policy (`retry_policy.py`) | 模块 + 测试 + 与 `self_healing.py` 集成 |
 | Engineer 2 | 监察御史 | Command Auditor (`command_auditor.py`) | 模块 + 测试 + severity 分级策略 |
 | Engineer 3 | 起居舍人 | SessionSource (`session_source.py`) | 模块 + 与 `terminal_console.py` 集成 |
 | Engineer 4 | 仓部郎中 | TaskMarket Claiming (`contracts.py` 扩展) | 两阶段认领 + 合并语义 + 测试 |

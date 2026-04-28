@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from polaris.infrastructure.accel.verify.verify.gate_checker import (
     GateChecker,
@@ -134,6 +137,7 @@ class TestDetectMissingPythonDeps:
 class TestGateChecker:
     """Tests for GateChecker class."""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="echo is a shell builtin on Windows")
     def test_check_command_passes(self, tmp_path: Path) -> None:
         """Should pass for valid command."""
         checker = GateChecker(tmp_path)

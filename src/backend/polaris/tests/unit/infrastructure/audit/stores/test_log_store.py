@@ -161,7 +161,7 @@ class TestLogStore:
             store = LogStore(tmpdir)
             store.write_director_log("Export test", "INFO")
 
-            export_path = tmpdir / "exported.log"
+            export_path = Path(tmpdir) / "exported.log"
             result = store.export_logs(str(export_path))
 
             assert Path(result).exists()
@@ -173,7 +173,7 @@ class TestLogStore:
             store = LogStore(tmpdir)
             store.write_task_log("export-task", "Task export content", "INFO")
 
-            export_path = tmpdir / "task_export.log"
+            export_path = Path(tmpdir) / "task_export.log"
             result = store.export_logs(str(export_path), task_id="export-task")
 
             assert Path(result).exists()

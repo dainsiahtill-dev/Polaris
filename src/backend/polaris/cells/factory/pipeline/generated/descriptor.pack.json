@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.141392Z",
-  "source_hash": "b622e54a2301a5c9",
+  "generated_at": "2026-04-28T08:34:45.410411Z",
+  "source_hash": "46a8d8b1c1e9d05e",
   "cell_id": "factory.pipeline",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -800,6 +800,358 @@
       "name": "test_back_mapping_prefers_tree_sitter_when_parser_is_available",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py"
+    },
+    {
+      "type": "class",
+      "name": "TestStartFactoryRunCommandV1",
+      "description": "Tests for StartFactoryRunCommandV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_construction",
+          "doc": "Test basic command construction."
+        },
+        {
+          "name": "test_command_with_options",
+          "doc": "Test command with options."
+        },
+        {
+          "name": "test_command_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_command_empty_run_name_raises",
+          "doc": "Test that empty run_name raises ValueError."
+        },
+        {
+          "name": "test_command_empty_stages_raises",
+          "doc": "Test that empty stages raises ValueError."
+        },
+        {
+          "name": "test_command_stages_whitespace_filtered",
+          "doc": "Test that whitespace-only stages are filtered out."
+        },
+        {
+          "name": "test_command_whitespace_normalized",
+          "doc": "Test that workspace and run_name whitespace is normalized."
+        },
+        {
+          "name": "test_command_stages_whitespace_preserved",
+          "doc": "Test that stages whitespace is preserved (only empty filtered)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCancelFactoryRunCommandV1",
+      "description": "Tests for CancelFactoryRunCommandV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_construction",
+          "doc": "Test basic command construction."
+        },
+        {
+          "name": "test_command_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_command_empty_run_id_raises",
+          "doc": "Test that empty run_id raises ValueError."
+        },
+        {
+          "name": "test_command_empty_reason_raises",
+          "doc": "Test that empty reason raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetFactoryRunStatusQueryV1",
+      "description": "Tests for GetFactoryRunStatusQueryV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_query_construction",
+          "doc": "Test basic query construction."
+        },
+        {
+          "name": "test_query_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_query_empty_run_id_raises",
+          "doc": "Test that empty run_id raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestListFactoryRunsQueryV1",
+      "description": "Tests for ListFactoryRunsQueryV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_query_defaults",
+          "doc": "Test query default values."
+        },
+        {
+          "name": "test_query_custom_pagination",
+          "doc": "Test query with custom pagination."
+        },
+        {
+          "name": "test_query_limit_less_than_one_raises",
+          "doc": "Test that limit < 1 raises ValueError."
+        },
+        {
+          "name": "test_query_negative_offset_raises",
+          "doc": "Test that negative offset raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRunProjectionExperimentCommandV1",
+      "description": "Tests for RunProjectionExperimentCommandV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_defaults",
+          "doc": "Test command default values."
+        },
+        {
+          "name": "test_command_custom_options",
+          "doc": "Test command with custom options."
+        },
+        {
+          "name": "test_command_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_command_empty_scenario_id_raises",
+          "doc": "Test that empty scenario_id raises ValueError."
+        },
+        {
+          "name": "test_command_empty_requirement_raises",
+          "doc": "Test that empty requirement raises ValueError."
+        },
+        {
+          "name": "test_boolean_fields_normalized",
+          "doc": "Test that boolean fields are normalized."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRefreshProjectionBackMappingCommandV1",
+      "description": "Tests for RefreshProjectionBackMappingCommandV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_construction",
+          "doc": "Test basic command construction."
+        },
+        {
+          "name": "test_command_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReprojectProjectionExperimentCommandV1",
+      "description": "Tests for ReprojectProjectionExperimentCommandV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_defaults",
+          "doc": "Test command default values."
+        },
+        {
+          "name": "test_command_custom_options",
+          "doc": "Test command with custom options."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryRunStartedEventV1",
+      "description": "Tests for FactoryRunStartedEventV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_event_construction",
+          "doc": "Test basic event construction."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryRunCompletedEventV1",
+      "description": "Tests for FactoryRunCompletedEventV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_event_success",
+          "doc": "Test success event construction."
+        },
+        {
+          "name": "test_event_with_error",
+          "doc": "Test event with error message."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryRunResultV1",
+      "description": "Tests for FactoryRunResultV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_result_success",
+          "doc": "Test success result construction."
+        },
+        {
+          "name": "test_result_with_artifacts",
+          "doc": "Test result with completed stages and artifacts."
+        },
+        {
+          "name": "test_result_failed",
+          "doc": "Test failed result construction."
+        },
+        {
+          "name": "test_result_whitespace_filtered",
+          "doc": "Test that whitespace artifacts are filtered."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProjectionExperimentResultV1",
+      "description": "Tests for ProjectionExperimentResultV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_result_construction",
+          "doc": "Test basic result construction."
+        },
+        {
+          "name": "test_result_with_files_and_cells",
+          "doc": "Test result with generated files and impacted cells."
+        },
+        {
+          "name": "test_result_to_dict",
+          "doc": "Test result serialization to dict."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProjectionBackMappingRefreshResultV1",
+      "description": "Tests for ProjectionBackMappingRefreshResultV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_result_construction",
+          "doc": "Test basic result construction."
+        },
+        {
+          "name": "test_result_with_symbols",
+          "doc": "Test result with symbol changes."
+        },
+        {
+          "name": "test_result_to_dict",
+          "doc": "Test result serialization to dict."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProjectionReprojectionResultV1",
+      "description": "Tests for ProjectionReprojectionResultV1 contract.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_result_construction",
+          "doc": "Test basic result construction."
+        },
+        {
+          "name": "test_result_with_rewrites",
+          "doc": "Test result with rewritten files."
+        },
+        {
+          "name": "test_result_to_dict",
+          "doc": "Test result serialization to dict."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryPipelineError",
+      "description": "Tests for FactoryPipelineError exception.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_error_default_code",
+          "doc": "Test error with default code."
+        },
+        {
+          "name": "test_error_custom_code",
+          "doc": "Test error with custom code."
+        },
+        {
+          "name": "test_error_with_details",
+          "doc": "Test error with details."
+        },
+        {
+          "name": "test_error_empty_message_raises",
+          "doc": "Test that empty message raises ValueError."
+        },
+        {
+          "name": "test_error_empty_code_raises",
+          "doc": "Test that empty code raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIFactoryPipelineProtocol",
+      "description": "Tests for IFactoryPipeline protocol.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_protocol_exists",
+          "doc": "Test protocol can be imported."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIFactoryProjectionLabProtocol",
+      "description": "Tests for IFactoryProjectionLab protocol.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_protocol_exists",
+          "doc": "Test protocol can be imported."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryPipelineLifecycle",
+      "description": "Tests for complete factory pipeline lifecycle scenarios.",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_pipeline_lifecycle",
+          "doc": "Test complete pipeline run lifecycle."
+        },
+        {
+          "name": "test_projection_experiment_lifecycle",
+          "doc": "Test complete projection experiment lifecycle."
+        }
+      ]
     },
     {
       "type": "function",

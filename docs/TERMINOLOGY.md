@@ -11,22 +11,22 @@
 
 ---
 
-## 1. 角色映射：工程术语 → 官职隐喻（仅教育辅助）
+## 1. 角色映射：工程术语（PRIMARY）/ 教育辅助隐喻
 
 | 工程术语 (PRIMARY) | 官职隐喻（教育辅助） | 职责 |
 |-------------------|---------------------|------|
-| PM (Project Manager) | 尚书令 | 项目规划、任务拆分、需求管理、路由调度 |
-| Architect | 中书令 | 架构设计、技术选型、系统架构 |
-| Chief Engineer | 工部尚书 | 技术分析、代码审查、技术决策 |
-| Director | 工部侍郎 | 代码执行、文件操作、按图施工 |
-| QA (Quality Assurance) | 门下侍中 | 质量审查、测试验证、独立审计、否决权 |
-| Scout | 探子 | 只读代码探索 |
+| PM (Project Manager) | PM | 项目规划、任务拆分、需求管理、路由调度 |
+| Architect | Architect | 架构设计、技术选型、系统架构 |
+| Chief Engineer | Chief Engineer | 技术分析、代码审查、技术决策 |
+| Director | Director | 代码执行、文件操作、按图施工 |
+| QA (Quality Assurance) | QA | 质量审查、测试验证、独立审计、否决权 |
+| Scout | Scout | 只读代码探索 |
 
-> **注意：** `Chief Engineer`（工部尚书）的 rank 高于 `Director`（工部侍郎），不要被英文 "Director" 一词误导。
+> **注意：** `Chief Engineer`（Chief Engineer）的 rank 高于 `Director`（Director），不要被英文 "Director" 一词误导。
 
 ---
 
-## 2. 运行时组件映射：工程实体 → 生物学隐喻（仅教育辅助）
+## 2. 运行时组件映射：工程实体（PRIMARY）/ 教育辅助隐喻
 
 | 工程实体 (PRIMARY) | 隐喻（教育辅助） | 工程职责 |
 |-------------------|-----------------|---------|
@@ -117,12 +117,12 @@
 
 | 旧隐喻 | 工程术语 (PRIMARY) | 说明 |
 |--------|-------------------|------|
-| 大理寺 | Policy | 策略闸门、合规检查 |
-| 户部 | FinOps | 预算控制、成本管理 |
-| 锦衣卫 | Security | 安全审查 |
-| 总建筑师 | Architect | 旧隐喻，现统一使用 中书令 → Architect |
-| 封驳 | 否决 (veto) | QA 对不合格产出的拒绝权 |
-| 章奏 | 需求/任务 | PM 接收的用户输入 |
+| Policy | Policy | 策略闸门、合规检查 |
+| FinOps | FinOps | 预算控制、成本管理 |
+| Security | Security | 安全审查 |
+| 总建筑师 | Architect | 旧隐喻，现统一使用 Architect → Architect |
+| Reject | 否决 (veto) | QA 对不合格产出的拒绝权 |
+| Task | 需求/任务 | PM 接收的用户输入 |
 | 认知生命体 | Cognitive Agent / Role Session | 哲学层概念 |
 | 神经预激 | Speculative Execution | 推测执行 |
 
@@ -173,7 +173,7 @@
 
 - 目标目录：`polaris/cells/roles/kernel/internal/`
 - 清理文件：
-  - `constitution_rules.py` — 古代官职注释已全部替换为工程术语
+  - `constitution_rules.py` — dynastic metaphor comments have been fully replaced with engineering terms
   - `prompt_templates.py` — 人设默认值已去隐喻化
 - 保留文件（原本即清洁）：
   - `turn_transaction_controller.py`

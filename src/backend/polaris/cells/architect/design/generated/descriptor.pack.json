@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.805983Z",
-  "source_hash": "12de1e7b2986eb94",
+  "generated_at": "2026-04-28T08:34:48.820934Z",
+  "source_hash": "7ede4464ec1200af",
   "cell_id": "architect.design",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -48,7 +48,7 @@
     {
       "type": "class",
       "name": "ArchitectAgent",
-      "description": "Architect role agent on top of RoleAgent runtime.",
+      "description": "Architect role agent (`Architect`) on top of RoleAgent runtime.",
       "defined_in": "polaris/cells/architect/design/internal/architect_agent.py",
       "methods": [
         {

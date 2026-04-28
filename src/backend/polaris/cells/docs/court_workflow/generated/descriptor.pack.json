@@ -1,14 +1,14 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.262032Z",
-  "source_hash": "a6c73831f745932b",
+  "generated_at": "2026-04-28T08:34:45.949144Z",
+  "source_hash": "db5dc60972e3e324",
   "cell_id": "docs.court_workflow",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
     {
       "type": "class",
       "name": "CourtRoleMapping",
-      "description": "宫廷角色映射器.",
+      "description": "Court role mapper.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/court_mapping.py",
       "methods": [
         {
@@ -17,50 +17,50 @@
         },
         {
           "name": "get_topology",
-          "doc": "获取完整宫廷拓扑."
+          "doc": "Get full court topology."
         },
         {
           "name": "get_role_state",
-          "doc": "获取指定角色的默认状态."
+          "doc": "Get default state for a specified role."
         },
         {
           "name": "map_tech_role_to_court",
-          "doc": "将技术角色映射到宫廷角色."
+          "doc": "Map technical role to court role."
         },
         {
           "name": "_determine_status_from_engine",
-          "doc": "根据引擎状态确定角色状态."
+          "doc": "Determine role status from engine state."
         },
         {
           "name": "_determine_risk_level",
-          "doc": "根据引擎数据确定风险等级."
+          "doc": "Determine risk level from engine data."
         },
         {
           "name": "map_engine_to_court_state",
-          "doc": "将引擎状态映射为完整宫廷状态."
+          "doc": "Map engine state to full court state."
         },
         {
           "name": "get_scene_configs",
-          "doc": "获取所有场景配置."
+          "doc": "Get all scene configs."
         }
       ]
     },
     {
       "type": "function",
       "name": "get_court_topology",
-      "description": "获取宫廷拓扑（API 兼容函数）.",
+      "description": "Get court topology (API compatibility function).",
       "defined_in": "polaris/cells/docs/court_workflow/internal/court_mapping.py"
     },
     {
       "type": "function",
       "name": "map_engine_to_court_state",
-      "description": "映射引擎状态到宫廷状态（API 兼容函数）.",
+      "description": "Map engine state to court state (API compatibility function).",
       "defined_in": "polaris/cells/docs/court_workflow/internal/court_mapping.py"
     },
     {
       "type": "function",
       "name": "get_scene_configs",
-      "description": "获取场景配置（API 兼容函数）.",
+      "description": "Get scene configs (API compatibility function).",
       "defined_in": "polaris/cells/docs/court_workflow/internal/court_mapping.py"
     },
     {
@@ -102,35 +102,35 @@
     {
       "type": "class",
       "name": "CourtRole",
-      "description": "宫廷角色枚举.",
+      "description": "Role Enumeration.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "CourtScenePhase",
-      "description": "宫廷场景阶段枚举.",
+      "description": "Scene Phase Enumeration.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ActorStatus",
-      "description": "角色状态枚举.",
+      "description": "Actor status enumeration.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "RiskLevel",
-      "description": "风险等级枚举.",
+      "description": "Risk level enumeration.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "CourtEvidenceRef",
-      "description": "证据引用定义.",
+      "description": "Evidence reference definition.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": [
         {
@@ -142,7 +142,7 @@
     {
       "type": "class",
       "name": "CourtActorState",
-      "description": "宫廷角色状态定义.",
+      "description": "Court actor state definition.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": [
         {
@@ -154,7 +154,7 @@
     {
       "type": "class",
       "name": "CourtTopologyNode",
-      "description": "宫廷拓扑节点定义.",
+      "description": "Court topology node definition.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": [
         {
@@ -166,7 +166,7 @@
     {
       "type": "class",
       "name": "CourtActionEvent",
-      "description": "宫廷动作事件定义.",
+      "description": "Court action event definition.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": [
         {
@@ -178,7 +178,7 @@
     {
       "type": "class",
       "name": "CourtSceneConfig",
-      "description": "宫廷场景配置定义.",
+      "description": "Court scene configuration definition.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": [
         {
@@ -190,7 +190,7 @@
     {
       "type": "class",
       "name": "CourtState",
-      "description": "完整宫廷状态定义.",
+      "description": "Full court state definition.",
       "defined_in": "polaris/cells/docs/court_workflow/internal/models/court.py",
       "methods": [
         {

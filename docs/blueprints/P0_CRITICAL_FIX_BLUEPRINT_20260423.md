@@ -4,7 +4,7 @@
 **日期**: 2026-04-23
 **状态**: Phase 1 蓝图 — 待 Phase 2 工程落地
 **优先级**: P0 (修复完成前禁止发布)
-**架构师**: Principal Architect (中书令)
+**架构师**: Principal Architect
 
 ---
 
@@ -171,7 +171,7 @@ src/backend/polaris/kernelone/audit/tests/
 
 ## 3. 模块职责划分
 
-### 3.1 Engineer 1: 架构重构 (工部尚书)
+### 3.1 Engineer 1: 架构重构 (Chief Engineer)
 
 **职责**: Issue 1 & 2 修复
 - 创建 kernelone/ports/ 抽象接口

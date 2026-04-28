@@ -3,7 +3,7 @@
 **Document ID**: MIGRATION-2026-0423-PORT-ADAPTER
 **Date**: 2026-04-23
 **Status**: Phase 2 Complete - Alignment Service Migrated
-**Architect**: Principal Engineer (工部尚书)
+**Architect**: Principal Engineer (Chief Engineer)
 
 ---
 

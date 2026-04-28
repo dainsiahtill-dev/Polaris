@@ -1,10 +1,11 @@
-# Pre-commit hooks for Polaris
+﻿# Pre-commit hooks for Polaris
 # See https://pre-commit.com for more information
 #
 # Task #4: Mandatory Quality Gates
 # - ruff check --fix: Linting with auto-fix
 # - ruff format: Code formatting
 # - mypy --strict: Type checking (strict mode)
+# - mypy cells/: Type checking with missing imports ignored
 
 repos:
   # Ruff - Python linting and formatting
@@ -24,7 +25,7 @@ repos:
         files: ^(src/backend/polaris|tests|scripts)/.*\.py$
         fail_fast: true
 
-  # MyPy - Type checking (strict mode)
+  # MyPy - Type checking (strict mode for critical paths)
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.2
     hooks:
@@ -34,6 +35,17 @@ repos:
         args: [--strict, --show-error-codes]
         files: ^src/backend/polaris/.*\.py$
         exclude: ^src/backend/polaris/(cells|tests|infrastructure|scripts)/
+        additional_dependencies:
+          - pydantic>=2.5.0
+          - pydantic-settings>=2.0.0
+          - types-requests>=2.31.0
+          - types-aiofiles>=23.0.0
+        fail_fast: true
+      # Hook 4: mypy cells/ (type safety gate for cells)
+      - id: mypy
+        name: mypy-cells
+        args: [--ignore-missing-imports, --show-error-codes]
+        files: ^src/backend/polaris/cells/.*\.py$
         additional_dependencies:
           - pydantic>=2.5.0
           - pydantic-settings>=2.0.0

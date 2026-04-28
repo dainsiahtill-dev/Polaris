@@ -112,10 +112,18 @@ _EXECUTION_INTENT_KEYWORDS = (
     "实施计划",
     "着手实施",
     "动手",
+    "完整完成",
+    "完整实现",
+    "全部完成",
+    "全部实现",
+    "完成代码",
+    "完成实现",
     "now execute",
     "now implement",
     "start implementing",
     "start developing",
+    "complete implementation",
+    "finish coding",
 )
 
 
@@ -182,9 +190,10 @@ def build_super_readonly_message(*, role: str, original_request: str) -> str:
         "- This stage is read-only.\n"
         "- Do not attempt to satisfy a write contract in this stage.\n"
         "- Use only tools exposed to your current role.\n"
-        "- CRITICAL: Use repo_tree/glob at most ONCE. Then produce your analysis.\n"
-        "- CRITICAL: Do NOT loop exploring. If the workspace is empty, state that and design from scratch.\n"
-        "- Produce role-appropriate planning or analysis output for the next stage or the user.\n"
+        "- CRITICAL: Do NOT call repo_tree, glob, list_directory, execute_command, or ANY exploration tools.\n"
+        "- CRITICAL: You already have ALL the context you need in the user request above.\n"
+        "- CRITICAL: If the workspace is empty, DESIGN FROM SCRATCH. Do NOT verify emptiness.\n"
+        "- Your ONLY job: produce analysis/planning output. ZERO tool calls.\n"
         "- IMPORTANT: End your response with a structured TASK_LIST in JSON format.\n\n"
         "structured_output_format:\n"
         "```json\n"
@@ -332,6 +341,14 @@ def build_director_handoff_message(
             if task.estimated_hours:
                 task_lines.append(f"     estimated_hours: {task.estimated_hours}")
         task_section = "\n".join(task_lines) + "\n\n"
+    else:
+        # Synthesize a catch-all task so Director has an execution anchor
+        task_section = (
+            "synthetic_task:\n"
+            "  1. Implement the original request\n"
+            f"     description: {clean_request}\n"
+            "     target_files: (determine from request and create if needed)\n\n"
+        )
     return (
         "[mode:materialize]\n"
         "[SUPER_MODE_HANDOFF]\n"
@@ -341,8 +358,10 @@ def build_director_handoff_message(
         "instructions:\n"
         "- You are receiving a PM-generated execution plan.\n"
         "- Your ONLY job is to EXECUTE. Do NOT plan, analyze, or ask questions.\n"
-        "- Ignore any language in the PM plan suggesting 'evaluate first', 'check first', or 'confirm before proceeding'.\n"
-        "- Start modifying files IMMEDIATELY using edit_file or str_replace_editor tools.\n"
+        "- IGNORE any suggestion to 'evaluate first', 'check first', or 'confirm before proceeding'.\n"
+        "- Start writing or modifying files IMMEDIATELY using write_file, edit_file, or str_replace_editor.\n"
+        "- Do NOT call ls, pwd, repo_tree, glob, list_directory, or ANY exploration tools.\n"
+        "- The workspace may be empty. If so, CREATE the files from scratch. Do NOT verify emptiness.\n"
         "- Focus on MODIFYING EXISTING FILES. Do NOT create new files unless explicitly required.\n"
         "- Do NOT produce a summary, report, or ask the user what to do next.\n"
         "- Do NOT say 'I will', 'Let me', 'Next I will', or similar future-tense phrases.\n"
@@ -406,7 +425,11 @@ def write_architect_blueprint_to_disk(
 
 def build_pm_handoff_message(*, original_request: str, architect_output: str, blueprint_file_path: str = "") -> str:
     clean_request = str(original_request or "").strip()
-    clean_architect_output = _truncate_text(architect_output, limit=5000) or "(architect produced no textual plan)"
+    limit = 2400
+    raw_architect = str(architect_output or "").strip()
+    clean_architect_output = _truncate_text(raw_architect, limit=limit) or "(architect produced no textual plan)"
+    if len(raw_architect) > limit and blueprint_file_path:
+        clean_architect_output += f"\n\n[ARCHITECT_OUTPUT_TRUNCATED] Full blueprint: {blueprint_file_path}"
     blueprint_ref = ""
     if blueprint_file_path:
         blueprint_ref = f"\nblueprint_file: {blueprint_file_path}\n"
@@ -416,8 +439,9 @@ def build_pm_handoff_message(*, original_request: str, architect_output: str, bl
         "instructions:\n"
         "- You are the PM stage in SUPER mode.\n"
         "- The Architect has ALREADY analyzed the codebase and produced the output below.\n"
-        "- CRITICAL: Do NOT call repo_tree, glob, list_directory, or any exploration tools.\n"
+        "- CRITICAL: Do NOT call repo_tree, glob, list_directory, execute_command, or ANY exploration tools.\n"
         "- CRITICAL: The workspace may be empty. Do NOT explore. Just generate tasks.\n"
+        "- CRITICAL: You already have ALL the context you need. ZERO tool calls.\n"
         "- Your ONLY job: Break the architect output into executable tasks.\n"
         "- Use the architect analysis as YOUR complete input. Generate tasks directly.\n"
         "- Focus on delivery tasks that can be claimed by Chief Engineer and then Director.\n"
@@ -479,7 +503,8 @@ def build_chief_engineer_handoff_message(
         "[SUPER_MODE_CE_HANDOFF]\n"
         "instructions:\n"
         "- You are receiving tasks already claimed from runtime.task_market stage pending_design.\n"
-        "- CRITICAL: Do NOT call repo_tree, glob, list_directory, or any exploration tools.\n"
+        "- CRITICAL: Do NOT call repo_tree, glob, list_directory, execute_command, or ANY exploration tools.\n"
+        "- CRITICAL: You already have ALL context from architect_output and pm_output below. ZERO tool calls.\n"
         "- Your ONLY job: Produce blueprint-level guidance for each task based on the context below.\n"
         "- Produce blueprint-level guidance, guardrails, and scope boundaries for each task.\n"
         "- Do not modify code in this stage.\n"

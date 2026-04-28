@@ -485,6 +485,10 @@ class CircuitBreakerRegistry:
             return True
         return False
 
+    def clear(self) -> None:
+        """Remove all circuit breakers from the registry."""
+        self._breakers.clear()
+
 
 # Global registry instance
 _global_registry: CircuitBreakerRegistry | None = None

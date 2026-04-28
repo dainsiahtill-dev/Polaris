@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.448749Z",
-  "source_hash": "598e4681974d69ff",
+  "generated_at": "2026-04-28T08:34:43.154692Z",
+  "source_hash": "ea876fa5bf320160",
   "cell_id": "policy.permission",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -526,6 +526,12 @@
       "type": "function",
       "name": "validate_director_action",
       "description": "Convenience function to validate a Director action against the capability matrix.",
+      "defined_in": "polaris/domain/entities/capability.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_role_enum",
+      "description": "Safely convert a string to a Role enum.",
       "defined_in": "polaris/domain/entities/capability.py"
     },
     {

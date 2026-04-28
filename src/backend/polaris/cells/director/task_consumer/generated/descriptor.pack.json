@@ -1,0 +1,209 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-28T08:34:46.777069Z",
+  "source_hash": "fb32c6406af5a27a",
+  "cell_id": "director.task_consumer",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "UnrecoverableExecutionError",
+      "description": "Execution failure that should be dead-lettered and compensated.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ScopeConflictDetector",
+      "description": "Detect scope path conflicts with other in-progress tasks.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": [
+        {
+          "name": "check_conflict",
+          "doc": "Return True if any other IN_EXECUTION task shares scope paths with current task."
+        },
+        {
+          "name": "_extract_scope_paths",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_paths",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_LeaseHeartbeat",
+      "description": "Background lease renewer for long-running execution.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": ""
+        },
+        {
+          "name": "stop",
+          "doc": ""
+        },
+        {
+          "name": "_run_loop",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectorExecutionConsumer",
+      "description": "Director consumer with Safe Parallel support.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "poll_once",
+          "doc": "Poll once for PENDING_EXEC tasks."
+        },
+        {
+          "name": "_process_claim",
+          "doc": "Process a single claimed execution task."
+        },
+        {
+          "name": "_register_compensation_actions",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_compensation_actions",
+          "doc": ""
+        },
+        {
+          "name": "run",
+          "doc": "Continuously poll and process PENDING_EXEC tasks until stop() is called."
+        },
+        {
+          "name": "stop",
+          "doc": "Signal the consumer to stop after the current poll cycle."
+        },
+        {
+          "name": "_execute_task",
+          "doc": "Execute task — delegates to DirectorAgent or placeholder."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionConsumerInit",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "test_valid_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_params",
+          "doc": ""
+        },
+        {
+          "name": "test_stop_event_initial_state",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionConsumerPollOnce",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "test_no_claimable_tasks_returns_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_successful_execution_acks_pending_qa",
+          "doc": "Verify director claims, executes, and advances to PENDING_QA."
+        },
+        {
+          "name": "test_successful_execution_registers_and_commits_compensation_actions",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_blueprint_dead_letters",
+          "doc": "Verify task without blueprint_id is moved to dead_letter."
+        },
+        {
+          "name": "test_execution_failure_requeues_pending_exec",
+          "doc": "Verify execution failure requeues to pending_exec."
+        },
+        {
+          "name": "test_unrecoverable_execution_compensates_and_dead_letters",
+          "doc": ""
+        },
+        {
+          "name": "test_scope_conflict_when_safe_parallel_enabled",
+          "doc": "Verify scope conflict requeues when enable_safe_parallel=True."
+        },
+        {
+          "name": "test_execution_renews_lease_heartbeat",
+          "doc": ""
+        },
+        {
+          "name": "_slow_execute",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestScopeConflictDetector",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "test_no_conflict_when_empty_scope",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_false_regardless_of_service_response",
+          "doc": "No overlap -> no conflict."
+        },
+        {
+          "name": "test_detects_conflict_with_other_in_execution_scope_overlap",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionConsumerRunStop",
+      "description": "Tests for the run() / stop() durable consumer loop.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "test_run_polls_until_stop",
+          "doc": "run() loops until stop() signals _stop_event."
+        },
+        {
+          "name": "counting_poll",
+          "doc": ""
+        },
+        {
+          "name": "test_run_isolates_exceptions",
+          "doc": "Exceptions in poll_once do not kill the run loop."
+        },
+        {
+          "name": "flaky_poll",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

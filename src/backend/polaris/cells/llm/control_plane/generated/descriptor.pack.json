@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.706215Z",
-  "source_hash": "e24ced27582f86f3",
+  "generated_at": "2026-04-28T08:34:43.676353Z",
+  "source_hash": "89f9dceedb55b722",
   "cell_id": "llm.control_plane",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -47,134 +47,6 @@
       "name": "get_inference_engine",
       "description": "Backward-compatible lazy singleton (prefer create_inference_engine + DI).",
       "defined_in": "polaris/cells/llm/control_plane/internal/inference_engine.py"
-    },
-    {
-      "type": "class",
-      "name": "LLMConfig",
-      "description": "LLM configuration for a role.",
-      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
-      "methods": [
-        {
-          "name": "to_dict",
-          "doc": ""
-        },
-        {
-          "name": "from_dict",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "LLMConfigStore",
-      "description": "Thread-safe config store backed by KernelFileSystem.",
-      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_load_all_unlocked",
-          "doc": ""
-        },
-        {
-          "name": "_save_all_unlocked",
-          "doc": ""
-        },
-        {
-          "name": "save",
-          "doc": ""
-        },
-        {
-          "name": "get",
-          "doc": ""
-        },
-        {
-          "name": "get_all",
-          "doc": ""
-        },
-        {
-          "name": "delete",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "HRAgent",
-      "description": "HR role agent (`吏部尚书`) for role/provider config operations.",
-      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_resolve_provider_kind",
-          "doc": ""
-        },
-        {
-          "name": "setup_toolbox",
-          "doc": ""
-        },
-        {
-          "name": "_tool_set_llm_config",
-          "doc": ""
-        },
-        {
-          "name": "_tool_get_llm_config",
-          "doc": ""
-        },
-        {
-          "name": "_tool_list_all_configs",
-          "doc": ""
-        },
-        {
-          "name": "_tool_update_llm_config",
-          "doc": ""
-        },
-        {
-          "name": "_tool_deactivate_config",
-          "doc": ""
-        },
-        {
-          "name": "_tool_activate_config",
-          "doc": ""
-        },
-        {
-          "name": "_tool_delete_config",
-          "doc": ""
-        },
-        {
-          "name": "handle_message",
-          "doc": ""
-        },
-        {
-          "name": "run_cycle",
-          "doc": ""
-        },
-        {
-          "name": "get_config",
-          "doc": ""
-        },
-        {
-          "name": "get_all_configs",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_get_polaris_home",
-      "description": "",
-      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
-    },
-    {
-      "type": "function",
-      "name": "_infer_workspace_from_storage_path",
-      "description": "",
-      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
     },
     {
       "type": "function",

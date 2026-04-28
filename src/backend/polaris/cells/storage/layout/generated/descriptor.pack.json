@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:27.225690Z",
-  "source_hash": "c630df9b463fc4b0",
+  "generated_at": "2026-04-28T08:34:40.939250Z",
+  "source_hash": "d1b959b4f759bf47",
   "cell_id": "storage.layout",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -38,10 +38,6 @@
         {
           "name": "resolve_polaris_roots",
           "doc": "Return Polaris-specific roots resolved from this layout's workspace."
-        },
-        {
-          "name": "resolve_polaris_roots",
-          "doc": ""
         }
       ]
     },
@@ -54,7 +50,7 @@
     {
       "type": "function",
       "name": "polaris_home",
-      "description": "Return the Polaris home directory (the .polaris directory itself).",
+      "description": "Return the Polaris home directory.",
       "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
     },
     {

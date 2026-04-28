@@ -42,7 +42,7 @@
 | UNSUBSCRIBED | 取消订阅确认 | `{"type": "UNSUBSCRIBED", "payload": {"channels": [...]}}` |
 | PONG | 心跳响应 | `{"type": "PONG"}` |
 | PING | 心跳保活 | `{"type": "PING"}` |
-| court_status | 政事堂状态 | `{"type": "court_status", "court_state": {...}}` |
+| docs_wizard_status | Docs Wizard Status | `{"type": "docs_wizard_status", "court_state": {...}}` |
 | ERROR | 错误 | `{"type": "ERROR", "payload": {"error": "..."}}` |
 
 ### 1.2 状态快照结构

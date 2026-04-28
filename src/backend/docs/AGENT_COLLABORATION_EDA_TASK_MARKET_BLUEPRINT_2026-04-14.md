@@ -1091,18 +1091,18 @@ Director 并行的真正定义应该是：
 
 结合你已明确的流程，目标态下的 Polaris 角色链应统一为：
 
-1. `Architect（中书令）`
+1. `Architect（Architect）`
    - 可选
    - 负责理解需求、形成项目计划书和架构说明
    - 也是高阶升级会审角色
-2. `PM（尚书令）`
+2. `PM（PM）`
    - 必选
    - 负责拆解计划书、生成 task contract、发布工作项、跟踪进度
-3. `ChiefEngineer（工部尚书）`
+3. `ChiefEngineer（Chief Engineer）`
    - 必选
    - 负责把 PM 任务升级为 blueprint
    - 对所有会触发 workspace write 的任务拥有设计前置权
-4. `Director（工部执行群）`
+4. `Director（Engineering执行群）`
    - 必选
    - 负责按 blueprint 施工
    - 后续支持多人并行竞争消费

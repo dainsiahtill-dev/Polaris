@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.234508Z",
-  "source_hash": "662937dfd12a63db",
+  "generated_at": "2026-04-28T08:34:45.835367Z",
+  "source_hash": "cb40b994d20e59d5",
   "cell_id": "events.fact_stream",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -1353,6 +1353,18 @@
       "name": "new_event_id",
       "description": "",
       "defined_in": "polaris/kernelone/events/sourcing/models.py"
+    },
+    {
+      "type": "function",
+      "name": "set_container_port",
+      "description": "Register the DI container port for message bus resolution.",
+      "defined_in": "polaris/kernelone/events/task_trace_events.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_container_port",
+      "description": "Clear the injected container port (for test isolation).",
+      "defined_in": "polaris/kernelone/events/task_trace_events.py"
     },
     {
       "type": "function",

@@ -56,7 +56,7 @@
 11. 只能修改 Polaris，不能手工修改目标项目代码
 12. `tests.agent_stress.runner` 当前默认采用 `project_serial` 收敛执行，主链策略为 `(可选 architect) -> PM -> (可选 chief_engineer) -> Director -> QA`
 13. AI Agent 高轮次压测中，workspace 自我升级门禁与 backend context 自动发现已由代码 / 脚本层强制执行，提示词不再重复展开低层参数细节
-14. 独立审计 LLM 已通过 `src/backend/application/audit_llm_runtime.py` 注入到 TaskService；审计技术角色固定为 `qa`，宫廷映射为 `门下省 / 门下侍中`
+14. 独立审计 LLM 已通过 `src/backend/application/audit_llm_runtime.py` 注入到 TaskService；audit technical role fixed as `qa`, court mapping as `QA / Quality Assurance`
 15. 审计策略字段统一为：`audit_llm_enabled`、`audit_llm_role`、`audit_llm_timeout`、`audit_llm_prefer_local_ollama`、`audit_llm_allow_remote_fallback`
 16. 审计诊断新增命令：`python src/backend/scripts/audit_cli.py role-info --format json --workspace .`；本地审计一键烟测脚本：`src/backend/scripts/audit_local_only_smoke.ps1`
 
@@ -68,7 +68,7 @@ python src/backend/scripts/audit_cli.py role-info --format human --workspace .
 
 检查要点：
 1. `Tech role` 必须是 `qa`
-2. `Court role` 必须是 `门下侍中`
+2. `Court role` must be `QA`
 3. 若要求本地模型，`Provider type` 必须是 `ollama`
 
 如需一键配置并验活本地审计链路：

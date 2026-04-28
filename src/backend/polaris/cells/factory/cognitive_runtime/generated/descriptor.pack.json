@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.080251Z",
-  "source_hash": "2e621006f01a0913",
+  "generated_at": "2026-04-28T08:34:45.153934Z",
+  "source_hash": "38ee6c5c92343221",
   "cell_id": "factory.cognitive_runtime",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -796,6 +796,13 @@
     },
     {
       "type": "class",
+      "name": "StructuredFindings",
+      "description": "跨 turn 认知状态传递的最小四要素。",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ContextHandoffPack",
       "description": "",
       "defined_in": "polaris/domain/cognitive_runtime/models.py",
@@ -965,6 +972,12 @@
     {
       "type": "function",
       "name": "_copy_optional_int",
+      "description": "",
+      "defined_in": "polaris/domain/cognitive_runtime/models.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_structured_findings",
       "description": "",
       "defined_in": "polaris/domain/cognitive_runtime/models.py"
     },

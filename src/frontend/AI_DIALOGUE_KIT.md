@@ -23,13 +23,13 @@ import { AIDialoguePanel } from '@/app/components/ai-dialogue';
 
 <AIDialoguePanel
   dialogueRole="pm"
-  roleDisplayName="尚书令"
+  roleDisplayName="PM"
   roleTheme={{
     primary: 'amber',
     secondary: 'amber-400',
     gradient: 'from-amber-500 to-amber-700',
   }}
-  welcomeMessage="尚书令已就绪"
+  welcomeMessage="PM is ready"
   context={{ workspace, taskCount }}
 />
 ```
@@ -41,15 +41,15 @@ import { useRoleChat } from '@/app/components/ai-dialogue';
 
 const { messages, inputValue, setInputValue, sendMessage } = useRoleChat({
   role: 'architect',
-  welcomeMessage: '中书令已就绪',
+  welcomeMessage: 'Architect is ready',
 });
 ```
 
 ### 3. 预配置角色组件
 
 已有预配置角色组件：
-- `PMAIDialoguePanel` - 尚书令 (PM)
-- `ArchitectAIDialoguePanel` - 中书令 (Architect)
+- `PMAIDialoguePanel` - PM
+- `ArchitectAIDialoguePanel` - Architect
 
 ```tsx
 import { PMAIDialoguePanel } from '@/app/components/pm';
@@ -60,10 +60,10 @@ import { ArchitectAIDialoguePanel } from '@/app/components/architect';
 
 | 角色 | 标识 | 默认名称 | 主题色 |
 |------|------|----------|--------|
-| PM | `pm` | 尚书令 | Amber |
-| Architect | `architect` | 中书令 | Purple |
-| Director | `director` | 大将军 | Emerald |
-| QA | `qa` | 御史大夫 | Rose |
+| PM | `pm` | PM | Amber |
+| Architect | `architect` | Architect | Purple |
+| Director | `director` | Director | Emerald |
+| QA | `qa` | QA | Rose |
 
 ## 后端 API
 

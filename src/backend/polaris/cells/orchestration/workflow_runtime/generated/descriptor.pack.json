@@ -1,13 +1,13 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.676505Z",
-  "source_hash": "9c8df841f4face1a",
+  "generated_at": "2026-04-28T08:34:43.586241Z",
+  "source_hash": "859e37563948aae1",
   "cell_id": "orchestration.workflow_runtime",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
     {
       "type": "class",
-      "name": "WorkflowConfig",
+      "name": "InternalWorkflowConfig",
       "description": "Runtime configuration for self-hosted workflow runtime.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/config.py",
       "methods": [
@@ -533,13 +533,6 @@
     },
     {
       "type": "class",
-      "name": "PMWorkflowResult",
-      "description": "Result produced by the top-level PM workflow.",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
-      "methods": []
-    },
-    {
-      "type": "class",
       "name": "DirectorWorkflowInput",
       "description": "Input payload for the Director workflow.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
@@ -549,13 +542,6 @@
           "doc": ""
         }
       ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorWorkflowResult",
-      "description": "Aggregated Director workflow result.",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py",
-      "methods": []
     },
     {
       "type": "class",
@@ -645,18 +631,6 @@
     {
       "type": "function",
       "name": "_normalize_mapping",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
-    },
-    {
-      "type": "function",
-      "name": "_coerce_positive_int",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
-    },
-    {
-      "type": "function",
-      "name": "_coerce_execution_mode",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/models.py"
     },
@@ -966,6 +940,24 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "set_adapter",
+      "description": "Set the adapter for the current context (for testing or DI).",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_adapter",
+      "description": "Reset the adapter for the current context.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "set_adapter_factory",
+      "description": "Set a custom adapter factory (for testing).",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_backend_adapter.py"
     },
     {
       "type": "function",

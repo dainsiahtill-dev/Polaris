@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.317404Z",
-  "source_hash": "ba9a7fd19d04ef1d",
+  "generated_at": "2026-04-28T08:34:46.192952Z",
+  "source_hash": "d27a666949c43ef2",
   "cell_id": "director.delivery",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -107,6 +107,13 @@
       "type": "class",
       "name": "RoleConsoleHostConfig",
       "description": "Configuration for the role console host.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RequestClarity",
+      "description": "Request clarity levels for Director role.",
       "defined_in": "polaris/delivery/cli/director/console_host.py",
       "methods": []
     },
@@ -307,6 +314,18 @@
       "type": "function",
       "name": "_normalize_user_message_token",
       "description": "Normalize user message text for duplicate detection across transports.",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_continuation_intent",
+      "description": "Detect if the user message is a continuation intent (e.g. '继续', 'go on').",
+      "defined_in": "polaris/delivery/cli/director/console_host.py"
+    },
+    {
+      "type": "function",
+      "name": "_assess_director_request_clarity",
+      "description": "Assess if a request is clear enough for Director to execute.",
       "defined_in": "polaris/delivery/cli/director/console_host.py"
     },
     {
@@ -730,7 +749,7 @@
     {
       "type": "class",
       "name": "DirectorRole",
-      "description": "Director Role.",
+      "description": "Director Role - Director",
       "defined_in": "polaris/delivery/cli/director/director_role.py",
       "methods": [
         {
@@ -1581,6 +1600,60 @@
       "name": "_make_envelope",
       "description": "Build a realistic TurnOutcomeEnvelope for testing.",
       "defined_in": "polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py"
+    },
+    {
+      "type": "function",
+      "name": "test_assess_director_request_clarity_handles_file_path_regex",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_assess_director_request_clarity_marks_empty_as_vague",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_is_continuation_intent_detects_chinese_continue",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_is_continuation_intent_detects_english_continue",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_is_continuation_intent_detects_affirmative",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_is_continuation_intent_rejects_non_continuation",
+      "description": "",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_assess_director_request_clarity_treats_continuation_as_executable",
+      "description": "Continuation intents must pass the clarity gate so the orchestrator",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_assess_director_request_clarity_super_mode_handoff_is_executable",
+      "description": "SUPER_MODE handoff messages must NEVER be blocked as vague.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_assess_director_request_clarity_super_mode_continue_is_executable",
+      "description": "SUPER_MODE director continuation prompts must also pass the clarity gate.",
+      "defined_in": "polaris/delivery/cli/director/tests/test_request_clarity.py"
     },
     {
       "type": "class",

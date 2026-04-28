@@ -1,0 +1,232 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-28T08:34:47.146941Z",
+  "source_hash": "747b7c412979857c",
+  "cell_id": "cognitive.knowledge_distiller",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "DistillationEngine",
+      "description": "Coordinates the distillation of session findings into reusable knowledge.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/internal/distillation_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "distill_session",
+          "doc": "Distill patterns from a completed session."
+        },
+        {
+          "name": "_convert_pattern_to_knowledge_unit",
+          "doc": "Convert an extracted pattern to a knowledge unit."
+        },
+        {
+          "name": "get_knowledge_store",
+          "doc": "Get the underlying knowledge store."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "KnowledgeStore",
+      "description": "Persistent storage for distilled knowledge units.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/internal/knowledge_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_load",
+          "doc": "Load knowledge from JSONL file."
+        },
+        {
+          "name": "_persist",
+          "doc": "Append unit to JSONL file."
+        },
+        {
+          "name": "_add_to_indexes",
+          "doc": "Add unit to in-memory indexes."
+        },
+        {
+          "name": "_tokenize",
+          "doc": "Simple tokenizer."
+        },
+        {
+          "name": "store",
+          "doc": "Store a knowledge unit."
+        },
+        {
+          "name": "_find_similar",
+          "doc": "Find similar existing knowledge unit."
+        },
+        {
+          "name": "_merge_knowledge",
+          "doc": "Merge two knowledge units."
+        },
+        {
+          "name": "_overwrite_persisted",
+          "doc": "Overwrite a unit in the JSONL file."
+        },
+        {
+          "name": "retrieve",
+          "doc": "Retrieve relevant knowledge units for a query."
+        },
+        {
+          "name": "get_all",
+          "doc": "Get all knowledge units."
+        },
+        {
+          "name": "clear",
+          "doc": "Clear all knowledge (for testing)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ExtractedPattern",
+      "description": "An extracted pattern from session findings.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/internal/pattern_analyzer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PatternAnalyzer",
+      "description": "Analyzes session structured_findings to extract distillable patterns.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/internal/pattern_analyzer.py",
+      "methods": [
+        {
+          "name": "analyze",
+          "doc": "Analyze structured_findings and extract patterns."
+        },
+        {
+          "name": "_has_error_indicators",
+          "doc": "Check if findings contain error indicators."
+        },
+        {
+          "name": "_has_success_indicators",
+          "doc": "Check if findings contain success indicators."
+        },
+        {
+          "name": "_has_stagnation_indicators",
+          "doc": "Check if findings contain stagnation indicators."
+        },
+        {
+          "name": "_extract_error_pattern",
+          "doc": "Extract error pattern from findings."
+        },
+        {
+          "name": "_extract_success_pattern",
+          "doc": "Extract success pattern from findings."
+        },
+        {
+          "name": "_extract_stagnation_pattern",
+          "doc": "Extract stagnation pattern from findings."
+        },
+        {
+          "name": "_extract_generic_pattern",
+          "doc": "Extract generic pattern when no specific type matches."
+        },
+        {
+          "name": "_extract_error_signature",
+          "doc": "Extract a short error signature from error summary."
+        },
+        {
+          "name": "_summarize_error",
+          "doc": "Create a summary of the error."
+        },
+        {
+          "name": "_generate_error_prevention",
+          "doc": "Generate a prevention hint based on action taken."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DistillSessionCommandV1",
+      "description": "Command to distill patterns from a completed session.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RetrieveKnowledgeQueryV1",
+      "description": "Query to retrieve relevant distilled knowledge.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DistilledKnowledgeUnitV1",
+      "description": "A distilled knowledge unit from cross-session analysis.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KnowledgeRetrievalResultV1",
+      "description": "Result of knowledge retrieval query.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SessionDistillationResultV1",
+      "description": "Result of session distillation.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "KnowledgeDistillerError",
+      "description": "Exception raised by KnowledgeDistiller operations.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "KnowledgeDistillerService",
+      "description": "Public service for cross-session knowledge distillation.",
+      "defined_in": "polaris/cells/cognitive/knowledge_distiller/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "distill_session",
+          "doc": "Distill patterns from a completed session."
+        },
+        {
+          "name": "retrieve_knowledge",
+          "doc": "Retrieve relevant knowledge for a query."
+        },
+        {
+          "name": "get_all_knowledge",
+          "doc": "Get all stored knowledge units."
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

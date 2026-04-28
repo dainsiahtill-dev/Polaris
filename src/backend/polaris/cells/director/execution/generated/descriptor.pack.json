@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.358502Z",
-  "source_hash": "75ea15ac6be0f42c",
+  "generated_at": "2026-04-28T08:34:46.361394Z",
+  "source_hash": "302024ddf3b31b72",
   "cell_id": "director.execution",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -358,26 +358,8 @@
     },
     {
       "type": "function",
-      "name": "_parse_pass_fail",
-      "description": "",
-      "defined_in": "polaris/cells/director/execution/logic.py"
-    },
-    {
-      "type": "function",
-      "name": "parse_acceptance",
-      "description": "",
-      "defined_in": "polaris/cells/director/execution/logic.py"
-    },
-    {
-      "type": "function",
-      "name": "extract_defect_ticket",
-      "description": "",
-      "defined_in": "polaris/cells/director/execution/logic.py"
-    },
-    {
-      "type": "function",
       "name": "write_gate_check",
-      "description": "",
+      "description": "Simplified write gate check for cell logic.",
       "defined_in": "polaris/cells/director/execution/logic.py"
     },
     {

@@ -4,15 +4,15 @@
 
 ## 目录
 
-- [1. PM 指标（尚书令）](#1-pm-指标尚书令)
-- [2. Director 指标（工部侍郎）](#2-director-指标工部侍郎)
-- [3. QA 指标（门下侍中）](#3-qa-指标门下侍中)
+- [1. PM Metrics](#1-pm-metrics)
+- [2. Director Metrics](#2-director-metrics)
+- [3. QA Metrics](#3-qa-metrics)
 - [4. 记忆检索指标](#4-记忆检索指标)
 - [5. 系统指标](#5-系统指标)
 
 ---
 
-## 1. PM 指标（尚书令）
+## 1. PM Metrics
 
 ### 1.1 交付成功率
 
@@ -88,7 +88,7 @@
 
 ---
 
-## 2. Director 指标（工部侍郎）
+## 2. Director Metrics
 
 ### 2.1 状态转换闭环
 
@@ -164,7 +164,7 @@
 
 ---
 
-## 3. QA 指标（门下侍中）
+## 3. QA Metrics
 
 ### 3.1 Integration QA 通过率
 

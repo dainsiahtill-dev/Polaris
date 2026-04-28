@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.387179Z",
-  "source_hash": "360d2670bd0129bb",
+  "generated_at": "2026-04-28T08:34:46.467120Z",
+  "source_hash": "c8b4050b684258a9",
   "cell_id": "director.planning",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -247,57 +247,9 @@
     },
     {
       "type": "function",
-      "name": "_parse_pass_fail",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
-    },
-    {
-      "type": "function",
-      "name": "parse_acceptance",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
-    },
-    {
-      "type": "function",
-      "name": "extract_defect_ticket",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
-    },
-    {
-      "type": "function",
       "name": "write_gate_check",
-      "description": "",
+      "description": "Simplified write gate check for cell logic.",
       "defined_in": "polaris/cells/director/planning/internal/director_logic.py"
-    },
-    {
-      "type": "function",
-      "name": "_parse_pass_fail",
-      "description": "Return True for PASS, False for FAIL, None otherwise.",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
-    },
-    {
-      "type": "function",
-      "name": "parse_acceptance",
-      "description": "Parse acceptance decision from QA output with strict format.",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_ticket_value",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
-    },
-    {
-      "type": "function",
-      "name": "extract_defect_ticket",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
-    },
-    {
-      "type": "function",
-      "name": "validate_defect_ticket",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
     },
     {
       "type": "function",
@@ -382,36 +334,6 @@
       "name": "extract_required_evidence",
       "description": "",
       "defined_in": "polaris/cells/director/planning/internal/director_logic_rules.py"
-    },
-    {
-      "type": "function",
-      "name": "_parse_pass_fail",
-      "description": "Return True for PASS, False for FAIL, None otherwise.",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
-    },
-    {
-      "type": "function",
-      "name": "parse_acceptance",
-      "description": "Parse acceptance decision from QA output with strict format.",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_ticket_value",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
-    },
-    {
-      "type": "function",
-      "name": "extract_defect_ticket",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
-    },
-    {
-      "type": "function",
-      "name": "validate_defect_ticket",
-      "description": "",
-      "defined_in": "polaris/cells/director/planning/internal/director_logic_rules_execution.py"
     },
     {
       "type": "function",
@@ -541,6 +463,166 @@
       "name": "_to_dict_copy",
       "description": "",
       "defined_in": "polaris/cells/director/planning/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "TestPlanDirectorTaskCommandV1",
+      "description": "Tests for PlanDirectorTaskCommandV1 contract.",
+      "defined_in": "polaris/cells/director/planning/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_required_fields",
+          "doc": "Test command with required fields only."
+        },
+        {
+          "name": "test_command_with_run_id",
+          "doc": "Test command with run_id."
+        },
+        {
+          "name": "test_command_with_attempt",
+          "doc": "Test command with attempt number."
+        },
+        {
+          "name": "test_command_with_metadata",
+          "doc": "Test command with metadata."
+        },
+        {
+          "name": "test_command_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_command_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_command_empty_instruction_raises",
+          "doc": "Test that empty instruction raises ValueError."
+        },
+        {
+          "name": "test_command_invalid_attempt_raises",
+          "doc": "Test that attempt < 1 raises ValueError."
+        },
+        {
+          "name": "test_command_whitespace_normalized",
+          "doc": "Test that whitespace is normalized."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetDirectorStatusQueryV1",
+      "description": "Tests for GetDirectorStatusQueryV1 contract.",
+      "defined_in": "polaris/cells/director/planning/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_query_required_fields",
+          "doc": "Test query with required fields only."
+        },
+        {
+          "name": "test_query_with_run_id",
+          "doc": "Test query with run_id."
+        },
+        {
+          "name": "test_query_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_query_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPlanningResultV1",
+      "description": "Tests for DirectorPlanningResultV1 contract.",
+      "defined_in": "polaris/cells/director/planning/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_success_result",
+          "doc": "Test successful result construction."
+        },
+        {
+          "name": "test_result_with_run_id",
+          "doc": "Test result with run_id."
+        },
+        {
+          "name": "test_result_with_plan_summary",
+          "doc": "Test result with plan summary."
+        },
+        {
+          "name": "test_failed_result_with_error_code",
+          "doc": "Test failed result with error code."
+        },
+        {
+          "name": "test_failed_result_with_error_message",
+          "doc": "Test failed result with error message."
+        },
+        {
+          "name": "test_failed_result_requires_error",
+          "doc": "Test that failed result requires error_code or error_message."
+        },
+        {
+          "name": "test_result_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_result_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_result_empty_status_raises",
+          "doc": "Test that empty status raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPlanningError",
+      "description": "Tests for DirectorPlanningError contract.",
+      "defined_in": "polaris/cells/director/planning/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_error_default_code",
+          "doc": "Test error with default code."
+        },
+        {
+          "name": "test_error_custom_code",
+          "doc": "Test error with custom code."
+        },
+        {
+          "name": "test_error_with_details",
+          "doc": "Test error with details."
+        },
+        {
+          "name": "test_error_empty_message_raises",
+          "doc": "Test that empty message raises ValueError."
+        },
+        {
+          "name": "test_error_empty_code_raises",
+          "doc": "Test that empty code raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPlanningLifecycle",
+      "description": "Tests for complete director planning lifecycle scenarios.",
+      "defined_in": "polaris/cells/director/planning/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_successful_planning_lifecycle",
+          "doc": "Test complete successful planning lifecycle."
+        },
+        {
+          "name": "test_retry_planning_lifecycle",
+          "doc": "Test planning retry lifecycle."
+        },
+        {
+          "name": "test_error_propagation",
+          "doc": "Test error is properly constructed and raised."
+        }
+      ]
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

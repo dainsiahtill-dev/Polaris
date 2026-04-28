@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.420398Z",
-  "source_hash": "5ee18778645792f7",
+  "generated_at": "2026-04-28T08:34:43.119427Z",
+  "source_hash": "8d031b57044fb5ea",
   "cell_id": "qa.audit_verdict",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -324,6 +324,62 @@
         },
         {
           "name": "test_audit_exception_requeues_pending_qa",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQualityService",
+      "description": "QualityService tests.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_quality_service.py",
+      "methods": [
+        {
+          "name": "test_init_detects_ruff_availability",
+          "doc": ""
+        },
+        {
+          "name": "test_get_status",
+          "doc": ""
+        },
+        {
+          "name": "test_lint_code_returns_error_when_ruff_unavailable",
+          "doc": ""
+        },
+        {
+          "name": "test_lint_code_returns_error_for_non_python",
+          "doc": ""
+        },
+        {
+          "name": "test_lint_code_returns_success_when_available",
+          "doc": ""
+        },
+        {
+          "name": "test_lint_code_with_valid_code",
+          "doc": ""
+        },
+        {
+          "name": "test_lint_code_with_issues",
+          "doc": ""
+        },
+        {
+          "name": "test_lint_code_with_fix_mode",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetQualityService",
+      "description": "Singleton and factory function tests.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_quality_service.py",
+      "methods": [
+        {
+          "name": "test_get_quality_service_returns_singleton",
+          "doc": ""
+        },
+        {
+          "name": "test_service_is_quality_service_instance",
           "doc": ""
         }
       ]

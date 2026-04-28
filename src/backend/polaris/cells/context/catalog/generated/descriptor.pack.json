@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.498521Z",
-  "source_hash": "0b45630978d80e00",
+  "generated_at": "2026-04-28T08:34:47.032618Z",
+  "source_hash": "4866acedd739c793",
   "cell_id": "context.catalog",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -114,6 +114,231 @@
         {
           "name": "_check_llm_availability",
           "doc": "Check if LLM infrastructure is configured."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DependencyType",
+      "description": "依赖类型分类",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/dependency_verifier.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DependencyNode",
+      "description": "依赖节点",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/dependency_verifier.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DependencyValidationResult",
+      "description": "依赖验证结果",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/dependency_verifier.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DependencyVerificationEngine",
+      "description": "L1.5 层：依赖验证引擎",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/dependency_verifier.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "verify_dependencies",
+          "doc": "验证代码中的所有依赖"
+        },
+        {
+          "name": "_extract_imports",
+          "doc": "使用 AST 提取所有导入语句（包含 TYPE_CHECKING 检测）"
+        },
+        {
+          "name": "_extract_from_node",
+          "doc": "递归提取导入，处理 TYPE_CHECKING 块"
+        },
+        {
+          "name": "_is_type_checking_block",
+          "doc": "检查是否为 if typing.TYPE_CHECKING: 块"
+        },
+        {
+          "name": "_classify_dependency",
+          "doc": "分类依赖类型"
+        },
+        {
+          "name": "_is_stdlib",
+          "doc": "检查是否为 Python 标准库模块"
+        },
+        {
+          "name": "_verify_single_dependency",
+          "doc": "验证单个依赖的存在性"
+        },
+        {
+          "name": "_check_relative_import_exists",
+          "doc": "检查相对导入的目标是否存在。"
+        },
+        {
+          "name": "_get_relative_target_path",
+          "doc": "生成相对导入的建议路径"
+        },
+        {
+          "name": "_check_internal_module_exists",
+          "doc": "检查内部模块是否存在于项目中"
+        },
+        {
+          "name": "_check_third_party_package",
+          "doc": "检查第三方包是否已安装。"
+        },
+        {
+          "name": "_get_installed_packages",
+          "doc": "极速获取当前环境已安装的包，零子进程开销。"
+        },
+        {
+          "name": "detect_circular_imports",
+          "doc": "检测项目中的循环导入。"
+        },
+        {
+          "name": "dfs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ValidationStatus",
+      "description": "Validation status",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidationTier",
+      "description": "Validation tier that produced the result",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidationResult",
+      "description": "Unified validation result across all tiers",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidationConfig",
+      "description": "Configuration for three-layer defense",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InvariantRule",
+      "description": "Protocol for L2 semantic invariant rules",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "Returns (passed, score, evidence)"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SQLWhereClauseInvariant",
+      "description": "L2: SQL must have WHERE or LIMIT",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "Validate SQL blocks for WHERE/LIMIT clauses"
+        },
+        {
+          "name": "_normalize_sql",
+          "doc": "Normalize SQL for analysis"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PythonTestPrefixInvariant",
+      "description": "L2: Python test functions must start with 'test_' or use pytest decorators",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "Validate Python test function naming"
+        },
+        {
+          "name": "_has_pytest_decorator",
+          "doc": "Check if function has pytest-related decorators"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMJudge",
+      "description": "L3: LLM-as-a-Judge with Prompt Jitter and statistical convergence",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "can_call",
+          "doc": "Check if we can afford another L3 call"
+        },
+        {
+          "name": "evaluate",
+          "doc": "Evaluate skill with Prompt Jitter technique."
+        },
+        {
+          "name": "_call_llm_with_perspective",
+          "doc": "Call LLM with specific perspective."
+        },
+        {
+          "name": "_discretize",
+          "doc": "Discretize score to reduce boundary jitter"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SkillValidationFramework",
+      "description": "Three-Layer Defense Skill Validation Framework",
+      "defined_in": "polaris/cells/context/catalog/internal/skill_validator/framework.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "validate",
+          "doc": "Execute three-layer defense validation."
+        },
+        {
+          "name": "_validate_l1_syntax",
+          "doc": "L1: AST Syntax validation"
+        },
+        {
+          "name": "_validate_l1_5_dependencies",
+          "doc": "L1.5: Dependency validation"
+        },
+        {
+          "name": "_validate_l2_semantic",
+          "doc": "L2: Semantic invariant validation"
+        },
+        {
+          "name": "_validate_l3_expert",
+          "doc": "L3: Expert review with LLM Judge"
+        },
+        {
+          "name": "_matches_always_review_pattern",
+          "doc": "Check if file matches high-risk patterns requiring L3 review"
         }
       ]
     },
@@ -355,6 +580,130 @@
         {
           "name": "test_descriptor_validation_types",
           "doc": "Test type validation for descriptor fields."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSearchCellsQueryV1",
+      "description": "Tests for SearchCellsQueryV1 contract.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_query_required_fields",
+          "doc": "Test query with required fields only."
+        },
+        {
+          "name": "test_query_with_limit",
+          "doc": "Test query with custom limit."
+        },
+        {
+          "name": "test_query_empty_query",
+          "doc": "Test query with empty string (allowed)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCellDescriptorV1",
+      "description": "Tests for CellDescriptorV1 contract.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_descriptor_required_fields",
+          "doc": "Test descriptor with required fields."
+        },
+        {
+          "name": "test_descriptor_stateless",
+          "doc": "Test stateless descriptor."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSearchCellsResultV1",
+      "description": "Tests for SearchCellsResultV1 contract.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_result_empty",
+          "doc": "Test empty result."
+        },
+        {
+          "name": "test_result_with_descriptors",
+          "doc": "Test result with descriptors."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveCachePath",
+      "description": "Tests for cache path resolution utilities.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_resolve_cache_path_returns_path",
+          "doc": "Test cache path resolution returns Path object."
+        },
+        {
+          "name": "test_resolve_index_state_path_returns_path",
+          "doc": "Test index state path resolution returns Path object."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestValidateDescriptorCachePayload",
+      "description": "Tests for descriptor cache validation.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_validate_valid_full_payload",
+          "doc": "Test validation of a complete valid payload."
+        },
+        {
+          "name": "test_validate_missing_root_fields",
+          "doc": "Test validation fails for missing root fields."
+        },
+        {
+          "name": "test_validate_non_dict_payload",
+          "doc": "Test validation fails for non-dict payload."
+        },
+        {
+          "name": "test_validate_none_payload",
+          "doc": "Test validation fails for None payload."
+        },
+        {
+          "name": "test_validate_empty_payload",
+          "doc": "Test validation fails for empty payload."
+        },
+        {
+          "name": "test_validate_descriptors_not_list",
+          "doc": "Test validation fails when descriptors is not a list."
+        },
+        {
+          "name": "test_validate_empty_descriptors_ok",
+          "doc": "Test validation passes with empty descriptors list."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContextCatalogIntegration",
+      "description": "Integration tests for context catalog contracts.",
+      "defined_in": "polaris/cells/context/catalog/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_search_and_result_flow",
+          "doc": "Test search query and result flow."
+        },
+        {
+          "name": "test_descriptor_immutability",
+          "doc": "Test that descriptors are immutable."
+        },
+        {
+          "name": "test_result_immutability",
+          "doc": "Test that results are immutable."
         }
       ]
     },

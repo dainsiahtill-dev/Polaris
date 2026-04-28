@@ -1,0 +1,2773 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-04-28T08:34:47.565054Z",
+  "source_hash": "9844e20986ac5552",
+  "cell_id": "code_intelligence.engine",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "_print_output",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_budget",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_init",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_doctor",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_index_build",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_index_update",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_context",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_verify",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_explain",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "cmd_benchmark",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "build_parser",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/cli.py"
+    },
+    {
+      "type": "class",
+      "name": "TimeoutError",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py"
+    },
+    {
+      "type": "function",
+      "name": "_deep_merge",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_config_file",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py"
+    },
+    {
+      "type": "function",
+      "name": "load_yaml_with_timeout",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_effective_config",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py"
+    },
+    {
+      "type": "function",
+      "name": "_dump_json_as_yaml",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py"
+    },
+    {
+      "type": "function",
+      "name": "init_project",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config.py"
+    },
+    {
+      "type": "function",
+      "name": "_cpu_count",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_max_workers",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_index_workers",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "default_accel_home",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_max_workers",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_positive_int",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_positive_float",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_ratio",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_bool",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_timeout_action",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_context_timeout_action",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_constraint_mode",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_syntax_provider",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_lexical_provider",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_env_overrides",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_effective_config",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/config_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_paths",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/eval/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "recall_at_k",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/eval/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "reciprocal_rank",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/eval/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "symbol_hit_rate",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/eval/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "_mean",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/eval/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "_p95",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/eval/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "aggregate_case_metrics",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/eval/metrics.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/hooks/post_hook.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/hooks/pre_hook.py"
+    },
+    {
+      "type": "function",
+      "name": "_setup_deadlock_logging",
+      "description": "Setup deadlock detection logging if not already configured.",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_log_deadlock_info",
+      "description": "Log deadlock detection information.",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_index_progress",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_rel_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_language",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_match_any",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_index_workers",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_index_workers",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_index_parallel_backend",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_compact_threshold",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_syntax_runtime_cfg",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_unit_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_unit",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_units",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_base_indexes_exist",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_process_file_for_index",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_payloads_for_changed",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_progress",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_grouped_maps_from_units",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_manifest_from_previous",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "build_or_update_indexes",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_py_dependencies",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/deps.py"
+    },
+    {
+      "type": "function",
+      "name": "_ts_js_dependencies",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/deps.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_dependencies",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/deps.py"
+    },
+    {
+      "type": "function",
+      "name": "_setup_deadlock_logging",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_log_deadlock_info",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_rel_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_language",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_match_any",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_scope_mode",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_patterns",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_legacy_default_include",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_exclude_patterns",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_git_candidate_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_filter_source_candidates",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_source_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/discovery.py"
+    },
+    {
+      "type": "function",
+      "name": "_py_call_references",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/references.py"
+    },
+    {
+      "type": "function",
+      "name": "_ts_js_references",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/references.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_references",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/references.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_signature",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_text_items",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_unparse",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_contains_callable",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_names",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_text",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_qualified_name",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_symbol_row",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_symbol_rows",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_py_parameters_from_ast",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_py_function_signature_from_ast",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_py_class_signature_from_ast",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_assignment_targets",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_assignment_symbol_rows_from_ast",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_py_symbols_from_ast",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_syntax_provider",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_type_parameters",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_parameters_from_signature",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_return_type_from_signature",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_relation_target",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_relation_targets_from_signature",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_ts_symbols_from_text",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_symbol_name",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_node_line_bounds",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_node_text",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_signature_from_node_text",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_decorators_from_tree_sitter",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_tree_sitter_parser",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_py_tree_sitter_symbols",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_py_symbols_from_tree_sitter",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_ts_symbols_from_tree_sitter",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_symbols",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/symbols.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_test_file",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/tests_ownership.py"
+    },
+    {
+      "type": "function",
+      "name": "_tokenize_name",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/tests_ownership.py"
+    },
+    {
+      "type": "function",
+      "name": "build_test_ownership",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/indexers/tests_ownership.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_profile_name",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_extension",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_verify_group",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_language_profile_registry",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_selected_language_profiles",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_extension_language_map",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_extension_verify_group_map",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_enabled_verify_groups",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_language_for_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/language_profiles.py"
+    },
+    {
+      "type": "class",
+      "name": "PolarisPaths",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/polaris_paths.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "normalize_project_root",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/polaris_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_polaris_paths",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/polaris_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "default_accel_runtime_home",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/polaris_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_within",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/polaris_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_artifact_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/polaris_paths.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_float",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_clamp",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_task_intent",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_complexity_factor",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_adaptive_budget",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/adaptive_budget.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_patterns",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_rel_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_matches_any",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_should_skip_default",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_truncate_text",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_snippet",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_iter_candidate_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_compile_pattern",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "search_code_content",
+      "description": "Search file contents with optional path filters and line context.",
+      "defined_in": "polaris/infrastructure/accel/query/content_search.py"
+    },
+    {
+      "type": "function",
+      "name": "_group_by_file",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_estimate_source_bytes",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_snippet_fingerprint",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_structural_signature",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_token_set",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_jaccard_similarity",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_path_key",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_changed_scope_prefixes",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_changed_scope_prioritization",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_verify_plan",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "_rank_candidate_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "explain_context_selection",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "compile_context_pack",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "write_context_pack",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/context_compiler.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_lexical_provider",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_clamp_ratio",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_provider",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_tantivy_module",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "probe_lexical_runtime",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_tokenize",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_doc_text",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_score_with_bm25",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_path_from_stored_doc",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_score_with_tantivy",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_scores",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_lexical_ranking",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/lexical_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_patterns",
+      "description": "Detect design patterns in the codebase.",
+      "defined_in": "polaris/infrastructure/accel/query/pattern_detector.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_singleton",
+      "description": "Detect Singleton pattern.",
+      "defined_in": "polaris/infrastructure/accel/query/pattern_detector.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_factory",
+      "description": "Detect Factory pattern.",
+      "defined_in": "polaris/infrastructure/accel/query/pattern_detector.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_observer",
+      "description": "Detect Observer pattern.",
+      "defined_in": "polaris/infrastructure/accel/query/pattern_detector.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_decorator",
+      "description": "Detect Decorator pattern.",
+      "defined_in": "polaris/infrastructure/accel/query/pattern_detector.py"
+    },
+    {
+      "type": "function",
+      "name": "_detect_builder",
+      "description": "Detect Builder pattern.",
+      "defined_in": "polaris/infrastructure/accel/query/pattern_detector.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_task_tokens",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/planner.py"
+    },
+    {
+      "type": "function",
+      "name": "build_candidate_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/planner.py"
+    },
+    {
+      "type": "class",
+      "name": "JobManagerProtocol",
+      "description": "Protocol for job manager to avoid direct dependency on verify module.",
+      "defined_in": "polaris/infrastructure/accel/query/project_stats.py",
+      "methods": [
+        {
+          "name": "get_all_jobs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_get_file_mtime_iso",
+      "description": "Get file modification time as ISO string.",
+      "defined_in": "polaris/infrastructure/accel/query/project_stats.py"
+    },
+    {
+      "type": "function",
+      "name": "get_project_stats",
+      "description": "Get project statistics from the index.",
+      "defined_in": "polaris/infrastructure/accel/query/project_stats.py"
+    },
+    {
+      "type": "function",
+      "name": "get_health_status",
+      "description": "Get system health status.",
+      "defined_in": "polaris/infrastructure/accel/query/project_stats.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_any",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_symbol_metadata",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_hits",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "score_file",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "get_inheritance_tree",
+      "description": "Get class inheritance relationships.",
+      "defined_in": "polaris/infrastructure/accel/query/relation_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_subtree",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/relation_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_interface_class",
+      "description": "Heuristic to detect if a class is an interface/protocol.",
+      "defined_in": "polaris/infrastructure/accel/query/relation_query.py"
+    },
+    {
+      "type": "function",
+      "name": "get_file_dependencies",
+      "description": "Get file dependency relationships.",
+      "defined_in": "polaris/infrastructure/accel/query/relation_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_comment_line",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/rule_compressor.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_import_line",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/rule_compressor.py"
+    },
+    {
+      "type": "function",
+      "name": "_line_has_any_token",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/rule_compressor.py"
+    },
+    {
+      "type": "function",
+      "name": "compress_snippet_content",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/rule_compressor.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_module_name",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "_symbol_tokens",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_symbol_to_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_module_to_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "_iter_row_candidates",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "build_semantic_relation_graph",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_changed_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_seed_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_relation_proximity",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "expand_candidates_with_relations",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "relation_graph_stats",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/semantic_relations.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/snippet_extractor.py"
+    },
+    {
+      "type": "function",
+      "name": "_score_symbol_row",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/snippet_extractor.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_focus_symbol",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/snippet_extractor.py"
+    },
+    {
+      "type": "function",
+      "name": "_compute_line_window_from_symbol",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/snippet_extractor.py"
+    },
+    {
+      "type": "function",
+      "name": "_truncate_content",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/snippet_extractor.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_snippet",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/snippet_extractor.py"
+    },
+    {
+      "type": "function",
+      "name": "_match_score",
+      "description": "Calculate match score for ranking results.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "search_symbols",
+      "description": "Search symbols in the index.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "get_symbol_details",
+      "description": "Get detailed information about a specific symbol.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_symbol_relations",
+      "description": "Build relation information for a symbol.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "build_call_graph",
+      "description": "Build a call graph from the specified starting point.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_add_node",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_traverse_down",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_traverse_up",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_group_by_file",
+      "description": "Group rows by file path.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "get_symbol_context",
+      "description": "Get context for a specific symbol.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_file_snippet",
+      "description": "Read a snippet from a file with context lines.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_symbol_files",
+      "description": "Find file locations for a list of symbol names.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_test_files",
+      "description": "Find test files that might test a symbol.",
+      "defined_in": "polaris/infrastructure/accel/query/symbol_query.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_constraint_mode",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_int",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_list_of_dicts",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_or_raise",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_schema",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_type_matches",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_schema_type_ok",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_schema_subset",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_schema_contract",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "enforce_context_pack_contract",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "enforce_context_payload_contract",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "enforce_verify_summary_contract",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "enforce_verify_events_payload_contract",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/schema/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_semantic_provider",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/semantic_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "clamp_ratio",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/semantic_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "probe_semantic_runtime",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/semantic_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_semantic_ranking",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/semantic_ranker.py"
+    },
+    {
+      "type": "function",
+      "name": "project_hash",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "project_paths",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "ensure_project_dirs",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "write_json",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "read_json",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "write_jsonl",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "base_path_for_kind",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "delta_path_for_base",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "load_jsonl_mmap",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "count_jsonl_lines",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "group_rows_by_key",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "flatten_grouped_rows",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "load_grouped_rows_with_delta",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "load_index_rows",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "append_delta_ops",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "write_jsonl_atomic",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_delta_file",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/storage/index_cache.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_float",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_backend",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "function",
+      "name": "estimate_tokens_for_text",
+      "description": "Estimate tokens with detailed metadata.",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "function",
+      "name": "estimate_tokens_from_chars",
+      "description": "Estimate tokens from character count with calibration.",
+      "defined_in": "polaris/infrastructure/accel/token_estimator.py"
+    },
+    {
+      "type": "function",
+      "name": "utc_now_iso",
+      "description": "Return the current UTC time as an ISO-8601 string.",
+      "defined_in": "polaris/infrastructure/accel/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "utc_now",
+      "description": "Return the current UTC time as a datetime object.",
+      "defined_in": "polaris/infrastructure/accel/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_path_str",
+      "description": "Normalize a relative path string: backslash → slash, strip, drop './' prefix.",
+      "defined_in": "polaris/infrastructure/accel/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_path_abs",
+      "description": "Resolve a Path to an absolute path safely (avoids Windows resolve quirks).",
+      "defined_in": "polaris/infrastructure/accel/utils.py"
+    },
+    {
+      "type": "function",
+      "name": "get_logger",
+      "description": "Return a namespaced logger under the ``accel`` hierarchy.",
+      "defined_in": "polaris/infrastructure/accel/utils.py"
+    },
+    {
+      "type": "class",
+      "name": "VerifyStage",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/callbacks.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerifyProgressCallback",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/callbacks.py",
+      "methods": [
+        {
+          "name": "on_start",
+          "doc": "验证开始"
+        },
+        {
+          "name": "on_stage_change",
+          "doc": "阶段变更"
+        },
+        {
+          "name": "on_command_start",
+          "doc": "单个命令开始执行"
+        },
+        {
+          "name": "on_command_complete",
+          "doc": "单个命令完成"
+        },
+        {
+          "name": "on_progress",
+          "doc": "进度更新 (每完成一个命令触发)"
+        },
+        {
+          "name": "on_heartbeat",
+          "doc": "心跳 (每 10 秒触发)"
+        },
+        {
+          "name": "on_command_output",
+          "doc": "命令输出流事件"
+        },
+        {
+          "name": "on_cache_hit",
+          "doc": "缓存命中"
+        },
+        {
+          "name": "on_skip",
+          "doc": "命令跳过"
+        },
+        {
+          "name": "on_error",
+          "doc": "错误发生"
+        },
+        {
+          "name": "on_complete",
+          "doc": "验证完成"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "NoOpCallback",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/callbacks.py",
+      "methods": [
+        {
+          "name": "on_start",
+          "doc": ""
+        },
+        {
+          "name": "on_stage_change",
+          "doc": ""
+        },
+        {
+          "name": "on_command_start",
+          "doc": ""
+        },
+        {
+          "name": "on_command_complete",
+          "doc": ""
+        },
+        {
+          "name": "on_progress",
+          "doc": ""
+        },
+        {
+          "name": "on_heartbeat",
+          "doc": ""
+        },
+        {
+          "name": "on_command_output",
+          "doc": ""
+        },
+        {
+          "name": "on_cache_hit",
+          "doc": ""
+        },
+        {
+          "name": "on_skip",
+          "doc": ""
+        },
+        {
+          "name": "on_error",
+          "doc": ""
+        },
+        {
+          "name": "on_complete",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "JobState",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/job_manager.py",
+      "methods": [
+        {
+          "name": "is_valid",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "VerifyJob",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/job_manager.py",
+      "methods": [
+        {
+          "name": "to_status",
+          "doc": ""
+        },
+        {
+          "name": "add_event",
+          "doc": ""
+        },
+        {
+          "name": "is_terminal",
+          "doc": ""
+        },
+        {
+          "name": "add_live_event",
+          "doc": ""
+        },
+        {
+          "name": "get_events",
+          "doc": ""
+        },
+        {
+          "name": "update_progress",
+          "doc": ""
+        },
+        {
+          "name": "mark_running",
+          "doc": ""
+        },
+        {
+          "name": "try_mark_completed",
+          "doc": ""
+        },
+        {
+          "name": "mark_completed",
+          "doc": ""
+        },
+        {
+          "name": "mark_failed",
+          "doc": ""
+        },
+        {
+          "name": "mark_cancelled",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "JobManager",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/job_manager.py",
+      "methods": [
+        {
+          "name": "_initialize_instance",
+          "doc": ""
+        },
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "create_job",
+          "doc": ""
+        },
+        {
+          "name": "get_job",
+          "doc": ""
+        },
+        {
+          "name": "get_all_jobs",
+          "doc": ""
+        },
+        {
+          "name": "cancel_job",
+          "doc": ""
+        },
+        {
+          "name": "cleanup_completed",
+          "doc": ""
+        },
+        {
+          "name": "clear_all_jobs",
+          "doc": "Clear all jobs for test isolation."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_positive_int",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_changed_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_changed_files_fingerprint",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_cache_file_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_cache_key",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_utc",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_cache_entries",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_prune_cache_entries",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_cache_entries_atomic",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_failure",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_executor_failure_result",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_classify_verify_failures",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_live_result",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_cached_result",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_cache_entry_is_failure",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_can_use_cached_entry",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_callback_call",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_tail_output_text",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_remaining_wall_time_seconds",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_timeboxed_command_timeout",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_unfinished_entries",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_emit_command_complete_event",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_start_command_tick_thread",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_ticker",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/orchestrator_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_output",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/runners.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_preexec_fn",
+      "description": "Return a safe preexec function for Unix-like systems only.",
+      "defined_in": "polaris/infrastructure/accel/verify/runners.py"
+    },
+    {
+      "type": "function",
+      "name": "_kill_process_tree",
+      "description": "Kill a process tree with enhanced Windows support and multiple fallback methods.",
+      "defined_in": "polaris/infrastructure/accel/verify/runners.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_pipe_stream",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/runners.py"
+    },
+    {
+      "type": "function",
+      "name": "run_command",
+      "description": "Run a command via CommandExecutionService (KernelOne CommandExecutorPort contract).",
+      "defined_in": "polaris/infrastructure/accel/verify/runners.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_rel_path",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_module_aliases",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_relative_target",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_dependency_targets",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_fingerprint",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_verify_config_hash",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_index_inputs",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_reverse_dependency_graph",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_impacted_files",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_textual_dependents",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_impacted_tests",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_targeted_pytests",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_shard_targets",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_targeted_pytests_shards",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_changed_verify_groups",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_selection_evidence",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "select_verify_commands",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "select_verify_commands_with_evidence",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_verify_plan",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_command_tokens",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_command_binary",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_node_script",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_sort_key",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_workspaces",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_node_workspaces",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_python_workspaces",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_changed_overlap_score",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_choose_workspace",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_wrap_command_with_workspace",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_join_command_tokens",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_pytest_args_start_index",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_pytest_node_target",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_likely_pytest_path_token",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_rebase_pytest_target_for_workspace",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_rewrite_pytest_targets_for_workspace",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_pytest_targets_require_project_root",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_workspace_routing",
+      "description": "",
+      "defined_in": "polaris/infrastructure/accel/verify/sharding_workspace.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_args",
+      "description": "Parse CLI arguments.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "build_config_from_args",
+      "description": "Build runtime config from CLI arguments.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/cli.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "Main CLI entry point.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/cli.py"
+    },
+    {
+      "type": "class",
+      "name": "VerifyConfig",
+      "description": "Verify configuration.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/core.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VerifyResult",
+      "description": "Verify result.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/core.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_resolve_verify_workers",
+      "description": "Resolve verify worker count from runtime config.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/core.py"
+    },
+    {
+      "type": "function",
+      "name": "run_verify",
+      "description": "Run verification without callback.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/core.py"
+    },
+    {
+      "type": "function",
+      "name": "run_verify_with_callback",
+      "description": "Run verification with progress callback.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/core.py"
+    },
+    {
+      "type": "function",
+      "name": "command_binary",
+      "description": "Extract the binary name from a shell command.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "effective_shell_command",
+      "description": "Get the effective command after handling chained commands.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "command_workdir",
+      "description": "Determine the working directory for a command.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_python_module",
+      "description": "Extract the Python module name from a python -m command.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_command_tokens",
+      "description": "Parse command into tokens safely.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_node_script",
+      "description": "Extract the npm/pnpm/yarn script name from a command.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "split_pytest_target",
+      "description": "Split pytest target to get the file path.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_pytest_targets",
+      "description": "Extract pytest test target paths from a command.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_windows_compatible_command",
+      "description": "Resolve Windows-compatible command fallback for make.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_positive_int",
+      "description": "Normalize a value to a positive integer.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_bool",
+      "description": "Normalize a value to boolean.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_optional_positive_float",
+      "description": "Normalize a value to optional positive float.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/formatters.py"
+    },
+    {
+      "type": "class",
+      "name": "GateDecision",
+      "description": "Result of a gate check decision.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/gate_checker.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GateChecker",
+      "description": "Gate checker for verify commands.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/gate_checker.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "check_command",
+          "doc": "Check if a command passes preflight validation."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "should_skip_for_preflight",
+      "description": "Determine if a warning should cause command to be skipped.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/gate_checker.py"
+    },
+    {
+      "type": "function",
+      "name": "preflight_warnings_for_command",
+      "description": "Generate preflight warnings for a command.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/gate_checker.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_or_root_only_pytest_targets",
+      "description": "Check for missing or root-only pytest targets.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/gate_checker.py"
+    },
+    {
+      "type": "function",
+      "name": "detect_missing_python_deps",
+      "description": "Detect missing Python dependencies from results.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/gate_checker.py"
+    },
+    {
+      "type": "class",
+      "name": "ReportGenerator",
+      "description": "Report generator for verify results.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/report_generator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "write_verification_start",
+          "doc": "Write verification start log entry."
+        },
+        {
+          "name": "write_verification_end",
+          "doc": "Write verification end log entry."
+        },
+        {
+          "name": "write_cache_hit",
+          "doc": "Write cache hit log entry."
+        },
+        {
+          "name": "write_command_skipped",
+          "doc": "Write command skipped log entry."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "append_line",
+      "description": "Append a line to a log file.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/report_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "append_jsonl",
+      "description": "Append a JSON line to a jsonl file.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/report_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "default_backfill_deadline",
+      "description": "Generate default backfill deadline timestamp.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/report_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "build_verify_selection_evidence",
+      "description": "Build evidence for verify command selection.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/report_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "log_command_result",
+      "description": "Log a command result to log and jsonl files.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/report_generator.py"
+    },
+    {
+      "type": "function",
+      "name": "invoke_run_command",
+      "description": "Invoke run_command with optional kwargs.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/runner_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "run_with_timeout_detection",
+      "description": "Run command with enhanced timeout detection and logging.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/runner_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "store_cache_result",
+      "description": "Store result in cache if appropriate.",
+      "defined_in": "polaris/infrastructure/accel/verify/verify/runner_utils.py"
+    },
+    {
+      "type": "class",
+      "name": "CodeIntelligenceService",
+      "description": "代码智能服务 - ChiefEngineer 和 Director 的代码分析基础设施.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "config",
+          "doc": "懒加载配置."
+        },
+        {
+          "name": "ensure_index",
+          "doc": "确保索引已构建，返回 manifest."
+        },
+        {
+          "name": "get_context_for_task",
+          "doc": "为任务生成代码上下文."
+        },
+        {
+          "name": "verify_changes",
+          "doc": "运行增量验证."
+        },
+        {
+          "name": "get_relevant_files",
+          "doc": "获取与任务最相关的文件列表 (用于 ChiefEngineer 分析范围确定)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CacheEntry",
+      "description": "缓存条目.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "is_expired",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MultiLevelCache",
+      "description": "多级缓存系统：内存 L1 -> SQLite L2 -> 文件 L3.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_init_sqlite",
+          "doc": "初始化 SQLite 缓存表."
+        },
+        {
+          "name": "_connect",
+          "doc": ""
+        },
+        {
+          "name": "_get_key",
+          "doc": "生成缓存键."
+        },
+        {
+          "name": "get",
+          "doc": "获取缓存，按 L1 -> L2 -> L3 顺序查找."
+        },
+        {
+          "name": "set",
+          "doc": "设置缓存（写入 L1 和 L2）."
+        },
+        {
+          "name": "_set_memory",
+          "doc": "设置内存缓存（带 LRU 淘汰）."
+        },
+        {
+          "name": "invalidate",
+          "doc": "使缓存失效."
+        },
+        {
+          "name": "get_stats",
+          "doc": "获取缓存统计."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AsyncIndexManager",
+      "description": "异步索引管理器 - 支持后台构建和共享索引.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "config",
+          "doc": "懒加载配置."
+        },
+        {
+          "name": "get_index_status",
+          "doc": "获取索引状态."
+        },
+        {
+          "name": "_build",
+          "doc": ""
+        },
+        {
+          "name": "shutdown",
+          "doc": "关闭索引管理器."
+        },
+        {
+          "name": "reset_for_testing",
+          "doc": "Reset singleton state for test isolation."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "AsyncCodeIntelligenceService",
+      "description": "异步代码智能服务 - 支持后台索引、共享索引和多级缓存.",
+      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "config",
+          "doc": ""
+        },
+        {
+          "name": "_compile",
+          "doc": ""
+        },
+        {
+          "name": "_verify",
+          "doc": ""
+        },
+        {
+          "name": "get_cache_stats",
+          "doc": "获取缓存统计."
+        },
+        {
+          "name": "invalidate_cache",
+          "doc": "使缓存失效."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FileChangeInfo",
+      "description": "文件变更信息.",
+      "defined_in": "polaris/infrastructure/code_intelligence/incremental_analyzer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IncrementalSemanticAnalyzer",
+      "description": "增量语义分析器.",
+      "defined_in": "polaris/infrastructure/code_intelligence/incremental_analyzer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_connect",
+          "doc": ""
+        },
+        {
+          "name": "_init_db",
+          "doc": "初始化数据库表."
+        },
+        {
+          "name": "_db_get",
+          "doc": "从数据库获取值."
+        },
+        {
+          "name": "_db_set",
+          "doc": "设置数据库值."
+        },
+        {
+          "name": "config",
+          "doc": ""
+        },
+        {
+          "name": "detect_changes",
+          "doc": "检测文件变更."
+        },
+        {
+          "name": "analyze_incremental",
+          "doc": "增量分析变更文件."
+        },
+        {
+          "name": "_load_known_files",
+          "doc": "加载已知文件校验和."
+        },
+        {
+          "name": "_save_known_files",
+          "doc": "保存当前文件校验和."
+        },
+        {
+          "name": "close",
+          "doc": "释放可回收状态，避免长会话保留不必要缓存."
+        },
+        {
+          "name": "_should_index",
+          "doc": "判断文件是否应该被索引."
+        },
+        {
+          "name": "_compute_checksum",
+          "doc": "计算文件校验和."
+        },
+        {
+          "name": "_update_index_for_files",
+          "doc": "只更新指定文件的索引（增量更新）."
+        },
+        {
+          "name": "_build_partial_graph",
+          "doc": "构建局部语义关系图."
+        },
+        {
+          "name": "_find_semantic_neighbors",
+          "doc": "查找语义邻居文件."
+        },
+        {
+          "name": "_analyze_impact",
+          "doc": "分析变更影响范围."
+        },
+        {
+          "name": "_is_critical_file",
+          "doc": "判断是否为关键文件."
+        },
+        {
+          "name": "_find_affected_upstream",
+          "doc": "查找受影响的上游文件."
+        },
+        {
+          "name": "_find_related_tests",
+          "doc": "查找相关的测试文件."
+        },
+        {
+          "name": "_calculate_risk",
+          "doc": "计算变更风险等级."
+        },
+        {
+          "name": "_generate_recommendations",
+          "doc": "生成建议."
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

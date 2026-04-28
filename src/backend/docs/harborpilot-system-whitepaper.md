@@ -66,7 +66,7 @@ ContextOS（TruthLog + Snapshot + WorkingState）—— 海马体/记忆固化
 
 这层就像工厂里的岗位分工。每个角色有明确的职责边界，不能跨级指挥。
 
-### 2.1 PM（尚书令）
+### 2.1 PM（PM）
 
 **文件**: `polaris/delivery/cli/pm/pm_role.py` → `PMRole`
 
@@ -80,7 +80,7 @@ PM 负责：
 
 核心问题回答：**"这次到底要做成什么样，才算完成？"**
 
-### 2.2 Chief Engineer（工部尚书）
+### 2.2 Chief Engineer（Chief Engineer）
 
 **文件**: `polaris/cells/roles/adapters/internal/chief_engineer_adapter.py` → `ChiefEngineerAdapter`
 
@@ -94,7 +94,7 @@ Chief Engineer 负责：
 
 核心问题回答：**"这个方案技术上可行吗？有什么风险？有什么替代方案？"**
 
-### 2.3 Architect（中书令）
+### 2.3 Architect（Architect）
 
 **文件**: `polaris/cells/roles/adapters/internal/architect_adapter.py` → `ArchitectAdapter`
 
@@ -107,7 +107,7 @@ Architect 负责：
 
 核心问题回答：**"系统应该怎么组织？模块怎么拆分？接口怎么设计？"**
 
-### 2.4 Director（工部侍郎）
+### 2.4 Director（Director）
 
 **文件**: `polaris/cells/roles/adapters/internal/director/adapter.py` → `DirectorAdapter`
 
@@ -120,7 +120,7 @@ Director 是执行负责人：
 
 可以把它理解为"施工队长"。核心问题回答：**"怎么把这个方案实现出来？"**
 
-### 2.5 QA（门下侍中）
+### 2.5 QA（QA）
 
 **文件**: `polaris/cells/roles/adapters/internal/qa_adapter.py` → `QAAdapter`
 
@@ -136,7 +136,7 @@ QA 不是帮忙写代码的，它是独立裁判：
 
 **意义**：执行者不能自己宣布自己成功，必须有独立验收。
 
-### 2.6 Scout（探子）
+### 2.6 Scout（Scout）
 
 **文件**: `polaris/cells/roles/profile/internal/builtin_profiles.py` → Scout Role Profile
 
@@ -631,12 +631,12 @@ class TurnOutcomeEnvelope:
 
 | 组件 | 一句话描述 | 文件位置 |
 |------|-----------|----------|
-| PMRole | 写合同的人（尚书令） | `polaris/delivery/cli/pm/pm_role.py` |
-| ChiefEngineerAdapter | 技术分析/架构评估/深度代码审查（工部尚书） | `polaris/cells/roles/adapters/internal/chief_engineer_adapter.py` |
-| ArchitectAdapter | 架构设计与设计文档产出（中书令） | `polaris/cells/roles/adapters/internal/architect_adapter.py` |
-| DirectorAdapter | 干活的人/执行负责人（工部侍郎） | `polaris/cells/roles/adapters/internal/director/adapter.py` |
-| QAAdapter | 独立裁判（门下侍中） | `polaris/cells/roles/adapters/internal/qa_adapter.py` |
-| Scout Role | 只读代码探索（探子） | `polaris/cells/roles/profile/internal/builtin_profiles.py` |
+| PMRole | 写合同的人（PM） | `polaris/delivery/cli/pm/pm_role.py` |
+| ChiefEngineerAdapter | 技术分析/架构评估/深度代码审查（Chief Engineer） | `polaris/cells/roles/adapters/internal/chief_engineer_adapter.py` |
+| ArchitectAdapter | 架构设计与设计文档产出（Architect） | `polaris/cells/roles/adapters/internal/architect_adapter.py` |
+| DirectorAdapter | 干活的人/执行负责人（Director） | `polaris/cells/roles/adapters/internal/director/adapter.py` |
+| QAAdapter | 独立裁判（QA） | `polaris/cells/roles/adapters/internal/qa_adapter.py` |
+| Scout Role | 只读代码探索（Scout） | `polaris/cells/roles/profile/internal/builtin_profiles.py` |
 
 ### 会话编排层
 

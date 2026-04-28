@@ -43,6 +43,7 @@ from polaris.delivery.cli.super_mode import (
     SuperClaimedTask,
     SuperModeRouter,
     SuperPipelineContext,
+    SuperRouteDecision,
     SuperTaskItem,
     build_chief_engineer_handoff_message,
     build_director_handoff_message,
@@ -2009,6 +2010,280 @@ def _acknowledge_super_claims(
     return acked
 
 
+def _run_super_turn_orchestrator(
+    host: RoleConsoleHost,
+    *,
+    decision: SuperRouteDecision,
+    role_sessions: dict[str, str],
+    host_kind: str,
+    session_title: str | None,
+    workspace_path: Path,
+    prompt_renderer: _PromptRenderer,
+    message: str,
+    json_render: str,
+    debug: bool,
+    dry_run: bool,
+    output_format: str,
+    enable_cognitive: bool | None = None,
+) -> _TurnExecutionResult:
+    """Orchestrator-driven SUPER pipeline — uses SuperPipelineConfig for declarative stages.
+
+    This is the new path. Each stage's constraints (exploration limits, tool_choice,
+    forbidden tools) are injected via StageConstraint rather than hardcoded prompts.
+    PM gets 2 retries by default. CE is skipped when PM produces no output.
+    Director always gets tool_choice='required' via API-level enforcement.
+    """
+    from polaris.delivery.cli.super_pipeline_config import DEFAULT_SUPER_PIPELINE, StageResult
+
+    config = DEFAULT_SUPER_PIPELINE
+    # Filter stages to only those in the decision.roles
+    active_stages = tuple(s for s in config.stages if s.role in decision.roles)
+    if not active_stages:
+        active_session_id = role_sessions.get(decision.fallback_role) or _resolve_role_session(
+            host,
+            role=decision.fallback_role,
+            role_sessions=role_sessions,
+            host_kind=host_kind,
+            session_title=session_title,
+        )
+        return _TurnExecutionResult(role=decision.fallback_role, session_id=active_session_id, saw_error=True)
+
+    from polaris.delivery.cli.super_mode import SuperPipelineContext
+
+    ctx = SuperPipelineContext(original_request=message)
+    last_result: _TurnExecutionResult | None = None
+    stage_results: list[StageResult] = []
+
+    for stage in active_stages:
+        # Skip condition check
+        if stage.skip_condition is not None and stage.skip_condition(ctx):
+            logger.info("ORCH_STAGE_SKIP: role=%s reason=condition", stage.role)
+            stage_results.append(StageResult(role=stage.role, success=True, skipped=True))
+            continue
+
+        # Build handoff message with constraint injection
+        handoff_kwargs = _orch_build_handoff_kwargs(stage, ctx, message)
+        constraint_text = stage.constraint.to_prompt_text()
+
+        try:
+            turn_message = stage.handoff_builder(**handoff_kwargs)
+        except Exception as exc:
+            logger.error("ORCH_HANDOFF_BUILD_FAILED: role=%s error=%s", stage.role, exc)
+            stage_results.append(StageResult(role=stage.role, success=False, error=str(exc)))
+            if stage.on_failure == "abort":
+                break
+            continue
+
+        # Inject constraint text
+        if constraint_text:
+            turn_message = _orch_inject_constraint(turn_message, constraint_text)
+
+        # Resolve session
+        if stage.role == "director" and "director" in role_sessions:
+            del role_sessions["director"]
+        session_id = role_sessions.get(stage.role) or _resolve_role_session(
+            host,
+            role=stage.role,
+            role_sessions=role_sessions,
+            host_kind=host_kind,
+            session_title=session_title,
+        )
+
+        # Execute with retry
+        stage_result, exec_result = _orch_execute_with_retry(
+            host,
+            stage=stage,
+            session_id=session_id,
+            turn_message=turn_message,
+            prompt_renderer=prompt_renderer,
+            workspace_path=workspace_path,
+            json_render=json_render,
+            debug=debug,
+            dry_run=dry_run,
+            output_format=output_format,
+            enable_cognitive=enable_cognitive,
+        )
+        stage_results.append(stage_result)
+        last_result = exec_result
+
+        if stage_result.skipped:
+            continue
+
+        if not stage_result.success:
+            if stage.on_failure == "abort":
+                break
+            elif stage.on_failure in ("skip", "degrade"):
+                continue
+            # retry already exhausted
+
+        # Update context
+        ctx = _orch_update_context(ctx, stage, stage_result, workspace_path)
+
+    # Log completion
+    logger.info(
+        "ORCH_PIPELINE_COMPLETE: final_role=%s stages=%d success=%d failed=%d",
+        last_result.role if last_result else "none",
+        len(stage_results),
+        sum(1 for s in stage_results if s.success),
+        sum(1 for s in stage_results if not s.success and not s.skipped),
+    )
+
+    if last_result is None:
+        active_session_id = role_sessions.get(decision.fallback_role) or _resolve_role_session(
+            host,
+            role=decision.fallback_role,
+            role_sessions=role_sessions,
+            host_kind=host_kind,
+            session_title=session_title,
+        )
+        return _TurnExecutionResult(role=decision.fallback_role, session_id=active_session_id, saw_error=True)
+    return last_result
+
+
+def _orch_build_handoff_kwargs(stage: Any, ctx: SuperPipelineContext, message: str) -> dict[str, Any]:
+    """Build kwargs for the stage's handoff_builder from context."""
+    kw: dict[str, Any] = {"original_request": ctx.original_request or message}
+    if stage.role == "pm":
+        kw["architect_output"] = ctx.architect_output
+        kw["blueprint_file_path"] = ctx.blueprint_file_path
+    elif stage.role == "chief_engineer":
+        kw["architect_output"] = ctx.architect_output
+        kw["pm_output"] = ctx.pm_output
+        kw["claimed_tasks"] = list(ctx.ce_claims)
+    elif stage.role == "director":
+        kw["architect_output"] = ctx.architect_output
+        kw["pm_output"] = ctx.pm_output
+        kw["claimed_tasks"] = list(ctx.director_claims)
+        kw["blueprint_items"] = list(ctx.blueprint_items)
+    return kw
+
+
+def _orch_inject_constraint(message: str, constraint_text: str) -> str:
+    """Inject constraint text before closing SUPER_MODE tag."""
+    if not constraint_text:
+        return message
+    for tag in (
+        "[/SUPER_MODE_HANDOFF]",
+        "[/SUPER_MODE_PM_HANDOFF]",
+        "[/SUPER_MODE_CE_HANDOFF]",
+        "[/SUPER_MODE_DIRECTOR_TASK_HANDOFF]",
+        "[/SUPER_MODE_READONLY_STAGE]",
+    ):
+        if tag in message:
+            return message.replace(tag, f"{constraint_text}\n{tag}")
+    return f"{message}\n\n{constraint_text}"
+
+
+def _orch_execute_with_retry(
+    host: RoleConsoleHost,
+    *,
+    stage: Any,
+    session_id: str,
+    turn_message: str,
+    prompt_renderer: Any,
+    workspace_path: Path,
+    json_render: str,
+    debug: bool,
+    dry_run: bool,
+    output_format: str,
+    enable_cognitive: bool | None,
+) -> tuple[Any, _TurnExecutionResult | None]:
+    """Execute a stage with retry logic. Returns (StageResult, last _TurnExecutionResult)."""
+    from polaris.delivery.cli.super_pipeline_config import StageResult
+
+    last_exec: _TurnExecutionResult | None = None
+    for attempt in range(1, stage.max_retries + 1):
+        exec_result = _run_streaming_turn(
+            host,
+            role=stage.role,
+            session_id=session_id,
+            message=turn_message,
+            json_render=json_render,
+            debug=debug,
+            spinner_label=prompt_renderer.render_spinner_label(
+                role=stage.role,
+                session_id=session_id,
+                workspace=workspace_path,
+            ),
+            dry_run=dry_run,
+            output_format=output_format,
+            enable_cognitive=enable_cognitive,
+        )
+        last_exec = exec_result
+        if exec_result and not exec_result.saw_error and exec_result.final_content.strip():
+            if attempt > 1:
+                logger.info("ORCH_RETRY_SUCCESS: role=%s attempt=%d", stage.role, attempt)
+            sr = StageResult(
+                role=stage.role,
+                success=True,
+                content=exec_result.final_content,
+                retry_count=attempt - 1,
+            )
+            return sr, exec_result
+        if attempt < stage.max_retries:
+            delay = min(2**attempt, 10)
+            logger.warning(
+                "ORCH_RETRY: role=%s attempt=%d/%d, waiting %ds",
+                stage.role,
+                attempt,
+                stage.max_retries,
+                delay,
+            )
+            import time as _time
+
+            _time.sleep(delay)
+    error_msg = "saw_error" if (exec_result and exec_result.saw_error) else "empty_output"
+    sr = StageResult(
+        role=stage.role,
+        success=False,
+        error=error_msg,
+        retry_count=stage.max_retries,
+    )
+    return sr, last_exec
+
+
+def _orch_update_context(
+    ctx: SuperPipelineContext,
+    stage: Any,
+    result: Any,
+    workspace_path: Path,
+) -> SuperPipelineContext:
+    """Update pipeline context after a successful stage."""
+    if stage.role == "architect":
+        blueprint_path = write_architect_blueprint_to_disk(
+            workspace=str(workspace_path),
+            original_request=ctx.original_request,
+            architect_output=result.content,
+        )
+        return SuperPipelineContext(
+            original_request=ctx.original_request,
+            architect_output=result.content,
+            pm_output=ctx.pm_output,
+            blueprint_file_path=blueprint_path,
+            source_chain=ctx.source_chain.append(SessionSource.ARCHITECT_DESIGNED),
+        )
+    elif stage.role == "pm":
+        pm_tasks = extract_task_list_from_pm_output(result.content)
+        return SuperPipelineContext(
+            original_request=ctx.original_request,
+            architect_output=ctx.architect_output,
+            pm_output=result.content,
+            blueprint_file_path=ctx.blueprint_file_path,
+            extracted_tasks=tuple(pm_tasks),
+            source_chain=ctx.source_chain.append(SessionSource.PM_DELEGATED),
+        )
+    elif stage.role == "director":
+        return SuperPipelineContext(
+            original_request=ctx.original_request,
+            architect_output=ctx.architect_output,
+            pm_output=ctx.pm_output,
+            blueprint_file_path=ctx.blueprint_file_path,
+            extracted_tasks=ctx.extracted_tasks,
+            source_chain=ctx.source_chain.append(SessionSource.DIRECTOR_EXECUTED),
+        )
+    return ctx
+
+
 def _run_super_turn(
     host: RoleConsoleHost,
     *,
@@ -2037,6 +2312,28 @@ def _run_super_turn(
         decision.use_chief_engineer,
         decision.use_director,
     )
+
+    # FIX-20260427: Opt-in orchestrator path via env var.
+    # When enabled, uses SuperPipelineOrchestrator with StageConstraint-based
+    # constraint injection and retry/degrade failure handling.
+    if os.environ.get("KERNELONE_SUPER_USE_ORCHESTRATOR", "").strip().lower() in ("1", "true", "yes"):
+        return _run_super_turn_orchestrator(
+            host,
+            decision=decision,
+            role_sessions=role_sessions,
+            host_kind=host_kind,
+            session_title=session_title,
+            workspace_path=workspace_path,
+            prompt_renderer=prompt_renderer,
+            message=message,
+            json_render=json_render,
+            debug=debug,
+            dry_run=dry_run,
+            output_format=output_format,
+            enable_cognitive=enable_cognitive,
+        )
+
+    # ── Legacy path (kept for fallback) ────────────────────────────────
     last_result: _TurnExecutionResult | None = None
     ctx = SuperPipelineContext(
         original_request=message,
@@ -2285,6 +2582,7 @@ def _run_super_turn(
         degraded_handoff = build_director_handoff_message(
             original_request=message,
             pm_output=pm_fallback,
+            extracted_tasks=pm_tasks,
         )
         last_result = _run_streaming_turn(
             host,

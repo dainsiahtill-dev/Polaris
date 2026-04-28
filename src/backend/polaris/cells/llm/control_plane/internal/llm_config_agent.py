@@ -1,4 +1,4 @@
-"""HR role agent and LLM configuration store implementation."""
+﻿"""HR role agent and LLM configuration store implementation."""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ class LLMConfigStore:
 
 
 class HRAgent(RoleAgent):
-    """HR role agent (`吏部尚书`) for role/provider config operations."""
+    """HR role agent for role/provider config operations."""
 
     def __init__(self, workspace: str) -> None:
         super().__init__(workspace=workspace, agent_name="HR")

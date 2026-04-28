@@ -177,7 +177,7 @@ if exec_tool_calls and not str(turn.thinking or "").strip():
 ```python
 @dataclass
 class Persona:
-    name: str                      # 显示名称，如"工部侍郎"
+    name: str                      # 显示名称，如"Director"
     traits: str                    # 身份基调
     tone: str                      # 语气特点
     vocabulary: list[str]          # 特色词汇
@@ -199,7 +199,7 @@ class Persona:
 """
 
 # 注入后输出
-"你是工部侍郎（Director），大国工匠与总工程师..."
+"你是Director（Director），大国工匠与总工程师..."
 ```
 
 #### 引擎集成

@@ -15,7 +15,7 @@
 7. 所有文本 I/O 必须显式 UTF-8。
 
 参数真值（按当前 CLI）：
-1. `--chain-profile` 只支持 `court_strict`
+1. `--chain-profile` 只支持 `docs_wizard_strict`
 2. `--projection-transport` 只支持 `ws`
 3. 禁止使用 `--disable-chain-evidence-gate`
 4. `--non-llm-timeout-seconds` 统一传 `120`
@@ -32,7 +32,7 @@ python -m tests.agent_stress.runner \
   --execution-mode project_serial \
   --attempts-per-project 3 \
   --workspace-mode per_project \
-  --chain-profile court_strict \
+  --chain-profile docs_wizard_strict \
   --non-llm-timeout-seconds 120 \
   --projection-enabled \
   --projection-transport ws \
@@ -48,7 +48,7 @@ python -m tests.agent_stress.runner \
   --execution-mode project_serial \
   --attempts-per-project 3 \
   --workspace-mode per_project \
-  --chain-profile court_strict \
+  --chain-profile docs_wizard_strict \
   --non-llm-timeout-seconds 120 \
   --projection-enabled \
   --projection-transport ws \
@@ -62,7 +62,7 @@ python -m tests.agent_stress.runner \
 ```bash
 python -m polaris.delivery.cli.audit.audit_cli role-info --format human --workspace .
 ```
-要求：`Tech role=qa`、`Court role=门下侍中`；若本地审计则 `Provider type=ollama`。
+Requirements: `Tech role=qa`, `Court role=QA`; if local audit then `Provider type=ollama`.
 
 失败闭环（必须执行）：
 ```bash

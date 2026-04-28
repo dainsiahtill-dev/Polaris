@@ -2,7 +2,7 @@
 
 > **宪法 = 不可变量**
 >
-> 每个角色必须高度解耦。违反宪法即触发封驳。
+> 每个角色必须高度解耦。Violating the constitution triggers Rejection.
 
 ## 1. 宪法概述
 
@@ -17,15 +17,15 @@
 
 ## 2. 角色定义
 
-### 2.1 PM (尚书令)
+### 2.1 PM
 
 **核心职责**：
 - 解析需求 (`parse_requirements`)
 - 任务分解 (`decompose_tasks`)
 - 生成任务契约 (`generate_task_contract`)
-- 路由到工部尚书 (`route_to_chief_engineer`)
+- Route to Chief Engineer (`route_to_chief_engineer`)
 
-**绝对禁止**（违规即封驳）：
+**Absolutely Prohibited** (violation triggers Rejection):
 - 直接写代码 (`write_code`)
 - 修改源文件 (`modify_source_files`)
 - 执行 shell 命令 (`execute_shell_commands`)
@@ -38,7 +38,7 @@
 - 上游：QA（反馈）
 - 下游：ChiefEngineer, Policy
 
-### 2.2 ChiefEngineer (工部尚书)
+### 2.2 Chief Engineer
 
 **核心职责**：
 - 分析任务复杂度 (`analyze_task_complexity`)
@@ -59,7 +59,7 @@
 - 上游：PM
 - 下游：Director, Policy
 
-### 2.3 Director (工部侍郎)
+### 2.3 Director
 
 **核心职责**：
 - 实现代码 (`implement_code`)
@@ -81,13 +81,13 @@
 - 上游：ChiefEngineer, PM
 - 下游：QA, Policy
 
-### 2.4 QA (门下侍中)
+### 2.4 QA
 
 **核心职责**：
 - 审计代码质量 (`audit_code_quality`)
 - 验证需求满足 (`verify_requirements_met`)
 - 执行测试 (`execute_tests`)
-- 行使封驳权 (`issue_veto`)
+- Exercise veto/rejection authority (`issue_veto`)
 - 请求变更 (`request_changes`)
 - 提供反馈 (`provide_feedback`)
 
@@ -266,4 +266,4 @@ else:
 
 ---
 
-**警告**：违反宪法将触发封驳机制，严重违规会导致系统拒绝启动。
+**Warning**: Violating the constitution will trigger the Rejection mechanism; severe violations will cause the system to refuse to start.

@@ -1,26 +1,27 @@
-import importlib
-import sys
+from __future__ import annotations
+
 from pathlib import Path
 
+from polaris.delivery.http.routers.docs import _sync_plan_to_runtime
+from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
-def _load_docs_router_module():
-    repo_root = Path(__file__).resolve().parents[1]
-    backend_root = repo_root / "src" / "backend"
-    if str(backend_root) in sys.path:
-        sys.path.remove(str(backend_root))
-    sys.path.insert(0, str(backend_root))
-    return importlib.import_module("app.routers.docs")
+
+def test_plan_sync_no_plan_source_is_noop(tmp_path):
+    """When no plan source exists, _sync_plan_to_runtime should be a no-op."""
+    workspace = str(tmp_path)
+    cache_root = build_cache_root("", workspace)
+    _sync_plan_to_runtime(workspace, cache_root)
 
 
 def test_sync_plan_to_runtime_skips_when_source_missing(tmp_path):
-    docs_router = _load_docs_router_module()
+    """When plan source is missing, runtime plan should not be created."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    docs_router._sync_plan_to_runtime(str(workspace), "")
+    _sync_plan_to_runtime(str(workspace), "")
 
     runtime_plan = Path(
-        docs_router.resolve_artifact_path(
+        resolve_artifact_path(
             str(workspace),
             "",
             "runtime/contracts/plan.md",
@@ -30,17 +31,17 @@ def test_sync_plan_to_runtime_skips_when_source_missing(tmp_path):
 
 
 def test_sync_plan_to_runtime_copies_and_is_idempotent(tmp_path):
-    docs_router = _load_docs_router_module()
+    """Plan should be copied to runtime and idempotent across multiple calls."""
     workspace = tmp_path / "workspace"
     plan_src = workspace / "docs" / "product" / "plan.md"
     plan_src.parent.mkdir(parents=True, exist_ok=True)
     plan_src.write_text("# Plan\n- item A\n", encoding="utf-8")
 
-    docs_router._sync_plan_to_runtime(str(workspace), "")
-    docs_router._sync_plan_to_runtime(str(workspace), "")
+    _sync_plan_to_runtime(str(workspace), "")
+    _sync_plan_to_runtime(str(workspace), "")
 
     runtime_plan = Path(
-        docs_router.resolve_artifact_path(
+        resolve_artifact_path(
             str(workspace),
             "",
             "runtime/contracts/plan.md",

@@ -17,6 +17,8 @@ import logging
 import os
 import sys
 
+import asyncio
+
 from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import CEConsumer
 
 __frozen__ = True

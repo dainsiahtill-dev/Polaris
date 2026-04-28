@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:27.526829Z",
-  "source_hash": "149fe186cb765621",
+  "generated_at": "2026-04-28T08:34:41.474517Z",
+  "source_hash": "451cad5b68b793e9",
   "cell_id": "roles.adapters",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -78,6 +78,14 @@
         {
           "name": "_split_markdown_sections",
           "doc": ""
+        },
+        {
+          "name": "_perform_architecture_self_review",
+          "doc": "Phase 2.3: Architecture self-review against design pattern library."
+        },
+        {
+          "name": "_propagate_architect_constraints",
+          "doc": "Phase 2.3: Propagate architect constraints back to Director for execution."
         },
         {
           "name": "_collect_doc_quality_issues",
@@ -216,6 +224,14 @@
         {
           "name": "get_capabilities",
           "doc": ""
+        },
+        {
+          "name": "_select_execution_strategy",
+          "doc": "Phase 2.4: Select optimal execution strategy based on task characteristics."
+        },
+        {
+          "name": "_apply_intelligent_correction",
+          "doc": "Phase 2.4: Apply intelligent self-correction based on failure patterns."
         },
         {
           "name": "_get_sequential_config",
@@ -736,6 +752,14 @@
           "doc": ""
         },
         {
+          "name": "_analyze_directive_complexity",
+          "doc": "Analyze directive complexity to guide adaptive task decomposition."
+        },
+        {
+          "name": "_apply_meta_planning_hints",
+          "doc": "Apply meta-planning hints to the PM message to guide decomposition strategy."
+        },
+        {
           "name": "_normalize_projection_project_slug",
           "doc": ""
         },
@@ -890,6 +914,18 @@
         {
           "name": "_dedupe_list",
           "doc": ""
+        },
+        {
+          "name": "_verify_test_execution",
+          "doc": "Phase 2.5: Execute tests and verify they pass."
+        },
+        {
+          "name": "_check_semantic_equivalence",
+          "doc": "Phase 2.5: Check if new code is semantically equivalent to specification."
+        },
+        {
+          "name": "_detect_regressions",
+          "doc": "Phase 2.5: Detect regressions by comparing to known good baseline."
         }
       ]
     },
@@ -1642,6 +1678,126 @@
     },
     {
       "type": "class",
+      "name": "TestCoerceBoardTaskId",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_base_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_none_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_string_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_plain_integer",
+          "doc": ""
+        },
+        {
+          "name": "test_task_prefix",
+          "doc": ""
+        },
+        {
+          "name": "test_non_matching_string_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveKernelValidationEnabled",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_base_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_default_false",
+          "doc": ""
+        },
+        {
+          "name": "test_context_override_true",
+          "doc": ""
+        },
+        {
+          "name": "test_context_override_false",
+          "doc": ""
+        },
+        {
+          "name": "test_env_override_true",
+          "doc": ""
+        },
+        {
+          "name": "test_env_override_false",
+          "doc": ""
+        },
+        {
+          "name": "test_context_takes_precedence_over_env",
+          "doc": ""
+        },
+        {
+          "name": "test_different_roles",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveKernelRetryBudget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_base_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_default_director",
+          "doc": ""
+        },
+        {
+          "name": "test_env_override",
+          "doc": ""
+        },
+        {
+          "name": "test_env_clamped_max",
+          "doc": ""
+        },
+        {
+          "name": "test_env_clamped_min",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_env_uses_default",
+          "doc": ""
+        },
+        {
+          "name": "test_different_roles",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStatusToTraceType",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_base_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_start_variants",
+          "doc": ""
+        },
+        {
+          "name": "test_error_variants",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_variants",
+          "doc": ""
+        },
+        {
+          "name": "test_default_step",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "NotReadyError",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py",
@@ -1725,6 +1881,192 @@
       "name": "test_director_graceful_fallback_when_unavailable",
       "description": "When DirectorAdapter is unavailable, 'director' must not appear in supported roles silently.",
       "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSelectExecutionStrategy",
+      "description": "_select_execution_strategy is a pure function of directive + task + context.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_architect_concern_triggers_conservative",
+          "doc": ""
+        },
+        {
+          "name": "test_large_scope_and_complex_directive_triggers_incremental",
+          "doc": ""
+        },
+        {
+          "name": "test_refactor_triggers_conservative",
+          "doc": ""
+        },
+        {
+          "name": "test_verify_triggers_focused",
+          "doc": ""
+        },
+        {
+          "name": "test_medium_scope_and_complex_triggers_aggressive",
+          "doc": ""
+        },
+        {
+          "name": "test_simple_directive_returns_default",
+          "doc": ""
+        },
+        {
+          "name": "test_refactor_zh_triggers_conservative",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplyIntelligentCorrection",
+      "description": "_apply_intelligent_correction analyzes failure patterns.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_success_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_timeout_pattern_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_syntax_error_pattern_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_dependency_pattern_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_permission_pattern_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_single_failure_no_hint",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildDirectorMessage",
+      "description": "_build_director_message constructs prompt text deterministically.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_includes_subject",
+          "doc": ""
+        },
+        {
+          "name": "test_sanitizes_description",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_description_omitted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildMaterializedMetadata",
+      "description": "_build_materialized_metadata is a pure dict transformation.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_basic_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_input_metadata_merged",
+          "doc": ""
+        },
+        {
+          "name": "test_none_input_data",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveExecutionBackendRequest",
+      "description": "_resolve_execution_backend_request delegates to resolve_director_execution_backend.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_defaults_to_code_edit",
+          "doc": ""
+        },
+        {
+          "name": "test_projection_hint_in_request",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPersistExecutionBackendMetadata",
+      "description": "_persist_execution_backend_metadata delegates to _update_board_task.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_noop_when_task_id_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_calls_update_board_task",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorAdapterIdentity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_capabilities",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionBackendPure",
+      "description": "Tests for the pure helper functions in director_execution_backend.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_normalize_backend",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_project_slug",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_bool",
+          "doc": ""
+        },
+        {
+          "name": "test_request_to_task_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_adapter",
+      "description": "Create a DirectorAdapter with mocked heavy dependencies.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
     },
     {
       "type": "class",
@@ -1818,6 +2160,1092 @@
     },
     {
       "type": "class",
+      "name": "TestNormalizeText",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_execution_backend_pure.py",
+      "methods": [
+        {
+          "name": "test_string",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_stripped",
+          "doc": ""
+        },
+        {
+          "name": "test_none_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_int_converted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeBool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_execution_backend_pure.py",
+      "methods": [
+        {
+          "name": "test_bool_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_none_returns_default",
+          "doc": ""
+        },
+        {
+          "name": "test_string_true_values",
+          "doc": ""
+        },
+        {
+          "name": "test_string_false_values",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_returns_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeBackend",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_execution_backend_pure.py",
+      "methods": [
+        {
+          "name": "test_default_backend",
+          "doc": ""
+        },
+        {
+          "name": "test_supported_backends",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_backend_passed_through",
+          "doc": ""
+        },
+        {
+          "name": "test_case_normalized",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeProjectSlug",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_execution_backend_pure.py",
+      "methods": [
+        {
+          "name": "test_basic_slug",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_returns_default",
+          "doc": ""
+        },
+        {
+          "name": "test_special_chars_replaced",
+          "doc": ""
+        },
+        {
+          "name": "test_none_returns_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMappingPayload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_execution_backend_pure.py",
+      "methods": [
+        {
+          "name": "test_dict_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_non_dict_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_keys_converted_to_str",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorExecutionBackendRequest",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_execution_backend_pure.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_projection_backend",
+          "doc": ""
+        },
+        {
+          "name": "test_unsupported_backend",
+          "doc": ""
+        },
+        {
+          "name": "test_to_task_metadata_code_edit",
+          "doc": ""
+        },
+        {
+          "name": "test_to_task_metadata_projection",
+          "doc": ""
+        },
+        {
+          "name": "test_to_task_metadata_with_extra_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveDirectorExecutionBackend",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_execution_backend_pure.py",
+      "methods": [
+        {
+          "name": "test_all_none_returns_default",
+          "doc": ""
+        },
+        {
+          "name": "test_context_backend",
+          "doc": ""
+        },
+        {
+          "name": "test_task_metadata_backend",
+          "doc": ""
+        },
+        {
+          "name": "test_input_data_backend",
+          "doc": ""
+        },
+        {
+          "name": "test_last_match_wins_precedence",
+          "doc": ""
+        },
+        {
+          "name": "test_context_wins_when_task_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_projection_fields_from_input",
+          "doc": ""
+        },
+        {
+          "name": "test_projection_fields_from_task_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_combined_projection_merged",
+          "doc": ""
+        },
+        {
+          "name": "test_default_project_slug_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_project_slug_uses_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSeqParseBool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_bool_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_string_true_values",
+          "doc": ""
+        },
+        {
+          "name": "test_string_false_values",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_returns_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSeqResolveBool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_settings_takes_precedence",
+          "doc": ""
+        },
+        {
+          "name": "test_env_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_default_fallback",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSeqResolveInt",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_settings_value",
+          "doc": ""
+        },
+        {
+          "name": "test_env_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_minimum_enforced",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_env_uses_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSeqResolveStr",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_settings_value",
+          "doc": ""
+        },
+        {
+          "name": "test_env_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_settings_ignored",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIsProjectCodeFile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_known_extensions",
+          "doc": ""
+        },
+        {
+          "name": "test_case_insensitive",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_extension",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPreviewContentForError",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_short_content_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_truncation",
+          "doc": ""
+        },
+        {
+          "name": "test_none_treated_as_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSummarizeToolsForDebug",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_basic_summary",
+          "doc": ""
+        },
+        {
+          "name": "test_skips_non_dict_items",
+          "doc": ""
+        },
+        {
+          "name": "test_limits_to_12",
+          "doc": ""
+        },
+        {
+          "name": "test_source_tool_extracted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIsFormatValidationFailure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_returns_false",
+          "doc": ""
+        },
+        {
+          "name": "test_chinese_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_english_hint",
+          "doc": ""
+        },
+        {
+          "name": "test_unrelated_error",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIsTimeoutFailure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_returns_false",
+          "doc": ""
+        },
+        {
+          "name": "test_timeout_variants",
+          "doc": ""
+        },
+        {
+          "name": "test_unrelated_error",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHasSuccessfulWriteTool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_returns_false",
+          "doc": ""
+        },
+        {
+          "name": "test_successful_write",
+          "doc": ""
+        },
+        {
+          "name": "test_unsuccessful_write",
+          "doc": ""
+        },
+        {
+          "name": "test_non_write_tool",
+          "doc": ""
+        },
+        {
+          "name": "test_skips_non_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIsEmptyRoleResponse",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_none_is_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_non_dict_is_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_content_present",
+          "doc": ""
+        },
+        {
+          "name": "test_error_present",
+          "doc": ""
+        },
+        {
+          "name": "test_tool_calls_in_raw",
+          "doc": ""
+        },
+        {
+          "name": "test_tool_calls_top_level",
+          "doc": ""
+        },
+        {
+          "name": "test_truly_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLooksLikeProtocolPatchResponse",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_returns_false",
+          "doc": ""
+        },
+        {
+          "name": "test_patch_file_keyword",
+          "doc": ""
+        },
+        {
+          "name": "test_delete_file_keyword",
+          "doc": ""
+        },
+        {
+          "name": "test_search_replace_markers",
+          "doc": ""
+        },
+        {
+          "name": "test_search_replace_labels",
+          "doc": ""
+        },
+        {
+          "name": "test_file_create_pattern",
+          "doc": ""
+        },
+        {
+          "name": "test_plain_text",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractKernelToolResults",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_from_tool_results",
+          "doc": ""
+        },
+        {
+          "name": "test_from_tool_calls_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_from_raw_response_nested",
+          "doc": ""
+        },
+        {
+          "name": "test_skips_non_dict_items",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_tool_name_fallback",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Obj",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Obj",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Obj",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Obj",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestCoerceTaskRecord",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_dict_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_method",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_exception_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_attribute_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_attribute_ignored",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskboardSnapshotBrief",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_helpers_pure.py",
+      "methods": [
+        {
+          "name": "test_non_dict_returns_unavailable",
+          "doc": ""
+        },
+        {
+          "name": "test_all_zeros",
+          "doc": ""
+        },
+        {
+          "name": "test_mixed_counts",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_counts",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveLlmCallTimeoutSeconds",
+      "description": "resolve_llm_call_timeout_seconds is a pure function of context + env.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py",
+      "methods": [
+        {
+          "name": "test_default_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_context_value_used",
+          "doc": ""
+        },
+        {
+          "name": "test_context_string_coerced",
+          "doc": ""
+        },
+        {
+          "name": "test_context_invalid_ignored",
+          "doc": ""
+        },
+        {
+          "name": "test_context_zero_ignored",
+          "doc": ""
+        },
+        {
+          "name": "test_context_negative_ignored",
+          "doc": ""
+        },
+        {
+          "name": "test_env_override",
+          "doc": ""
+        },
+        {
+          "name": "test_env_fallback_timeout_seconds",
+          "doc": ""
+        },
+        {
+          "name": "test_context_takes_precedence_over_env",
+          "doc": ""
+        },
+        {
+          "name": "test_clamped_to_maximum",
+          "doc": ""
+        },
+        {
+          "name": "test_clamped_to_minimum",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeToolArguments",
+      "description": "_normalize_tool_arguments is a pure static function.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py",
+      "methods": [
+        {
+          "name": "test_dict_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_list_with_single_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_list_multiple_items_error",
+          "doc": ""
+        },
+        {
+          "name": "test_string_error",
+          "doc": ""
+        },
+        {
+          "name": "test_none_error",
+          "doc": ""
+        },
+        {
+          "name": "test_int_error",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractMarkdownFileBlocks",
+      "description": "_extract_markdown_file_blocks is a pure static function.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_text",
+          "doc": ""
+        },
+        {
+          "name": "test_none_text",
+          "doc": ""
+        },
+        {
+          "name": "test_basic_code_block",
+          "doc": ""
+        },
+        {
+          "name": "test_multiple_code_blocks",
+          "doc": ""
+        },
+        {
+          "name": "test_heading_prefix",
+          "doc": ""
+        },
+        {
+          "name": "test_list_prefix",
+          "doc": ""
+        },
+        {
+          "name": "test_no_language_specifier",
+          "doc": ""
+        },
+        {
+          "name": "test_skips_protocol_like_content",
+          "doc": ""
+        },
+        {
+          "name": "test_no_match_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_file_path_with_various_extensions",
+          "doc": ""
+        },
+        {
+          "name": "test_multiline_content_preserved",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeriveQaState",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_tracking_pure.py",
+      "methods": [
+        {
+          "name": "test_no_qa_required_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_qa_passed_true",
+          "doc": ""
+        },
+        {
+          "name": "test_qa_passed_false_completed",
+          "doc": ""
+        },
+        {
+          "name": "test_qa_passed_false_in_progress",
+          "doc": ""
+        },
+        {
+          "name": "test_qa_passed_none_completed",
+          "doc": ""
+        },
+        {
+          "name": "test_qa_passed_none_in_progress",
+          "doc": ""
+        },
+        {
+          "name": "test_metadata_rework_requested",
+          "doc": ""
+        },
+        {
+          "name": "test_failed_and_exhausted",
+          "doc": ""
+        },
+        {
+          "name": "test_adapter_result_takes_precedence_over_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSanitizeTaskDescription",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_tracking_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_crlf_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_heading_stripped",
+          "doc": ""
+        },
+        {
+          "name": "test_list_prefix_stripped",
+          "doc": ""
+        },
+        {
+          "name": "test_code_blocks_skipped",
+          "doc": ""
+        },
+        {
+          "name": "test_truncation",
+          "doc": ""
+        },
+        {
+          "name": "test_line_limit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildTaskboardTaskRef",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_tracking_pure.py",
+      "methods": [
+        {
+          "name": "test_non_dict_task_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_basic_fields",
+          "doc": ""
+        },
+        {
+          "name": "_get_task",
+          "doc": ""
+        },
+        {
+          "name": "test_metadata_fallback",
+          "doc": ""
+        },
+        {
+          "name": "_get_task",
+          "doc": ""
+        },
+        {
+          "name": "test_runtime_execution_session_id",
+          "doc": ""
+        },
+        {
+          "name": "_get_task",
+          "doc": ""
+        },
+        {
+          "name": "test_title_fallback",
+          "doc": ""
+        },
+        {
+          "name": "_get_task",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractOutputRequirements",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_utils_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_task_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_subject_only",
+          "doc": ""
+        },
+        {
+          "name": "test_min_files_from_subject",
+          "doc": ""
+        },
+        {
+          "name": "test_min_lines_from_description",
+          "doc": ""
+        },
+        {
+          "name": "test_metadata_goal",
+          "doc": ""
+        },
+        {
+          "name": "test_steps_included",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_numbers_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_zero_clamped_to_one",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIsOutputSparse",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_utils_pure.py",
+      "methods": [
+        {
+          "name": "test_sufficient_output",
+          "doc": ""
+        },
+        {
+          "name": "test_insufficient_files",
+          "doc": ""
+        },
+        {
+          "name": "test_insufficient_lines",
+          "doc": ""
+        },
+        {
+          "name": "test_zero_min_values_clamped",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractDomainTokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_utils_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_task",
+          "doc": ""
+        },
+        {
+          "name": "test_filters_stopwords",
+          "doc": ""
+        },
+        {
+          "name": "test_extracts_unique_tokens",
+          "doc": ""
+        },
+        {
+          "name": "test_limits_to_10",
+          "doc": ""
+        },
+        {
+          "name": "test_short_tokens_filtered",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSummarizeToolResults",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_utils_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_basic_summary",
+          "doc": ""
+        },
+        {
+          "name": "test_error_truncation",
+          "doc": ""
+        },
+        {
+          "name": "test_result_value_truncation",
+          "doc": ""
+        },
+        {
+          "name": "test_limits_to_4_items",
+          "doc": ""
+        },
+        {
+          "name": "test_skips_non_dict_items",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDefaultProjectionSlug",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_utils_pure.py",
+      "methods": [
+        {
+          "name": "test_from_subject",
+          "doc": ""
+        },
+        {
+          "name": "test_from_title",
+          "doc": ""
+        },
+        {
+          "name": "test_from_input_data",
+          "doc": ""
+        },
+        {
+          "name": "test_from_task_id_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_length_limit",
+          "doc": ""
+        },
+        {
+          "name": "test_special_chars_replaced",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestComposeProjectionRequirement",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_state_utils_pure.py",
+      "methods": [
+        {
+          "name": "test_input_data_projection_requirement",
+          "doc": ""
+        },
+        {
+          "name": "test_input_data_requirement_delta",
+          "doc": ""
+        },
+        {
+          "name": "test_metadata_projection_requirement",
+          "doc": ""
+        },
+        {
+          "name": "test_goal_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_description_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_subject_fallback",
+          "doc": ""
+        },
+        {
+          "name": "test_completely_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestAdapterFactoryCreation",
       "description": "Tests for adapter factory creation and registration.",
       "defined_in": "polaris/cells/roles/adapters/tests/test_factory_integration.py",
@@ -1907,6 +3335,845 @@
           "doc": "Test adapter build_env respects overrides."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildPmMessage",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_includes_directive",
+          "doc": ""
+        },
+        {
+          "name": "test_includes_existing_tasks",
+          "doc": ""
+        },
+        {
+          "name": "test_meta_planning_injection",
+          "doc": ""
+        },
+        {
+          "name": "test_projection_hint_injection",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildPmRetryMessage",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_includes_quality_issues",
+          "doc": ""
+        },
+        {
+          "name": "test_no_critical_issues_fallback",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractJsonPayload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_plain_json",
+          "doc": ""
+        },
+        {
+          "name": "test_fenced_json",
+          "doc": ""
+        },
+        {
+          "name": "test_embedded_json",
+          "doc": ""
+        },
+        {
+          "name": "test_python_literal",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractTasksFromPayload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_list_of_dicts",
+          "doc": ""
+        },
+        {
+          "name": "test_dict_with_tasks_key",
+          "doc": ""
+        },
+        {
+          "name": "test_nested_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_mapped_tasks",
+          "doc": ""
+        },
+        {
+          "name": "test_none_returns_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractTasksFromSections",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_heading_and_keys",
+          "doc": ""
+        },
+        {
+          "name": "test_bullet_continuation",
+          "doc": ""
+        },
+        {
+          "name": "test_chinese_headings",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractTasksFromBullets",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_simple_bullets",
+          "doc": ""
+        },
+        {
+          "name": "test_numbered_list",
+          "doc": ""
+        },
+        {
+          "name": "test_with_description",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeTaskContract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_basic_normalization",
+          "doc": ""
+        },
+        {
+          "name": "test_title_without_action_marker_gets_prefix",
+          "doc": ""
+        },
+        {
+          "name": "test_infers_scope_from_title",
+          "doc": ""
+        },
+        {
+          "name": "test_projection_metadata_merged",
+          "doc": ""
+        },
+        {
+          "name": "test_execution_backend_in_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeList",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_string_split",
+          "doc": ""
+        },
+        {
+          "name": "test_list_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_none_returns_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestInferScopeFromTitle",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_extracts_keyword",
+          "doc": ""
+        },
+        {
+          "name": "test_fallback_when_no_keywords",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeriveDomainToken",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_from_workspace_name",
+          "doc": ""
+        },
+        {
+          "name": "test_from_directive_keywords",
+          "doc": ""
+        },
+        {
+          "name": "test_from_directive_text",
+          "doc": ""
+        },
+        {
+          "name": "test_fallback_project",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractDomainKeywords",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_limit_respected",
+          "doc": ""
+        },
+        {
+          "name": "test_keyword_hint_parsed",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAnalyzeDirectiveComplexity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_low_complexity",
+          "doc": ""
+        },
+        {
+          "name": "test_high_complexity",
+          "doc": ""
+        },
+        {
+          "name": "test_medium_complexity",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplyMetaPlanningHints",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_no_analysis_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_injects_before_tasks_section",
+          "doc": ""
+        },
+        {
+          "name": "test_no_tasks_section_returns_unchanged",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeProjectionProjectSlug",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_uses_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractProjectionContractHint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_non_projection_backend_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_projection_backend_extracts_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_scenario_id_returns_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplyProjectionContractHint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_no_hint_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_first_task_gets_projection_generate",
+          "doc": ""
+        },
+        {
+          "name": "test_preserves_existing_projection_generate",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildProjectionHintContracts",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_returns_three_tasks",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSynthesizeTaskContractsFromDirective",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_without_hint_returns_three_tasks",
+          "doc": ""
+        },
+        {
+          "name": "test_with_hint_uses_projection",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCanonicalText",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_strips_noise",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildTaskIdentitySignature",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_combines_title_and_goal",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPickPreferredTaskId",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_prefers_in_progress",
+          "doc": ""
+        },
+        {
+          "name": "test_prefers_higher_id_on_same_status",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFindExistingTaskMatch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_signature_match",
+          "doc": ""
+        },
+        {
+          "name": "test_title_match",
+          "doc": ""
+        },
+        {
+          "name": "test_fuzzy_match_above_threshold",
+          "doc": ""
+        },
+        {
+          "name": "test_no_match_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPmAdapterIdentity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_capabilities",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py"
+    },
+    {
+      "type": "class",
+      "name": "Obj",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Obj",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "Obj",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCoerceTaskRecord",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_dict_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_object_with_to_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_object_with_attributes",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_exception_fallback",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSafeInt",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_numeric",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_returns_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveReworkRetryBudget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_default",
+          "doc": ""
+        },
+        {
+          "name": "test_env_override",
+          "doc": ""
+        },
+        {
+          "name": "test_env_clamped",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildQaMessage",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_includes_review_type_and_target",
+          "doc": ""
+        },
+        {
+          "name": "test_includes_evidence",
+          "doc": ""
+        },
+        {
+          "name": "test_no_evidence_fallback",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestParseReviewResult",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_json_payload",
+          "doc": ""
+        },
+        {
+          "name": "test_fallback_regex",
+          "doc": ""
+        },
+        {
+          "name": "test_unparseable",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMergeReviewResult",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_llm_passed_inherits",
+          "doc": ""
+        },
+        {
+          "name": "test_llm_unparsed_adds_warning",
+          "doc": ""
+        },
+        {
+          "name": "test_dedupe",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFinalizeReviewResult",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_pass_when_no_issues",
+          "doc": ""
+        },
+        {
+          "name": "test_fail_on_critical",
+          "doc": ""
+        },
+        {
+          "name": "test_fail_on_verdict_fail",
+          "doc": ""
+        },
+        {
+          "name": "test_score_computed_correctly",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractJsonPayload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_plain_json",
+          "doc": ""
+        },
+        {
+          "name": "test_fenced_json",
+          "doc": ""
+        },
+        {
+          "name": "test_with_comments",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_returns_none",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestStripJsonLineComments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_removes_comments",
+          "doc": ""
+        },
+        {
+          "name": "test_preserves_url_in_string",
+          "doc": ""
+        },
+        {
+          "name": "test_no_comment_unchanged",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeReviewPayload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_findings_critical",
+          "doc": ""
+        },
+        {
+          "name": "test_summary_in_evidence",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractDomainTokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_filters_stopwords",
+          "doc": ""
+        },
+        {
+          "name": "test_extracts_unique",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCoerceInt",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_numeric",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_returns_zero",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCoerceList",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_list_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_string_wrap",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_returns_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDedupeList",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_removes_duplicates",
+          "doc": ""
+        },
+        {
+          "name": "test_non_list_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_strips_and_skips_empty",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCheckSemanticEquivalence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_empty_returns_false",
+          "doc": ""
+        },
+        {
+          "name": "test_sufficient_keyword_coverage",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_return_detected",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDetectRegressions",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_no_baseline",
+          "doc": ""
+        },
+        {
+          "name": "test_significant_reduction",
+          "doc": ""
+        },
+        {
+          "name": "test_api_reduction",
+          "doc": ""
+        },
+        {
+          "name": "test_stable",
+          "doc": ""
+        },
+        {
+          "name": "test_improvement",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQaAdapterIdentity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_capabilities",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_adapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

@@ -82,7 +82,7 @@ run_once()                                              [orchestration_engine.py
   └─ finalize_iteration()                                [归档 + 状态持久化]
 ```
 
-### 0-A.3 Shangshuling（尚书令）本地注册表
+### 0-A.3 Shangshuling（PM）本地注册表
 
 **文件**: `polaris/cells/orchestration/pm_dispatch/internal/shangshuling_registry.py`
 **存储**: `runtime/state/dispatch/shangshuling.registry.json`
@@ -637,7 +637,7 @@ def _safe_trace_link(
 
 ## 4) 角色职责强化
 
-### 4.1 PM 尚书令 — 文档版本化需求管理
+### 4.1 PM PM — 文档版本化需求管理
 
 **新增职责**:
 1. 每个需求文档附带 `doc_id` + `doc_version`，存入 `runtime/docs/`
@@ -715,7 +715,7 @@ class BlueprintPersistence:
 
 **与 ADR 的关系**: 这是 ADR 机制的 P0 前置依赖，必须先于或同步于 `adr_store.py` 实现。
 
-### 4.2 Chief Engineer 工部尚书 — 蓝图 ADR 增量进化
+### 4.2 Chief Engineer Chief Engineer — 蓝图 ADR 增量进化
 
 **新增职责**:
 1. 每次输出 `construction_plan` 时分配 `blueprint_id`
@@ -1034,7 +1034,7 @@ class ADRStore:
 }
 ```
 
-### 4.3 Director 工部侍郎 — 蓝图驱动执行
+### 4.3 Director Director — 蓝图驱动执行
 
 **新增职责**:
 1. 认领任务时校验 `blueprint_id` 存在性
@@ -1061,7 +1061,7 @@ class ADRStore:
 
 **不新增模块**: 在 `director_role.py` 的消息构建中加入 `blueprint_id` 约束提示。
 
-### 4.4 QA 门下侍中 — 追溯验证
+### 4.4 QA QA — 追溯验证
 
 **新增职责**:
 1. 验证变更是否 100% 覆盖对应蓝图的 `construction_steps`
@@ -2062,7 +2062,7 @@ chief_engineer:
 ### 13.5 CE 作为技术总监的交互模型
 
 ```
-ChiefEngineer (工部尚书 / 技术总监)
+ChiefEngineer (Chief Engineer / 技术总监)
   │
   ├─ 输入: TaskContract[] (从 Task Market 认领)
   │

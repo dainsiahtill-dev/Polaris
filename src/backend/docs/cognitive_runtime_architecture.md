@@ -389,7 +389,7 @@
 
 ### 4.4 与 `director.execution`
 
-`director.execution` 仍是工部执行工作流。
+`director.execution` 仍是Engineering执行工作流。
 
 关系裁决：
 

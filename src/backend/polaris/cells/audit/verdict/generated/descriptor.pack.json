@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.743205Z",
-  "source_hash": "b12e1387c7dcc84c",
+  "generated_at": "2026-04-28T08:34:48.579637Z",
+  "source_hash": "ebeeafe6f83b0866",
   "cell_id": "audit.verdict",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -397,7 +397,7 @@
     {
       "type": "class",
       "name": "IndependentAuditService",
-      "description": "Independent audit service providing Chancellery (门下省) review.",
+      "description": "Independent audit service providing QA review.",
       "defined_in": "polaris/cells/audit/verdict/internal/independent_audit_service.py",
       "methods": [
         {
@@ -540,6 +540,522 @@
       "name": "get_review_gate",
       "description": "返回全局单例 ReviewGate 实例。",
       "defined_in": "polaris/cells/audit/verdict/internal/review_gate.py"
+    },
+    {
+      "type": "class",
+      "name": "TestArtifactRegistry",
+      "description": "Artifact registry tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_artifact_service.py",
+      "methods": [
+        {
+          "name": "test_all_keys_have_paths",
+          "doc": ""
+        },
+        {
+          "name": "test_legacy_key_mapping_resolves",
+          "doc": ""
+        },
+        {
+          "name": "test_legacy_path_aliases",
+          "doc": ""
+        },
+        {
+          "name": "test_list_artifact_keys_sorted",
+          "doc": ""
+        },
+        {
+          "name": "test_get_artifact_path_valid_key",
+          "doc": ""
+        },
+        {
+          "name": "test_get_artifact_path_legacy_key",
+          "doc": ""
+        },
+        {
+          "name": "test_get_artifact_path_invalid_key_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_get_artifact_key_valid_path",
+          "doc": ""
+        },
+        {
+          "name": "test_get_artifact_key_unknown_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPolicyMetadata",
+      "description": "Policy metadata tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_artifact_service.py",
+      "methods": [
+        {
+          "name": "test_get_artifact_policy_metadata_valid",
+          "doc": ""
+        },
+        {
+          "name": "test_get_artifact_policy_metadata_legacy_key",
+          "doc": ""
+        },
+        {
+          "name": "test_get_artifact_policy_metadata_unknown_key",
+          "doc": ""
+        },
+        {
+          "name": "test_should_compress_artifact_compress_true",
+          "doc": ""
+        },
+        {
+          "name": "test_should_compress_artifact_compress_false",
+          "doc": ""
+        },
+        {
+          "name": "test_should_archive_artifact_archive_true",
+          "doc": ""
+        },
+        {
+          "name": "test_should_archive_artifact_archive_false",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestArtifactService",
+      "description": "ArtifactService tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_artifact_service.py",
+      "methods": [
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_init_with_relative_path",
+          "doc": ""
+        },
+        {
+          "name": "test_init_with_absolute_path",
+          "doc": ""
+        },
+        {
+          "name": "test_init_with_cache_root",
+          "doc": ""
+        },
+        {
+          "name": "test_get_path",
+          "doc": ""
+        },
+        {
+          "name": "test_exists_false_for_nonexistent",
+          "doc": ""
+        },
+        {
+          "name": "test_exists_true_after_write",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_plan",
+          "doc": ""
+        },
+        {
+          "name": "test_read_nonexistent_plan_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_gap_report",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_task_contract",
+          "doc": ""
+        },
+        {
+          "name": "test_read_nonexistent_task_contract_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_pm_report",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_pm_state",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_director_result",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_director_status",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_director_runlog",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_qa_review",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_last_state",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_engine_status",
+          "doc": ""
+        },
+        {
+          "name": "test_control_flag_pm_stop",
+          "doc": ""
+        },
+        {
+          "name": "test_control_flag_director_stop",
+          "doc": ""
+        },
+        {
+          "name": "test_control_flag_pause",
+          "doc": ""
+        },
+        {
+          "name": "test_clear_flag_when_not_set",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_agents_draft",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_agents_feedback",
+          "doc": ""
+        },
+        {
+          "name": "test_write_and_read_runtime_events",
+          "doc": ""
+        },
+        {
+          "name": "test_read_runtime_events_with_limit",
+          "doc": ""
+        },
+        {
+          "name": "test_read_runtime_events_nonexistent_returns_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_get_runtime_events_path",
+          "doc": ""
+        },
+        {
+          "name": "test_get_pm_events_path",
+          "doc": ""
+        },
+        {
+          "name": "test_get_dialogue_transcript_path",
+          "doc": ""
+        },
+        {
+          "name": "test_get_pm_llm_events_path",
+          "doc": ""
+        },
+        {
+          "name": "test_get_director_llm_events_path",
+          "doc": ""
+        },
+        {
+          "name": "test_generic_write_text_and_read",
+          "doc": ""
+        },
+        {
+          "name": "test_generic_write_json_and_read",
+          "doc": ""
+        },
+        {
+          "name": "test_read_json_invalid_key_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateArtifactService",
+      "description": "Factory function tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_artifact_service.py",
+      "methods": [
+        {
+          "name": "test_create_with_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_cache_root",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMultipleServiceInstances",
+      "description": "Test that multiple instances are isolated.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_artifact_service.py",
+      "methods": [
+        {
+          "name": "test_instances_are_isolated",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAuditVerdict",
+      "description": "AuditVerdict dataclass tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_independent_audit_service.py",
+      "methods": [
+        {
+          "name": "test_is_pass_true_when_accepted_is_true",
+          "doc": ""
+        },
+        {
+          "name": "test_is_fail_true_when_accepted_is_false",
+          "doc": ""
+        },
+        {
+          "name": "test_is_inconclusive_true_when_accepted_is_none",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_contains_all_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_raw_output_preview_truncated",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAuditContext",
+      "description": "AuditContext dataclass tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_independent_audit_service.py",
+      "methods": [
+        {
+          "name": "test_basic_context_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_full_context_creation",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestIndependentAuditService",
+      "description": "IndependentAuditService tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_independent_audit_service.py",
+      "methods": [
+        {
+          "name": "failing_caller",
+          "doc": ""
+        },
+        {
+          "name": "pass_caller",
+          "doc": ""
+        },
+        {
+          "name": "fail_caller",
+          "doc": ""
+        },
+        {
+          "name": "md_caller",
+          "doc": ""
+        },
+        {
+          "name": "retry_caller",
+          "doc": ""
+        },
+        {
+          "name": "simple_caller",
+          "doc": ""
+        },
+        {
+          "name": "test_get_stats_empty",
+          "doc": ""
+        },
+        {
+          "name": "pass_caller",
+          "doc": ""
+        },
+        {
+          "name": "fail_caller",
+          "doc": ""
+        },
+        {
+          "name": "inconclusive_caller",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_verdict_empty_output",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_verdict_alternate_true_values",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_verdict_alternate_false_values",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_verdict_fallback_to_text_search",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_verdict_findings_normalized_from_string",
+          "doc": ""
+        },
+        {
+          "name": "test_parse_verdict_findings_filtered",
+          "doc": ""
+        },
+        {
+          "name": "test_mentions_missing_evidence_true",
+          "doc": ""
+        },
+        {
+          "name": "test_mentions_missing_evidence_false_no_evidence",
+          "doc": ""
+        },
+        {
+          "name": "test_mentions_missing_evidence_false_no_marker",
+          "doc": ""
+        },
+        {
+          "name": "test_defect_ticket_extracted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReviewGate",
+      "description": "ReviewGate integration tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_review_gate.py",
+      "methods": [
+        {
+          "name": "test_create_code_change",
+          "doc": ""
+        },
+        {
+          "name": "test_request_review_updates_change_status",
+          "doc": ""
+        },
+        {
+          "name": "test_request_review_nonexistent_change_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_approve_review",
+          "doc": ""
+        },
+        {
+          "name": "test_reject_review",
+          "doc": ""
+        },
+        {
+          "name": "test_add_comments",
+          "doc": ""
+        },
+        {
+          "name": "test_can_complete_task_no_changes",
+          "doc": ""
+        },
+        {
+          "name": "test_can_complete_task_with_approved_change",
+          "doc": ""
+        },
+        {
+          "name": "test_can_complete_task_with_pending_change",
+          "doc": ""
+        },
+        {
+          "name": "test_can_complete_task_with_rejected_change",
+          "doc": ""
+        },
+        {
+          "name": "test_get_task_review_status",
+          "doc": ""
+        },
+        {
+          "name": "test_get_task_review_status_nonexistent",
+          "doc": ""
+        },
+        {
+          "name": "test_get_reviews_by_status",
+          "doc": ""
+        },
+        {
+          "name": "test_get_pending_reviews",
+          "doc": ""
+        },
+        {
+          "name": "test_get_all_changes",
+          "doc": ""
+        },
+        {
+          "name": "test_get_all_reviews",
+          "doc": ""
+        },
+        {
+          "name": "test_create_review_gate_factory",
+          "doc": ""
+        },
+        {
+          "name": "test_get_review_gate_singleton",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCodeChange",
+      "description": "CodeChange dataclass tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_review_gate.py",
+      "methods": [
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReview",
+      "description": "Review dataclass tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_review_gate.py",
+      "methods": [
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReviewEventType",
+      "description": "ReviewEventType enum tests.",
+      "defined_in": "polaris/cells/audit/verdict/internal/tests/test_review_gate.py",
+      "methods": [
+        {
+          "name": "test_all_event_types_defined",
+          "doc": ""
+        },
+        {
+          "name": "test_event_types_are_auto",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",

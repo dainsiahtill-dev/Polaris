@@ -13,9 +13,18 @@ from polaris.kernelone.llm.engine.resilience import (
     CircuitBreakerOpenError,
     CircuitState,
     calculate_backoff_with_jitter,
+    get_circuit_breaker_registry,
     is_retryable,
     retry_with_jitter,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_circuit_breaker_registry():
+    """Clear the global registry before each test to prevent state leaks."""
+    registry = get_circuit_breaker_registry()
+    registry.clear()
+    yield
 
 
 class TestCircuitState:

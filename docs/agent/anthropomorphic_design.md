@@ -6,9 +6,9 @@ This document outlines the integration of cognitive architecture concepts from _
 
 拟人化核心不是“演出效果”，而是无人值守稳定性的工程机制：
 
-- **角色可协商**：当 Director 卡住时，PM/工部尚书/QA 可以基于证据链对同一任务进行协商，而不是让流水线僵死在单一路径。
+- **Negotiable Roles**: When Director is stuck, PM/Chief Engineer/QA can negotiate on the same task based on evidence chain, rather than letting the pipeline freeze on a single path.
 - **自我修复闭环**：通过角色对话把失败转成可执行动作（补文件、缩作用域、调整施工图），减少“直接 FAIL 终止”频率。
-- **弱模型可用化**：Director 即使能力较弱，也可按工部尚书施工图执行；系统把“模型能力差异”转成“流程可治理”。
+- **弱模型可用化**：Director 即使能力较弱，也可按Chief Engineer施工图执行；系统把“模型能力差异”转成“流程可治理”。
 - **可追溯可回放**：所有协商与决策仍落在 append-only 证据流中（`events.jsonl` + `DIALOGUE.jsonl`），保证审计与复盘。
 
 与传统“单线路定死”自动化相比，拟人化核心提供的是**可讨论、可纠偏、可迭代**的运行控制面。

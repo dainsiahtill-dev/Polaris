@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:28.891565Z",
-  "source_hash": "89b2c4f308135b9a",
+  "generated_at": "2026-04-28T08:34:44.371075Z",
+  "source_hash": "33c2d7acc77bf614",
   "cell_id": "llm.provider_runtime",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -46,7 +46,7 @@
       "methods": [
         {
           "name": "extract_json_object",
-          "doc": "Extract JSON object from text."
+          "doc": "Extract JSON object from text (delegate to parse_json_payload)."
         },
         {
           "name": "looks_truncated_json",
@@ -64,12 +64,6 @@
       "type": "function",
       "name": "_append",
       "description": "",
-      "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py"
-    },
-    {
-      "type": "function",
-      "name": "truncate_text",
-      "description": "Truncate text to limit characters.",
       "defined_in": "polaris/cells/llm/provider_runtime/internal/cell_executor.py"
     },
     {

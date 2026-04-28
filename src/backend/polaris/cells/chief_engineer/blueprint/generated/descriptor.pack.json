@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-20T20:34:29.554539Z",
-  "source_hash": "6e3a468bc2546bf1",
+  "generated_at": "2026-04-28T08:34:47.733469Z",
+  "source_hash": "5ddf3ed049db6f1d",
   "cell_id": "chief_engineer.blueprint",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -256,7 +256,7 @@
     {
       "type": "class",
       "name": "ChiefEngineerAgent",
-      "description": "Chief Engineer role agent.",
+      "description": "Chief Engineer role agent (`Chief Engineer`).",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_agent.py",
       "methods": [
         {
@@ -298,6 +298,22 @@
         {
           "name": "_tool_list_construction_plans",
           "doc": ""
+        },
+        {
+          "name": "_tool_analyze_change_impact",
+          "doc": "Phase 2.2: Analyze impact of proposed changes across modules/files."
+        },
+        {
+          "name": "_generate_impact_recommendations",
+          "doc": "Generate recommendations based on impact analysis."
+        },
+        {
+          "name": "_tool_evaluate_technical_tradeoffs",
+          "doc": "Phase 2.2: Evaluate technical tradeoffs for a decision."
+        },
+        {
+          "name": "_tool_generate_adr",
+          "doc": "Phase 2.2: Auto-generate ADR from blueprint changes."
         },
         {
           "name": "handle_message",

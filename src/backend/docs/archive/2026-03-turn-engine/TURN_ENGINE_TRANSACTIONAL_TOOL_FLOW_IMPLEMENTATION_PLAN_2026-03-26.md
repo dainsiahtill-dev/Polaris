@@ -219,9 +219,9 @@
 
 默认角色：
 
-1. 中书令
-2. 尚书令 PM
-3. 工部尚书 Chief Engineer
+1. Architect
+2. PM PM
+3. Chief Engineer Chief Engineer
 
 默认策略：
 
