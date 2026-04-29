@@ -135,6 +135,7 @@ src/electron/out/
 .polaris/memory/
 .polaris/brain/
 .polaris/docs/
+**/.polaris/
 
 # -----------------------------------------------------------------------------
 # Project-specific temporary paths

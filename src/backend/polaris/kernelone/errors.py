@@ -1,4 +1,4 @@
-"""Polaris KernelOne exception hierarchy.
+﻿"""Polaris KernelOne exception hierarchy.
 
 This module provides the unified exception hierarchy for all KernelOne and Cell errors.
 It serves as the single source of truth for error classification and handling.
@@ -765,13 +765,14 @@ class DatabaseError(ResourceError):
         self,
         message: str,
         *,
+        code: str = "DATABASE_ERROR",
         database_name: str = "",
         operation: str = "",
         **kwargs,
     ) -> None:
         super().__init__(
             message,
-            code="DATABASE_ERROR",
+            code=code,
             resource_type="database",
             resource_id=database_name,
             **kwargs,

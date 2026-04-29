@@ -1,4 +1,4 @@
-# ADR-013: KernelOne Context Strategy Framework with Canonical Default Profile
+# ADR-0042: KernelOne Context Strategy Framework with Canonical Default Profile
 
 - Status: Proposed
 - Date: 2026-03-25

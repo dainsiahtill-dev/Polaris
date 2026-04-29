@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-BACKEND_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = Path(__file__).resolve().parents[4]
 GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "check_catalog_presence.py"
 FITNESS_RULES_FILE = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 CELLS_YAML_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"

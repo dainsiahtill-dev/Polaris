@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-BACKEND_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = Path(__file__).resolve().parents[4]
 FITNESS_RULES_FILE = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 CANONICAL_FACT_EVENTS = BACKEND_ROOT / "polaris" / "kernelone" / "events" / "fact_events.py"
 CANONICAL_SESSION_EVENTS = BACKEND_ROOT / "polaris" / "kernelone" / "events" / "session_events.py"

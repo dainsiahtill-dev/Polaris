@@ -530,7 +530,7 @@ rules:
 
   # ---------------------------------------------------------------------------
   # Phase 5: Canonical Code Exploration Rules (2026-03-25)
-  # ADR: docs/governance/decisions/adr-013-canonical-code-exploration.md
+  # ADR: docs/governance/decisions/adr-0042-canonical-code-exploration.md
   # ---------------------------------------------------------------------------
 
   - id: CE-001

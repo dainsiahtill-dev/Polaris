@@ -16,35 +16,6 @@ BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-# Ignore legacy tests with broken imports (stale top-level modules)
-collect_ignore = [
-    "test_agent_stress_backend_bootstrap_cleanup.py",
-    "test_agent_stress_framework.py",
-    "test_agent_stress_projection_streaming.py",
-    "test_auditor_evidence_markers.py",
-    "test_director_exec_utils.py",
-    "test_director_hp_end_to_end.py",
-    "test_director_policy_runtime_rollback_guard.py",
-    "test_director_scope_guards.py",
-    "test_director_stop.py",
-    "test_director_tool_first_contract.py",
-    "test_director_tooling.py",
-    "test_execution_phase_recovery.py",
-    "test_loop_director_bootstrap.py",
-    "test_loop_director_required_evidence.py",
-    "test_loop_director_verification_commands.py",
-    "test_orchestration_runtime_mode.py",
-    "test_plan_act_context.py",
-    "test_policy_contract.py",
-    "test_precision_editor.py",
-    "test_qa_auditor_verify_gate.py",
-    "test_qa_task_type_classification.py",
-    "integration/test_task_trace_integration.py",
-    "unit/test_task_trace.py",
-]
-
-
-
 # =============================================================================
 # Pytest Configuration
 # =============================================================================
@@ -59,20 +30,6 @@ def pytest_configure(config):
         "filterwarnings",
         "ignore:.*iscoroutinefunction.*:DeprecationWarning:nats\\.aio\\.client",
     )
-
-
-def pytest_ignore_collect(collection_path, config):
-    """Ignore tests with broken imports (deprecated modules)."""
-    path = str(collection_path)
-    if path.endswith("test_lancedb_store_script.py"):
-        return True
-    if path.endswith("test_llm_toolkit_executor_safety.py"):
-        return True
-    if path.endswith("test_role_tooling_security_hardening.py"):
-        return True
-    if path.endswith("test_roles_runtime_bus.py"):
-        return True
-    return None
 
 
 # =============================================================================

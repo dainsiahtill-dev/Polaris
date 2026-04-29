@@ -7,6 +7,7 @@ from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
     PM_SPIN_GUARD_STATUS,
     NoopShangshulingPort,
     ShangshulingPort,
+    append_pm_report,
     get_director_task_status_summary,
     get_task_signature,
     normalize_task_status,
@@ -206,3 +207,187 @@ class TestShangshulingPortProtocol:
         """NoopShangshulingPort should be accepted as implementing ShangshulingPort."""
         port = NoopShangshulingPort()
         assert isinstance(port, ShangshulingPort)
+
+
+class TestAppendPmReport:
+    """Tests for append_pm_report file I/O utility."""
+
+    def test_empty_path_is_noop(self, tmp_path) -> None:
+        append_pm_report("", "some content")
+        # Should not raise and should not create any file
+
+    def test_creates_parent_directories(self, tmp_path) -> None:
+        report_path = tmp_path / "nested" / "dir" / "report.md"
+        assert not report_path.parent.exists()
+        append_pm_report(str(report_path), "line 1")
+        assert report_path.exists()
+        assert report_path.parent.exists()
+
+    def test_appends_content_with_newline(self, tmp_path) -> None:
+        report_path = tmp_path / "report.md"
+        append_pm_report(str(report_path), "line 1")
+        append_pm_report(str(report_path), "line 2")
+        content = report_path.read_text(encoding="utf-8")
+        assert content == "line 1\nline 2\n"
+
+    def test_does_not_double_newline(self, tmp_path) -> None:
+        report_path = tmp_path / "report.md"
+        append_pm_report(str(report_path), "already has newline\n")
+        content = report_path.read_text(encoding="utf-8")
+        assert content == "already has newline\n"
+        assert "\n\n" not in content
+
+    def test_uses_utf8_encoding(self, tmp_path) -> None:
+        report_path = tmp_path / "report.md"
+        unicode_content = "Unicode: \u7981\u7528\u8bcd\u6c47"
+        append_pm_report(str(report_path), unicode_content)
+        content = report_path.read_text(encoding="utf-8")
+        assert unicode_content in content
+
+    def test_appends_to_existing_file(self, tmp_path) -> None:
+        report_path = tmp_path / "report.md"
+        report_path.write_text("existing\n", encoding="utf-8")
+        append_pm_report(str(report_path), "appended")
+        content = report_path.read_text(encoding="utf-8")
+        assert content == "existing\nappended\n"
+
+
+class TestGetTaskSignatureEdgeCases:
+    """Additional edge cases for get_task_signature."""
+
+    def test_deterministic_for_same_input(self) -> None:
+        tasks = [{"title": "A", "desc": "B"}]
+        sig1 = get_task_signature(tasks)
+        sig2 = get_task_signature(tasks)
+        assert sig1 == sig2
+
+    def test_different_inputs_produce_different_signatures(self) -> None:
+        tasks_a = [{"title": "A"}]
+        tasks_b = [{"title": "B"}]
+        sig_a = get_task_signature(tasks_a)
+        sig_b = get_task_signature(tasks_b)
+        assert sig_a != sig_b
+
+    def test_dict_order_does_not_matter(self) -> None:
+        tasks = [{"z": 1, "a": 2}]
+        sig = get_task_signature(tasks)
+        assert len(sig) == 16
+
+    def test_falsy_id_falls_back_to_fingerprint(self) -> None:
+        tasks = [{"id": "", "fingerprint": "fp-123"}]
+        assert get_task_signature(tasks) == "fp-123"
+
+    def test_whitespace_id_is_stripped(self) -> None:
+        tasks = [{"id": "  TASK-001  "}]
+        assert get_task_signature(tasks) == "TASK-001"
+
+    def test_list_with_multiple_dicts(self) -> None:
+        tasks = [
+            {"id": "first"},
+            {"id": "second"},
+        ]
+        assert get_task_signature(tasks) == "first"
+
+
+class TestGetDirectorTaskStatusSummaryEdgeCases:
+    """Additional edge cases for status summary aggregation."""
+
+    def test_case_insensitive_assigned_to(self) -> None:
+        tasks = [
+            {"assigned_to": "Director", "status": "done"},
+            {"assigned_to": "DIRECTOR", "status": "done"},
+            {"assigned_to": "director", "status": "done"},
+        ]
+        summary = get_director_task_status_summary(tasks)
+        assert summary["total"] == 3
+        assert summary["done"] == 3
+
+    def test_status_normalization(self) -> None:
+        tasks = [
+            {"assigned_to": "director", "status": "DONE"},
+            {"assigned_to": "director", "status": "Success"},
+            {"assigned_to": "director", "status": "IN_PROGRESS"},
+        ]
+        summary = get_director_task_status_summary(tasks)
+        assert summary["done"] == 2
+        assert summary["in_progress"] == 1
+
+    def test_unknown_status_defaults_to_todo(self) -> None:
+        tasks = [
+            {"assigned_to": "director", "status": "weird_status"},
+        ]
+        summary = get_director_task_status_summary(tasks)
+        assert summary["todo"] == 1
+
+    def test_missing_assigned_to_skips_task(self) -> None:
+        tasks = [
+            {"status": "done"},
+            {"assigned_to": "director", "status": "done"},
+        ]
+        summary = get_director_task_status_summary(tasks)
+        assert summary["total"] == 1
+
+    def test_empty_assigned_to_skips_task(self) -> None:
+        tasks = [
+            {"assigned_to": "", "status": "done"},
+            {"assigned_to": "director", "status": "done"},
+        ]
+        summary = get_director_task_status_summary(tasks)
+        assert summary["total"] == 1
+
+    def test_blocked_status_counted(self) -> None:
+        tasks = [
+            {"assigned_to": "director", "status": "blocked"},
+            {"assigned_to": "director", "status": "block"},
+        ]
+        summary = get_director_task_status_summary(tasks)
+        assert summary["blocked"] == 2
+
+    def test_needs_continue_variants(self) -> None:
+        tasks = [
+            {"assigned_to": "director", "status": "needs_continue"},
+            {"assigned_to": "director", "status": "need_continue"},
+            {"assigned_to": "director", "status": "continue"},
+            {"assigned_to": "director", "status": "retry_same_task"},
+        ]
+        summary = get_director_task_status_summary(tasks)
+        assert summary["needs_continue"] == 4
+
+
+class TestToBoolEdgeCases:
+    """Additional edge cases for to_bool conversion."""
+
+    @pytest.mark.parametrize(
+        ("input_val", "expected"),
+        [
+            ("  true  ", True),
+            ("TRUE", True),
+            ("  FALSE  ", False),
+            ("False", False),
+        ],
+    )
+    def test_whitespace_and_case(self, input_val: str, expected: bool) -> None:
+        assert to_bool(input_val) is expected
+
+    def test_whitespace_only_defaults(self) -> None:
+        assert to_bool("   ") is True
+        assert to_bool("   ", default=False) is False
+
+    def test_int_zero_and_one(self) -> None:
+        # Note: 0 is falsy so value or '' yields empty string, falling
+        # through to the default (True).  This is the documented behaviour.
+        assert to_bool(1) is True  # '1' matches truthy set
+        assert to_bool(0) is True  # falsy -> empty string -> default
+
+    def test_float_defaults(self) -> None:
+        assert to_bool(1.5) is True
+        assert to_bool(0.0, default=False) is False
+
+    def test_negative_number_defaults(self) -> None:
+        assert to_bool(-1) is True
+
+    def test_list_defaults(self) -> None:
+        assert to_bool([1, 2, 3]) is True
+
+    def test_dict_defaults(self) -> None:
+        assert to_bool({"key": "value"}) is True

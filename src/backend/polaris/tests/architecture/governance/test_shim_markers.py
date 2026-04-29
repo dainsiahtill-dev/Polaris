@@ -31,7 +31,7 @@ import yaml
 # Fixture paths
 # ---------------------------------------------------------------------------
 
-BACKEND_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "check_shim_markers.py"
 LEDGER_PATH = BACKEND_ROOT / "docs" / "migration" / "ledger.yaml"
 FITNESS_RULES_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
