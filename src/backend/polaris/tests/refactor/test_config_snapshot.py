@@ -13,8 +13,6 @@ sys.path.insert(0, str(Path(__file__).parents[2] / "src" / "backend"))
 import pytest
 from domain.models.config_snapshot import (
     ConfigSnapshot,
-    ConfigValidationResult,
-    FrozenInstanceError,
     SourceType,
 )
 

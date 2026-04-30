@@ -1,0 +1,131 @@
+version: 1
+id: llm_pipeline
+title: LLM Pipeline
+purpose: >
+  End-to-end LLM capability flow from provider configuration and runtime health
+  through dialogue orchestration, tool execution rounds, and evaluation readiness.
+
+entry_cells:
+  - delivery.api_gateway
+  - roles.runtime
+
+cells:
+  - llm.provider_config
+  - llm.provider_runtime
+  - llm.dialogue
+  - llm.tool_runtime
+  - llm.evaluation
+  - llm.control_plane
+  - finops.budget_guard
+  - policy.workspace_guard
+  - policy.permission
+  - audit.evidence
+  - context.engine
+  - runtime.execution_broker
+  - events.fact_stream
+
+exit_cells:
+  - llm.dialogue
+  - llm.evaluation
+  - llm.tool_runtime
+
+relations:
+  - from: llm.provider_config
+    to: llm.provider_runtime
+    type: calls
+    contract: ResolveProviderContextCommandV1
+  - from: llm.provider_runtime
+    to: finops.budget_guard
+    type: queries
+    contract: GetBudgetStatusQueryV1
+  - from: llm.provider_runtime
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: llm.dialogue
+    to: llm.provider_runtime
+    type: calls
+    contract: InvokeRoleProviderCommandV1
+  - from: llm.dialogue
+    to: llm.tool_runtime
+    type: calls
+    contract: ExecuteToolRoundCommandV1
+  - from: llm.dialogue
+    to: context.engine
+    type: queries
+    contract: BuildRoleContextCommandV1
+  - from: llm.tool_runtime
+    to: runtime.execution_broker
+    type: commands
+    contract: LaunchExecutionProcessCommandV1
+  - from: llm.tool_runtime
+    to: policy.permission
+    type: queries
+    contract: QueryToolRuntimePolicyV1
+  - from: llm.tool_runtime
+    to: events.fact_stream
+    type: emits
+    contract: ToolRoundCompletedEventV1
+  - from: llm.evaluation
+    to: llm.provider_runtime
+    type: calls
+    contract: InvokeProviderActionCommandV1
+  - from: llm.evaluation
+    to: audit.evidence
+    type: emits
+    contract: LlmEvaluationCompletedEventV1
+  - from: llm.control_plane
+    to: llm.provider_config
+    type: calls
+    contract: SyncSettingsFromLlmCommandV1
+  - from: llm.control_plane
+    to: llm.dialogue
+    type: calls
+    contract: InvokeLlmRoleCommandV1
+  - from: finops.budget_guard
+    to: llm.provider_runtime
+    type: governs
+    contract: ReserveBudgetCommandV1
+
+critical_contracts:
+  - ResolveProviderContextCommandV1
+  - InvokeRoleProviderCommandV1
+  - ExecuteToolRoundCommandV1
+  - BuildRoleContextCommandV1
+  - LaunchExecutionProcessCommandV1
+  - QueryToolRuntimePolicyV1
+  - RunLlmEvaluationCommandV1
+  - InvokeProviderActionCommandV1
+  - SyncSettingsFromLlmCommandV1
+  - InvokeLlmRoleCommandV1
+  - ReserveBudgetCommandV1
+
+state_boundaries:
+  - owner: llm.control_plane
+    state: config/llm/*
+  - owner: llm.evaluation
+    state: workspace/.polaris/runtime/llm_evaluations/*
+  - owner: llm.evaluation
+    state: workspace/.polaris/llm_test_index.evaluation.json
+  - owner: finops.budget_guard
+    state: runtime/state/budget/*
+
+verify_targets:
+  tests:
+    - tests/test_llm_provider_actions.py
+    - tests/test_llm_provider_request_context.py
+    - tests/test_role_dialogue_validation_retry.py
+    - tests/test_quality_checker_director_tool_calls.py
+    - tests/test_llm_agentic_benchmark.py
+    - tests/test_llm_evaluation_runner_provider_cfg.py
+  contracts:
+    - ResolveProviderContextCommandV1
+    - InvokeRoleProviderCommandV1
+    - ExecuteToolRoundCommandV1
+    - RunLlmEvaluationCommandV1
+    - ReserveBudgetCommandV1
+
+migration_notes:
+  - llm.control_plane is a composite cell pending child-cell split for config/evaluation/provider_runtime.
+  - Tool runtime still has some direct callers that bypass the public boundary.
+  - Evaluation callers still bypass contracts in some paths.

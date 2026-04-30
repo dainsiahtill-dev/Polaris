@@ -23,6 +23,7 @@ from .paths import ensure_backend_root_on_syspath
 ensure_backend_root_on_syspath()
 
 import httpx
+
 from .backend_bootstrap import (
     BackendBootstrapError,
     ensure_backend_session,

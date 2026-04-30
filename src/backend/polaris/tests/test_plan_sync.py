@@ -11,7 +11,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 log = logging.getLogger("test_plan_sync")
 
 
@@ -54,7 +53,7 @@ class TestSyncPlanToRuntime(unittest.TestCase):
 
             plan_dst = os.path.join(workspace, ".polaris", "runtime", "contracts", "plan.md")
             self.assertTrue(os.path.isfile(plan_dst))
-            with open(plan_dst, "r", encoding="utf-8") as f:
+            with open(plan_dst, encoding="utf-8") as f:
                 content = f.read()
             self.assertIn("Task 1", content)
 
@@ -81,7 +80,7 @@ class TestSyncPlanToRuntime(unittest.TestCase):
 
             _sync_plan_to_runtime(workspace, "")
 
-            with open(plan_dst, "r", encoding="utf-8") as f:
+            with open(plan_dst, encoding="utf-8") as f:
                 content = f.read()
             self.assertEqual(content, "New plan content")
 
@@ -97,7 +96,7 @@ class TestSyncPlanToRuntime(unittest.TestCase):
             _sync_plan_to_runtime(workspace, "")
 
             plan_dst = os.path.join(workspace, ".polaris", "runtime", "contracts", "plan.md")
-            with open(plan_dst, "r", encoding="utf-8") as f:
+            with open(plan_dst, encoding="utf-8") as f:
                 content = f.read()
             self.assertEqual(content, "Idempotent plan")
 
@@ -124,7 +123,7 @@ class TestSchemaValidation(unittest.TestCase):
         schema_path = repo_root / "schema" / "pm_tasks.schema.json"
         if not schema_path.is_file():
             raise unittest.SkipTest(f"Schema not found: {schema_path}")
-        with open(schema_path, "r", encoding="utf-8") as f:
+        with open(schema_path, encoding="utf-8") as f:
             cls.schema = json.load(f)
         try:
             import jsonschema

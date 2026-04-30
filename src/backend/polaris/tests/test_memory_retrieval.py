@@ -20,6 +20,8 @@ _BACKEND_DIR = os.path.abspath(os.path.join(_CURRENT_DIR, "..", "..", "src", "ba
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
+import contextlib
+
 from polaris.kernelone.memory.memory_store import (
     BM25,
     QUERY_TYPE_WEIGHTS,
@@ -28,7 +30,6 @@ from polaris.kernelone.memory.memory_store import (
     _detect_query_type,
     _expand_with_synonyms,
 )
-import contextlib
 
 
 class TestBM25(unittest.TestCase):

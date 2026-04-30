@@ -1,9 +1,7 @@
+import importlib.util
 import json
-import os
-import sys
 from pathlib import Path
 from types import SimpleNamespace
-import importlib.util
 
 
 def _load_loop_pm():

@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import pytest
 from polaris.cells.roles.kernel.internal.tool_loop_controller import (
     ContextEvent,
     ToolLoopController,

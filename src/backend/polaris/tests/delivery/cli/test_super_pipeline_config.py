@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.delivery.cli.super_pipeline_config import (
     DEFAULT_SUPER_PIPELINE,
     PipelineResult,

@@ -1175,7 +1175,7 @@ def _run_dispatch_pipeline_with_workflow(
     # Submit workflow
     from polaris.cells.orchestration.workflow_runtime.public import PMWorkflowInput, WorkflowConfig
 
-    config = WorkflowConfig.from_env(force_enable=True)  # type: ignore[attr-defined]
+    config = WorkflowConfig.from_env(force_enable=True)
     workflow_run_id = f"{run_id}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
     workflow_input = PMWorkflowInput(

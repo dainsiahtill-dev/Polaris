@@ -1,0 +1,79 @@
+version: 1
+id: finops_pipeline
+title: FinOps Pipeline
+purpose: >
+  Budget governance flow from FinOps budget reserve and usage accounting through
+  policy enforcement to runtime execution broker process launch gating.
+
+entry_cells:
+  - llm.control_plane
+  - roles.runtime
+  - director.execution
+
+cells:
+  - finops.budget_guard
+  - policy.permission
+  - policy.workspace_guard
+  - audit.evidence
+  - runtime.execution_broker
+  - llm.provider_runtime
+  - roles.runtime
+
+exit_cells:
+  - finops.budget_guard
+  - runtime.execution_broker
+
+relations:
+  - from: finops.budget_guard
+    to: policy.permission
+    type: queries
+    contract: QueryPermissionMatrixV1
+  - from: finops.budget_guard
+    to: audit.evidence
+    type: emits
+    contract: BudgetThresholdExceededEventV1
+  - from: finops.budget_guard
+    to: roles.runtime
+    type: governs
+    contract: ReserveBudgetCommandV1
+  - from: llm.provider_runtime
+    to: finops.budget_guard
+    type: queries
+    contract: GetBudgetStatusQueryV1
+  - from: runtime.execution_broker
+    to: finops.budget_guard
+    type: queries
+    contract: GetBudgetStatusQueryV1
+  - from: director.execution
+    to: finops.budget_guard
+    type: queries
+    contract: GetBudgetStatusQueryV1
+  - from: finops.budget_guard
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+
+critical_contracts:
+  - ReserveBudgetCommandV1
+  - RecordUsageCommandV1
+  - GetBudgetStatusQueryV1
+  - BudgetThresholdExceededEventV1
+  - BudgetDecisionResultV1
+  - QueryPermissionMatrixV1
+
+state_boundaries:
+  - owner: finops.budget_guard
+    state: runtime/state/budget/*
+
+verify_targets:
+  tests:
+    - tests/test_llm_token_budget.py
+    - tests/test_token_estimator.py
+  contracts:
+    - ReserveBudgetCommandV1
+    - GetBudgetStatusQueryV1
+    - BudgetThresholdExceededEventV1
+
+migration_notes:
+  - Per-role budget partitioning is not fully unified yet.
+  - Budget guard modules still span kernelone, domain, and infrastructure paths pending cell consolidation.

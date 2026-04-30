@@ -185,7 +185,7 @@ def _project_agent_turn(
     session_context: dict[str, Any],
 ) -> tuple[tuple[tuple[str, str], ...], dict[str, Any]]:
     prior_messages = [message.to_dict() for message in service.get_messages(session_id, limit=50, offset=0)]
-    projection = _AGENT_CONTINUITY_ENGINE.project(  # type: ignore[attr-defined]
+    projection = _AGENT_CONTINUITY_ENGINE.project(
         SessionContinuityRequest(
             session_id=session_id,
             role=role,
@@ -200,12 +200,12 @@ def _project_agent_turn(
             history_limit=10,
         )
     )
-    if projection.changed:  # type: ignore[attr-defined]
+    if projection.changed:
         service.update_session(
             session_id=session_id,
-            context_config=projection.persisted_context_config,  # type: ignore[attr-defined]
+            context_config=projection.persisted_context_config,
         )
-    return messages_to_history_pairs(projection.recent_messages), dict(projection.prompt_context)  # type: ignore[attr-defined]
+    return messages_to_history_pairs(projection.recent_messages), dict(projection.prompt_context)
 
 
 async def _execute_agent_message(

@@ -42,7 +42,7 @@ class TestJsonlIo(unittest.TestCase):
             with io_utils._JSONL_BUFFER_LOCK:
                 self.assertEqual(io_utils._JSONL_BUFFER[jsonl_path]["lines"], [])
 
-            with open(jsonl_path, "r", encoding="utf-8") as handle:
+            with open(jsonl_path, encoding="utf-8") as handle:
                 content = handle.read().strip()
             self.assertTrue(bool(content))
 
@@ -61,7 +61,7 @@ class TestJsonlIo(unittest.TestCase):
 
             self.assertTrue(os.path.isfile(jsonl_path))
             self.assertFalse(os.path.exists(lock_path))
-            with open(jsonl_path, "r", encoding="utf-8") as handle:
+            with open(jsonl_path, encoding="utf-8") as handle:
                 content = handle.read().strip()
             self.assertTrue(bool(content))
 

@@ -1,0 +1,76 @@
+version: 1
+id: knowledge_pipeline
+title: Knowledge Pipeline
+purpose: >
+  Cognitive knowledge distillation flow from completed role sessions through
+  pattern analysis to context catalog lookup and knowledge retrieval for future
+  task execution.
+
+entry_cells:
+  - roles.session
+  - roles.runtime
+
+cells:
+  - cognitive.knowledge_distiller
+  - context.catalog
+  - roles.session
+  - policy.workspace_guard
+  - audit.evidence
+
+exit_cells:
+  - cognitive.knowledge_distiller
+  - context.catalog
+
+relations:
+  - from: cognitive.knowledge_distiller
+    to: roles.session
+    type: calls
+    contract: DistillSessionCommandV1
+  - from: cognitive.knowledge_distiller
+    to: context.catalog
+    type: queries
+    contract: SearchCellsQueryV1
+  - from: roles.session
+    to: cognitive.knowledge_distiller
+    type: queries
+    contract: RetrieveKnowledgeQueryV1
+  - from: cognitive.knowledge_distiller
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: cognitive.knowledge_distiller
+    to: audit.evidence
+    type: emits
+    contract: KnowledgeDistilledEventV1
+  - from: context.catalog
+    to: cognitive.knowledge_distiller
+    type: depends_on
+    contract: cognitive.knowledge_distiller
+
+critical_contracts:
+  - DistillSessionCommandV1
+  - RetrieveKnowledgeQueryV1
+  - KnowledgeDistilledEventV1
+  - SearchCellsQueryV1
+  - CellDescriptorV1
+  - DistillationResultV1
+  - KnowledgeRetrievalResultV1
+
+state_boundaries:
+  - owner: cognitive.knowledge_distiller
+    state: workspace/.polaris/knowledge_distiller/*
+  - owner: context.catalog
+    state: workspace/meta/context_catalog/*
+
+verify_targets:
+  tests:
+    - polaris/cells/cognitive/knowledge_distiller/internal/tests/**
+  contracts:
+    - DistillSessionCommandV1
+    - RetrieveKnowledgeQueryV1
+    - KnowledgeDistilledEventV1
+
+migration_notes:
+  - Cell newly created with basic structure.
+  - Integration with roles.session pending.
+  - Full test coverage pending.

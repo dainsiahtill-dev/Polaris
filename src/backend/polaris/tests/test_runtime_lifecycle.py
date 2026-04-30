@@ -1,35 +1,32 @@
-"""Test for runtime_lifecycle module."""
-import unittest
+"""Test for runtime_lifecycle module.
+
+The core.polaris_loop.runtime_lifecycle module has been migrated to
+polaris.domain.director.lifecycle. These tests verify the canonical
+polaris import path.
+"""
+
+import importlib.util
 import tempfile
+import unittest
 from pathlib import Path
-import os
-import sys
 
-# Add src/backend to sys.path for core module imports
-# This must match the structure expected by pytest
-_repo_root = Path(__file__).resolve().parents[1]  # Go up from tests/ to root
-_backend_dir = str(_repo_root / "src" / "backend")
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
+if importlib.util.find_spec("polaris.domain.director.lifecycle") is None:
+    import unittest
+    raise unittest.SkipTest("Module not available: polaris.domain.director.lifecycle")
 
-
-def _load_runtime_lifecycle():
-    """Load runtime_lifecycle module using package import."""
-    from core.polaris_loop import runtime_lifecycle
-    return runtime_lifecycle
+from polaris.domain.director.lifecycle import (
+    read as read_director_lifecycle,
+    update as update_director_lifecycle,
+)
 
 
 class TestRuntimeLifecycle(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.lifecycle = _load_runtime_lifecycle()
-
     def test_update_director_lifecycle_tracks_start_and_execution(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
-            path = self.lifecycle.director_lifecycle_path(str(run_dir))
-            self.lifecycle.update_director_lifecycle(
-                path,
+            path = str(run_dir / "DIRECTOR_LIFECYCLE.json")
+            update_director_lifecycle(
+                path=path,
                 phase="startup_ready",
                 run_id="pm-00001",
                 task_id="PM-1",
@@ -37,13 +34,13 @@ class TestRuntimeLifecycle(unittest.TestCase):
                 execution_started=False,
                 status="running",
             )
-            self.lifecycle.update_director_lifecycle(
-                path,
+            update_director_lifecycle(
+                path=path,
                 phase="tooling",
                 execution_started=True,
                 status="running",
             )
-            payload = self.lifecycle.read_director_lifecycle(path)
+            payload = read_director_lifecycle(path)
             self.assertEqual(payload.get("run_id"), "pm-00001")
             self.assertEqual(payload.get("task_id"), "PM-1")
             self.assertTrue(payload.get("startup_completed"))

@@ -187,7 +187,7 @@ def test_workflow_dispatch_defers_integration_qa_until_terminal_state(tmp_path, 
         workflow_config_mod.WorkflowConfig,
         "from_env",
         classmethod(
-            lambda cls, force_enable=False: SimpleNamespace(  # noqa: ARG005
+            lambda cls, force_enable=False: SimpleNamespace(
                 task_queue="unit-queue",
                 namespace="unit-namespace",
             )
@@ -196,12 +196,12 @@ def test_workflow_dispatch_defers_integration_qa_until_terminal_state(tmp_path, 
     monkeypatch.setattr(
         mod,
         "resolve_director_dispatch_tasks",
-        lambda workspace_full, tasks: (list(tasks), {"source": "unit"}),  # noqa: ARG005
+        lambda workspace_full, tasks: (list(tasks), {"source": "unit"}),
     )
     monkeypatch.setattr(
         mod,
         "submit_pm_workflow_sync",
-        lambda workflow_input, config: SimpleNamespace(  # noqa: ARG005
+        lambda workflow_input, config: SimpleNamespace(
             submitted=True,
             status="submitted",
             workflow_id="wf-001",
@@ -213,17 +213,17 @@ def test_workflow_dispatch_defers_integration_qa_until_terminal_state(tmp_path, 
     monkeypatch.setattr(
         mod,
         "wait_for_workflow_completion_sync",
-        lambda workflow_id, timeout_seconds, config: {"error": "workflow_wait_timeout"},  # noqa: ARG005
+        lambda workflow_id, timeout_seconds, config: {"error": "workflow_wait_timeout"},
     )
     monkeypatch.setattr(
         mod,
         "get_workflow_runtime_status",
-        lambda workspace_full, cache_root_full: {"workflow_status": "running"},  # noqa: ARG005
+        lambda workspace_full, cache_root_full: {"workflow_status": "running"},
     )
     monkeypatch.setattr(
         mod,
         "summarize_workflow_tasks",
-        lambda workflow_status, base_tasks, workspace, cache_root: {  # noqa: ARG005
+        lambda workflow_status, base_tasks, workspace, cache_root: {
             "tasks": [{"id": "TASK-001", "status": "in_progress"}],
             "total": 1,
             "state": "running",
@@ -241,7 +241,7 @@ def test_workflow_dispatch_defers_integration_qa_until_terminal_state(tmp_path, 
     monkeypatch.setattr(mod, "run_post_dispatch_integration_qa", _unexpected_qa_call)
 
     class _Engine:
-        def update_role_status(self, *args, **kwargs):  # noqa: ANN002, ANN003, D401
+        def update_role_status(self, *args, **kwargs):
             return None
 
     run_dir = tmp_path / "run"

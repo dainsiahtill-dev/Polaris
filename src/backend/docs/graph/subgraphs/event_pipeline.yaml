@@ -1,0 +1,97 @@
+version: 1
+id: event_pipeline
+title: Event Pipeline
+purpose: >
+  Append-only runtime fact stream flow from event ingestion and fanout through
+  audit evidence to task market collaboration and realtime projection consumers.
+
+entry_cells:
+  - runtime.task_runtime
+  - director.execution
+  - llm.tool_runtime
+
+cells:
+  - events.fact_stream
+  - audit.evidence
+  - runtime.projection
+  - runtime.task_market
+  - policy.workspace_guard
+  - runtime.task_runtime
+  - runtime.state_owner
+
+exit_cells:
+  - events.fact_stream
+  - runtime.projection
+  - runtime.task_market
+
+relations:
+  - from: runtime.task_runtime
+    to: events.fact_stream
+    type: emits
+    contract: FactEventAppendedV1
+  - from: director.execution
+    to: events.fact_stream
+    type: emits
+    contract: FactEventAppendedV1
+  - from: llm.tool_runtime
+    to: events.fact_stream
+    type: emits
+    contract: ToolRoundCompletedEventV1
+  - from: events.fact_stream
+    to: audit.evidence
+    type: commands
+    contract: AppendEvidenceEventCommandV1
+  - from: events.fact_stream
+    to: runtime.projection
+    type: depends_on
+    contract: runtime.projection
+  - from: events.fact_stream
+    to: runtime.task_market
+    type: depends_on
+    contract: runtime.task_market
+  - from: events.fact_stream
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: runtime.task_market
+    to: events.fact_stream
+    type: emits
+    contract: TaskWorkItemPublishedEventV1
+  - from: runtime.task_market
+    to: runtime.state_owner
+    type: depends_on
+    contract: RuntimeStateWriteResultV1
+
+critical_contracts:
+  - AppendFactEventCommandV1
+  - FactEventAppendedV1
+  - QueryFactEventsV1
+  - FactStreamQueryResultV1
+  - AppendEvidenceEventCommandV1
+  - TaskWorkItemPublishedEventV1
+  - TaskLeaseGrantedEventV1
+  - TaskStageAdvancedEventV1
+
+state_boundaries:
+  - owner: events.fact_stream
+    state: runtime/events/*
+  - owner: runtime.task_market
+    state: runtime/task_market/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+
+verify_targets:
+  tests:
+    - tests/test_runtime_event_fanout.py
+    - tests/test_realtime_hub_v2.py
+    - tests/test_websocket_signal_hub.py
+    - polaris/cells/runtime/task_market/tests/test_service.py
+  contracts:
+    - AppendFactEventCommandV1
+    - FactEventAppendedV1
+    - QueryFactEventsV1
+
+migration_notes:
+  - Some emitters still write event files directly and need unified writer routing.
+  - Outbox relay and durable Pull Consumer mainline are not fully wired yet.
+  - WAITING_HUMAN and HITL authority remain partially sidecar-mediated.

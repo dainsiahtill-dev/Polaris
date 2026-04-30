@@ -1,27 +1,31 @@
-import importlib.util, pytest
-if importlib.util.find_spec("core") is None:
-    pytest.skip("Legacy module not available: core.polaris_loop.unified_audit_core", allow_module_level=True)
-
 """Tests for UnifiedAuditCore.
 
 CRITICAL: 所有文本文件 I/O 必须使用 UTF-8 编码。
+
+Note: UnifiedAuditCore was a legacy abstraction that has been superseded by
+polaris.kernelone.audit.KernelAuditRuntime. These tests verify the legacy
+interface via the compatibility gateway in polaris.kernelone.audit.gateway.
 """
 
+from __future__ import annotations
+
+import importlib.util
 import json
 import threading
 import time
-from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
-from core.polaris_loop.unified_audit_core import (
-    UnifiedAuditCore,
-    emit_audit_event,
+if importlib.util.find_spec("polaris.kernelone.audit.gateway") is None:
+    pytest.skip("Module not available: polaris.kernelone.audit.gateway", allow_module_level=True)
+
+from polaris.kernelone.audit import (
+    KernelAuditEventType as AuditEventType,
+    KernelAuditRole as AuditRole,
 )
-from infrastructure.persistence.audit_store import (
-    AuditEventType,
-    AuditRole,
+from polaris.kernelone.audit.gateway import (
+    AuditGateway as UnifiedAuditCore,
+    emit_audit_event,
 )
 
 
@@ -52,14 +56,14 @@ class TestUnifiedAuditCore:
 
     def test_emit_event(self, core):
         """测试事件发射"""
-        success = core.emit_v2(
+        result = core.emit_event(
             event_type=AuditEventType.TASK_START,
             role=AuditRole.PM,
             workspace="/tmp/test",
             task_id="task-123",
             run_id="run-456",
         )
-        assert success is True
+        assert result["success"] is True
 
         # 验证事件被写入
         events = core.store.query(limit=10)
@@ -79,7 +83,7 @@ class TestUnifiedAuditCore:
         def emit_batch(thread_id: int):
             try:
                 for i in range(50):
-                    core.emit_v2(
+                    core.emit_event(
                         event_type=AuditEventType.TOOL_EXECUTION,
                         role=AuditRole.DIRECTOR,
                         workspace="/tmp/test",
@@ -126,7 +130,7 @@ class TestUnifiedAuditCore:
         """测试链完整性"""
         # 发射多个事件
         for i in range(10):
-            core.emit_v2(
+            core.emit_event(
                 event_type=AuditEventType.TASK_START,
                 role=AuditRole.PM,
                 workspace="/tmp/test",
@@ -142,7 +146,7 @@ class TestUnifiedAuditCore:
     def test_utf8_encoding(self, core):
         """测试 UTF-8 编码"""
         # 发射包含非 ASCII 字符的事件
-        core.emit_v2(
+        core.emit_event(
             event_type=AuditEventType.LLM_CALL,
             role=AuditRole.PM,
             workspace="/tmp/test",
@@ -157,7 +161,7 @@ class TestUnifiedAuditCore:
         """测试索引刷写"""
         # 发射多个 run_id 的事件
         for i in range(5):
-            core.emit_v2(
+            core.emit_event(
                 event_type=AuditEventType.TASK_START,
                 role=AuditRole.PM,
                 workspace="/tmp/test",
@@ -166,7 +170,7 @@ class TestUnifiedAuditCore:
             )
 
         for i in range(3):
-            core.emit_v2(
+            core.emit_event(
                 event_type=AuditEventType.TASK_START,
                 role=AuditRole.PM,
                 workspace="/tmp/test",
@@ -182,7 +186,7 @@ class TestUnifiedAuditCore:
         index_file = core._audit_dir / "index.run_id.json"
         assert index_file.exists()
 
-        with open(index_file, 'r', encoding='utf-8') as f:
+        with open(index_file, encoding='utf-8') as f:
             index = json.load(f)
 
         assert "run-abc" in index
@@ -216,10 +220,10 @@ class TestEmitAuditEvent:
     def test_emit_audit_event(self, tmp_path):
         """测试便捷函数"""
         UnifiedAuditCore.reset_instance(tmp_path)
-        success = emit_audit_event(
+        result = emit_audit_event(
             event_type=AuditEventType.TASK_COMPLETE,
             role=AuditRole.PM,
             workspace="/tmp/test",
             task_id="task-test",
         )
-        assert success is True
+        assert result["success"] is True

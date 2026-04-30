@@ -358,7 +358,7 @@ def execute_non_director_tasks(
                 "phase": "assignee_queue",
                 "files": [role_artifact_path],
             },
-            summary=str(role_record["summary"]),  # type: ignore[arg-type]
+            summary=str(role_record["summary"]),
             ok=bool(role_record["ok"]),
             output={
                 "status": role_record["status"],

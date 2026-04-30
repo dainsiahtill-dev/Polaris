@@ -1,29 +1,27 @@
-import importlib.util, pytest
-if importlib.util.find_spec("core") is None:
-    pytest.skip("Legacy module not available: core.polaris_loop.audit_gateway", allow_module_level=True)
-
 """Tests for AuditGateway.
 
 CRITICAL: 所有文本文件 I/O 必须使用 UTF-8 编码。
 """
 
+from __future__ import annotations
+
+import importlib.util
 import json
 import threading
-import time
-from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
-from core.polaris_loop.audit_gateway import (
+if importlib.util.find_spec("polaris.kernelone.audit.gateway") is None:
+    pytest.skip("Module not available: polaris.kernelone.audit.gateway", allow_module_level=True)
+
+from polaris.kernelone.audit import (
+    KernelAuditEventType as AuditEventType,
+    KernelAuditRole as AuditRole,
+)
+from polaris.kernelone.audit.gateway import (
     AuditGateway,
     emit_audit_event,
-    get_gateway,
     validate_run_id,
-)
-from infrastructure.persistence.audit_store import (
-    AuditEventType,
-    AuditRole,
 )
 
 
@@ -345,7 +343,7 @@ class TestCanonicalLog:
         assert canonical_file.exists()
 
         # 读取并验证内容
-        with open(canonical_file, "r", encoding="utf-8") as f:
+        with open(canonical_file, encoding="utf-8") as f:
             line = f.readline().strip()
             record = json.loads(line)
 
@@ -384,7 +382,7 @@ class TestHashChainVerification:
 
     def test_hash_chain_invalid_signature_detects_tampering(self, tmp_path):
         """测试签名验证能检测到篡改"""
-        from core.polaris_loop.audit_gateway import AuditGateway
+        from polaris.kernelone.audit.gateway import AuditGateway
 
         AuditGateway.reset_instance(tmp_path)
         gateway = AuditGateway.get_instance(tmp_path)
@@ -419,7 +417,7 @@ class TestMemoryIndexManagement:
 
     def test_index_eviction_on_size_limit(self, tmp_path):
         """测试索引大小限制"""
-        from core.polaris_loop.audit_gateway import AuditGateway
+        from polaris.kernelone.audit.gateway import AuditGateway
 
         AuditGateway.reset_instance(tmp_path)
         gateway = AuditGateway.get_instance(tmp_path)
@@ -455,7 +453,7 @@ class TestConcurrentWrite:
         """测试并发写入 canonical log 不会数据交错"""
         import threading
 
-        from core.polaris_loop.audit_gateway import AuditGateway
+        from polaris.kernelone.audit.gateway import AuditGateway
 
         AuditGateway.reset_instance(tmp_path)
         gateway = AuditGateway.get_instance(tmp_path)
@@ -487,7 +485,7 @@ class TestConcurrentWrite:
         # 验证数据完整性 - 每行应该是完整的 JSON
         canonical_file = gateway._audit_dir / "canonical.process.jsonl"
         if canonical_file.exists():
-            with open(canonical_file, "r", encoding="utf-8") as f:
+            with open(canonical_file, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if line:

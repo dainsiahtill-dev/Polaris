@@ -1,32 +1,34 @@
-import importlib.util, pytest
-if importlib.util.find_spec("core") is None:
-    pytest.skip("Legacy module not available: core.orchestration", allow_module_level=True)
-
 """Tests for RuntimeOrchestrator - unified process orchestration.
 
 This module tests the orchestration functionality introduced
 in Phase 3 of the "Thin CLI + Core OO" refactoring.
 """
 
+from __future__ import annotations
+
+import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
+
+if importlib.util.find_spec("polaris.cells.orchestration.workflow_runtime.public") is None:
+    pytest.skip("Module not available: polaris.cells.orchestration.workflow_runtime.public", allow_module_level=True)
 
 # Add src/backend to path
 sys.path.insert(0, str(Path(__file__).parents[2] / "src" / "backend"))
 
-import pytest
-import asyncio
 
-from core.orchestration import (
+from polaris.cells.orchestration.workflow_runtime.public import (
+    EventLevel,
+    EventStream,
+    EventType,
+    OrchestrationEvent,
+    ProcessLauncher,
     RuntimeOrchestrator,
     ServiceDefinition,
-    ProcessLauncher,
-    EventStream,
-    OrchestrationEvent,
-    EventType,
-    EventLevel,
 )
-from application.dto.process_launch import ProcessLaunchRequest, ProcessLaunchResult, RunMode
+from polaris.cells.orchestration.workflow_runtime.public.process_launch import RunMode
 
 
 class TestServiceDefinition:
@@ -242,8 +244,6 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_pm_launch_request(self):
         """Test PM launch request generation."""
-        orchestrator = RuntimeOrchestrator()
-
         # This just tests the request generation, not actual launch
         launcher = ProcessLauncher()
         request = launcher.launch_pm(Path("."), RunMode.SINGLE, iterations=1)

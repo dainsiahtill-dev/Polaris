@@ -1,19 +1,21 @@
-import pytest
-import time
 import statistics
-from typing import Callable, List
+import time
+from typing import Callable
+
+import pytest
+
 
 class PerformanceBenchmark:
     def __init__(self, iterations: int = 100):
         self.iterations = iterations
-        
+
     def measure(self, func: Callable, *args) -> dict:
-        times: List[float] = []
+        times: list[float] = []
         for _ in range(self.iterations):
             start = time.perf_counter()
             func(*args)
             times.append(time.perf_counter() - start)
-        
+
         times.sort()
         return {
             'min': min(times),

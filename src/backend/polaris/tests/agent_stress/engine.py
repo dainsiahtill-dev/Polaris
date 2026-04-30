@@ -23,9 +23,12 @@ from typing import Any, Self
 
 import httpx
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
+
 from .paths import ensure_backend_root_on_syspath
 
 ensure_backend_root_on_syspath()
+import contextlib
+
 from .contracts import (
     factory_failure_evidence,
     factory_failure_info,
@@ -42,7 +45,6 @@ from .stress_path_policy import (
     runtime_layout_policy_violations,
 )
 from .tracer import RoundTrace, RuntimeTracer, TaskLineage
-import contextlib
 
 MAX_NON_LLM_CONTROL_PLANE_STALL_SECONDS = 120.0
 DEFAULT_MIN_NEW_CODE_FILES = 2

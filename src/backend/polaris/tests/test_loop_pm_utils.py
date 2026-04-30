@@ -1,8 +1,8 @@
+import importlib.util
+import os
+import tempfile
 import unittest
 from pathlib import Path
-import importlib.util
-import tempfile
-import os
 from types import SimpleNamespace
 from unittest.mock import patch
 

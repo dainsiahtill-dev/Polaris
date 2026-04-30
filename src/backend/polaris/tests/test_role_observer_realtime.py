@@ -57,7 +57,7 @@ async def test_store_execution_data_emits_preview_events_to_runtime_channel(
     monkeypatch.setattr(kernel, "_get_or_create_data_store", _fake_get_store)
     monkeypatch.setattr(kernel, "_emit_runtime_llm_event", _fake_emit)
 
-    await kernel._store_execution_data(  # noqa: SLF001
+    await kernel._store_execution_data(
         profile=profile,  # type: ignore[arg-type]
         request=request,
         run_id="run-observer-1",
@@ -132,7 +132,7 @@ async def test_finalize_result_emits_structured_tool_events(
     monkeypatch.setattr(kernel._output_parser, "parse_structured_output", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(kernel._quality_checker, "_check_quality", lambda *_args, **_kwargs: (100.0, []))
 
-    result = await kernel._finalize_result(  # noqa: SLF001
+    result = await kernel._finalize_result(
         profile=profile,  # type: ignore[arg-type]
         request=request,
         run_id="run-observer-2",

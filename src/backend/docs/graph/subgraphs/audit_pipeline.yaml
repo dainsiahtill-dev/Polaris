@@ -1,0 +1,107 @@
+version: 1
+id: audit_pipeline
+title: Audit Pipeline
+purpose: >
+  End-to-end audit flow from evidence append and chain verification through
+  diagnosis and trace-query to final review-gate verdict evaluation.
+
+entry_cells:
+  - delivery.api_gateway
+  - director.execution
+  - qa.audit_verdict
+
+cells:
+  - audit.evidence
+  - audit.diagnosis
+  - audit.verdict
+  - policy.workspace_guard
+  - storage.layout
+  - runtime.projection
+  - runtime.artifact_store
+  - runtime.state_owner
+
+exit_cells:
+  - audit.evidence
+  - audit.verdict
+  - audit.diagnosis
+
+relations:
+  - from: audit.diagnosis
+    to: audit.evidence
+    type: queries
+    contract: QueryEvidenceEventsV1
+  - from: audit.diagnosis
+    to: storage.layout
+    type: queries
+    contract: ResolveStorageLayoutQueryV1
+  - from: audit.diagnosis
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: audit.verdict
+    to: audit.evidence
+    type: queries
+    contract: QueryEvidenceEventsV1
+  - from: audit.verdict
+    to: runtime.projection
+    type: queries
+    contract: RuntimeProjectionQueryV1
+  - from: audit.verdict
+    to: runtime.artifact_store
+    type: queries
+    contract: QueryRuntimeArtifactV1
+  - from: audit.verdict
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: audit.evidence
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: audit.evidence
+    to: runtime.state_owner
+    type: depends_on
+    contract: RuntimeStateWriteResultV1
+
+critical_contracts:
+  - AppendEvidenceEventCommandV1
+  - QueryEvidenceEventsV1
+  - VerifyEvidenceChainV1
+  - RunAuditDiagnosisCommandV1
+  - QueryAuditDiagnosisTrailV1
+  - RunAuditVerdictCommandV1
+  - QueryAuditVerdictV1
+  - WorkspaceWriteGuardQueryV1
+  - RuntimeProjectionQueryV1
+  - QueryRuntimeArtifactV1
+
+state_boundaries:
+  - owner: audit.evidence
+    state: runtime/evidence/*
+  - owner: audit.diagnosis
+    state: runtime/events/ws.connection.events.jsonl
+  - owner: audit.verdict
+    state: runtime/results/audit_verdicts/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+  - owner: runtime.artifact_store
+    state: runtime/artifacts/*
+
+verify_targets:
+  tests:
+    - tests/test_log_pipeline_storage_layout.py
+    - tests/test_audit_llm_runtime.py
+    - tests/test_command_security.py
+    - tests/test_artifact_service.py
+    - tests/test_integration_qa_command.py
+    - tests/test_quality_checker_director_tool_calls.py
+  contracts:
+    - AppendEvidenceEventCommandV1
+    - QueryEvidenceEventsV1
+    - VerifyEvidenceChainV1
+    - RunAuditVerdictCommandV1
+
+migration_notes:
+  - Runtime event stream ownership is moving to events.fact_stream.
+  - Runtime artifact state ownership still overlaps with adjacent runtime cells in transitional paths.
+  - Audit toolkit command surface still carries legacy envelope compatibility payloads.

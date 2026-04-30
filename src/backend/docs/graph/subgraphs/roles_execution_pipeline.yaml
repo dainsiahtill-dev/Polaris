@@ -1,0 +1,139 @@
+version: 1
+id: roles_execution_pipeline
+title: Roles Execution Pipeline
+purpose: >
+  Unified role execution flow from host protocol adaptation through kernel
+  primitives, engine strategy selection, runtime lifecycle, and adapter
+  dispatch for PM/Director/Architect/ChiefEngineer/QA.
+
+entry_cells:
+  - delivery.api_gateway
+  - delivery.cli
+
+cells:
+  - roles.host
+  - roles.kernel
+  - roles.engine
+  - roles.runtime
+  - roles.adapters
+  - roles.profile
+  - roles.session
+  - context.engine
+  - llm.control_plane
+  - policy.permission
+  - policy.workspace_guard
+  - audit.evidence
+  - runtime.execution_broker
+  - runtime.task_runtime
+  - runtime.state_owner
+
+exit_cells:
+  - roles.runtime
+  - roles.adapters
+  - roles.kernel
+
+relations:
+  - from: roles.host
+    to: roles.session
+    type: calls
+    contract: CreateRoleSessionCommandV1
+  - from: roles.session
+    to: roles.kernel
+    type: calls
+    contract: ExecuteRoleKernelCommandV1
+  - from: roles.kernel
+    to: roles.engine
+    type: calls
+    contract: SelectEngineCommandV1
+  - from: roles.engine
+    to: roles.runtime
+    type: calls
+    contract: ExecuteRoleTaskCommandV1
+  - from: roles.runtime
+    to: roles.adapters
+    type: calls
+    contract: CreateRoleAdapterCommandV1
+  - from: roles.adapters
+    to: roles.profile
+    type: queries
+    contract: QueryRoleProfileRegistryV1
+  - from: roles.profile
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: roles.kernel
+    to: context.engine
+    type: queries
+    contract: BuildRoleContextCommandV1
+  - from: roles.kernel
+    to: llm.control_plane
+    type: calls
+    contract: InvokeLlmRoleCommandV1
+  - from: roles.runtime
+    to: runtime.execution_broker
+    type: commands
+    contract: LaunchExecutionProcessCommandV1
+  - from: roles.runtime
+    to: runtime.task_runtime
+    type: commands
+    contract: CreateRuntimeTaskCommandV1
+  - from: roles.runtime
+    to: runtime.state_owner
+    type: commands
+    contract: PersistRuntimeTaskStateCommandV1
+  - from: roles.kernel
+    to: audit.evidence
+    type: emits
+    contract: RoleKernelEventV1
+  - from: policy.permission
+    to: roles.kernel
+    type: governs
+    contract: EvaluatePermissionCommandV1
+
+critical_contracts:
+  - CreateRoleSessionCommandV1
+  - ExecuteRoleKernelCommandV1
+  - SelectEngineCommandV1
+  - ExecuteRoleTaskCommandV1
+  - CreateRoleAdapterCommandV1
+  - QueryRoleProfileRegistryV1
+  - BuildRoleContextCommandV1
+  - InvokeLlmRoleCommandV1
+  - LaunchExecutionProcessCommandV1
+  - CreateRuntimeTaskCommandV1
+  - PersistRuntimeTaskStateCommandV1
+  - EvaluatePermissionCommandV1
+
+state_boundaries:
+  - owner: roles.session
+    state: runtime/role_sessions/*
+  - owner: roles.session
+    state: runtime/conversations/*
+  - owner: roles.profile
+    state: config/roles/*
+  - owner: roles.runtime
+    state: runtime/roles/*
+  - owner: runtime.state_owner
+    state: runtime/tasks/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+
+verify_targets:
+  tests:
+    - tests/test_roles_kernel.py
+    - tests/test_runtime_role_binding.py
+    - tests/test_roles_state_ownership.py
+    - tests/test_sequential_engine.py
+    - tests/test_role_adapters_taskboard_alignment.py
+    - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+  contracts:
+    - ExecuteRoleKernelCommandV1
+    - SelectEngineCommandV1
+    - ExecuteRoleTaskCommandV1
+    - CreateRoleAdapterCommandV1
+    - EvaluatePermissionCommandV1
+
+migration_notes:
+  - roles.host is newly created; full test coverage and EngineRegistry host_kind awareness pending.
+  - roles.runtime is a composite cell; business-role cell extraction still has remaining call-site rewiring.
+  - roles.adapters still routes Director optional execution backends during migration.

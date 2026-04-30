@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from polaris.cells.workspace.integrity.internal.fs_utils import (
     get_abs_path,
     normalize_rel_path,

@@ -225,10 +225,10 @@ async def create_session(
         with RoleSessionService() as service:
             session = service.create_session(
                 role=payload.role,
-                host_kind=payload.host_kind,  # type: ignore[arg-type]
+                host_kind=payload.host_kind,
                 workspace=payload.workspace or str(state.settings.workspace or ""),
-                session_type=payload.session_type,  # type: ignore[arg-type]
-                attachment_mode=payload.attachment_mode,  # type: ignore[arg-type]
+                session_type=payload.session_type,
+                attachment_mode=payload.attachment_mode,
                 title=payload.title,
                 context_config=payload.context_config,
                 capability_profile=payload.capability_profile,
@@ -244,7 +244,6 @@ async def create_session(
             "ok": False,
             "error": str(e),
         }
-    return {}  # type: ignore[return]
 
 
 @router.get("/v2/roles/sessions", dependencies=[Depends(require_auth)])
@@ -294,7 +293,6 @@ async def list_sessions(
             "ok": False,
             "error": str(e),
         }
-    return {}  # type: ignore[return]
 
 
 @router.get("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)])
@@ -317,7 +315,7 @@ async def get_session(
             session = service.get_session(session_id)
 
             if not session:
-                return JSONResponse(  # type: ignore[return-value]
+                return JSONResponse(
                     {"ok": False, "error": f"Session not found: {session_id}"},
                     status_code=404,
                 )
@@ -332,7 +330,6 @@ async def get_session(
             "ok": False,
             "error": str(e),
         }
-    return {}  # type: ignore[return]
 
 
 @router.put("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)])
@@ -385,7 +382,6 @@ async def update_session(
             "ok": False,
             "error": str(e),
         }
-    return {}  # type: ignore[return]
 
 
 @router.delete("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)])
@@ -408,7 +404,7 @@ async def delete_session(
             success = service.delete_session(session_id, soft=soft)
 
             if not success:
-                return JSONResponse(  # type: ignore[return-value]
+                return JSONResponse(
                     {"ok": False, "error": f"Session not found: {session_id}"},
                     status_code=404,
                 )
@@ -467,7 +463,6 @@ async def get_messages(
             "ok": False,
             "error": str(e),
         }
-    return {}  # type: ignore[return]
 
 
 @router.post("/v2/roles/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
@@ -567,7 +562,7 @@ async def send_message_stream(
                 )
                 session_context = None
 
-            projection = _SESSION_CONTINUITY_ENGINE.project(  # type: ignore[attr-defined]
+            projection = _SESSION_CONTINUITY_ENGINE.project(
                 SessionContinuityRequest(
                     session_id=session_id,
                     role=session_role,
@@ -582,12 +577,12 @@ async def send_message_stream(
                     history_limit=10,
                 )
             )
-            runtime_history = messages_to_history_pairs(projection.recent_messages)  # type: ignore[attr-defined]
-            runtime_context = dict(projection.prompt_context)  # type: ignore[attr-defined]
-            if projection.changed:  # type: ignore[attr-defined]
+            runtime_history = messages_to_history_pairs(projection.recent_messages)
+            runtime_context = dict(projection.prompt_context)
+            if projection.changed:
                 service.update_session(
                     session_id=session_id,
-                    context_config=projection.persisted_context_config,  # type: ignore[attr-defined]
+                    context_config=projection.persisted_context_config,
                 )
 
             # 保存用户消息

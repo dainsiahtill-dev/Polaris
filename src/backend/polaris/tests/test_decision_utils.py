@@ -1,6 +1,6 @@
+import importlib.util
 import unittest
 from pathlib import Path
-import importlib.util
 
 
 def _load_decision_module():

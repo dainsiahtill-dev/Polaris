@@ -1,0 +1,96 @@
+version: 1
+id: context_assembly_pipeline
+title: Context Assembly Pipeline
+purpose: >
+  Deterministic context assembly flow from graph-backed catalog lookup through
+  context engine resolution to orchestration and role kernel consumption.
+
+entry_cells:
+  - delivery.api_gateway
+  - roles.runtime
+  - roles.kernel
+
+cells:
+  - context.catalog
+  - context.engine
+  - orchestration.pm_planning
+  - orchestration.pm_dispatch
+  - workspace.integrity
+  - policy.workspace_guard
+  - roles.session
+  - kernelone.core
+
+exit_cells:
+  - context.engine
+  - orchestration.pm_dispatch
+
+relations:
+  - from: context.engine
+    to: context.catalog
+    type: queries
+    contract: SearchCellsQueryV1
+  - from: context.catalog
+    to: workspace.integrity
+    type: queries
+    contract: ValidateWorkspaceCommandV1
+  - from: context.catalog
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: orchestration.pm_planning
+    to: context.engine
+    type: queries
+    contract: BuildRoleContextCommandV1
+  - from: orchestration.pm_dispatch
+    to: context.engine
+    type: queries
+    contract: ResolveRoleContextQueryV1
+  - from: roles.kernel
+    to: context.engine
+    type: queries
+    contract: BuildRoleContextCommandV1
+  - from: roles.session
+    to: context.engine
+    type: queries
+    contract: SearchRoleSessionMemoryQueryV1
+  - from: context.engine
+    to: kernelone.core
+    type: depends_on
+    contract: ContextOS.models
+  - from: context.catalog
+    to: roles.runtime
+    type: depends_on
+    contract: roles.runtime
+
+critical_contracts:
+  - SearchCellsQueryV1
+  - CellDescriptorV1
+  - SearchCellsResultV1
+  - BuildRoleContextCommandV1
+  - ResolveRoleContextQueryV1
+  - ContextResolvedEventV1
+  - RoleContextResultV1
+  - ValidateWorkspaceCommandV1
+  - SearchRoleSessionMemoryQueryV1
+
+state_boundaries:
+  - owner: context.catalog
+    state: workspace/meta/context_catalog/*
+  - owner: workspace.integrity
+    state: workspace/meta/workspace_status.json
+
+verify_targets:
+  tests:
+    - polaris/cells/context/catalog/tests/test_service.py
+    - polaris/cells/context/catalog/tests/test_descriptor_validation.py
+    - tests/architecture/test_architecture_invariants.py
+    - tests/test_docs_template_quality.py
+  contracts:
+    - SearchCellsQueryV1
+    - BuildRoleContextCommandV1
+    - ResolveRoleContextQueryV1
+
+migration_notes:
+  - Context assembly logic is still distributed across role adapters and converging into context.engine.
+  - Vector rank and rerank are not wired yet.
+  - No public storage.layout cell is reintroduced yet.

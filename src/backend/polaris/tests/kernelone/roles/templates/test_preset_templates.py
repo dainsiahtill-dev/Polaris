@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
+from polaris.kernelone.roles.dynamic_role import DynamicRoleManager
 from polaris.kernelone.roles.templates.preset_templates import (
     ARCHITECT_TEMPLATE,
     CHIEF_ENGINEER_TEMPLATE,
@@ -16,7 +16,6 @@ from polaris.kernelone.roles.templates.preset_templates import (
     list_preset_template_names,
     register_preset_templates,
 )
-from polaris.kernelone.roles.dynamic_role import DynamicRoleManager
 
 
 class TestPresetTemplates:

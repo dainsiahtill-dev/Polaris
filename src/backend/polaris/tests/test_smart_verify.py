@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+
 import pytest
 
 # Skip this test - domain.* modules have been migrated to polaris
 try:
-    from domain.verification.existence_gate import check_mode  # noqa: E402
-    from domain.verification.progress_delta import (  # noqa: E402
+    from domain.verification.existence_gate import check_mode
+    from domain.verification.progress_delta import (
         ProgressTracker,
         detect_stall,
     )
-    from domain.verification.soft_check import (  # noqa: E402
+    from domain.verification.soft_check import (
         check_missing_targets,
         detect_unresolved_imports,
     )

@@ -3,13 +3,13 @@
 CRITICAL: 所有文本文件 I/O 必须使用 UTF-8 编码。
 """
 
-import importlib.util, pytest
-if importlib.util.find_spec("api") is None:
-    pytest.skip("Legacy module not available: api.main", allow_module_level=True)
 
+import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
-from api.main import app
+
+# The api.main module no longer exists in the polaris architecture.
+# Skip this test module entirely.
+pytest.importorskip("api.main", reason="Legacy api.main module has been removed; use polaris.delivery.http.v2 endpoints instead")
 
 
 

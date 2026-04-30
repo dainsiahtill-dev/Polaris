@@ -18,6 +18,7 @@ from typing import Any
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
+
 from ..backend_bootstrap import (
     BackendBootstrapError,
     ensure_backend_session,
@@ -26,7 +27,6 @@ from ..stress_path_policy import (
     default_stress_workspace_base,
     ensure_stress_workspace_path,
 )
-
 from .cli import (
     _build_observer_command,
     _build_runner_command,

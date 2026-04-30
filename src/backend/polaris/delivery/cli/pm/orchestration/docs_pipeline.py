@@ -34,10 +34,7 @@ logger = logging.getLogger(__name__)
 def _resolve_docs_autoinit_root(workspace_full: str) -> str:
     """Resolve docs auto initialization root path."""
     try:
-        try:
-            from polaris.kernelone.storage import resolve_workspace_persistent_path
-        except (RuntimeError, ValueError):  # pragma: no cover - script-mode fallback
-            from polaris.kernelone.storage import resolve_workspace_persistent_path  # type: ignore
+        from polaris.kernelone.storage import resolve_workspace_persistent_path
         return os.path.abspath(resolve_workspace_persistent_path(workspace_full, "workspace/docs"))
     except (RuntimeError, ValueError) as exc:
         logger.warning(
@@ -137,13 +134,13 @@ def _write_architect_docs_pipeline(
     blueprint_bundle = _materialize_zhongshu_blueprints(
         workspace_full=workspace_full,
         cache_root_full=cache_root_full,
-        stages=stages,  # type: ignore[arg-type]
+        stages=stages,
     )
 
     return {
         "pipeline_path": pipeline_full,
         "progress_path": progress_full,
-        "stage_count": len(stages) if isinstance(stages, list) else 0,  # type: ignore[arg-type]
+        "stage_count": len(stages) if isinstance(stages, list) else 0,
         "blueprint_manifest_path": str(blueprint_bundle.get("manifest_path") or "").strip(),
         "blueprint_doc_count": int(blueprint_bundle.get("count") or 0),
     }

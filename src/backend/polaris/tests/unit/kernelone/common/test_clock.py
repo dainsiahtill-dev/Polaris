@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from polaris.kernelone.common.clock import MockClock, RealClock
 
 

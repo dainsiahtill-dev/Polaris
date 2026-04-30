@@ -1,0 +1,136 @@
+version: 1
+id: director_workflow_pipeline
+title: Director Workflow Pipeline
+purpose: >
+  Director-specific workflow flow from planning and tasking through execution
+  to runtime state persistence and projection under policy and budget guards.
+
+entry_cells:
+  - orchestration.pm_dispatch
+  - delivery.api_gateway
+
+cells:
+  - director.planning
+  - director.tasking
+  - director.execution
+  - chief_engineer.blueprint
+  - factory.pipeline
+  - policy.permission
+  - policy.workspace_guard
+  - runtime.execution_broker
+  - runtime.state_owner
+  - runtime.task_runtime
+  - audit.evidence
+  - audit.verdict
+  - finops.budget_guard
+  - llm.control_plane
+  - llm.provider_runtime
+  - workspace.integrity
+
+exit_cells:
+  - director.execution
+  - runtime.task_runtime
+  - audit.evidence
+
+relations:
+  - from: director.planning
+    to: chief_engineer.blueprint
+    type: depends_on
+    contract: chief_engineer.blueprint
+  - from: director.planning
+    to: factory.pipeline
+    type: depends_on
+    contract: factory.pipeline
+  - from: director.planning
+    to: policy.permission
+    type: queries
+    contract: EvaluatePermissionCommandV1
+  - from: director.planning
+    to: runtime.execution_broker
+    type: commands
+    contract: LaunchExecutionProcessCommandV1
+  - from: director.tasking
+    to: runtime.execution_broker
+    type: commands
+    contract: LaunchExecutionProcessCommandV1
+  - from: director.tasking
+    to: runtime.task_runtime
+    type: commands
+    contract: CreateRuntimeTaskCommandV1
+  - from: director.execution
+    to: director.planning
+    type: depends_on
+    contract: director.planning
+  - from: director.execution
+    to: director.tasking
+    type: depends_on
+    contract: director.tasking
+  - from: director.execution
+    to: runtime.state_owner
+    type: commands
+    contract: PersistRuntimeTaskStateCommandV1
+  - from: director.execution
+    to: audit.evidence
+    type: emits
+    contract: DirectorTaskCompletedEventV1
+  - from: director.execution
+    to: audit.verdict
+    type: depends_on
+    contract: audit.verdict
+  - from: director.execution
+    to: finops.budget_guard
+    type: queries
+    contract: GetBudgetStatusQueryV1
+  - from: director.execution
+    to: llm.control_plane
+    type: calls
+    contract: InvokeLlmRoleCommandV1
+  - from: director.execution
+    to: workspace.integrity
+    type: queries
+    contract: ValidateWorkspaceCommandV1
+  - from: policy.permission
+    to: director.execution
+    type: governs
+    contract: EvaluatePermissionCommandV1
+
+critical_contracts:
+  - EvaluatePermissionCommandV1
+  - LaunchExecutionProcessCommandV1
+  - CreateRuntimeTaskCommandV1
+  - PersistRuntimeTaskStateCommandV1
+  - DirectorTaskCompletedEventV1
+  - GetBudgetStatusQueryV1
+  - InvokeLlmRoleCommandV1
+  - ValidateWorkspaceCommandV1
+  - ExecuteDirectorTaskCommandV1
+  - RetryDirectorTaskCommandV1
+
+state_boundaries:
+  - owner: director.planning
+    state: runtime/state/director/planning/*
+  - owner: director.tasking
+    state: runtime/state/director/tasking/*
+  - owner: director.execution
+    state: runtime/state/director/*
+  - owner: runtime.task_runtime
+    state: runtime/tasks/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+
+verify_targets:
+  tests:
+    - tests/test_director_logic.py
+    - tests/test_director_service_convergence.py
+    - polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py
+    - tests/test_worker_service_responsiveness.py
+  contracts:
+    - ExecuteDirectorTaskCommandV1
+    - PersistRuntimeTaskStateCommandV1
+    - DirectorTaskCompletedEventV1
+    - EvaluatePermissionCommandV1
+
+migration_notes:
+  - director.planning and director.tasking are Phase 2/3 migrated; remaining cutover from director.execution.internal pending.
+  - Director optional projection execution backends currently route through roles.adapters during migration.
+  - Director CLI console transport is being consolidated under polaris/delivery/cli/director/.

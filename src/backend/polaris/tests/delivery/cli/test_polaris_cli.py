@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.delivery.cli.polaris_cli import (
     _bind_workspace_environment,
     _default_workflow_run_id,
@@ -178,8 +176,7 @@ class TestBindWorkspaceEnvironment:
 
     def test_bind_workspace_runtime_db_unset(self):
         env_copy = dict(os.environ)
-        if "KERNELONE_RUNTIME_DB" in env_copy:
-            del env_copy["KERNELONE_RUNTIME_DB"]
+        env_copy.pop("KERNELONE_RUNTIME_DB", None)
         with patch.dict(os.environ, env_copy, clear=True):
             _bind_workspace_environment("C:/test/workspace")
             assert "KERNELONE_RUNTIME_ROOT" in os.environ

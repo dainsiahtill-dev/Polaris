@@ -1,7 +1,7 @@
-import unittest
-from pathlib import Path
 import importlib.util
 import sys
+import unittest
+from pathlib import Path
 
 
 def _load_codex_utils():

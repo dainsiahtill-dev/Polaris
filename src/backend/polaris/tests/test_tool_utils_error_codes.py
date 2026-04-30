@@ -1,16 +1,24 @@
+"""Tool execution error code tests.
+
+These tests verify error code mapping in the tool execution pipeline.
+Imports migrated from core.polaris_loop.director_tooling.executor_core and
+core.polaris_loop.tool_contract to polaris.kernelone.tool_execution.
+"""
+
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
 import pytest
 
-# Skip this test - core.polaris_loop modules have been migrated to polaris
-try:
-    from core.polaris_loop.director_tooling.executor_core import run_tool_plan  # noqa: E402
-    from core.polaris_loop.tool_contract import validate_tool_step  # noqa: E402
-except ImportError:
-    pytest.importorskip("polaris.kernelone")
+if importlib.util.find_spec("polaris.kernelone.tool_execution") is None:
+    pytest.skip("Module not available: polaris.kernelone.tool_execution", allow_module_level=True)
+
+from polaris.kernelone.tool_execution import validate_tool_step
+from polaris.kernelone.tool_execution.executor_core import run_tool_plan
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "src" / "backend"
@@ -51,7 +59,7 @@ def test_run_tool_plan_infers_path_not_file_error_code(monkeypatch, tmp_path: Pa
         return _Result()
 
     monkeypatch.setattr(
-        "core.polaris_loop.director_tooling.executor_core.subprocess.run",
+        "polaris.kernelone.tool_execution.executor_core.subprocess.run",
         _fake_run,
     )
 
@@ -76,7 +84,7 @@ def test_run_tool_plan_infers_path_not_directory_error_code(monkeypatch, tmp_pat
         return _Result()
 
     monkeypatch.setattr(
-        "core.polaris_loop.director_tooling.executor_core.subprocess.run",
+        "polaris.kernelone.tool_execution.executor_core.subprocess.run",
         _fake_run,
     )
 
@@ -101,7 +109,7 @@ def test_run_tool_plan_sets_runtime_error_code_when_no_json_stdout(monkeypatch, 
         return _Result()
 
     monkeypatch.setattr(
-        "core.polaris_loop.director_tooling.executor_core.subprocess.run",
+        "polaris.kernelone.tool_execution.executor_core.subprocess.run",
         _fake_run,
     )
 

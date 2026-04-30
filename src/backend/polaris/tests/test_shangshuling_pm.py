@@ -6,46 +6,35 @@
 3. 压力测试：1000次/秒状态更新、10MB文档解析、10000任务查询
 """
 
-import json
 import os
 import random
 import shutil
-import string
 import sys
 import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
-from typing import Any, Dict, List
 
 # Skip this test - pm.* modules have been migrated to polaris/cells
 import pytest
+
 pytest.importorskip("polaris.cells.pm")
 
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'backend', 'scripts'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'backend', 'core', 'polaris_loop'))
 
-from pm.state_manager import get_state_manager, PMStateManager
+from pm.pm_integration import get_pm
 from pm.requirements_tracker import (
-    get_requirements_tracker,
-    RequirementsTracker,
-    RequirementStatus,
     RequirementPriority,
     RequirementType,
 )
-from pm.document_manager import get_document_manager, DocumentManager
 from pm.task_orchestrator import (
-    get_task_orchestrator,
-    TaskOrchestrator,
-    TaskStatus,
-    TaskPriority,
     AssigneeType,
+    TaskPriority,
+    TaskStatus,
     TaskVerification,
 )
-from pm.execution_tracker import get_execution_tracker, ExecutionTracker
-from pm.pm_integration import get_pm, PM
 
 
 class TestPMBase(unittest.TestCase):
@@ -111,7 +100,7 @@ class TestFunctionalStress(TestPMBase):
             )
             task_ids.append(task.id)
 
-        print(f"  已注册500个任务")
+        print("  已注册500个任务")
 
         # Concurrent updates
         start_time = time.time()
@@ -189,7 +178,7 @@ class TestIntegrationStress(TestPMBase):
             )
             reqs.append(req)
 
-        print(f"  步骤1: 注册50个需求 ✓")
+        print("  步骤1: 注册50个需求 ✓")
 
         # 2. Create tasks for each requirement
         tasks = []
@@ -206,7 +195,7 @@ class TestIntegrationStress(TestPMBase):
                 # Link task to requirement
                 self.pm.requirements.link_task(req.id, task.id)
 
-        print(f"  步骤2: 创建100个任务并关联需求 ✓")
+        print("  步骤2: 创建100个任务并关联需求 ✓")
 
         # 3. Assign and complete tasks
         for i, task in enumerate(tasks):
@@ -228,7 +217,7 @@ class TestIntegrationStress(TestPMBase):
                     ),
                 )
 
-        print(f"  步骤3: 分配任务，完成90% ✓")
+        print("  步骤3: 分配任务，完成90% ✓")
 
         elapsed = time.time() - start_time
         print(f"  完成: 完整链路验证，耗时 {elapsed:.2f}秒")
@@ -406,7 +395,7 @@ class TestPressureStress(TestPMBase):
         sorted_tasks = self.pm.tasks.topological_sort()
         elapsed3 = time.time() - start_time
 
-        print(f"  查询结果:")
+        print("  查询结果:")
         print(f"    按状态查询10000任务: {elapsed1:.2f}秒")
         print(f"    随机访问100任务: {elapsed2:.2f}秒")
         print(f"    拓扑排序: {elapsed3:.2f}秒")

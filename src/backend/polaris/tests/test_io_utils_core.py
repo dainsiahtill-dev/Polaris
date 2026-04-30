@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,9 +84,9 @@ class TestIoUtilsCore(unittest.TestCase):
             io_utils.emit_event(events_path, kind="action", actor="System", name="noop", summary="test")
             io_utils.flush_jsonl_buffers(force=True)
 
-            with open(dialogue_path, "r", encoding="utf-8") as handle:
+            with open(dialogue_path, encoding="utf-8") as handle:
                 dialogue = json.loads(handle.readline())
-            with open(events_path, "r", encoding="utf-8") as handle:
+            with open(events_path, encoding="utf-8") as handle:
                 event = json.loads(handle.readline())
 
             self.assertEqual(dialogue["speaker"], "PM")
@@ -127,7 +127,7 @@ class TestIoUtilsCore(unittest.TestCase):
                 )
                 io_utils.flush_jsonl_buffers(force=True)
 
-                with open(llm_path, "r", encoding="utf-8") as handle:
+                with open(llm_path, encoding="utf-8") as handle:
                     rows = [json.loads(line) for line in handle if line.strip()]
                 self.assertEqual(len(rows), 1)
 
@@ -144,7 +144,7 @@ class TestIoUtilsCore(unittest.TestCase):
                 )
                 io_utils.flush_jsonl_buffers(force=True)
 
-                with open(llm_path, "r", encoding="utf-8") as handle:
+                with open(llm_path, encoding="utf-8") as handle:
                     rows = [json.loads(line) for line in handle if line.strip()]
                 self.assertEqual(len(rows), 2)
             finally:
@@ -172,7 +172,7 @@ class TestIoUtilsCore(unittest.TestCase):
                 io_utils.emit_event(events_path, **kwargs)
                 io_utils.flush_jsonl_buffers(force=True)
 
-                with open(events_path, "r", encoding="utf-8") as handle:
+                with open(events_path, encoding="utf-8") as handle:
                     rows = [json.loads(line) for line in handle if line.strip()]
                 self.assertEqual(len(rows), 1)
 
@@ -185,7 +185,7 @@ class TestIoUtilsCore(unittest.TestCase):
                 )
                 io_utils.flush_jsonl_buffers(force=True)
 
-                with open(events_path, "r", encoding="utf-8") as handle:
+                with open(events_path, encoding="utf-8") as handle:
                     rows = [json.loads(line) for line in handle if line.strip()]
                 self.assertEqual(len(rows), 2)
             finally:

@@ -220,7 +220,7 @@ async def export_audit(
     export_data = facade.export_json(
         start_time=start_dt,
         end_time=end_dt,
-        event_types=event_type_list,  # type: ignore[arg-type]
+        event_types=event_type_list,
         include_data=include_data,
     )
 

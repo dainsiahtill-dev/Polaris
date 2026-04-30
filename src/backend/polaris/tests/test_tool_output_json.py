@@ -1,10 +1,11 @@
 import sys
 from pathlib import Path
+
 import pytest
 
 # Skip this test - tool_output_json module has been migrated to polaris.kernelone.tool_execution.output_json
 try:
-    from tool_output_json import parse_json_stdout  # noqa: E402
+    from tool_output_json import parse_json_stdout
 except ImportError:
     pytest.importorskip("polaris.kernelone.tool_execution.output_json")
 

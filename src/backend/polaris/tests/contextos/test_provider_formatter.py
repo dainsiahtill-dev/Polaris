@@ -12,14 +12,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
 from polaris.cells.roles.kernel.internal.llm_caller import (
     AnnotatedProviderFormatter,
     NativeProviderFormatter,
     ProviderFormatter,
 )
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ContextEvent
-
 
 # -----------------------------------------------------------------------------
 # Fixtures

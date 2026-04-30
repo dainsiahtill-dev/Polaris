@@ -86,6 +86,12 @@ class _CaptureRoleAdapter(RoleOrchestrationAdapter):
 
 
 def test_core_runtime_files_do_not_import_app_directly():
+    """Verify polaris runtime modules do not import from the deprecated app.* root.
+
+    Note: The literal strings "from app." and "import app." are intentional
+    search patterns used to detect legacy imports. The app.* root has been
+    fully migrated to polaris.*; this test enforces the architecture boundary.
+    """
     targets = [
         BACKEND_ROOT
         / "polaris"

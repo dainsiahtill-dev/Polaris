@@ -694,7 +694,7 @@ class TaskOrchestrator:
                 if req and req.status == RequirementStatus.IN_PROGRESS:
                     # Check if all tasks for this requirement are complete
                     all_complete = all(
-                        (t := self.get_task(t_id)) is not None and t.status == TaskStatus.COMPLETED  # type: ignore[union-attr]
+                        (t := self.get_task(t_id)) is not None and t.status == TaskStatus.COMPLETED
                         for t_id in req.tasks
                     )
                     if all_complete:

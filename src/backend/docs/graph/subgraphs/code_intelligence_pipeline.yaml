@@ -1,0 +1,75 @@
+version: 1
+id: code_intelligence_pipeline
+title: Code Intelligence Pipeline
+purpose: >
+  Code indexing, semantic analysis, and context compilation flow from the code
+  intelligence engine through workspace integrity to context engine consumption
+  for Director and ChiefEngineer execution paths.
+
+entry_cells:
+  - director.execution
+  - chief_engineer.blueprint
+  - workspace.integrity
+
+cells:
+  - code_intelligence.engine
+  - workspace.integrity
+  - context.engine
+  - kernelone.core
+  - policy.workspace_guard
+
+exit_cells:
+  - code_intelligence.engine
+  - context.engine
+
+relations:
+  - from: code_intelligence.engine
+    to: workspace.integrity
+    type: depends_on
+    contract: workspace.integrity
+  - from: code_intelligence.engine
+    to: kernelone.core
+    type: depends_on
+    contract: kernelone.core
+  - from: code_intelligence.engine
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: context.engine
+    to: code_intelligence.engine
+    type: queries
+    contract: repo_symbols_index
+  - from: workspace.integrity
+    to: code_intelligence.engine
+    type: calls
+    contract: repo_read_slice
+  - from: chief_engineer.blueprint
+    to: code_intelligence.engine
+    type: depends_on
+    contract: code_intelligence.engine
+
+critical_contracts:
+  - repo_symbols_index
+  - repo_read_slice
+  - repo_read_around
+  - repo_read_head
+  - repo_read_tail
+  - repo_rg
+  - treesitter_find_symbol
+  - WorkspaceWriteGuardQueryV1
+
+state_boundaries:
+  - owner: workspace.integrity
+    state: workspace/meta/integrity/*
+
+verify_targets:
+  tests:
+    - tests/test_hyper_opt.py
+  contracts:
+    - repo_symbols_index
+    - repo_read_slice
+
+migration_notes:
+  - Cell directory structure pending creation (Phase 2).
+  - Full migration from infrastructure to cells layer is Phase 3 work.
+  - Code intelligence indexing strategy still depends on infrastructure adapter maturity.

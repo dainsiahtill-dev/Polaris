@@ -17,7 +17,6 @@
 
 import asyncio
 import json
-import os
 import re
 import sys
 import time
@@ -25,7 +24,7 @@ import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable
 
 # 添加backend到路径
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -40,10 +39,10 @@ class TestCase:
     role: str  # pm, architect, chief_engineer, director, qa
     name: str
     description: str
-    input_data: Dict[str, Any]
-    expected_patterns: List[str] = field(default_factory=list)
-    forbidden_patterns: List[str] = field(default_factory=list)
-    validator: Optional[Callable[[str], Tuple[bool, List[str]]]] = None
+    input_data: dict[str, Any]
+    expected_patterns: list[str] = field(default_factory=list)
+    forbidden_patterns: list[str] = field(default_factory=list)
+    validator: Callable[[str], tuple[bool, list[str]]] | None = None
     timeout_sec: int = 60
 
 
@@ -55,9 +54,9 @@ class TestResult:
     success: bool
     score: float  # 0-100
     output: str
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    metrics: Dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    metrics: dict[str, Any] = field(default_factory=dict)
     duration_ms: int = 0
 
 
@@ -69,7 +68,7 @@ class RoleBenchmark:
     passed_tests: int = 0
     failed_tests: int = 0
     avg_score: float = 0.0
-    results: List[TestResult] = field(default_factory=list)
+    results: list[TestResult] = field(default_factory=list)
 
 
 class PromptInjectionTester:
@@ -101,7 +100,7 @@ class PromptInjectionTester:
     ]
 
     @classmethod
-    def test_prompt_robustness(cls, prompt_template: str, role: str) -> List[Dict[str, Any]]:
+    def test_prompt_robustness(cls, prompt_template: str, role: str) -> list[dict[str, Any]]:
         """测试提示词模板的鲁棒性"""
         results = []
         for payload in cls.INJECTION_PAYLOADS:
@@ -155,7 +154,7 @@ class OutputValidator:
     }
 
     @classmethod
-    def validate_json_structure(cls, output: str, schema_type: str) -> Tuple[bool, List[str]]:
+    def validate_json_structure(cls, output: str, schema_type: str) -> tuple[bool, list[str]]:
         """验证JSON结构合规性"""
         errors = []
 
@@ -215,7 +214,7 @@ class OutputValidator:
         return len(errors) == 0, errors
 
     @classmethod
-    def validate_patch_format(cls, output: str) -> Tuple[bool, List[str]]:
+    def validate_patch_format(cls, output: str) -> tuple[bool, list[str]]:
         """验证代码补丁格式"""
         errors = []
 
@@ -246,7 +245,7 @@ class OutputValidator:
         return len(errors) == 0, errors
 
     @classmethod
-    def validate_architecture_design(cls, output: str) -> Tuple[bool, List[str]]:
+    def validate_architecture_design(cls, output: str) -> tuple[bool, list[str]]:
         """验证架构设计输出的质量"""
         errors = []
         warnings = []
@@ -291,7 +290,7 @@ class QualityScorer:
     """输出质量评分器"""
 
     @classmethod
-    def score_pm_output(cls, output: str, tasks: List[Dict]) -> Tuple[float, List[str]]:
+    def score_pm_output(cls, output: str, tasks: list[dict]) -> tuple[float, list[str]]:
         """评分PM任务生成质量"""
         score = 100.0
         feedback = []
@@ -319,7 +318,7 @@ class QualityScorer:
                     feedback.append(f"任务 {task.get('id', '?')} 缺少必填字段: {field}")
 
             # 可选字段加分
-            optional_count = sum(1 for f in optional_fields if f in task and task[f])
+            optional_count = sum(1 for f in optional_fields if task.get(f))
             if optional_count < 2:
                 score -= 2
                 feedback.append(f"任务 {task.get('id', '?')} 可选字段过少")
@@ -352,7 +351,7 @@ class QualityScorer:
         return max(0, score), feedback
 
     @classmethod
-    def score_ce_output(cls, output: str, blueprint: Dict) -> Tuple[float, List[str]]:
+    def score_ce_output(cls, output: str, blueprint: dict) -> tuple[float, list[str]]:
         """评分ChiefEngineer蓝图质量"""
         score = 100.0
         feedback = []
@@ -395,7 +394,7 @@ class QualityScorer:
         return max(0, score), feedback
 
     @classmethod
-    def score_director_output(cls, output: str, actions: List[Dict]) -> Tuple[float, List[str]]:
+    def score_director_output(cls, output: str, actions: list[dict]) -> tuple[float, list[str]]:
         """评分Director执行输出质量"""
         score = 100.0
         feedback = []
@@ -432,7 +431,7 @@ class QualityScorer:
         return max(0, score), feedback
 
     @classmethod
-    def score_qa_output(cls, output: str, report: Dict) -> Tuple[float, List[str]]:
+    def score_qa_output(cls, output: str, report: dict) -> tuple[float, list[str]]:
         """评分QA审查报告质量"""
         score = 100.0
         feedback = []
@@ -472,15 +471,15 @@ class RoleStressTester:
 
     def __init__(self, workspace: str = "."):
         self.workspace = workspace
-        self.results: Dict[str, RoleBenchmark] = {}
-        self.test_cases: List[TestCase] = []
+        self.results: dict[str, RoleBenchmark] = {}
+        self.test_cases: list[TestCase] = []
 
-    def _load_prompt_templates(self) -> Dict[str, str]:
+    def _load_prompt_templates(self) -> dict[str, str]:
         """加载角色提示词模板"""
         templates = {}
 
         try:
-            from app.llm.usecases.role_dialogue import ROLE_PROMPT_TEMPLATES
+            from polaris.cells.llm.dialogue.public import ROLE_PROMPT_TEMPLATES
             templates.update(ROLE_PROMPT_TEMPLATES)
         except ImportError as e:
             print(f"警告: 无法加载role_dialogue模板: {e}")
@@ -492,7 +491,7 @@ class RoleStressTester:
 
         return templates
 
-    def generate_test_cases(self) -> List[TestCase]:
+    def generate_test_cases(self) -> list[TestCase]:
         """生成压测用例"""
         cases = []
 
@@ -859,7 +858,7 @@ class RoleStressTester:
             # 这里我们先做静态检查
 
             # 1. 检查提示词模板注入风险
-            from app.llm.usecases.role_dialogue import ROLE_PROMPT_TEMPLATES
+            from polaris.cells.llm.dialogue.public import ROLE_PROMPT_TEMPLATES
 
             template = ROLE_PROMPT_TEMPLATES.get(case.role, "")
             injection_results = PromptInjectionTester.test_prompt_robustness(
@@ -934,8 +933,8 @@ class RoleStressTester:
         return f"[模拟输出] {case.role} 响应 {case.input_data}"
 
     def _validate_pm_output(
-        self, output: str, input_data: Dict
-    ) -> Tuple[bool, List[str]]:
+        self, output: str, input_data: dict
+    ) -> tuple[bool, list[str]]:
         """验证PM输出"""
         errors = []
 
@@ -949,14 +948,14 @@ class RoleStressTester:
         return len(errors) == 0, errors
 
     def _validate_architect_output(
-        self, output: str, input_data: Dict
-    ) -> Tuple[bool, List[str]]:
+        self, output: str, input_data: dict
+    ) -> tuple[bool, list[str]]:
         """验证Architect输出"""
         return OutputValidator.validate_architecture_design(output)
 
     def _validate_ce_output(
-        self, output: str, input_data: Dict
-    ) -> Tuple[bool, List[str]]:
+        self, output: str, input_data: dict
+    ) -> tuple[bool, list[str]]:
         """验证ChiefEngineer输出"""
         errors = []
 
@@ -969,8 +968,8 @@ class RoleStressTester:
         return len(errors) == 0, errors
 
     def _validate_director_output(
-        self, output: str, input_data: Dict
-    ) -> Tuple[bool, List[str]]:
+        self, output: str, input_data: dict
+    ) -> tuple[bool, list[str]]:
         """验证Director输出"""
         errors = []
 
@@ -982,8 +981,8 @@ class RoleStressTester:
         return len(errors) == 0, errors
 
     def _validate_qa_output(
-        self, output: str, input_data: Dict
-    ) -> Tuple[bool, List[str]]:
+        self, output: str, input_data: dict
+    ) -> tuple[bool, list[str]]:
         """验证QA输出"""
         errors = []
 
@@ -995,7 +994,7 @@ class RoleStressTester:
 
         return len(errors) == 0, errors
 
-    async def run_all_tests(self) -> Dict[str, RoleBenchmark]:
+    async def run_all_tests(self) -> dict[str, RoleBenchmark]:
         """运行所有压测"""
         print("=" * 80)
         print("Polaris LLM角色压测开始")
@@ -1006,7 +1005,7 @@ class RoleStressTester:
         print(f"\n共生成 {len(self.test_cases)} 个测试用例")
 
         # 按角色分组
-        cases_by_role: Dict[str, List[TestCase]] = {}
+        cases_by_role: dict[str, list[TestCase]] = {}
         for case in self.test_cases:
             cases_by_role.setdefault(case.role, []).append(case)
 
@@ -1051,7 +1050,7 @@ class RoleStressTester:
         lines = []
         lines.append("# Polaris LLM角色压测报告")
         lines.append(f"\n生成时间: {datetime.now().isoformat()}")
-        lines.append(f"测试框架版本: 1.0.0")
+        lines.append("测试框架版本: 1.0.0")
         lines.append("\n" + "=" * 80 + "\n")
 
         # 总体概览
@@ -1095,7 +1094,7 @@ class RoleStressTester:
             for result in benchmark.results:
                 all_errors.extend(result.errors)
 
-        error_counts: Dict[str, int] = {}
+        error_counts: dict[str, int] = {}
         for error in all_errors:
             # 简化错误信息用于统计
             key = error.split(":")[0] if ":" in error else error[:50]

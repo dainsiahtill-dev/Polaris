@@ -7,14 +7,13 @@ Cell-local singletons (ActivityRegistry, WorkflowRegistry, _workflow_context_var
 from __future__ import annotations
 
 import logging
-import sys
 
 import pytest
 
 logger = logging.getLogger(__name__)
 
 
-def pytest_load_initial_conftests(early_config, parser, args):  # noqa: ARG001, ARG002
+def pytest_load_initial_conftests(early_config, parser, args):
     """Patch torch._overrides._add_docstr before any test collection imports torch.
 
     The torch library raises RuntimeError when '_has_torch_function' already has

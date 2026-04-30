@@ -1,16 +1,13 @@
-import importlib.util, pytest
-if importlib.util.find_spec("app") is None:
-    pytest.skip("Legacy module not available: app.llm.usecases.role_dialogue", allow_module_level=True)
-
 """测试新的角色输出验证功能"""
 
-import sys
-from pathlib import Path
+import importlib.util
 
-# 添加backend到路径
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src" / "backend"))
+import pytest
 
-from app.llm.usecases.role_dialogue import (
+if importlib.util.find_spec("polaris.cells.llm.dialogue.public") is None:
+    pytest.skip("Module not available: polaris.cells.llm.dialogue.public", allow_module_level=True)
+
+from polaris.cells.llm.dialogue.public import (
     RoleOutputParser,
     RoleOutputQualityChecker,
     validate_and_parse_role_output,
@@ -126,7 +123,7 @@ END PATCH_FILE
 '''
 
     patches, errors = RoleOutputParser.extract_patch_blocks(unsafe_output)
-    print(f"Path traversal test:")
+    print("Path traversal test:")
     print(f"  Patches found: {len(patches)} (should be 0)")
     print(f"  Security errors: {errors}")
 
@@ -147,7 +144,7 @@ END PATCH_FILE
     score, suggestions = RoleOutputQualityChecker._check_director_output(
         director_dangerous, None
     )
-    print(f"\nDangerous code test:")
+    print("\nDangerous code test:")
     print(f"  Score: {score} (should be low)")
     print(f"  Warnings: {suggestions}")
 

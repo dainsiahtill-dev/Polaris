@@ -5,10 +5,7 @@ CRITICAL: 所有文本文件 I/O 必须使用 UTF-8 编码。
 
 from __future__ import annotations
 
-import importlib.util, pytest
-if importlib.util.find_spec("scripts.audit_quick") is None or importlib.util.find_spec("core") is None:
-    pytest.skip("Legacy modules not available: scripts.audit_quick or core", allow_module_level=True)
-
+import importlib.util
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -16,8 +13,12 @@ from pathlib import Path
 
 import pytest
 
+if importlib.util.find_spec("scripts.audit_quick") is None:
+    pytest.skip("Legacy module not available: scripts.audit_quick", allow_module_level=True)
+
+from polaris.cells.audit.diagnosis.public import ErrorChainSearcher
+
 import scripts.audit_quick as audit_quick_module
-from core.auditkit.error_chain import ErrorChainSearcher
 from scripts.audit_quick import (
     _collect_factory_events,
     _collect_runtime_event_inventory,

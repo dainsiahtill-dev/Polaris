@@ -10,7 +10,7 @@ class TestPmTaskSchemaContract(unittest.TestCase):
         schema_path = repo_root / "schema" / "pm_tasks.schema.json"
         if not schema_path.is_file():
             raise unittest.SkipTest(f"Schema not found: {schema_path}")
-        with open(schema_path, "r", encoding="utf-8") as handle:
+        with open(schema_path, encoding="utf-8") as handle:
             cls.schema = json.load(handle)
         try:
             import jsonschema

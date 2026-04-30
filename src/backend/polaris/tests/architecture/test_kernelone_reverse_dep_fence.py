@@ -61,10 +61,7 @@ BASELINE_PRODUCTION_FILES: frozenset[str] = frozenset(
         "polaris/kernelone/runtime/defaults.py",
         "polaris/kernelone/storage/policy.py",
         # Benchmark adapters (scheduled for extraction)
-        "polaris/kernelone/benchmark/adapters/agentic_adapter.py",
-        "polaris/kernelone/benchmark/adapters/context_adapter.py",
         "polaris/kernelone/benchmark/holographic_runner.py",
-        "polaris/kernelone/benchmark/unified_runner.py",
         "polaris/kernelone/benchmark/unified_judge.py",
     }
 )
@@ -92,9 +89,8 @@ def _collect_imports(source: str) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 modules.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                modules.append(node.module)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.append(node.module)
     return modules
 
 
@@ -160,7 +156,7 @@ class TestKernelOneReverseDependencyFence:
 
     def test_production_baseline_is_not_growing(self) -> None:
         """Verify no one silently expanded the baseline."""
-        max_allowed = 22  # current count as of 2026-04-25
+        max_allowed = 19  # current count as of 2026-04-29
         assert len(BASELINE_PRODUCTION_FILES) <= max_allowed, (
             f"Production baseline has {len(BASELINE_PRODUCTION_FILES)} entries "
             f"but max is {max_allowed}. Baseline must shrink, not grow."

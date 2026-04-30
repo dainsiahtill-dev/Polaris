@@ -119,7 +119,7 @@ async def update_settings(request: Request, payload: SettingsUpdate) -> dict[str
     )
     if payload.workspace:
         try:
-            payload.workspace = validate_workspace(  # type: ignore[misc]
+            payload.workspace = validate_workspace(
                 payload.workspace,
                 self_upgrade_mode=target_self_upgrade_mode,
             )
@@ -198,15 +198,15 @@ async def update_settings(request: Request, payload: SettingsUpdate) -> dict[str
     set_debug_tracing_enabled(bool(state.settings.debug_tracing))
     if payload.workspace:
         workspace_str = str(state.settings.workspace or "")
-        if workspace_has_docs(workspace_str):  # type: ignore[misc]
-            clear_workspace_status(workspace_str)  # type: ignore[misc]
+        if workspace_has_docs(workspace_str):
+            clear_workspace_status(workspace_str)
         else:
             write_workspace_status(
                 workspace_str,
                 status="NEEDS_DOCS_INIT",
                 reason="docs/ directory not found",
                 actions=["INIT_DOCS_WIZARD"],
-            )  # type: ignore[misc]
+            )
     if workspace_changed:
         from polaris.cells.orchestration.pm_planning.public.service import PMService
         from polaris.infrastructure.di.container import get_container

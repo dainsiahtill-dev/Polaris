@@ -52,10 +52,10 @@ class DirectorResult:
     changed_files: list[str]
     patches: list[dict[str, Any]]
     error: str | None = None
-    metadata: dict[str, Any] | None = None  # type: ignore[assignment]
+    metadata: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        self.changed_files = normalize_path_list(self.changed_files or [])  # type: ignore[assignment]
+        self.changed_files = normalize_path_list(self.changed_files or [])
         if self.metadata is None:
             self.metadata = {}
 

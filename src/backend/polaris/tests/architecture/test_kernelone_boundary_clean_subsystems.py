@@ -21,6 +21,12 @@ HIGH_TRUST_FILES = [
     BACKEND_ROOT / "polaris" / "kernelone" / "process" / "ollama_utils.py",
 ]
 
+# These patterns detect old-root imports (app., core., api., scripts.) that
+# should not appear inside high-trust Polaris subsystems. This is an
+# architecture invariant test: it scans polaris/kernelone/ and
+# polaris/cells/context/catalog/ to ensure they only use canonical polaris.*
+# imports. The strings below are intentionally literal search patterns, not
+# import statements in this test file.
 FORBIDDEN_PATTERNS = (
     "from io_utils import",
     "from storage_layout import",

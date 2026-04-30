@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
 from .engine import RoundResult, StageExecution, StageResult
 from .project_pool import PROJECT_POOL
 

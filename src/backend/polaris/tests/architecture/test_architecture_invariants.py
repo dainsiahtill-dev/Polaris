@@ -39,6 +39,12 @@ class TestArchitectureInvariants:
         """测试：非兼容层代码不得直接 import core.polaris_loop.role_agent
 
         规则: 除了 role_agent 自身和兼容层，其他代码不应直接导入 role_agent
+
+        Note: This test intentionally searches for the literal string
+        "from core.polaris_loop.role_agent" in source files to detect
+        legacy imports. The old root (core.polaris_loop.role_agent) has
+        been migrated to polaris.cells.roles.runtime. This invariant
+        ensures no production code re-introduces the deprecated path.
         """
         violations = []
 

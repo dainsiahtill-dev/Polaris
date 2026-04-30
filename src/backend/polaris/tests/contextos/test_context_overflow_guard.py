@@ -14,7 +14,6 @@ from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.roles.profile.internal.schema import (
     RoleContextPolicy,
     RoleProfile,

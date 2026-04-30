@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import shutil
@@ -5,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-import importlib.util
 
 import pytest
 

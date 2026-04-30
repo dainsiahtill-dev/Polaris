@@ -6,6 +6,7 @@ WebSocket runtime.v2(JetStream) 连接与事件归一化。
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -17,7 +18,6 @@ from typing import Any
 
 import websockets
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
-import contextlib
 
 logger = logging.getLogger("observer.projection")
 

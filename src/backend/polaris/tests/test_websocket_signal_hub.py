@@ -7,6 +7,10 @@ This module tests:
 
 Note: These tests use the new v2 architecture (RuntimeEventFanout) instead of
 the deprecated _DirectorBusRealtimeBridge from app.routers.websocket.
+
+Architecture note: The comment above references app.routers.websocket as the
+*deprecated* old root path that has been replaced by polaris.infrastructure.*.
+This is intentional documentation, not an import statement.
 """
 
 from __future__ import annotations

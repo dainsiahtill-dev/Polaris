@@ -11,22 +11,20 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
-import pytest
 
+import pytest
 from polaris.kernelone.llm.engine.executor import (
-    _get_global_semaphore,
-    WorkspaceExecutorManager,
     AIExecutor,
+    WorkspaceExecutorManager,
+    _get_global_semaphore,
     reset_executor_manager,
 )
 from polaris.kernelone.llm.engine.resilience import (
     CircuitBreaker,
     CircuitBreakerConfig,
-    CircuitState,
     CircuitBreakerOpenError,
+    CircuitState,
     retry_with_jitter,
 )
 
@@ -133,9 +131,9 @@ class TestCancelledErrorPropagation:
         """AIExecutor.invoke 应传播 CancelledError"""
         # 重置 executor manager
         reset_executor_manager()
-        
+
         from polaris.kernelone.llm.shared_contracts import AIRequest, TaskType
-        
+
         executor = AIExecutor(workspace=".")
         request = AIRequest(
             task_type=TaskType.GENERATION,
@@ -221,11 +219,11 @@ class TestCircuitBreakerTOCTOUFix:
 
         # 等待进入 HALF_OPEN（需要等待 recovery_timeout）
         await asyncio.sleep(0.6)
-        
+
         # 检查状态是否已转换
         # 注意：状态转换发生在下一次 call() 时
         # 所以我们需要先触发一次调用来检查状态
-        
+
         # 并发调用：只有 half_open_max_calls 个应该通过
         results: list[str] = []
         rejected: list[CircuitBreakerOpenError] = []

@@ -4,10 +4,20 @@ This module validates:
 - Phase 4: CLI shell slimming with thin adapters
 - Phase 5: Observability layer integration
 - Phase 6: Cleanup and migration tools
+
+Note: Many imports reference legacy modules (core.orchestration.*) that have
+been migrated to polaris.cells.orchestration.workflow_runtime.public.*.
+These tests verify the legacy compatibility shim layer.
 """
 
+import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
+
+if importlib.util.find_spec("polaris.cells.orchestration.workflow_runtime.public") is None:
+    pytest.skip("Module not available: polaris.cells.orchestration.workflow_runtime.public", allow_module_level=True)
 
 sys.path.insert(0, str(Path(__file__).parents[2] / "src" / "backend"))
 
@@ -118,12 +128,12 @@ def test_phase5_observability():
     """Phase 5: Observability layer."""
     print("\n=== Phase 5: Observability Layer ===")
 
-    from core.orchestration import (
+    from polaris.cells.orchestration.workflow_runtime.public import (
         EventStream,
-        UIEventBridge,
-        MetricsCollector,
         HealthMonitor,
+        MetricsCollector,
         StructuredLogger,
+        UIEventBridge,
         create_observability_stack,
     )
 
@@ -172,7 +182,7 @@ def test_phase5_ui_event_types():
     """Phase 5: UI event types."""
     print("\n=== Phase 5: UI Event Types ===")
 
-    from core.orchestration.observability import UIEventType
+    from polaris.cells.orchestration.workflow_runtime.public import UIEventType
 
     # Test all UI event types exist
     assert UIEventType.SERVICE_STATUS.value == "service_status"
@@ -190,8 +200,9 @@ def test_phase5_service_metrics():
     """Phase 5: Service metrics."""
     print("\n=== Phase 5: Service Metrics ===")
 
-    from core.orchestration.observability import ServiceMetrics
     from datetime import datetime
+
+    from polaris.cells.orchestration.workflow_runtime.public import ServiceMetrics
 
     # Test metrics creation
     metrics = ServiceMetrics(
@@ -264,10 +275,8 @@ def test_phase4_to_6_integration():
     """Integration test across Phase 4-6."""
     print("\n=== Phase 4-6 Integration ===")
 
-    from core.orchestration import (
+    from polaris.cells.orchestration.workflow_runtime.public import (
         RuntimeOrchestrator,
-        ServiceDefinition,
-        RunMode,
         create_observability_stack,
     )
 

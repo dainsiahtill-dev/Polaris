@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from polaris.delivery.cli.super_mode import (
-    SUPER_ROLE,
     SuperBlueprintItem,
     SuperClaimedTask,
     SuperModeRouter,

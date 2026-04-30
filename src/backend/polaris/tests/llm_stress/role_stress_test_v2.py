@@ -4,26 +4,16 @@
 """
 
 import asyncio
-import json
-import sys
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-# 添加backend到路径
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-BACKEND_DIR = PROJECT_ROOT / "src" / "backend"
-sys.path.insert(0, str(BACKEND_DIR))
-
-from app.llm.usecases.role_dialogue import (
+from polaris.cells.llm.dialogue.public import (
     ROLE_PROMPT_TEMPLATES,
-    RoleOutputParser,
-    RoleOutputQualityChecker,
+    build_dialogue_prompt as _build_role_prompt,
     validate_and_parse_role_output,
-    _build_role_prompt,
 )
 
 
@@ -35,7 +25,7 @@ class StressTestCase:
     name: str
     description: str
     input_message: str
-    context: Optional[Dict[str, Any]] = None
+    context: dict[str, Any] | None = None
     expected_valid: bool = True
     min_quality_score: float = 60.0
 
@@ -48,8 +38,8 @@ class StressTestResult:
     success: bool
     validation_success: bool
     quality_score: float
-    parse_errors: List[str]
-    quality_warnings: List[str]
+    parse_errors: list[str]
+    quality_warnings: list[str]
     prompt_length: int
     duration_ms: int
     output_sample: str = ""
@@ -59,7 +49,7 @@ class PromptQualityAnalyzer:
     """提示词质量分析器"""
 
     @classmethod
-    def analyze(cls, template: str, role: str) -> Dict[str, Any]:
+    def analyze(cls, template: str, role: str) -> dict[str, Any]:
         """分析提示词模板的质量"""
         result = {
             "role": role,
@@ -112,9 +102,9 @@ class RoleStressTestV2:
     """LLM角色压测主类 V2"""
 
     def __init__(self):
-        self.results: List[StressTestResult] = []
+        self.results: list[StressTestResult] = []
 
-    def generate_test_cases(self) -> List[StressTestCase]:
+    def generate_test_cases(self) -> list[StressTestCase]:
         """生成压测用例"""
         cases = []
 
@@ -506,7 +496,7 @@ END PATCH_FILE
                 output_sample="ERROR",
             )
 
-    async def run_all_tests(self) -> List[StressTestResult]:
+    async def run_all_tests(self) -> list[StressTestResult]:
         """运行所有压测"""
         print("=" * 80)
         print("Polaris LLM角色压测 V2")
@@ -574,7 +564,7 @@ END PATCH_FILE
         lines.append(f"- 平均质量分: {avg_quality:.1f}/100\n")
 
         # 按角色分组
-        by_role: Dict[str, List[StressTestResult]] = {}
+        by_role: dict[str, list[StressTestResult]] = {}
         for r in self.results:
             by_role.setdefault(r.role, []).append(r)
 

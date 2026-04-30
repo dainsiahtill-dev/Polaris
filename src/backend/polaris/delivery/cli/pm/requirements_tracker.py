@@ -93,7 +93,7 @@ class RequirementChange:
     old_value: Any  # 旧值
     new_value: Any  # 新值
     changed_by: str  # 变更者
-    changed_at: str = field(default_factory=_now_iso)  # type: ignore[operator]
+    changed_at: str = field(default_factory=_now_iso)
     reason: str = ""  # 变更原因
 
 

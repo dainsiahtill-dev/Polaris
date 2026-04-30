@@ -8,7 +8,6 @@ These tests validate the core integration paths of the Polaris system:
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 
 import pytest

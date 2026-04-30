@@ -243,7 +243,7 @@ async def create_task(
         description=request.description,
         command=request.command,
         priority=priority,
-        blocked_by=request.blocked_by,  # type: ignore[arg-type]
+        blocked_by=request.blocked_by,
         timeout_seconds=request.timeout_seconds,
         metadata=request.metadata,
     )

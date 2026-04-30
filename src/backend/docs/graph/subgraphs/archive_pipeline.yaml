@@ -1,0 +1,110 @@
+version: 1
+id: archive_pipeline
+title: Archive Pipeline
+purpose: >
+  Immutable archive flow for runtime runs, task snapshots, and factory outputs
+  from runtime state reads through archive persistence to audit evidence and
+  history index maintenance.
+
+entry_cells:
+  - runtime.state_owner
+  - factory.pipeline
+
+cells:
+  - archive.run_archive
+  - archive.factory_archive
+  - archive.task_snapshot_archive
+  - policy.workspace_guard
+  - audit.evidence
+  - storage.layout
+  - runtime.state_owner
+
+exit_cells:
+  - archive.run_archive
+  - archive.factory_archive
+  - archive.task_snapshot_archive
+
+relations:
+  - from: archive.run_archive
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - from: archive.run_archive
+    to: runtime.state_owner
+    type: queries
+    contract: GetRuntimeRunQueryV1
+  - from: archive.run_archive
+    to: audit.evidence
+    type: commands
+    contract: AppendEvidenceEventCommandV1
+  - from: archive.run_archive
+    to: storage.layout
+    type: queries
+    contract: ResolveStorageLayoutQueryV1
+  - from: archive.task_snapshot_archive
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - from: archive.task_snapshot_archive
+    to: runtime.state_owner
+    type: queries
+    contract: GetRuntimeSnapshotQueryV1
+  - from: archive.task_snapshot_archive
+    to: audit.evidence
+    type: commands
+    contract: AppendEvidenceEventCommandV1
+  - from: archive.factory_archive
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceArchiveWriteGuardQueryV1
+  - from: archive.factory_archive
+    to: audit.evidence
+    type: commands
+    contract: AppendEvidenceEventCommandV1
+  - from: archive.factory_archive
+    to: archive.run_archive
+    type: depends_on
+    contract: archive.run_archive
+
+critical_contracts:
+  - ArchiveRunCommandV1
+  - ArchiveTaskSnapshotCommandV1
+  - ArchiveFactoryRunCommandV1
+  - WorkspaceArchiveWriteGuardQueryV1
+  - GetRuntimeRunQueryV1
+  - GetRuntimeSnapshotQueryV1
+  - AppendEvidenceEventCommandV1
+  - ResolveStorageLayoutQueryV1
+
+state_boundaries:
+  - owner: archive.run_archive
+    state: workspace/history/runs/*
+  - owner: archive.run_archive
+    state: workspace/history/index/runs.index.jsonl
+  - owner: archive.task_snapshot_archive
+    state: workspace/history/tasks/*
+  - owner: archive.task_snapshot_archive
+    state: workspace/history/index/tasks.index.jsonl
+  - owner: archive.factory_archive
+    state: workspace/history/factory/*
+  - owner: archive.factory_archive
+    state: workspace/history/index/factory.index.jsonl
+  - owner: runtime.state_owner
+    state: runtime/runs/*
+  - owner: runtime.state_owner
+    state: runtime/state/*
+
+verify_targets:
+  tests:
+    - tests/architecture/test_graph_reality.py
+    - tests/test_history_archive_service.py
+  contracts:
+    - ArchiveRunCommandV1
+    - ArchiveTaskSnapshotCommandV1
+    - ArchiveFactoryRunCommandV1
+    - AppendEvidenceEventCommandV1
+
+migration_notes:
+  - Archive implementations still share history_archive_service.py and remain declaration-first at the graph layer.
+  - Run archive reads are converged; history router still needs full contract-only traversal for all run endpoints.
+  - Task snapshot and factory archive API compatibility routes are still being standardized.

@@ -1,17 +1,29 @@
+"""Role agent concurrency guard tests.
+
+These tests verify thread-safety properties of the role agent runtime.
+The imports have been migrated from core.polaris_loop.role_agent to
+polaris.cells.roles.runtime.public.
+"""
+
 from __future__ import annotations
 
+import importlib.util
 import sys
 import threading
 import time
 from pathlib import Path
+
 import pytest
 
-# Skip this test - core.polaris_loop.role_agent has been migrated to polaris
-try:
-    from core.polaris_loop.role_agent.base import AgentMessage, AgentStatus, RoleAgent  # noqa: E402
-    from core.polaris_loop.role_agent.protocol import ProtocolFSM, ProtocolType  # noqa: E402
-except ImportError:
-    pytest.skip("core.polaris_loop.role_agent migrated to polaris.cells.roles", allow_module_level=True)
+if importlib.util.find_spec("polaris.cells.roles.runtime.public") is None:
+    pytest.skip("Module not available: polaris.cells.roles.runtime.public", allow_module_level=True)
+
+from polaris.cells.roles.runtime.public import (
+    AgentMessage,
+    AgentStatus,
+    RoleAgent,
+)
+from polaris.cells.roles.runtime.public.service import ProtocolFSM, ProtocolType
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "src" / "backend"

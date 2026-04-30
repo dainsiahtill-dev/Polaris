@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.kernelone.audit.registry import (
     _store_cache,
-    _store_factory,
     create_audit_store,
     get_audit_store,
     has_audit_store_factory,

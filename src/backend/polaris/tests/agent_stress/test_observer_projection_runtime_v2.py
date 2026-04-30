@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from polaris.kernelone.storage import resolve_storage_roots
+
 from .observer.projection import RuntimeProjection
 
 

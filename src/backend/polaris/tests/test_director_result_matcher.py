@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 def _load_module():
@@ -17,9 +17,9 @@ def _load_module():
     return module
 
 
-def _make_result(**extra: Any) -> Dict[str, Any]:
+def _make_result(**extra: Any) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "task_id": "task-1",
         "run_id": "pm-00001",
         "timestamp": now.isoformat(),

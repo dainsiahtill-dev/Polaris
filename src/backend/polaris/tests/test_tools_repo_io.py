@@ -1,8 +1,8 @@
+import importlib.util
 import os
 import tempfile
 import unittest
 from pathlib import Path
-import importlib.util
 
 
 def _load_tools_module():

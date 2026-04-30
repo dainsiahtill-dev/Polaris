@@ -11,7 +11,6 @@ This module validates the fixes implemented in TOP 6 critical fixes:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any

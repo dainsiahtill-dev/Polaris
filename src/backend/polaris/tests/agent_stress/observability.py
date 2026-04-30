@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Any, Self
 
 import httpx
+
 from .contracts import (
     director_task_id,
     director_task_pm_task_id,

@@ -1,22 +1,24 @@
-import importlib.util, pytest
-if importlib.util.find_spec("core") is None:
-    pytest.skip("Legacy module not available: core.auditkit", allow_module_level=True)
-
 """Tests for auditkit library.
 
 CRITICAL: 所有文本文件 I/O 必须使用 UTF-8 编码。
 """
 
-import json
-import pytest
-from datetime import datetime, timezone
-from pathlib import Path
+from __future__ import annotations
 
-from core.auditkit import (
+import importlib.util
+import json
+from datetime import datetime, timezone
+
+import pytest
+
+if importlib.util.find_spec("polaris.cells.audit.diagnosis.public") is None:
+    pytest.skip("Module not available: polaris.cells.audit.diagnosis.public", allow_module_level=True)
+
+from polaris.cells.audit.diagnosis.internal.toolkit import (
     build_triage_bundle,
-    query_events,
     query_by_run_id,
     query_by_task_id,
+    query_events,
     verify_chain,
     verify_file_integrity,
 )

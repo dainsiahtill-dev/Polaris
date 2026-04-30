@@ -1,8 +1,9 @@
+import importlib.util
 import json
 import sys
-from types import SimpleNamespace
-import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+
 
 def _load_loop_pm():
     repo_root = Path(__file__).resolve().parents[2]

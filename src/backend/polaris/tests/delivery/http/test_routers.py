@@ -17,13 +17,8 @@ Uses pytest and pytest-asyncio with comprehensive coverage of:
 
 from __future__ import annotations
 
-import asyncio
 import json
-import tempfile
-import uuid
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -43,7 +38,6 @@ from polaris.delivery.http.routers._shared import (
     require_auth,
     structured_error_response,
 )
-
 
 # =============================================================================
 # Shared Test Infrastructure

@@ -427,7 +427,7 @@ TBD
                 "",
                 "workspace/blueprints/manifest.json",
             )
-            with open(manifest_full, "r", encoding="utf-8") as handle:
+            with open(manifest_full, encoding="utf-8") as handle:
                 manifest = json.load(handle)
 
             docs = manifest.get("docs")

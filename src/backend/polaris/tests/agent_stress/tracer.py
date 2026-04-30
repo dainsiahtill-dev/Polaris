@@ -25,6 +25,7 @@ from .paths import ensure_backend_root_on_syspath
 ensure_backend_root_on_syspath()
 
 import httpx
+
 from .contracts import (
     director_task_claimed_by,
     director_task_id,

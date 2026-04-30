@@ -349,7 +349,7 @@ def invoke_pm_backend(
             )
             resolved_backend = "codex"
         elif backend_kind == "ollama":
-            output = invoke_ollama(  # type: ignore[assignment]
+            output = invoke_ollama(
                 prompt,
                 state.model,
                 state.workspace_full,

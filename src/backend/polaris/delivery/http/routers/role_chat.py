@@ -57,7 +57,7 @@ async def role_chat_status(
     try:
         cache_root = build_cache_root(
             "",  # ramdisk_root (empty string as default)
-            str(state.settings.workspace),  # type: ignore[arg-type]
+            str(state.settings.workspace),
         )
 
         # 评测索引用于补充状态，不应误判为“未配置”。
@@ -68,7 +68,7 @@ async def role_chat_status(
 
         # 加载配置获取详细信息（使用线程池执行文件 I/O）
         config = await _load_llm_config_async(
-            str(state.settings.workspace),  # type: ignore[arg-type]
+            str(state.settings.workspace),
             cache_root,
             state.settings,
         )

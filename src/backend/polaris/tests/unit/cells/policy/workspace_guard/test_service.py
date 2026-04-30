@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from polaris.cells.policy.workspace_guard.service import (
     SELF_UPGRADE_MODE_ENV,
     build_workspace_guard_message,

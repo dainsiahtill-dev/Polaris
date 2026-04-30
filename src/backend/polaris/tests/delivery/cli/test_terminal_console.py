@@ -6,21 +6,16 @@ import datetime
 import logging
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from polaris.delivery.cli.terminal_console import (
-    ROLE_PROMPT_SYMBOLS,
-    TOOL_NAME_STYLES,
     _ANSI_GREEN,
     _ANSI_RED,
-    _ConsoleRenderState,
     SUPER_ROLE,
-    _TurnExecutionResult,
     _build_structured_json_event,
     _coerce_bool,
     _console_display_role,
+    _ConsoleRenderState,
     _detect_keymode_from_shell,
     _director_output_suggests_more_work,
     _estimate_cost,
@@ -37,20 +32,19 @@ from polaris.delivery.cli.terminal_console import (
     _normalize_output_format,
     _normalize_prompt_style,
     _normalize_role,
-    _print_error_event,
     _render_diff_ansi,
     _resolve_keymode,
     _resolve_output_format,
     _restore_infrastructure_logs,
     _safe_text,
     _set_current_model,
-    _stdout_is_tty,
     _suppress_infrastructure_logs,
     _tool_error,
     _tool_name,
     _tool_path,
     _tool_status,
     _truncate_workspace,
+    _TurnExecutionResult,
 )
 
 

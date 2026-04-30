@@ -1,25 +1,28 @@
-import importlib.util, pytest
-if importlib.util.find_spec("core") is None:
-    pytest.skip("Legacy module not available: core.startup", allow_module_level=True)
-
 """Tests for BackendBootstrapper - unified backend startup core.
 
 This module tests the backend bootstrap functionality introduced
 in Phase 2 of the "Thin CLI + Core OO" refactoring.
 """
 
+from __future__ import annotations
+
+import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
+
+if importlib.util.find_spec("polaris.bootstrap") is None:
+    pytest.skip("Module not available: polaris.bootstrap", allow_module_level=True)
 
 # Add src/backend to path
 sys.path.insert(0, str(Path(__file__).parents[2] / "src" / "backend"))
 
-import pytest
 import asyncio
 
-from core.startup import ConfigLoader, BackendBootstrapper, ConfigLoadError
-from application.dto.backend_launch import BackendLaunchRequest, BackendLaunchResult
-from domain.models.config_snapshot import ConfigSnapshot, SourceType
+from polaris.bootstrap import BackendBootstrapper, ConfigLoader
+from polaris.bootstrap.contracts.backend_launch import BackendLaunchRequest, BackendLaunchResult
+from polaris.domain.models.config_snapshot import ConfigSnapshot, SourceType
 
 
 class TestConfigLoader:
