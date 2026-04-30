@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
-
 from polaris.infrastructure.db.repositories.accel_session_receipt_store import (
     SessionReceiptError,
     SessionReceiptStore,
@@ -19,10 +17,10 @@ from polaris.infrastructure.db.repositories.accel_session_receipt_store import (
     _to_meta_json,
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def receipt_store(tmp_path: Path) -> SessionReceiptStore:
@@ -34,8 +32,10 @@ def receipt_store(tmp_path: Path) -> SessionReceiptStore:
 # _parse_utc
 # =============================================================================
 
+
 def test_parse_utc_iso() -> None:
     from datetime import datetime, timezone
+
     dt = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     assert _parse_utc(dt.isoformat()) == dt
 
@@ -58,6 +58,7 @@ def test_parse_utc_invalid() -> None:
 # _normalize_bool_flag
 # =============================================================================
 
+
 def test_normalize_bool_flag_true_values() -> None:
     assert _normalize_bool_flag(True) is True
     assert _normalize_bool_flag("true") is True
@@ -77,6 +78,7 @@ def test_normalize_bool_flag_false_values() -> None:
 # =============================================================================
 # _normalize_receipt_status
 # =============================================================================
+
 
 def test_normalize_receipt_status_success_aliases() -> None:
     assert _normalize_receipt_status("success") == "succeeded"
@@ -103,6 +105,7 @@ def test_normalize_receipt_status_invalid() -> None:
 # _normalize_session_final_status
 # =============================================================================
 
+
 def test_normalize_session_final_status_defaults() -> None:
     assert _normalize_session_final_status("") == "closed"
     assert _normalize_session_final_status("closed") == "closed"
@@ -122,6 +125,7 @@ def test_normalize_session_final_status_invalid() -> None:
 # _normalize_ttl_seconds
 # =============================================================================
 
+
 def test_normalize_ttl_seconds_default() -> None:
     assert _normalize_ttl_seconds("invalid", default_value=1800) == 1800
 
@@ -138,6 +142,7 @@ def test_normalize_ttl_seconds_valid() -> None:
 # =============================================================================
 # _to_meta_json
 # =============================================================================
+
 
 def test_to_meta_json_dict() -> None:
     assert _to_meta_json({"a": 1}) == json.dumps({"a": 1}, ensure_ascii=False)
@@ -162,6 +167,7 @@ def test_to_meta_json_none() -> None:
 # =============================================================================
 # open_session
 # =============================================================================
+
 
 def test_open_session_new(receipt_store: SessionReceiptStore) -> None:
     session = receipt_store.open_session(run_id="run1")
@@ -197,6 +203,7 @@ def test_open_session_missing_run_id(receipt_store: SessionReceiptStore) -> None
 # attach_session
 # =============================================================================
 
+
 def test_attach_session_readonly(receipt_store: SessionReceiptStore) -> None:
     receipt_store.open_session(run_id="run1", session_id="sess1")
     session = receipt_store.attach_session(session_id="sess1", run_id="run1", readonly=True)
@@ -223,7 +230,9 @@ def test_attach_session_run_id_mismatch(receipt_store: SessionReceiptStore) -> N
 
 def test_attach_session_expired_lease(receipt_store: SessionReceiptStore, monkeypatch) -> None:
     import time
+
     from polaris.infrastructure.db.repositories import accel_session_receipt_store as mod
+
     monkeypatch.setattr(mod, "_normalize_ttl_seconds", lambda v, default_value=1800: max(1, int(v)))
     receipt_store.open_session(run_id="run1", session_id="sess1", ttl_seconds=1)
     time.sleep(1.2)
@@ -242,11 +251,13 @@ def test_attach_session_lease_conflict(receipt_store: SessionReceiptStore) -> No
 # heartbeat_session
 # =============================================================================
 
+
 def test_heartbeat_session_extends_lease(receipt_store: SessionReceiptStore) -> None:
     s = receipt_store.open_session(run_id="run1", session_id="sess1")
     lease_id = s["lease_id"]
     before = s["lease_until"]
     import time
+
     time.sleep(0.1)
     after = receipt_store.heartbeat_session(session_id="sess1", lease_id=lease_id)
     assert after["lease_until"] != before
@@ -267,6 +278,7 @@ def test_heartbeat_session_not_found(receipt_store: SessionReceiptStore) -> None
 # =============================================================================
 # close_session
 # =============================================================================
+
 
 def test_close_session(receipt_store: SessionReceiptStore) -> None:
     receipt_store.open_session(run_id="run1", session_id="sess1")
@@ -289,6 +301,7 @@ def test_close_session_not_found(receipt_store: SessionReceiptStore) -> None:
 # =============================================================================
 # upsert_receipt
 # =============================================================================
+
 
 def test_upsert_receipt_new(receipt_store: SessionReceiptStore) -> None:
     receipt_store.open_session(run_id="run1", session_id="sess1")
@@ -386,6 +399,7 @@ def test_upsert_receipt_run_id_mismatch(receipt_store: SessionReceiptStore) -> N
 # update_receipt_status
 # =============================================================================
 
+
 def test_update_receipt_status(receipt_store: SessionReceiptStore) -> None:
     receipt_store.open_session(run_id="run1", session_id="sess1")
     receipt_store.upsert_receipt(
@@ -409,6 +423,7 @@ def test_update_receipt_status_not_found(receipt_store: SessionReceiptStore) -> 
 # =============================================================================
 # get_receipt
 # =============================================================================
+
 
 def test_get_receipt_hit(receipt_store: SessionReceiptStore) -> None:
     receipt_store.open_session(run_id="run1", session_id="sess1")
@@ -436,6 +451,7 @@ def test_get_receipt_empty_id(receipt_store: SessionReceiptStore) -> None:
 # =============================================================================
 # list_receipts
 # =============================================================================
+
 
 def test_list_receipts_no_filter(receipt_store: SessionReceiptStore) -> None:
     receipt_store.open_session(run_id="run1", session_id="sess1")
@@ -557,8 +573,13 @@ def test_list_receipts_limit_clamped(receipt_store: SessionReceiptStore) -> None
 # recover_expired_running_receipts
 # =============================================================================
 
-def test_recover_expired_running_receipts(receipt_store: SessionReceiptStore) -> None:
+
+def test_recover_expired_running_receipts(receipt_store: SessionReceiptStore, monkeypatch) -> None:
     import time
+
+    from polaris.infrastructure.db.repositories import accel_session_receipt_store as mod
+
+    monkeypatch.setattr(mod, "_normalize_ttl_seconds", lambda v, default_value=1800: max(1, int(v)))
     receipt_store.open_session(run_id="run1", session_id="sess1", ttl_seconds=1)
     receipt_store.upsert_receipt(
         job_id="job1",
@@ -577,8 +598,12 @@ def test_recover_expired_running_receipts(receipt_store: SessionReceiptStore) ->
     assert r["error_code"] == "E_SESSION_EXPIRED"
 
 
-def test_recover_expired_running_receipts_not_recoverable(receipt_store: SessionReceiptStore) -> None:
+def test_recover_expired_running_receipts_not_recoverable(receipt_store: SessionReceiptStore, monkeypatch) -> None:
     import time
+
+    from polaris.infrastructure.db.repositories import accel_session_receipt_store as mod
+
+    monkeypatch.setattr(mod, "_normalize_ttl_seconds", lambda v, default_value=1800: max(1, int(v)))
     receipt_store.open_session(run_id="run1", session_id="sess1", ttl_seconds=1)
     receipt_store.upsert_receipt(
         job_id="job1",
@@ -601,6 +626,7 @@ def test_recover_expired_running_receipts_invalid_terminal(receipt_store: Sessio
 # =============================================================================
 # SessionReceiptError
 # =============================================================================
+
 
 def test_session_receipt_error_attributes() -> None:
     err = SessionReceiptError("E_CODE", "message here")

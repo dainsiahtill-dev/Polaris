@@ -290,7 +290,7 @@ class TestUnifiedJudge:
             role="director",
             title="Test",
             prompt="Test",
-            judge=JudgeConfig(validators=["nonexistent_validator"]),  # type: ignore[arg-type]
+            judge=JudgeConfig(validators=("nonexistent_validator",)),
         )
 
         observed = ObservedBenchmarkRun(
@@ -313,7 +313,7 @@ class TestUnifiedJudge:
             role="pm",
             title="Test",
             prompt="Create a plan",
-            judge=JudgeConfig(validators=["pm_plan_json"]),  # type: ignore[arg-type]
+            judge=JudgeConfig(validators=("pm_plan_json",)),
         )
 
         # Valid PM plan
@@ -347,7 +347,7 @@ class TestUnifiedJudge:
             role="director",
             title="Test",
             prompt="Test",
-            judge=JudgeConfig(validators=["custom_validator"]),  # type: ignore[arg-type]
+            judge=JudgeConfig(validators=("custom_validator",)),
         )
 
         observed = ObservedBenchmarkRun(

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.policy.workspace_guard.internal.guard_service import (
     GuardCheckResult,
     WorkspaceGuardService,
@@ -163,50 +161,14 @@ class TestCheckArchiveWriteAllowed:
     """Test suite for check_archive_write_allowed method."""
 
     @patch(
-        "polaris.cells.policy.workspace_guard.internal.guard_service.ensure_workspace_target_allowed"
-    )
-    @patch(
         "polaris.cells.policy.workspace_guard.internal.guard_service.resolve_workspace_target"
     )
-    def test_check_archive_write_allowed_valid_history_path(
-        self,
-        mock_resolve: MagicMock,
-        mock_ensure: MagicMock,
-    ) -> None:
-        """Valid workspace/history path passes archive guard."""
-        resolved = Path("/workspace/history/run-001")
-        mock_ensure.return_value = resolved
-        mock_resolve.return_value = resolved
-        service = WorkspaceGuardService()
-        result = service.check_archive_write_allowed("/workspace/history/run-001")
-        assert result.allowed is True
-        assert result.reason == "allowed"
-
-    @patch(
-        "polaris.cells.policy.workspace_guard.internal.guard_service.resolve_workspace_target"
-    )
-    def test_check_archive_write_allowed_outside_history_namespace(
+    def test_check_archive_write_allowed_no_history_keyword_delegates(
         self,
         mock_resolve: MagicMock,
     ) -> None:
-        """History keyword outside workspace/history namespace is blocked."""
-        resolved = Path("/workspace/history-bad/run-001")
-        mock_resolve.return_value = resolved
-        service = WorkspaceGuardService()
-        result = service.check_archive_write_allowed("/workspace/history-bad/run-001")
-        assert result.allowed is False
-        assert "outside the allowed workspace/history/* namespace" in result.reason
-        assert result.resolved_path == resolved
-
-    @patch(
-        "polaris.cells.policy.workspace_guard.internal.guard_service.resolve_workspace_target"
-    )
-    def test_check_archive_write_allowed_no_history_keyword(
-        self,
-        mock_resolve: MagicMock,
-    ) -> None:
-        """Path without history keyword delegates to check_write_allowed."""
-        resolved = Path("/workspace/other/run-001")
+        """Path without 'history' keyword delegates to check_write_allowed."""
+        resolved = Path("/workspace") / "other" / "run-001"
         mock_resolve.return_value = resolved
         with patch.object(
             WorkspaceGuardService,
@@ -218,22 +180,53 @@ class TestCheckArchiveWriteAllowed:
             ),
         ) as mock_check:
             service = WorkspaceGuardService()
-            result = service.check_archive_write_allowed("/workspace/other/run-001")
+            result = service.check_archive_write_allowed(str(resolved))
             assert result.allowed is True
             mock_check.assert_called_once()
 
     @patch(
         "polaris.cells.policy.workspace_guard.internal.guard_service.resolve_workspace_target"
     )
-    def test_check_archive_write_allowed_nested_history(
+    def test_check_archive_write_allowed_outside_history_namespace_blocked(
+        self,
+        mock_resolve: MagicMock,
+    ) -> None:
+        """Path with 'history' but outside workspace/history namespace is blocked."""
+        resolved = Path("/workspace") / "history-bad" / "run-001"
+        mock_resolve.return_value = resolved
+        service = WorkspaceGuardService()
+        result = service.check_archive_write_allowed(str(resolved))
+        assert result.allowed is False
+        assert "outside the allowed workspace/history/* namespace" in result.reason
+        assert result.resolved_path == resolved
+
+    @patch(
+        "polaris.cells.policy.workspace_guard.internal.guard_service.resolve_workspace_target"
+    )
+    def test_check_archive_write_allowed_nested_history_blocked(
         self,
         mock_resolve: MagicMock,
     ) -> None:
         """Deeply nested history path outside workspace/history is blocked."""
-        resolved = Path("/workspace/deep/history/data")
+        resolved = Path("/workspace") / "deep" / "history" / "data"
         mock_resolve.return_value = resolved
         service = WorkspaceGuardService()
-        result = service.check_archive_write_allowed("/workspace/deep/history/data")
+        result = service.check_archive_write_allowed(str(resolved))
+        assert result.allowed is False
+        assert "outside the allowed workspace/history/* namespace" in result.reason
+
+    @patch(
+        "polaris.cells.policy.workspace_guard.internal.guard_service.resolve_workspace_target"
+    )
+    def test_check_archive_write_allowed_with_history_in_name_blocked(
+        self,
+        mock_resolve: MagicMock,
+    ) -> None:
+        """Path containing 'history' keyword but not in workspace/history blocked."""
+        resolved = Path("/my-history-folder") / "data"
+        mock_resolve.return_value = resolved
+        service = WorkspaceGuardService()
+        result = service.check_archive_write_allowed(str(resolved))
         assert result.allowed is False
         assert "outside the allowed workspace/history/* namespace" in result.reason
 
@@ -243,18 +236,23 @@ class TestCheckArchiveWriteAllowed:
     @patch(
         "polaris.cells.policy.workspace_guard.internal.guard_service.resolve_workspace_target"
     )
-    def test_check_archive_write_allowed_exact_workspace_history(
+    def test_check_archive_write_allowed_forwards_self_upgrade_mode(
         self,
         mock_resolve: MagicMock,
         mock_ensure: MagicMock,
     ) -> None:
-        """Exact workspace/history prefix is allowed."""
-        resolved = Path("/workspace/history")
+        """Self-upgrade mode is forwarded via check_write_allowed delegation."""
+        resolved = Path("/workspace") / "other" / "run-001"
         mock_ensure.return_value = resolved
         mock_resolve.return_value = resolved
-        service = WorkspaceGuardService()
-        result = service.check_archive_write_allowed("/workspace/history")
+        service = WorkspaceGuardService(self_upgrade_mode=True)
+        result = service.check_archive_write_allowed(str(resolved))
         assert result.allowed is True
+        assert result.reason == "allowed"
+        mock_ensure.assert_called_once_with(
+            str(resolved),
+            self_upgrade_mode=True,
+        )
 
 
 class TestIsMetaProjectWorkspace:

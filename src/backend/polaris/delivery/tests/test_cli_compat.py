@@ -38,15 +38,6 @@ class TestEmitCompatWarnings:
             assert issubclass(w[0].category, DeprecationWarning)
             assert "polaris-pm" in str(w[0].message)
 
-    def test_legacy_entry_point_polaris_cli(self) -> None:
-        """Test warning emitted for 'polaris-cli' entry point."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            emit_compat_warnings(["polaris-cli"])
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "polaris-cli" in str(w[0].message)
-
     def test_no_warning_for_current_entry_point(self) -> None:
         """Test no warning for non-legacy entry point."""
         with warnings.catch_warnings(record=True) as w:
@@ -227,12 +218,12 @@ class TestLegacyEntryPointsConstant:
         """Test that constant contains expected legacy entry points."""
         assert "polaris-director" in _LEGACY_ENTRY_POINTS
         assert "polaris-pm" in _LEGACY_ENTRY_POINTS
-        assert "polaris-cli" in _LEGACY_ENTRY_POINTS
+        assert "polaris-cli" not in _LEGACY_ENTRY_POINTS  # Current canonical CLI
 
     def test_is_set(self) -> None:
         """Test that constant is a set."""
         assert isinstance(_LEGACY_ENTRY_POINTS, set)
 
     def test_expected_count(self) -> None:
-        """Test that there are exactly 3 legacy entry points."""
-        assert len(_LEGACY_ENTRY_POINTS) == 3
+        """Test that there are exactly 2 legacy entry points."""
+        assert len(_LEGACY_ENTRY_POINTS) == 2

@@ -1000,10 +1000,14 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     };
   }, [processMessage, connection.registerMessageHandler]);
 
-  // Workspace change handling
+  // Workspace change handling — only trigger on actual workspace change.
+  // Previously depended on connection.transportConnected/transportReconnecting,
+  // which caused an infinite reconnect loop (same bug as useRuntimeConnection).
+  const prevWorkspaceRef = useRef<string>(workspace);
   useEffect(() => {
     if (!workspace) return;
-    if (!connection.transportConnected && !connection.transportReconnecting) return;
+    if (workspace === prevWorkspaceRef.current) return;
+    prevWorkspaceRef.current = workspace;
 
     seenDialogueIdsRef.current.clear();
     seenLlmEventIdsRef.current.clear();
@@ -1011,7 +1015,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     directorRunningRef.current = false;
 
     resetForWorkspace();
-  }, [connection.transportConnected, connection.transportReconnecting, connection.transportReconnect, resetForWorkspace, workspace]);
+  }, [workspace]);
 
   // Setters for mutable maps (backward compatibility)
   const setTaskProgressMap = useCallback(

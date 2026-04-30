@@ -138,6 +138,7 @@ class DirectorExecutionConsumer:
 
     .. deprecated::
         Use :class:`polaris.cells.director.pool.internal.director_pool.DirectorPool` instead.
+        Will be removed after 2026-06-30.
     """
 
     def __init__(
@@ -150,7 +151,8 @@ class DirectorExecutionConsumer:
         lease_renew_interval_seconds: float | None = None,
     ) -> None:
         warnings.warn(
-            "DirectorExecutionConsumer is deprecated. Use DirectorPool instead.",
+            "DirectorExecutionConsumer is deprecated. Use DirectorPool instead. "
+            "Will be removed after 2026-06-30.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -387,4 +389,4 @@ class DirectorExecutionConsumer:
 
 
 __all__ = ["DirectorExecutionConsumer", "UnrecoverableExecutionError"]
-__deprecated__ = {"DirectorExecutionConsumer": "Use DirectorPool instead."}
+__deprecated__ = {"DirectorExecutionConsumer": "Use DirectorPool instead. Will be removed after 2026-06-30."}

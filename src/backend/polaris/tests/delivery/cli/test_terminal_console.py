@@ -5,7 +5,10 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import sys
 from pathlib import Path
+
+import pytest
 from unittest.mock import patch
 
 from polaris.delivery.cli.terminal_console import (
@@ -142,6 +145,7 @@ class TestResolveOutputFormat:
         with patch("polaris.delivery.cli.terminal_console._stdout_is_tty", return_value=False):
             assert _resolve_output_format(_UNSET) == "json"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="TTY detection differs on Windows")
     def test_resolve_unset_tty(self):
         from polaris.delivery.cli.terminal_console import _UNSET
 

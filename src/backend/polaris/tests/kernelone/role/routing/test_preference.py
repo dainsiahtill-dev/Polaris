@@ -8,17 +8,15 @@ from __future__ import annotations
 
 from dataclasses import fields
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
+from polaris.kernelone.role.routing.context import RoutingContext, UserPreference
 from polaris.kernelone.role.routing.preference import (
     Feedback,
     PersonaPreference,
     PreferenceLearner,
 )
-from polaris.kernelone.role.routing.context import RoutingContext, UserPreference
-
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -247,7 +245,9 @@ class TestGetPreferredPersonas:
         result = learner.get_preferred_personas("session-1", context=casual_context)
         assert result[0] == "casual"
 
-    def test_casual_context_moves_all_casual_to_front(self, learner: PreferenceLearner, casual_context: RoutingContext) -> None:
+    def test_casual_context_moves_all_casual_to_front(
+        self, learner: PreferenceLearner, casual_context: RoutingContext
+    ) -> None:
         learner.record_feedback("session-1", "relaxed", 0.5)
         learner.record_feedback("session-1", "casual", 0.6)
         learner.record_feedback("session-1", "cyberpunk_hacker", 0.7)
@@ -338,7 +338,9 @@ class TestSaveLoad:
 
     def test_save_default_path(self, learner: PreferenceLearner) -> None:
         """Save with default path should not raise."""
-        with patch("polaris.kernelone.role.routing.preference.get_workspace_metadata_dir_name", return_value=".polaris"):
+        with patch(
+            "polaris.kernelone.role.routing.preference.get_workspace_metadata_dir_name", return_value=".polaris"
+        ):
             learner.save()
 
     def test_round_trip_preserves_feedback(self, learner: PreferenceLearner, tmp_path: Any) -> None:
@@ -373,7 +375,9 @@ class TestSaveLoad:
         learner.load(path=path)  # Should not raise
         assert len(learner._feedback_history) == 0
 
-    def test_load_missing_file_logs_debug(self, learner: PreferenceLearner, tmp_path: Any, caplog: pytest.LogCaptureFixture) -> None:
+    def test_load_missing_file_logs_debug(
+        self, learner: PreferenceLearner, tmp_path: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import logging
 
         path = tmp_path / "nonexistent.json"
@@ -382,7 +386,9 @@ class TestSaveLoad:
 
         assert "Preference file not found" in caplog.text
 
-    def test_load_corrupted_json_logs_error(self, learner: PreferenceLearner, tmp_path: Any, caplog: pytest.LogCaptureFixture) -> None:
+    def test_load_corrupted_json_logs_error(
+        self, learner: PreferenceLearner, tmp_path: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import logging
 
         path = tmp_path / "corrupt.json"
@@ -393,7 +399,9 @@ class TestSaveLoad:
 
         assert "Failed to load preference data" in caplog.text
 
-    def test_load_missing_keys_logs_error(self, learner: PreferenceLearner, tmp_path: Any, caplog: pytest.LogCaptureFixture) -> None:
+    def test_load_missing_keys_logs_error(
+        self, learner: PreferenceLearner, tmp_path: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import logging
 
         path = tmp_path / "bad.json"
@@ -405,7 +413,7 @@ class TestSaveLoad:
         assert "Failed to load preference data" in caplog.text
 
     def test_save_truncates_to_last_100_feedback(self, learner: PreferenceLearner, tmp_path: Any) -> None:
-        for i in range(150):
+        for _ in range(150):
             learner.record_feedback("session-1", "persona-a", 0.8)
 
         assert len(learner._feedback_history) == 150

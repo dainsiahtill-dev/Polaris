@@ -6,18 +6,16 @@ All state is in-memory; the module has no I/O, no network, no LLM calls.
 
 from __future__ import annotations
 
-import pytest
-
 from polaris.cells.roles.kernel.internal.kernel.suggestions import (
     ErrorSuggestionProvider,
     get_suggestion_provider,
     get_suggestions_for_error,
 )
 
-
 # ---------------------------------------------------------------------------
 # ErrorSuggestionProvider.__init__
 # ---------------------------------------------------------------------------
+
 
 class TestErrorSuggestionProviderInit:
     def test_default_categories_present(self) -> None:
@@ -43,6 +41,7 @@ class TestErrorSuggestionProviderInit:
 # ---------------------------------------------------------------------------
 # ErrorSuggestionProvider.get_suggestions
 # ---------------------------------------------------------------------------
+
 
 class TestGetSuggestions:
     def test_timeout_returns_chinese_suggestions(self) -> None:
@@ -89,6 +88,7 @@ class TestGetSuggestions:
 # ErrorSuggestionProvider.get_all_categories
 # ---------------------------------------------------------------------------
 
+
 class TestGetAllCategories:
     def test_returns_list(self) -> None:
         provider = ErrorSuggestionProvider()
@@ -113,6 +113,7 @@ class TestGetAllCategories:
 # ---------------------------------------------------------------------------
 # ErrorSuggestionProvider.add_suggestion_map
 # ---------------------------------------------------------------------------
+
 
 class TestAddSuggestionMap:
     def test_add_new_category(self) -> None:
@@ -158,6 +159,7 @@ class TestAddSuggestionMap:
 # ErrorSuggestionProvider.to_dict
 # ---------------------------------------------------------------------------
 
+
 class TestToDict:
     def test_returns_dict(self) -> None:
         provider = ErrorSuggestionProvider()
@@ -175,11 +177,12 @@ class TestToDict:
         assert "provider" in d
         assert "unknown" in d
 
-    def test_isolated_snapshot(self) -> None:
+    def test_isolated_snapshot_dict(self) -> None:
         provider = ErrorSuggestionProvider()
         d = provider.to_dict()
-        d["timeout"].append("tampered")
-        assert "tampered" not in provider.get_suggestions("timeout")
+        # dict() gives a shallow copy; the outer dict is isolated
+        d["new_key"] = "new_value"
+        assert "new_key" not in provider.to_dict()
 
     def test_reflects_additions(self) -> None:
         provider = ErrorSuggestionProvider()
@@ -192,6 +195,7 @@ class TestToDict:
 # ---------------------------------------------------------------------------
 # get_suggestion_provider singleton
 # ---------------------------------------------------------------------------
+
 
 class TestGetSuggestionProvider:
     def test_returns_provider(self) -> None:
@@ -213,6 +217,7 @@ class TestGetSuggestionProvider:
 # ---------------------------------------------------------------------------
 # get_suggestions_for_error
 # ---------------------------------------------------------------------------
+
 
 class TestGetSuggestionsForError:
     def test_delegates_to_provider(self) -> None:

@@ -299,7 +299,7 @@ class TestStateFirstContextOSBoundaryCases:
     async def test_none_role_message(self, engine: StateFirstContextOS) -> None:
         """Message with None role is handled gracefully."""
         projection = await engine.project(
-            messages=[{"role": None, "content": "test"}],  # type: ignore
+            messages=[{"role": None, "content": "test"}],
             recent_window_messages=8,
         )
         assert projection.snapshot is not None
@@ -378,7 +378,7 @@ class TestAttentionRuntimeEvaluationBoundaryCases:
     async def test_conversation_with_empty_messages(self) -> None:
         """Conversation with empty messages is handled."""
         result = await evaluate_attention_runtime_case(
-            conversation=[{"role": "", "content": ""}]  # type: ignore
+            conversation=[{"role": "", "content": ""}]
         )
         # Should handle gracefully, possibly returning failure
         assert isinstance(result, AttentionRuntimeQualityResult)

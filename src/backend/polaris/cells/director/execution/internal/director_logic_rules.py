@@ -6,12 +6,16 @@
 
     This module is kept as a backward-compatibility stub.
     Update imports to use ``polaris.cells.director.planning.internal``.
+
+# TODO: remove after 2026-06-30
 """
 
 from __future__ import annotations
 
 import warnings
 
+# TODO: Cross-cell internal import — director_logic_rules symbols are not
+# yet exposed in director.planning.public. Add to public contract when stabilised.
 from polaris.cells.director.planning.internal.director_logic_rules import (
     compact_pm_payload,
     extract_defect_ticket,

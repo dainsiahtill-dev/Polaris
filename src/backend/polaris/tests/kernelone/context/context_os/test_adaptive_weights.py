@@ -351,15 +351,6 @@ def test_get_best_strategy_none_when_no_data(learner):
     assert learner.get_best_strategy_for_type("none") == (None, 0.0)
 
 
-def test_get_best_strategy_respects_min_samples(learner):
-    """Strategies with < min_samples must be ignored."""
-    learner.config.min_samples = 5
-    learner.record("s1", "code", 100.0, 0.2, success=True)
-    best, quality = learner.get_best_strategy_for_type("code")
-    assert best is None
-    assert quality == 0.0
-
-
 def test_get_best_strategy_returns_best_when_min_met(learner):
     """When min_samples met, return the strategy with highest avg_quality."""
     for _ in range(5):

@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
@@ -38,7 +39,7 @@ def _make_sqlite_db_path() -> Path:
     return Path(raw)
 
 
-def _install_temp_session_db(db_path: Path):
+def _install_temp_session_db(db_path: Path) -> tuple[Any, Any, Any]:
     engine = create_engine(
         f"sqlite:///{db_path.resolve().as_posix()}",
         echo=False,
@@ -63,28 +64,30 @@ def _build_test_client(workspace: Path) -> TestClient:
     return TestClient(app)
 
 
-def _seed_agent_context_os_session(session_factory, workspace: Path) -> str:
-    projection = StateFirstContextOS(domain_adapter=CodeContextDomainAdapter()).project(
-        messages=[
-            {
-                "role": "user",
-                "content": "Continue fixing agent session continuity memory over HTTP.",
-                "sequence": 1,
-            },
-            {
-                "role": "assistant",
-                "content": "I will preserve the continuity facade and fix the restore endpoints.",
-                "sequence": 2,
-            },
-            {
-                "role": "tool",
-                "content": "```python\nfrom polaris.kernelone.context.session_continuity import SessionContinuityEngine\n```",
-                "sequence": 3,
-            },
-        ],
-        recent_window_messages=2,
+def _seed_agent_context_os_session(session_factory: Any, workspace: Path) -> str:
+    projection = asyncio.run(
+        StateFirstContextOS(domain_adapter=CodeContextDomainAdapter()).project(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Continue fixing agent session continuity memory over HTTP.",
+                    "sequence": 1,
+                },
+                {
+                    "role": "assistant",
+                    "content": "I will preserve the continuity facade and fix the restore endpoints.",
+                    "sequence": 2,
+                },
+                {
+                    "role": "tool",
+                    "content": "```python\nfrom polaris.kernelone.context.session_continuity import SessionContinuityEngine\n```",
+                    "sequence": 3,
+                },
+            ],
+            recent_window_messages=2,
+        )
     )
-    snapshot = projection.snapshot.to_dict()  # type: ignore[attr-defined]
+    snapshot = projection.snapshot.to_dict()
     artifact_store = list(snapshot.get("artifact_store") or [])
     artifact_refs = []
     if artifact_store:
@@ -126,7 +129,7 @@ class TestAgentRouterCanonicalSessions:
         db_path = _make_sqlite_db_path()
         engine, _session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
-            created = agent_router._get_or_create_session(None, "/ws", "pm")  # type: ignore[arg-type]
+            created = agent_router._get_or_create_session("/ws", "pm", None)
             loaded = agent_router._load_agent_session(created["session_id"])
             assert loaded is not None
             assert loaded["session_id"] == created["session_id"]
@@ -143,7 +146,7 @@ class TestAgentRouterCanonicalSessions:
         db_path = _make_sqlite_db_path()
         engine, session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
-            created = agent_router._get_or_create_session(None, "/ws", "pm")  # type: ignore[arg-type]
+            created = agent_router._get_or_create_session("/ws", "pm", None)
 
             async def run() -> None:
                 with patch.object(

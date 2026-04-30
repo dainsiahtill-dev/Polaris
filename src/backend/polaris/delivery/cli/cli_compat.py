@@ -13,7 +13,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 _LEGACY_ENTRY_POINTS: Final[set[str]] = {
     "polaris-director",
     "polaris-pm",
-    "polaris-cli",
 }
 
 
@@ -28,7 +27,7 @@ def emit_compat_warnings(argv: list[str]) -> None:
 
     if program_name in _LEGACY_ENTRY_POINTS:
         _warn(
-            f"Entry point '{program_name}' is deprecated. Use 'polaris-cli' or 'polaris-lazy' instead.",
+            f"Entry point '{program_name}' is deprecated. Use 'polaris-cli' instead.",
             DeprecationWarning,
             stacklevel=3,
         )
@@ -43,7 +42,7 @@ def warn_if_old_runtime_mode(mode: str) -> None:
     deprecated_modes = {"rich", "textual", "server"}
     if mode in deprecated_modes:
         _warn(
-            f"Runtime mode '{mode}' is deprecated or non-canonical. Prefer 'interactive' or 'console' mode.",
+            f"Runtime mode '{mode}' is deprecated. Prefer 'interactive' or 'console' mode. Will be removed in v2.0.",
             DeprecationWarning,
             stacklevel=2,
         )

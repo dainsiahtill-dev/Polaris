@@ -8,11 +8,9 @@ All tests are pure logic (filesystem mocked where needed).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.kernelone.benchmark.reporting.alerts import (
     AlertChannel,
     AlertDispatcher,
@@ -30,7 +28,6 @@ from polaris.kernelone.benchmark.reporting.structs import (
     RegressionAlert,
     ReportSummary,
 )
-
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -295,7 +292,9 @@ class TestSlackFormatter:
         assert "Passed:" in blocks_text
         assert "Failed:" in blocks_text
 
-    def test_format_multiple_alerts(self, formatter: SlackFormatter, sample_alert: BenchmarkAlert, critical_alert: BenchmarkAlert) -> None:
+    def test_format_multiple_alerts(
+        self, formatter: SlackFormatter, sample_alert: BenchmarkAlert, critical_alert: BenchmarkAlert
+    ) -> None:
         result = formatter.format([sample_alert, critical_alert])
         assert len(result["blocks"]) > 3  # header, divider, sections, divider
 
@@ -305,9 +304,9 @@ class TestSlackFormatter:
         assert formatter._severity_order(AlertSeverity.INFO) == 1
 
     def test_severity_emoji_mapping(self, formatter: SlackFormatter) -> None:
-        assert "🔴" == formatter._severity_emoji(AlertSeverity.CRITICAL)
-        assert "🟡" == formatter._severity_emoji(AlertSeverity.WARNING)
-        assert "ℹ️" == formatter._severity_emoji(AlertSeverity.INFO)
+        assert formatter._severity_emoji(AlertSeverity.CRITICAL) == "🔴"
+        assert formatter._severity_emoji(AlertSeverity.WARNING) == "🟡"
+        assert formatter._severity_emoji(AlertSeverity.INFO) == "ℹ️"
 
     def test_severity_color_mapping(self, formatter: SlackFormatter) -> None:
         assert formatter._severity_color(AlertSeverity.CRITICAL) == "#FF0000"
@@ -357,7 +356,9 @@ class TestTeamsFormatter:
         body_text = str(result["body"])
         assert "Attention" in body_text
 
-    def test_format_multiple_alerts(self, formatter: TeamsFormatter, sample_alert: BenchmarkAlert, critical_alert: BenchmarkAlert) -> None:
+    def test_format_multiple_alerts(
+        self, formatter: TeamsFormatter, sample_alert: BenchmarkAlert, critical_alert: BenchmarkAlert
+    ) -> None:
         result = formatter.format([sample_alert, critical_alert])
         assert len(result["body"]) > 2
 
@@ -388,7 +389,9 @@ class TestAlertDispatcher:
         result = dispatcher.unregister_channel(AlertChannel.SLACK)
         assert result is False
 
-    def test_dispatch_empty_channels_returns_empty(self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert) -> None:
+    def test_dispatch_empty_channels_returns_empty(
+        self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert
+    ) -> None:
         results = dispatcher.dispatch([sample_alert])
         assert results == {}
 
@@ -400,7 +403,9 @@ class TestAlertDispatcher:
         assert results[AlertChannel.CONSOLE] is True
         mock_print.assert_called()
 
-    def test_dispatch_file_channel(self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, tmp_path: Path) -> None:
+    def test_dispatch_file_channel(
+        self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, tmp_path: Path
+    ) -> None:
         path = str(tmp_path / "alerts.json")
         dispatcher.register_channel(AlertChannel.FILE, path)
         results = dispatcher.dispatch([sample_alert])
@@ -408,7 +413,9 @@ class TestAlertDispatcher:
         assert results[AlertChannel.FILE] is True
         assert Path(path).exists()
 
-    def test_dispatch_file_channel_content(self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, tmp_path: Path) -> None:
+    def test_dispatch_file_channel_content(
+        self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, tmp_path: Path
+    ) -> None:
         path = str(tmp_path / "alerts.json")
         dispatcher.register_channel(AlertChannel.FILE, path)
         dispatcher.dispatch([sample_alert])
@@ -465,7 +472,9 @@ class TestAlertDispatcher:
         results = dispatcher.dispatch([sample_alert])
         assert results[AlertChannel.EMAIL] is False
 
-    def test_dispatch_multiple_channels(self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, tmp_path: Path) -> None:
+    def test_dispatch_multiple_channels(
+        self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, tmp_path: Path
+    ) -> None:
         dispatcher.register_channel(AlertChannel.CONSOLE, "")
         dispatcher.register_channel(AlertChannel.FILE, str(tmp_path / "alerts.json"))
 
@@ -475,7 +484,9 @@ class TestAlertDispatcher:
         assert len(results) == 2
         assert all(results.values())
 
-    def test_dispatch_with_report(self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, sample_report: BenchmarkReport) -> None:
+    def test_dispatch_with_report(
+        self, dispatcher: AlertDispatcher, sample_alert: BenchmarkAlert, sample_report: BenchmarkReport
+    ) -> None:
         dispatcher.register_channel(AlertChannel.CONSOLE, "")
         with patch("builtins.print"):
             results = dispatcher.dispatch([sample_alert], report=sample_report)

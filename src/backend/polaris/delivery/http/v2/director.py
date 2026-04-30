@@ -46,7 +46,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# DEPRECATED: Backward-compat re-export for tests.
+# TODO: remove after 2026-06-30
+# Backward-compat re-export for tests.
 # Tests should import merge_director_status directly from
 # polaris.cells.runtime.projection.public.service.
 # This alias will be removed in v2.0.

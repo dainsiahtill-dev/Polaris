@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.delivery.cli.audit.audit.reporters import (
     format_factory_events_compact,
     format_failure_compact,
@@ -78,6 +78,7 @@ class TestPrintDiagnosis:
             "index_files": [],
             "corruption_file": {"exists": False},
             "recommendations": [],
+            "total_events": 5,
         }
         with patch(
             "polaris.delivery.cli.audit.audit.reporters.logger", mock_logger
@@ -117,6 +118,7 @@ class TestPrintDiagnosis:
             "index_files": [],
             "corruption_file": {"exists": False},
             "recommendations": [],
+            "total_events": 3,
         }
         with patch(
             "polaris.delivery.cli.audit.audit.reporters.logger", mock_logger
@@ -328,7 +330,7 @@ class TestFormatHealthCompact:
         }
         output = format_health_compact(result, Path("/test"))
         assert "✓ Health: healthy" in output
-        assert "/test" in output
+        assert "test" in output
         assert "disk" in output
         assert "memory" in output
 

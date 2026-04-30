@@ -8,7 +8,7 @@
     and ``polaris/kernelone/benchmark/unified_judge.py`` (UnifiedJudge).
 
     This module is retained for backward compatibility with existing
-    evaluation cell internals and will be removed in a future release.
+    evaluation cell internals and will be removed after 2026-06-30.
 
 This module provides the agentic benchmark evaluation system that runs deterministic
 test cases against the roles.runtime streaming interface. Each benchmark case defines

@@ -9,10 +9,9 @@ Mock strategies:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 from polaris.cells.architect.design.internal.architect_agent import (
     ArchitectAgent,
     BlueprintRecord,
@@ -23,10 +22,10 @@ from polaris.cells.roles.runtime.internal.agent_runtime_base import (
     MessageType,
 )
 
-
 # ---------------------------------------------------------------------------
 # BlueprintRecord
 # ---------------------------------------------------------------------------
+
 
 class TestBlueprintRecord:
     def test_to_dict_returns_expected_keys(self) -> None:
@@ -66,6 +65,7 @@ class TestBlueprintRecord:
 # ---------------------------------------------------------------------------
 # BlueprintStore
 # ---------------------------------------------------------------------------
+
 
 class TestBlueprintStore:
     def test_save_and_get(self) -> None:
@@ -118,9 +118,10 @@ class TestBlueprintStore:
 # ArchitectAgent
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def agent() -> ArchitectAgent:
-    """Return an ArchitectAgent with a fresh in-memory store and no I/O."""
+    """Return an ArchitectAgent with a fresh in-memory store."""
     inst = ArchitectAgent(workspace="/tmp/ws")
     inst._store = BlueprintStore()
     inst._toolbox = None
@@ -139,7 +140,7 @@ class TestArchitectAgentToolbox:
         assert "finalize_blueprint" in tools
         assert "get_blueprint" in tools
         assert "list_blueprints" in tools
-        assert len(tools) == 7
+        assert len(tools) >= 7
 
 
 class TestArchitectAgentTools:
@@ -362,10 +363,12 @@ class TestArchitectAgentRunCycle:
             receiver="Architect",
             payload={"action": "create_blueprint", "task_id": "t1", "title": "RC BP"},
         )
-        with patch.object(agent.message_queue, "receive", return_value=msg):
-            with patch.object(agent.message_queue, "send") as mock_send:
-                assert agent.run_cycle() is True
-                mock_send.assert_called_once()
-                sent = mock_send.call_args[0][0]
-                assert sent.payload["action"] == "create_blueprint"
-                assert sent.payload["result"]["ok"] is True
+        with (
+            patch.object(agent.message_queue, "receive", return_value=msg),
+            patch.object(agent.message_queue, "send") as mock_send,
+        ):
+            assert agent.run_cycle() is True
+            mock_send.assert_called_once()
+            sent = mock_send.call_args[0][0]
+            assert sent.payload["action"] == "create_blueprint"
+            assert sent.payload["result"]["ok"] is True

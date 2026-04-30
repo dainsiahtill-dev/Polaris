@@ -228,7 +228,7 @@ class TestSeedContext:
         context = ReproducibleSeed.set_global_seed(42)
 
         with pytest.raises(AttributeError):  # frozen dataclass cannot be modified
-            context.master_seed = 999  # type: ignore
+            context.master_seed = 999
 
     def test_has_torch_property(self) -> None:
         """Verify has_torch property reflects torch availability."""

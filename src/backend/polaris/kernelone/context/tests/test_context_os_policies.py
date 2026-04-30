@@ -25,7 +25,7 @@ class TestSubPolicyDataclasses:
         """ContextWindowPolicy should be frozen."""
         policy = ContextWindowPolicy()
         with pytest.raises(FrozenInstanceError):
-            policy.model_context_window = 65536  # type: ignore[misc]
+            policy.model_context_window = 65536
 
     def test_context_window_policy_has_slots(self) -> None:
         """ContextWindowPolicy should have slots."""
@@ -37,37 +37,37 @@ class TestSubPolicyDataclasses:
         """WindowSizePolicy should be frozen."""
         policy = WindowSizePolicy()
         with pytest.raises(FrozenInstanceError):
-            policy.min_recent_messages_pinned = 5  # type: ignore[misc]
+            policy.min_recent_messages_pinned = 5
 
     def test_artifact_policy_is_frozen(self) -> None:
         """ArtifactPolicy should be frozen."""
         policy = ArtifactPolicy()
         with pytest.raises(FrozenInstanceError):
-            policy.max_artifact_stubs = 8  # type: ignore[misc]
+            policy.max_artifact_stubs = 8
 
     def test_collection_limits_policy_is_frozen(self) -> None:
         """CollectionLimitsPolicy should be frozen."""
         policy = CollectionLimitsPolicy()
         with pytest.raises(FrozenInstanceError):
-            policy.max_open_loops = 10  # type: ignore[misc]
+            policy.max_open_loops = 10
 
     def test_token_budget_policy_is_frozen(self) -> None:
         """TokenBudgetPolicy should be frozen."""
         policy = TokenBudgetPolicy()
         with pytest.raises(FrozenInstanceError):
-            policy.output_reserve_ratio = 0.2  # type: ignore[misc]
+            policy.output_reserve_ratio = 0.2
 
     def test_input_validation_policy_is_frozen(self) -> None:
         """InputValidationPolicy should be frozen."""
         policy = InputValidationPolicy()
         with pytest.raises(FrozenInstanceError):
-            policy.max_messages = 2000  # type: ignore[misc]
+            policy.max_messages = 2000
 
     def test_attention_runtime_policy_is_frozen(self) -> None:
         """AttentionRuntimePolicy should be frozen."""
         policy = AttentionRuntimePolicy()
         with pytest.raises(FrozenInstanceError):
-            policy.enable_dialog_act = False  # type: ignore[misc]
+            policy.enable_dialog_act = False
 
 
 class TestStateFirstContextOSPolicySubPolicies:
@@ -277,7 +277,7 @@ class TestToDictFromDict:
 
     def test_from_dict_not_dict(self) -> None:
         """from_dict with non-dict should return default policy."""
-        policy = StateFirstContextOSPolicy.from_dict(None)  # type: ignore[arg-type]
+        policy = StateFirstContextOSPolicy.from_dict(None)
         assert isinstance(policy, StateFirstContextOSPolicy)
         assert policy.context_window.model_context_window == 128_000
 

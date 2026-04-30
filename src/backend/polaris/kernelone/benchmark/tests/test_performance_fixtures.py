@@ -185,7 +185,7 @@ class TestBenchmarkDecorator:
         async def my_async_function() -> None:
             await asyncio.sleep(0.001)
 
-        stats = await my_async_function()  # type: ignore[misc]
+        stats = await my_async_function()
 
         assert isinstance(stats, BenchmarkStats)
         assert len(stats.latencies) == 5
@@ -293,7 +293,7 @@ class TestThroughputBenchmarkDecorator:
         async def async_increment() -> None:
             await asyncio.sleep(0.001)
 
-        stats = await async_increment()  # type: ignore[misc]
+        stats = await async_increment()
 
         assert isinstance(stats, ThroughputStats)
         assert stats.total_operations > 0

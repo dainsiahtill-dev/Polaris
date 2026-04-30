@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -221,7 +221,7 @@ class CacheReplay:
 
             return response
 
-        return async_wrapper if is_async else sync_wrapper  # type: ignore[return-value]
+        return cast(Callable[..., Any], async_wrapper if is_async else sync_wrapper)
 
     def clear(self, key: str | None = None) -> None:
         """

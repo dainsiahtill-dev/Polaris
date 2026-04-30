@@ -34,6 +34,8 @@ from polaris.domain.director.context_constants import (
 # NOTE: Once director.runtime is migrated (Phase 4), update this to:
 #   from polaris.cells.director.runtime.internal.existence_gate import ExecutionMode
 
+# TODO: Cross-cell internal import — ExecutionMode is not yet exposed in
+# director.tasking.public or director.execution.public. Add to public contract when stabilised.
 if TYPE_CHECKING:
     from polaris.cells.director.execution.internal.existence_gate import ExecutionMode
 

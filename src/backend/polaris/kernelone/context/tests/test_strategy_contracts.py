@@ -66,7 +66,7 @@ class TestProfileMetadata:
         """ProfileMetadata should be frozen."""
         metadata = ProfileMetadata(description="test")
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):  # frozen dataclass
-            metadata.description = "modified"  # type: ignore
+            metadata.description = "modified"
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ class TestStrategyProfile:
         """StrategyProfile should be frozen."""
         profile = StrategyProfile(profile_id="test")
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):  # frozen dataclass
-            profile.profile_id = "modified"  # type: ignore
+            profile.profile_id = "modified"
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ class TestExpansionDecisionResult:
         """ExpansionDecisionResult should be frozen."""
         result = ExpansionDecisionResult(decision="approved")
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):
-            result.decision = "denied"  # type: ignore
+            result.decision = "denied"
 
 
 class TestReadEscalationDecisionResult:
@@ -589,7 +589,7 @@ class TestBuiltinProfiles:
     def test_profiles_frozen(self) -> None:
         """Built-in profiles should be frozen (immutable)."""
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):
-            canonical_balanced.profile_id = "modified"  # type: ignore
+            canonical_balanced.profile_id = "modified"
 
     def test_all_profiles_valid_overrides_structure(self) -> None:
         """All profiles should have valid override structure."""

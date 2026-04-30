@@ -120,21 +120,21 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     rolesRef.current = roles;
   }, [roles]);
 
-  // Reset state on workspace change
-  useEffect(() => {
-    workspaceRef.current = workspace;
-  }, [workspace]);
-
+  // Reset state ONLY on workspace change (not on every connection state flip).
+  // The previous version depended on transportConnected/transportReconnecting,
+  // which caused an infinite loop: connected=true → effect re-runs → reconnect()
+  // → disconnect → reconnect → connected=true → effect re-runs → ...
+  const prevWorkspaceRef = useRef<string>(workspace);
   useEffect(() => {
     if (!workspace) return;
-    if (!transportConnected && !transportReconnecting) return;
+    if (workspace === prevWorkspaceRef.current) return;
+    prevWorkspaceRef.current = workspace;
 
     resetForWorkspace();
-
     if (autoConnect && activeRef.current) {
       transportReconnect();
     }
-  }, [autoConnect, transportConnected, transportReconnect, transportReconnecting, workspace, resetForWorkspace]);
+  }, [workspace]);
 
   // Initial activation
   useEffect(() => {

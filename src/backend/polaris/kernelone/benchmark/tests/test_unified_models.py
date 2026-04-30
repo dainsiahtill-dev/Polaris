@@ -142,7 +142,7 @@ class TestJudgeConfig:
         assert cfg.mode == "strategy"
 
         with pytest.raises(ValueError, match="mode must be one of"):
-            JudgeConfig(mode="invalid")  # type: ignore[arg-type]  # Intentionally testing invalid mode
+            JudgeConfig(mode="invalid")  # Intentionally testing invalid mode
 
     def test_from_dict_with_nested_objects(self) -> None:
         """Test from_dict with nested objects."""
@@ -204,7 +204,7 @@ class TestUnifiedBenchmarkCase:
             history=[
                 {"role": "user", "content": "hello"},
                 {"role": "assistant", "content": "hi"},
-            ],  # type: ignore[arg-type]  # Testing normalization from dict format
+            ],  # Testing normalization from dict format
         )
         assert case.history == (("user", "hello"), ("assistant", "hi"))
 

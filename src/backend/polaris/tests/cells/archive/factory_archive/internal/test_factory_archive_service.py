@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.archive.factory_archive.internal.factory_archive_service import (
     FactoryArchiveManifest,
     FactoryArchiveService,
@@ -77,7 +77,7 @@ class TestArchiveFactoryRun:
     """Test suite for archive_factory_run method."""
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_success(
         self,
@@ -87,7 +87,7 @@ class TestArchiveFactoryRun:
         """Successful archive copies files and creates manifest."""
         service = _make_service(tmp_path)
         run_id = "factory-001"
-        source_dir = tmp_path / "source" / run_id
+        source_dir = tmp_path / ".polaris" / "factory" / run_id
         source_dir.mkdir(parents=True)
         (source_dir / "config.json").write_text('{"name": "test"}', encoding="utf-8")
 
@@ -100,14 +100,14 @@ class TestArchiveFactoryRun:
         assert manifest.id == run_id
         assert manifest.scope == "factory_run"
         assert manifest.reason == "completed"
-        assert manifest.file_count == 2  # config.json + manifest.json
+        assert manifest.file_count == 1  # config.json only (manifest written after)
         assert manifest.total_size_bytes > 0
         assert manifest.content_hash != ""
-        assert manifest.target_path == f"factory/{run_id}"
+        assert manifest.target_path == f"factory{os.sep}{run_id}"
         mock_repo_cls.return_value.append_factory_entry.assert_called_once()
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_missing_source_returns_empty_manifest(
         self,
@@ -144,7 +144,7 @@ class TestArchiveFactoryRun:
             service.archive_factory_run(factory_run_id="   ")
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_custom_reason(
         self,
@@ -154,7 +154,7 @@ class TestArchiveFactoryRun:
         """Custom reason is preserved in manifest."""
         service = _make_service(tmp_path)
         run_id = "factory-002"
-        source_dir = tmp_path / "source" / run_id
+        source_dir = tmp_path / ".polaris" / "factory" / run_id
         source_dir.mkdir(parents=True)
         (source_dir / "file.txt").write_text("data", encoding="utf-8")
 
@@ -167,7 +167,7 @@ class TestArchiveFactoryRun:
         assert manifest.reason == "integration_test"
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_default_source_dir(
         self,
@@ -184,10 +184,10 @@ class TestArchiveFactoryRun:
         manifest = service.archive_factory_run(factory_run_id=run_id)
 
         assert manifest.id == run_id
-        assert manifest.file_count == 2  # data.json + manifest.json
+        assert manifest.file_count == 1  # data.json only
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_overwrites_existing(
         self,
@@ -197,7 +197,7 @@ class TestArchiveFactoryRun:
         """Re-archiving overwrites existing target directory."""
         service = _make_service(tmp_path)
         run_id = "factory-004"
-        source_dir = tmp_path / "source" / run_id
+        source_dir = tmp_path / ".polaris" / "factory" / run_id
         source_dir.mkdir(parents=True)
         (source_dir / "v1.txt").write_text("version1", encoding="utf-8")
 
@@ -215,10 +215,10 @@ class TestArchiveFactoryRun:
 
         target_file = service.history_root / "factory" / run_id / "v1.txt"
         assert target_file.read_text(encoding="utf-8") == "version2"
-        assert manifest.file_count == 2
+        assert manifest.file_count == 1
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_calculates_checksums(
         self,
@@ -228,7 +228,7 @@ class TestArchiveFactoryRun:
         """Archive calculates SHA256 checksum of all files."""
         service = _make_service(tmp_path)
         run_id = "factory-005"
-        source_dir = tmp_path / "source" / run_id
+        source_dir = tmp_path / ".polaris" / "factory" / run_id
         source_dir.mkdir(parents=True)
         (source_dir / "a.txt").write_text("alpha", encoding="utf-8")
         (source_dir / "b.txt").write_text("beta", encoding="utf-8")
@@ -242,7 +242,7 @@ class TestArchiveFactoryRun:
         assert len(manifest.content_hash) == 64  # SHA256 hex length
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_manifest_persisted(
         self,
@@ -252,7 +252,7 @@ class TestArchiveFactoryRun:
         """Manifest JSON is written to target directory."""
         service = _make_service(tmp_path)
         run_id = "factory-006"
-        source_dir = tmp_path / "source" / run_id
+        source_dir = tmp_path / ".polaris" / "factory" / run_id
         source_dir.mkdir(parents=True)
         (source_dir / "file.txt").write_text("data", encoding="utf-8")
 
@@ -268,7 +268,7 @@ class TestArchiveFactoryRun:
         assert payload["scope"] == "factory_run"
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_archive_factory_run_empty_reason_defaults_to_completed(
         self,
@@ -278,7 +278,7 @@ class TestArchiveFactoryRun:
         """Empty reason defaults to 'completed'."""
         service = _make_service(tmp_path)
         run_id = "factory-007"
-        source_dir = tmp_path / "source" / run_id
+        source_dir = tmp_path / ".polaris" / "factory" / run_id
         source_dir.mkdir(parents=True)
         (source_dir / "file.txt").write_text("data", encoding="utf-8")
 
@@ -307,7 +307,7 @@ class TestGetManifest:
             "archive_datetime": "2009-02-13T23:31:30+00:00",
             "source_runtime_root": str(service.workspace_persistent_root),
             "source_paths": ["factory/test"],
-            "target_path": f"factory/{run_id}",
+            "target_path": f"factory{os.sep}{run_id}",
             "total_size_bytes": 100,
             "file_count": 1,
             "content_hash": "abcd1234",
@@ -346,9 +346,13 @@ class TestGetManifest:
         run_id = "factory-bad"
         target_dir = service.history_root / "factory" / run_id
         target_dir.mkdir(parents=True)
-        (target_dir / "manifest.json").write_text("not json", encoding="utf-8")
-
-        result = service.get_manifest(run_id)
+        # Mock KernelFileSystem read to return invalid JSON directly
+        with patch.object(
+            service._kernel_fs,
+            "workspace_read_text",
+            return_value="not json",
+        ):
+            result = service.get_manifest(run_id)
         assert result is None
 
     def test_get_manifest_non_dict_payload_returns_none(
@@ -370,7 +374,7 @@ class TestListFactoryRuns:
     """Test suite for list_factory_runs method."""
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_list_factory_runs_default(
         self,
@@ -388,7 +392,7 @@ class TestListFactoryRuns:
         mock_repo.read_factory_index.assert_called_once_with(limit=50, offset=0)
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_list_factory_runs_with_limit_offset(
         self,
@@ -405,7 +409,7 @@ class TestListFactoryRuns:
         mock_repo.read_factory_index.assert_called_once_with(limit=10, offset=5)
 
     @patch(
-        "polaris.cells.archive.run_archive.internal.history_manifest_repository.HistoryManifestRepository"
+        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
     )
     def test_list_factory_runs_negative_values_clamped(
         self,
@@ -495,7 +499,7 @@ class TestHelperMethods:
         path = Path("/workspace/history/run-001")
         root = Path("/workspace/history")
         result = FactoryArchiveService._safe_rel(path, root)
-        assert result == "run-001"
+        assert "run-001" in result
 
     def test_safe_rel_outside_root(self) -> None:
         """_safe_rel returns absolute path when outside root."""
@@ -504,10 +508,8 @@ class TestHelperMethods:
         result = FactoryArchiveService._safe_rel(path, root)
         assert result == str(path)
 
-    def test_safe_rel_with_oserror(self, tmp_path: Path) -> None:
-        """_safe_rel handles OSError gracefully."""
-        # On Windows, relative_to can raise ValueError, not OSError
-        # but the code catches both
+    def test_safe_rel_different_drives(self, tmp_path: Path) -> None:
+        """_safe_rel handles different drives gracefully (Windows)."""
         path = Path("C:/other/path")
         root = Path("D:/workspace/history")
         result = FactoryArchiveService._safe_rel(path, root)

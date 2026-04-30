@@ -115,9 +115,10 @@ async def handle_client_message(
             v2_protocol = "runtime.v2"
         return status_sig, tail_lines, v2_protocol, v2_consumer_manager, v2_client_id, v2_channels, v2_cursor
 
-    # Legacy v1 Protocol Handling (DEPRECATED)
+    # Legacy v1 Protocol Handling (DEPRECATED — will be removed in v2.0)
     warnings.warn(
-        "Legacy v1 WebSocket protocol detected. The v1 protocol is deprecated. "
+        "Legacy v1 WebSocket protocol detected. The v1 protocol is deprecated "
+        "and will be removed in v2.0. "
         "Please set protocol='runtime.v2' in SUBSCRIBE messages.",
         DeprecationWarning,
         stacklevel=2,
@@ -245,7 +246,9 @@ async def _handle_subscribe(
             if not normalized:
                 continue
             warnings.warn(
-                f"Legacy channel '{normalized}' via v1 protocol is deprecated.", DeprecationWarning, stacklevel=2
+                f"Legacy channel '{normalized}' via v1 protocol is deprecated and will be removed in v2.0.",
+                DeprecationWarning,
+                stacklevel=2,
             )
             if normalized in STREAM_CHANNELS:
                 continue
@@ -329,11 +332,13 @@ async def _send_legacy_snapshots(
     tail_lines: int,
     legacy_channel_states: dict[str, dict[str, Any]],
 ) -> bool:
-    """Send snapshots for legacy v1 channels (DEPRECATED)."""
+    """Send snapshots for legacy v1 channels (DEPRECATED — will be removed in v2.0)."""
     from polaris.cells.runtime.projection.public.service import CHANNEL_FILES, read_file_tail
 
     warnings.warn(
-        "send_legacy_snapshots: legacy v1 channel snapshots are deprecated.", DeprecationWarning, stacklevel=2
+        "send_legacy_snapshots: legacy v1 channel snapshots are deprecated and will be removed in v2.0.",
+        DeprecationWarning,
+        stacklevel=2,
     )
     sent_any = False
     for channel in channels:

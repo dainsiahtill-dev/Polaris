@@ -7,7 +7,7 @@
     JudgeConfig, UnifiedJudgeVerdict).
 
     This module is retained for backward compatibility with existing
-    evaluation cell internals and will be removed in a future release.
+    evaluation cell internals and will be removed after 2026-06-30.
 """
 
 from __future__ import annotations

@@ -6,12 +6,16 @@
 
     This module is kept as a backward-compatibility stub.
     Update imports to use ``polaris.cells.director.tasking.internal``.
+
+# TODO: remove after 2026-06-30
 """
 
 from __future__ import annotations
 
 import warnings
 
+# TODO: Cross-cell internal import — bootstrap_template_catalog symbols are not
+# yet exposed in director.tasking.public. Add to public contract when stabilised.
 from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
     get_generic_bootstrap_files,
     get_intelligent_bootstrap_files,

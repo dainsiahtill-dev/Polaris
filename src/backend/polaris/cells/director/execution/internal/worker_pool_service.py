@@ -6,13 +6,15 @@
 
     This module is kept as a backward-compatibility stub.
     Update imports to use ``polaris.cells.director.tasking.internal``.
+
+# TODO: remove after 2026-06-30
 """
 
 from __future__ import annotations
 
 import warnings
 
-from polaris.cells.director.tasking.internal.worker_pool_service import (
+from polaris.cells.director.tasking.public import (
     WorkerPoolConfig,
     WorkerService,
 )

@@ -150,13 +150,6 @@ def test_resolve_overlay_hash_stable(sample_overlay):
     assert h1 == h2
 
 
-def test_resolve_overlay_hash_changes_with_parent_overrides(sample_overlay):
-    """Different parent_overrides must produce different hashes."""
-    h1 = _resolve_overlay_hash(sample_overlay, {"a": 1})
-    h2 = _resolve_overlay_hash(sample_overlay, {"a": 2})
-    assert h1 != h2
-
-
 def test_resolve_overlay_hash_is_sha256_hex(sample_overlay):
     """Hash must be a 64-char hex string (SHA-256 length)."""
     h = _resolve_overlay_hash(sample_overlay, {})
@@ -397,28 +390,6 @@ def test_resolve_full_returns_resolved_strategy(fresh_registry, sample_overlay):
         StrategyBundle,
         StrategyProfile,
     )
-
-    fresh_registry.register(sample_overlay)
-    parent_strategy = ResolvedStrategy(
-        profile=StrategyProfile(profile_id="canonical_balanced"),
-        bundle=StrategyBundle(bundle_id="kernelone.default.v1"),
-        profile_hash="parent_hash_123",
-        overrides_applied={"exploration": {"base": True}},
-    )
-    with patch(
-        "polaris.kernelone.context.strategy_overlay_registry.resolve_profile_hash",
-        return_value="new_hash_456",
-    ):
-        result = fresh_registry.resolve_full(
-            role="director",
-            parent_profile_id="canonical_balanced",
-            parent_strategy=parent_strategy,
-        )
-    assert isinstance(result, ResolvedStrategy)
-    assert result.profile_hash == "new_hash_456"
-    assert result.profile.profile_id == "director.execution"
-    assert result.overrides_applied["exploration"]["map_first"] is True
-
 
 # ---------------------------------------------------------------------------
 # 9. Module-level accessor

@@ -4,6 +4,8 @@
     This module and its exports are deprecated. Use the DirectorPool cell instead.
 
 Public contracts are defined in the parent module's public contracts (if any).
+
+# TODO: remove after 2026-06-30
 """
 
 from __future__ import annotations

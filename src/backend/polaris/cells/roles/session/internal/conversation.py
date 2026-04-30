@@ -28,13 +28,14 @@ from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 from sqlalchemy import (
     Column,
     DateTime,
+    Engine,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
 )
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import NullPool
 
 # SQLAlchemy's declarative_base() returns a dynamically created class
@@ -208,8 +209,8 @@ class ConversationMessage(Base):
 
 
 # 数据库连接管理
-_engine = None
-_SessionLocal = None
+_engine: Engine | None = None
+_SessionLocal: sessionmaker[Session] | None = None
 _engine_lock = threading.Lock()
 _kernel_db_lock = threading.Lock()
 _kernel_db: KernelDatabase | None = None

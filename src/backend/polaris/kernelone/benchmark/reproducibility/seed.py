@@ -210,9 +210,9 @@ def deterministic(seed: int | None = None) -> Callable[[Callable[..., Any]], Cal
                 ReproducibleSeed.restore(context)
 
         # Preserve function metadata
-        wrapper.__name__ = func.__name__  # type: ignore[attr-defined]
-        wrapper.__doc__ = func.__doc__  # type: ignore[attr-defined]
-        return wrapper  # type: ignore[return-value]
+        wrapper.__name__ = func.__name__
+        wrapper.__doc__ = func.__doc__
+        return wrapper
 
     return decorator
 

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 from polaris.infrastructure.db.repositories.accel_semantic_cache_store import (
     SemanticCacheStore,
-    _normalize_path_token,
     _parse_utc,
     _utc_text,
     _validate_sql_identifier,
@@ -22,10 +19,10 @@ from polaris.infrastructure.db.repositories.accel_semantic_cache_store import (
     task_signature,
 )
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 @pytest.fixture
 def cache_store(tmp_path: Path) -> SemanticCacheStore:
@@ -36,6 +33,7 @@ def cache_store(tmp_path: Path) -> SemanticCacheStore:
 # =============================================================================
 # _validate_sql_identifier
 # =============================================================================
+
 
 def test_validate_sql_identifier_valid() -> None:
     _validate_sql_identifier("context_cache", "table")
@@ -56,8 +54,10 @@ def test_validate_sql_identifier_invalid_chars() -> None:
 # _utc_text / _parse_utc
 # =============================================================================
 
+
 def test_utc_text_roundtrip() -> None:
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc)
     text = _utc_text(now)
     parsed = _parse_utc(text)
@@ -91,6 +91,7 @@ def test_parse_utc_invalid() -> None:
 # normalize_token_list
 # =============================================================================
 
+
 def test_normalize_token_list_basic() -> None:
     assert normalize_token_list(["A", "b", " C "]) == ["a", "b", "c"]
 
@@ -111,6 +112,7 @@ def test_normalize_token_list_empty_items() -> None:
 # normalize_changed_files
 # =============================================================================
 
+
 def test_normalize_changed_files_paths() -> None:
     result = normalize_changed_files(["Src/App.PY", "lib/Foo.py"])
     assert result == ["src/app.py", "lib/foo.py"]
@@ -124,6 +126,7 @@ def test_normalize_changed_files_backslash() -> None:
 # =============================================================================
 # make_stable_hash / context_changed_fingerprint / task_signature
 # =============================================================================
+
 
 def test_make_stable_hash_deterministic() -> None:
     payload: dict[str, Any] = {"a": 1, "b": [2, 3]}
@@ -147,6 +150,7 @@ def test_task_signature() -> None:
 # jaccard_similarity
 # =============================================================================
 
+
 def test_jaccard_both_empty() -> None:
     assert jaccard_similarity(set(), set()) == 1.0
 
@@ -167,6 +171,7 @@ def test_jaccard_partial() -> None:
 # SemanticCacheStore.init + schema
 # =============================================================================
 
+
 def test_init_creates_db(cache_store: SemanticCacheStore) -> None:
     assert cache_store._db_path.exists()
 
@@ -174,6 +179,7 @@ def test_init_creates_db(cache_store: SemanticCacheStore) -> None:
 # =============================================================================
 # put_context + get_context_exact
 # =============================================================================
+
 
 def test_put_and_get_context_exact(cache_store: SemanticCacheStore) -> None:
     cache_store.put_context(
@@ -212,6 +218,7 @@ def test_get_context_exact_expired(cache_store: SemanticCacheStore) -> None:
         max_entries=100,
     )
     import time
+
     time.sleep(1.1)
     assert cache_store.get_context_exact("ck1") is None
 
@@ -219,6 +226,7 @@ def test_get_context_exact_expired(cache_store: SemanticCacheStore) -> None:
 # =============================================================================
 # put_context upsert
 # =============================================================================
+
 
 def test_put_context_upserts(cache_store: SemanticCacheStore) -> None:
     for i in range(2):
@@ -242,6 +250,7 @@ def test_put_context_upserts(cache_store: SemanticCacheStore) -> None:
 # =============================================================================
 # get_context_hybrid
 # =============================================================================
+
 
 def test_get_context_hybrid_match(cache_store: SemanticCacheStore) -> None:
     cache_store.put_context(
@@ -325,6 +334,7 @@ def test_get_context_hybrid_no_budget_match(cache_store: SemanticCacheStore) -> 
 # explain_context_miss
 # =============================================================================
 
+
 def test_explain_context_miss_no_prior(cache_store: SemanticCacheStore) -> None:
     result = cache_store.explain_context_miss(
         task_signature_value="ts1",
@@ -352,6 +362,7 @@ def test_explain_context_miss_expired(cache_store: SemanticCacheStore) -> None:
         max_entries=100,
     )
     import time
+
     time.sleep(1.1)
     result = cache_store.explain_context_miss(
         task_signature_value="ts1",
@@ -393,6 +404,7 @@ def test_explain_context_miss_changed_files_set(cache_store: SemanticCacheStore)
 # verify_plan cache
 # =============================================================================
 
+
 def test_put_and_get_verify_plan(cache_store: SemanticCacheStore) -> None:
     cache_store.put_verify_plan(
         cache_key="vp1",
@@ -418,6 +430,7 @@ def test_get_verify_plan_expired(cache_store: SemanticCacheStore) -> None:
         max_entries=100,
     )
     import time
+
     time.sleep(1.1)
     assert cache_store.get_verify_plan("vp1") is None
 
@@ -448,6 +461,7 @@ def test_put_verify_plan_upserts(cache_store: SemanticCacheStore) -> None:
 # prune_table
 # =============================================================================
 
+
 def test_prune_table_removes_expired(cache_store: SemanticCacheStore) -> None:
     cache_store.put_context(
         cache_key="ck1",
@@ -463,6 +477,7 @@ def test_prune_table_removes_expired(cache_store: SemanticCacheStore) -> None:
         max_entries=100,
     )
     import time
+
     time.sleep(1.1)
     cache_store.put_context(
         cache_key="ck2",

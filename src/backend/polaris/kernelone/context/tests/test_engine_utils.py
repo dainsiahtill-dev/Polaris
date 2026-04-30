@@ -53,7 +53,7 @@ class TestHashText:
 
     def test_hash_none_input(self) -> None:
         """_hash_text should handle None input gracefully."""
-        result = _hash_text(None)  # type: ignore
+        result = _hash_text(None)
         assert isinstance(result, str)
         assert len(result) == 40
 
@@ -91,7 +91,7 @@ class TestEstimateTokens:
 
     def test_estimate_tokens_none(self) -> None:
         """_estimate_tokens should handle None gracefully."""
-        result = _estimate_tokens(None)  # type: ignore
+        result = _estimate_tokens(None)
         assert result == 0
 
     def test_estimate_tokens_longer_text_more_tokens(self) -> None:

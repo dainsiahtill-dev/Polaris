@@ -117,7 +117,7 @@ async def pm_start_loop(
     resume: bool = False,
     pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
-    """Start PM in loop mode (deprecated - use /v2/pm/start).
+    """Start PM in loop mode (deprecated — use /v2/pm/start).
 
     DEPRECATED: This endpoint is deprecated. Use /v2/pm/start instead.
     Will be removed in v2.0.

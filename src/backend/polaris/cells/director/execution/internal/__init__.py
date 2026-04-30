@@ -16,6 +16,8 @@
 
 Consumers of this module will receive deprecation warnings until all
 implementation has been migrated out of director.execution/internal/.
+
+# TODO: remove after 2026-06-30
 """
 
 from __future__ import annotations
@@ -107,7 +109,7 @@ with contextlib.suppress(ImportError):
     )
 
 warnings.warn(
-    "polaris.cells.director.execution.internal.* is deprecated and will be removed. "
+    "polaris.cells.director.execution.internal.* is deprecated and will be removed after 2026-06-30. "
     "Implementation has been migrated to sub-Cells: "
     "director.planning (✅ Phase 2), director.tasking (✅ Phase 3), "
     "director.runtime (Phase 4), director.delivery (Phase 5). "

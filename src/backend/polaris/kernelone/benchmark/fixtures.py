@@ -113,7 +113,7 @@ def benchmark(
         print(f"p50: {stats.p50}ms, p90: {stats.p90}ms, p99: {stats.p99}ms")
     """
 
-    def decorator(func: F) -> Callable[..., BenchmarkStats]:  # type: ignore[type-var]
+    def decorator(func: F) -> Callable[..., BenchmarkStats]:
         is_async = asyncio.iscoroutinefunction(func)
 
         @wraps(func)
@@ -274,7 +274,7 @@ def throughput_benchmark(
             pass
     """
 
-    def decorator(func: F) -> Callable[..., ThroughputStats]:  # type: ignore[type-var]
+    def decorator(func: F) -> Callable[..., ThroughputStats]:
         is_async = asyncio.iscoroutinefunction(func)
 
         @wraps(func)

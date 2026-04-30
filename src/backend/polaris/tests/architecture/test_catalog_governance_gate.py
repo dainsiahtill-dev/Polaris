@@ -8,11 +8,11 @@ from pathlib import Path
 
 import yaml
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_catalog_governance_gate.py"
-BASELINE_FILE = BACKEND_ROOT / "tests" / "architecture" / "allowlists" / "catalog_governance_gate.baseline.json"
+BASELINE_FILE = BACKEND_ROOT / "polaris" / "tests" / "architecture" / "allowlists" / "catalog_governance_gate.baseline.json"
 MISMATCH_BASELINE_FILE = (
-    BACKEND_ROOT / "tests" / "architecture" / "allowlists" / "manifest_catalog_mismatches.baseline.jsonl"
+    BACKEND_ROOT / "polaris" / "tests" / "architecture" / "allowlists" / "manifest_catalog_mismatches.baseline.jsonl"
 )
 FITNESS_RULES_FILE = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
 

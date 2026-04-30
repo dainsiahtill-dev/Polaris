@@ -10,7 +10,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
 from polaris.cells.resident.autonomy.internal.goal_governor import (
     GoalGovernor,
     _scope_from_evidence,
@@ -26,10 +25,10 @@ from polaris.domain.models.resident import (
     MetaInsight,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_goal(goal_id: str = "g1", status: GoalStatus = GoalStatus.PENDING, **kwargs) -> GoalProposal:
     return GoalProposal(
@@ -63,6 +62,7 @@ def governor(storage: MagicMock) -> GoalGovernor:
 # _stable_goal_fingerprint
 # ---------------------------------------------------------------------------
 
+
 class TestStableGoalFingerprint:
     def test_deterministic(self) -> None:
         fp1 = _stable_goal_fingerprint(GoalType.MAINTENANCE, "Title", "src", ["a", "b"])
@@ -93,6 +93,7 @@ class TestStableGoalFingerprint:
 # ---------------------------------------------------------------------------
 # _scope_from_evidence
 # ---------------------------------------------------------------------------
+
 
 class TestScopeFromEvidence:
     def test_typical_paths(self) -> None:
@@ -136,6 +137,7 @@ class TestScopeFromEvidence:
 # GoalGovernor.list_goals
 # ---------------------------------------------------------------------------
 
+
 class TestListGoals:
     def test_list_all(self, governor: GoalGovernor, storage: MagicMock) -> None:
         storage.load_goals.return_value = [
@@ -167,6 +169,7 @@ class TestListGoals:
 # ---------------------------------------------------------------------------
 # GoalGovernor.create_manual_proposal
 # ---------------------------------------------------------------------------
+
 
 class TestCreateManualProposal:
     def test_create_basic(self, governor: GoalGovernor, storage: MagicMock) -> None:
@@ -230,6 +233,7 @@ class TestCreateManualProposal:
 # GoalGovernor.generate
 # ---------------------------------------------------------------------------
 
+
 class TestGenerate:
     def test_generate_from_insights(self, governor: GoalGovernor, storage: MagicMock) -> None:
         storage.load_goals.return_value = []
@@ -269,7 +273,10 @@ class TestGenerate:
 
     def test_generate_max_new_limits(self, governor: GoalGovernor, storage: MagicMock) -> None:
         storage.load_goals.return_value = []
-        insights = [MetaInsight(insight_type="strategy_risk", summary=f"R{i}", confidence=0.5, evidence_refs=[]) for i in range(10)]
+        insights = [
+            MetaInsight(insight_type="strategy_risk", summary=f"R{i}", confidence=0.5, evidence_refs=[f"src/{i}.py"])
+            for i in range(10)
+        ]
         new_goals = governor.generate(insights=insights, capability_graph=None, improvements=[], max_new=3)
         assert len(new_goals) == 3
 
@@ -321,6 +328,7 @@ class TestGenerate:
 # GoalGovernor.approve_goal
 # ---------------------------------------------------------------------------
 
+
 class TestApproveGoal:
     def test_approve_existing(self, governor: GoalGovernor, storage: MagicMock) -> None:
         goal = _make_goal("g1", GoalStatus.PENDING)
@@ -342,6 +350,7 @@ class TestApproveGoal:
 # GoalGovernor.reject_goal
 # ---------------------------------------------------------------------------
 
+
 class TestRejectGoal:
     def test_reject_existing(self, governor: GoalGovernor, storage: MagicMock) -> None:
         goal = _make_goal("g1", GoalStatus.PENDING)
@@ -361,6 +370,7 @@ class TestRejectGoal:
 # ---------------------------------------------------------------------------
 # GoalGovernor.materialize_goal
 # ---------------------------------------------------------------------------
+
 
 class TestMaterializeGoal:
     def test_materialize_approved(self, governor: GoalGovernor, storage: MagicMock) -> None:
@@ -394,6 +404,7 @@ class TestMaterializeGoal:
 # GoalGovernor._title_from_insight
 # ---------------------------------------------------------------------------
 
+
 class TestTitleFromInsight:
     def test_strategy_strength(self, governor: GoalGovernor) -> None:
         insight = MetaInsight(insight_type="strategy_strength", strategy_tag="tag1")
@@ -416,6 +427,7 @@ class TestTitleFromInsight:
 # ---------------------------------------------------------------------------
 # GoalGovernor._build_pm_contract
 # ---------------------------------------------------------------------------
+
 
 class TestBuildPmContract:
     def test_contract_structure(self, governor: GoalGovernor) -> None:

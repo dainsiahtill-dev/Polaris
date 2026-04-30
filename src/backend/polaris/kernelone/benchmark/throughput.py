@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from polaris.kernelone.benchmark.models import ThroughputStats
 
@@ -391,4 +391,4 @@ def throughput(func: F) -> Callable[..., ThroughputStats]:
         else:
             return bench.run_sync(func, *args, **kwargs)
 
-    return wrapper  # type: ignore[return-value]
+    return cast(Callable[..., ThroughputStats], wrapper)

@@ -141,7 +141,7 @@ def append_delta_ops(index_dir: Path, kind: str, ops: list[dict[str, Any]]) -> i
 def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    tmp_file = tempfile.NamedTemporaryFile(
+    tmp_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
         mode="w",
         encoding="utf-8",
         delete=False,

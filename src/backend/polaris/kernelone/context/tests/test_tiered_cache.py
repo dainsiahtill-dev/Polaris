@@ -475,8 +475,8 @@ class TestAssetCachePortProtocol:
     async def test_string_tier_coercion(self, cache: TieredAssetCacheManager) -> None:
         """Cache operations must accept string tier values (not just enum members)."""
         # set(key, tier) where tier is a string
-        await cache.set("str_key", "hot_slice", "str_value")  # type: ignore[arg-type]
-        result = await cache.get("str_key", "hot_slice")  # type: ignore[arg-type]
+        await cache.set("str_key", CacheTier("hot_slice"), "str_value")
+        result = await cache.get("str_key", CacheTier("hot_slice"))
         assert result == "str_value"
 
 

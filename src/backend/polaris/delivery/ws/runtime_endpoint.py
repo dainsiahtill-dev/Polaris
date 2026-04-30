@@ -21,7 +21,7 @@ v2 Protocol (canonical):
 
 Legacy v1 Protocol (DEPRECATED — will be removed in v2.0):
 - v1 clients send SUBSCRIBE/STATUS/SNAPSHOT without protocol field
-- Legacy channel paths (pm_llm, director_llm) deprecated
+- Legacy channel paths (pm_llm, director_llm) are deprecated
 - Migrate to v2 protocol for all new integrations
 """
 

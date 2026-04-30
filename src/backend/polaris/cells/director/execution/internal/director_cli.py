@@ -6,6 +6,8 @@
 
     This module is kept as a backward-compatibility stub.
     Update imports to use ``polaris.cells.director.tasking.internal``.
+
+# TODO: remove after 2026-06-30
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ from __future__ import annotations
 import warnings
 
 # Import from tasking - DirectorCLI may not exist yet, handle gracefully
+# TODO: Cross-cell internal import — DirectorCLI is not yet exposed in
+# director.tasking.public. Add to public contract when stabilised.
 try:
     from polaris.cells.director.tasking.internal.director_cli import (  # type: ignore[attr-defined]
         DirectorCLI,

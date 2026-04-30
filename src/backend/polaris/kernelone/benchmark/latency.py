@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from polaris.kernelone.benchmark.models import BenchmarkStats, LatencyBenchmarkResult
 
@@ -298,4 +298,4 @@ async def measure_latency_async(func: Callable[..., Any]) -> Callable[..., Any]:
         await func(*args, **kwargs)
         return (time.perf_counter() - start) * 1000.0
 
-    return wrapper  # type: ignore[return-value]
+    return cast(Callable[..., float], wrapper)

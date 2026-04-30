@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from polaris.infrastructure.accel.storage.index_cache import (
     INDEX_FILE_NAMES,
     append_delta_ops,
@@ -23,10 +22,10 @@ from polaris.infrastructure.accel.storage.index_cache import (
     write_jsonl_atomic,
 )
 
-
 # =============================================================================
 # base_path_for_kind
 # =============================================================================
+
 
 def test_base_path_for_kind_valid(tmp_path: Path) -> None:
     for kind, filename in INDEX_FILE_NAMES.items():
@@ -43,6 +42,7 @@ def test_base_path_for_kind_invalid() -> None:
 # delta_path_for_base
 # =============================================================================
 
+
 def test_delta_path_for_base() -> None:
     base = Path("/tmp/index/symbols.jsonl")
     result = delta_path_for_base(base)
@@ -58,6 +58,7 @@ def test_delta_path_for_base_different_stem() -> None:
 # =============================================================================
 # load_jsonl_mmap
 # =============================================================================
+
 
 def test_load_jsonl_mmap_missing_file(tmp_path: Path) -> None:
     missing = tmp_path / "missing.jsonl"
@@ -103,6 +104,7 @@ def test_load_jsonl_mmap_skips_blank_lines(tmp_path: Path) -> None:
 # count_jsonl_lines
 # =============================================================================
 
+
 def test_count_jsonl_lines_missing_file(tmp_path: Path) -> None:
     missing = tmp_path / "missing.jsonl"
     assert count_jsonl_lines(missing) == 0
@@ -129,6 +131,7 @@ def test_count_jsonl_lines_includes_invalid(tmp_path: Path) -> None:
 # =============================================================================
 # group_rows_by_key
 # =============================================================================
+
 
 def test_group_rows_by_key_basic() -> None:
     rows: list[dict[str, Any]] = [
@@ -160,6 +163,7 @@ def test_group_rows_by_key_missing_key() -> None:
 # flatten_grouped_rows
 # =============================================================================
 
+
 def test_flatten_grouped_rows_sorted() -> None:
     grouped: dict[str, list[dict[str, Any]]] = {
         "b": [{"k": "b", "v": 1}],
@@ -176,6 +180,7 @@ def test_flatten_grouped_rows_empty() -> None:
 # =============================================================================
 # load_grouped_rows_with_delta
 # =============================================================================
+
 
 def test_load_grouped_rows_with_delta_base_only(tmp_path: Path) -> None:
     kind = "symbols"
@@ -249,6 +254,7 @@ def test_load_grouped_rows_with_delta_skips_unknown_op(tmp_path: Path) -> None:
 # load_index_rows
 # =============================================================================
 
+
 def test_load_index_rows(tmp_path: Path) -> None:
     kind = "symbols"
     base = base_path_for_kind(tmp_path, kind)
@@ -263,6 +269,7 @@ def test_load_index_rows(tmp_path: Path) -> None:
 # =============================================================================
 # append_delta_ops
 # =============================================================================
+
 
 def test_append_delta_ops_returns_count(tmp_path: Path) -> None:
     kind = "symbols"
@@ -287,6 +294,7 @@ def test_append_delta_ops_appends(tmp_path: Path) -> None:
 # write_jsonl_atomic
 # =============================================================================
 
+
 def test_write_jsonl_atomic_creates_file(tmp_path: Path) -> None:
     path = tmp_path / "out.jsonl"
     write_jsonl_atomic(path, [{"a": 1}])
@@ -310,6 +318,7 @@ def test_write_jsonl_atomic_creates_parent_dirs(tmp_path: Path) -> None:
 # =============================================================================
 # clear_delta_file
 # =============================================================================
+
 
 def test_clear_delta_file(tmp_path: Path) -> None:
     kind = "symbols"

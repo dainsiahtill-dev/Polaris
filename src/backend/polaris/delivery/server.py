@@ -7,9 +7,9 @@ Usage:
     python server.py [--host HOST] [--port PORT] [--workspace PATH]
 
 Environment Variables:
-    KERNELONE_WORKSPACE: Default workspace path (deprecated: KERNELONE_WORKSPACE)
-    KERNELONE_BACKEND_PORT: Default port (deprecated: KERNELONE_BACKEND_PORT)
-    KERNELONE_LOG_LEVEL: Logging level (deprecated: KERNELONE_LOG_LEVEL)
+    KERNELONE_WORKSPACE: Default workspace path
+    KERNELONE_BACKEND_PORT: Default port
+    KERNELONE_LOG_LEVEL: Logging level
 """
 
 from __future__ import annotations

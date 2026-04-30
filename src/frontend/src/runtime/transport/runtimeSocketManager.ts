@@ -30,6 +30,9 @@ const CONFIG = {
   // v2 protocol settings
   batchAckInterval: 500, // ms
   batchAckThreshold: 20,
+  // Heartbeat settings
+  pingIntervalMs: 30000, // send PING every 30s
+  pongTimeoutMs: 10000,  // if no PONG within 10s, reconnect
 } as const;
 
 // ============================================================================
@@ -86,6 +89,10 @@ class RuntimeSocketManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
 
+  // Heartbeat
+  private pingTimer: ReturnType<typeof setTimeout> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
+
   // v2 protocol state
   private lastCursor = 0;
   private pendingAckCursors: number[] = [];
@@ -141,6 +148,7 @@ class RuntimeSocketManager {
     this.closed = true;
     this.clearReconnectTimer();
     this.clearBatchAckTimer();
+    this.clearHeartbeat();
     this.ws?.close();
     this.ws = null;
     this.updateState({
@@ -157,6 +165,48 @@ class RuntimeSocketManager {
       this.batchAckTimer = null;
     }
     this.pendingAckCursors = [];
+  }
+
+  // ==========================================================================
+  // Heartbeat
+  // ==========================================================================
+
+  private clearHeartbeat(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+    if (this.pongTimer) {
+      clearTimeout(this.pongTimer);
+      this.pongTimer = null;
+    }
+  }
+
+  private startHeartbeat(): void {
+    this.clearHeartbeat();
+    this.pingTimer = setInterval(() => this.sendPing(), CONFIG.pingIntervalMs);
+  }
+
+  private sendPing(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    this.ws.send(JSON.stringify({ type: 'PING', protocol: 'runtime.v2' }));
+
+    // If no PONG within timeout, consider connection dead
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = null;
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.close();
+        // onclose handler will trigger reconnect
+      }
+    }, CONFIG.pongTimeoutMs);
+  }
+
+  private handlePong(): void {
+    if (this.pongTimer) {
+      clearTimeout(this.pongTimer);
+      this.pongTimer = null;
+    }
   }
 
   /**
@@ -352,6 +402,7 @@ class RuntimeSocketManager {
         error: null,
         attemptCount: 0,
       });
+      this.startHeartbeat();
       this.sendSubscribe();
     };
 
@@ -360,6 +411,7 @@ class RuntimeSocketManager {
     };
 
     socket.onclose = (event) => {
+      this.clearHeartbeat();
       this.ws = null;
       this.updateState({ connected: false, reconnecting: false });
 
@@ -397,6 +449,12 @@ class RuntimeSocketManager {
     // Handle RESYNC_REQUIRED - reset cursor
     if (msg.type === 'RESYNC_REQUIRED' && msg.protocol === 'runtime.v2') {
       this.lastCursor = typeof msg.cursor === 'number' ? msg.cursor : 0;
+      return;
+    }
+
+    // Handle PONG - heartbeat response
+    if (msg.type === 'PONG') {
+      this.handlePong();
       return;
     }
 

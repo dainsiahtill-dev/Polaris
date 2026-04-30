@@ -1285,9 +1285,7 @@ class TaskService:
             task = self._tasks.get(task_id)
             if task:
                 # Import AuditContext at runtime to avoid TYPE_CHECKING issues
-                from polaris.cells.audit.verdict.internal.independent_audit_service import (
-                    AuditContext,
-                )
+                from polaris.cells.audit.verdict.public.service import AuditContext
 
                 # Build audit context
                 audit_context = AuditContext(

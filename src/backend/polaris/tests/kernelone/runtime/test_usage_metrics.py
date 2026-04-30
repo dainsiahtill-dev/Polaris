@@ -7,17 +7,14 @@ All emit_event calls are mocked to avoid filesystem side effects.
 from __future__ import annotations
 
 from dataclasses import fields
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.kernelone.runtime.usage_metrics import (
     TokenUsage,
     UsageContext,
     track_usage,
 )
-
 
 # ------------------------------------------------------------------
 # Fixtures

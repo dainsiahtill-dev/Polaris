@@ -372,37 +372,35 @@ class TestDirectorCompatCli:
             def emit(self, record: logging.LogRecord) -> None:
                 logged.append(record.getMessage())
 
-        logger = logging.getLogger("polaris.delivery.cli.director.cli_compat")
-        logger.addHandler(ListHandler())
-        logger.setLevel(logging.INFO)
+        # Patch the module-level logger directly so the cached reference works
+        fake_logger = logging.getLogger("test_director_compat_create_task_logs_info")
+        fake_logger.addHandler(ListHandler())
+        fake_logger.setLevel(logging.INFO)
+        monkeypatch.setattr(_cli_compat_mod, "logger", fake_logger)
 
-        # Patch DirectorService inside the module to avoid the buggy code path
         class FakeResult:
             ok = True
             task_id = "task-123"
 
         class FakeService:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
             async def create_task(self, subject: str, description: str, priority: str) -> FakeResult:
                 return FakeResult()
 
         monkeypatch.setattr(
-            _cli_compat_mod,
-            "DirectorService",
+            "polaris.cells.director.execution.public.service.DirectorService",
             FakeService,
         )
 
-        # Also patch DirectorConfig to avoid missing-arg error
         class FakeConfig:
-            def __init__(self, **kwargs: Any) -> None:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-        monkeypatch.setattr(
-            _cli_compat_mod,
-            "DirectorConfig",
-            FakeConfig,
-        )
+        import polaris.cells.director.execution.public.contracts as _contracts_mod
+        _contracts_mod.DirectorConfig = FakeConfig  # type: ignore[attr-defined]
 
-        # Run the async function
         import asyncio
 
         asyncio.run(_cli_compat_mod.create_task("/tmp/ws", "Subject", "Desc", "medium"))
@@ -423,33 +421,33 @@ class TestDirectorCompatCli:
             def emit(self, record: logging.LogRecord) -> None:
                 logged.append(record.getMessage())
 
-        logger = logging.getLogger("polaris.delivery.cli.director.cli_compat")
-        logger.addHandler(ListHandler())
-        logger.setLevel(logging.ERROR)
+        fake_logger = logging.getLogger("test_director_compat_create_task_logs_error")
+        fake_logger.addHandler(ListHandler())
+        fake_logger.setLevel(logging.ERROR)
+        monkeypatch.setattr(_cli_compat_mod, "logger", fake_logger)
 
         class FakeResult:
             ok = False
             error = "something went wrong"
 
         class FakeService:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
             async def create_task(self, subject: str, description: str, priority: str) -> FakeResult:
                 return FakeResult()
 
         monkeypatch.setattr(
-            _cli_compat_mod,
-            "DirectorService",
+            "polaris.cells.director.execution.public.service.DirectorService",
             FakeService,
         )
 
         class FakeConfig:
-            def __init__(self, **kwargs: Any) -> None:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-        monkeypatch.setattr(
-            _cli_compat_mod,
-            "DirectorConfig",
-            FakeConfig,
-        )
+        import polaris.cells.director.execution.public.contracts as _contracts_mod
+        _contracts_mod.DirectorConfig = FakeConfig  # type: ignore[attr-defined]
 
         import asyncio
 

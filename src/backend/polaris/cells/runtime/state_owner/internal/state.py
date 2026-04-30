@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import secrets
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -40,14 +39,12 @@ class Auth:
     """Authentication handler with strict security policy.
 
     Security rules:
-    - Missing token = authentication disabled (for local/dev only)
+    - Missing token = all connections rejected
     - Token configured = strict Bearer token validation required
     """
 
     def __init__(self, token: str) -> None:
         self.token = token or ""
-        strict_when_empty = str(os.environ.get("KERNELONE_STRICT_AUTH_WHEN_EMPTY_TOKEN", "")).strip().lower()
-        self._strict_when_empty_token = strict_when_empty in {"1", "true", "yes", "on"}
 
     def check(self, header_value: str) -> bool:
         """Validate authentication header against configured token.
@@ -56,14 +53,11 @@ class Auth:
         - Valid Bearer token is provided matching configured token
 
         Returns False if:
-        - No token is configured (local/dev mode requires token)
+        - No token is configured
         - No authorization header provided
         - Invalid Bearer token format
         """
         if not self.token:
-            # Security fix: empty token no longer bypasses auth.
-            # Auth is always enforced; only explicit KERNELONE_STRICT_AUTH_WHEN_EMPTY_TOKEN=1
-            # may disable it in dev/test environments (strict mode = rejection).
             return False
         if not header_value:
             return False

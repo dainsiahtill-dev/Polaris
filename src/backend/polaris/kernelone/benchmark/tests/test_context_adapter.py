@@ -295,7 +295,7 @@ class TestContextCompilationResult:
         result = ContextCompilationResult(selected_files=("a.py",))
 
         with pytest.raises(AttributeError):
-            result.selected_files = ("b.py",)  # type: ignore[misc]
+            result.selected_files = ("b.py",)
 
 
 class TestContextCompilationError:
@@ -317,7 +317,7 @@ class TestContextCompilationError:
 # ------------------------------------------------------------------
 
 
-class _FakeCompiler(ContextCompilerPort):  # type: ignore[misc]
+class _FakeCompiler(ContextCompilerPort):
     """Fake compiler for tests."""
 
     __slots__ = ("_files",)
@@ -334,7 +334,7 @@ class _FakeCompiler(ContextCompilerPort):  # type: ignore[misc]
         return ContextCompilationResult(selected_files=tuple(self._files))
 
 
-class _FailingCompiler(ContextCompilerPort):  # type: ignore[misc]
+class _FailingCompiler(ContextCompilerPort):
     """Compiler that always fails for error handling tests."""
 
     __slots__ = ()
@@ -349,7 +349,7 @@ class _FailingCompiler(ContextCompilerPort):  # type: ignore[misc]
         raise ContextCompilationError(msg)
 
 
-class _CustomFileListCompiler(ContextCompilerPort):  # type: ignore[misc]
+class _CustomFileListCompiler(ContextCompilerPort):
     """Custom compiler that returns predefined file list."""
 
     __slots__ = ("_files",)
@@ -366,7 +366,7 @@ class _CustomFileListCompiler(ContextCompilerPort):  # type: ignore[misc]
         return ContextCompilationResult(selected_files=tuple(self._files))
 
 
-class _FakeMetricsCalculator(MetricsCalculatorPort):  # type: ignore[misc]
+class _FakeMetricsCalculator(MetricsCalculatorPort):
     """Fake metrics calculator for tests.
 
     Returns deterministic metrics based on overlap.
@@ -419,7 +419,7 @@ class _FakeMetricsCalculator(MetricsCalculatorPort):  # type: ignore[misc]
         }
 
 
-class _FixedScoreMetricsCalculator(MetricsCalculatorPort):  # type: ignore[misc]
+class _FixedScoreMetricsCalculator(MetricsCalculatorPort):
     """Metrics calculator that returns a fixed score for testing."""
 
     __slots__ = ("_score",)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import shutil
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -36,7 +38,7 @@ def _make_sqlite_db_path() -> Path:
     return Path(raw)
 
 
-def _install_temp_session_db(db_path: Path):
+def _install_temp_session_db(db_path: Path) -> tuple[Any, Any, Any]:
     engine = create_engine(
         f"sqlite:///{db_path.resolve().as_posix()}",
         echo=False,
@@ -51,28 +53,30 @@ def _install_temp_session_db(db_path: Path):
     return engine, session_factory, conv_mod
 
 
-def _seed_context_os_session(session_factory) -> str:
-    projection = StateFirstContextOS(domain_adapter=CodeContextDomainAdapter()).project(
-        messages=[
-            {
-                "role": "user",
-                "content": "Fix polaris/kernelone/context/session_continuity.py and preserve session continuity runtime.",
-                "sequence": 1,
-            },
-            {
-                "role": "assistant",
-                "content": "I will update the continuity runtime and keep the public facade stable.",
-                "sequence": 2,
-            },
-            {
-                "role": "tool",
-                "content": "```python\nfrom polaris.kernelone.context.session_continuity import SessionContinuityEngine\n```",
-                "sequence": 3,
-            },
-        ],
-        recent_window_messages=2,
+def _seed_context_os_session(session_factory: Any) -> str:
+    projection = asyncio.run(
+        StateFirstContextOS(domain_adapter=CodeContextDomainAdapter()).project(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Fix polaris/kernelone/context/session_continuity.py and preserve session continuity runtime.",
+                    "sequence": 1,
+                },
+                {
+                    "role": "assistant",
+                    "content": "I will update the continuity runtime and keep the public facade stable.",
+                    "sequence": 2,
+                },
+                {
+                    "role": "tool",
+                    "content": "```python\nfrom polaris.kernelone.context.session_continuity import SessionContinuityEngine\n```",
+                    "sequence": 3,
+                },
+            ],
+            recent_window_messages=2,
+        )
     )
-    snapshot = projection.snapshot.to_dict()  # type: ignore[attr-defined]
+    snapshot = projection.snapshot.to_dict()
     artifact_store = list(snapshot.get("artifact_store") or [])
     artifact_refs = []
     if artifact_store:
