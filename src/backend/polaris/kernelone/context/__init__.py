@@ -13,6 +13,8 @@ from .budget_gate import (
     MIN_BUDGET_TOKENS,
     ContextBudget,
     ContextBudgetGate,
+    ContextBudgetUsage,
+    SectionAllocation,
 )
 from .cache import (
     CacheEntry,
@@ -191,32 +193,24 @@ from .working_set import (
 
 __all__ = [
     "BUILTIN_OVERLAYS",
-    # Strategy profiles
     "BUILTIN_PROFILES",
-    # Strategy registry
     "CANONICAL_BUNDLE",
-    # Strategy scoring
     "CANONICAL_WEIGHTING",
     "COST_GUARDED_WEIGHTING",
     "DEFAULT_FALLBACK_WINDOW",
     "DEFAULT_SAFETY_MARGIN",
     "LOW_LATENCY_WEIGHTING",
     "MIN_BUDGET_TOKENS",
-    # Prompt chunks
     "AssemblyContext",
     "AssemblyResult",
     "AssetCachePort",
-    # Exploration policy
     "AssetCandidate",
     "AssetKind",
-    # Strategy contracts
     "BudgetDecision",
     "BudgetDecisionKind",
     "CacheControl",
-    # Cache (legacy 3-tier)
     "CacheEntry",
     "CacheStats",
-    # Strategy code domain
     "CacheStrategy",
     "CacheStrategyPort",
     "CacheTier",
@@ -225,9 +219,7 @@ __all__ = [
     "ChunkMetadata",
     "ChunkTokenStats",
     "ChunkType",
-    # Context OS
     "CodeContextDomainAdapter",
-    # Working set
     "CodeSlice",
     "CompactSnapshot",
     "CompactionDecision",
@@ -235,10 +227,9 @@ __all__ = [
     "CompactionStrategy",
     "CompactionStrategyPort",
     "CompressionDecision",
-    # Budget gate
     "ContextBudget",
     "ContextBudgetGate",
-    # Engine
+    "ContextBudgetUsage",
     "ContextCache",
     "ContextDomainAdapter",
     "ContextItem",
@@ -263,14 +254,12 @@ __all__ = [
     "ExplorationPolicyPort",
     "ExplorationStrategy",
     "ExplorationStrategyPort",
-    # Repo Intelligence
     "FileTag",
     "FinalRequestReceipt",
     "GenericContextDomainAdapter",
     "HistoryMaterialization",
     "HistoryMaterializationStrategy",
     "HistoryMaterializationStrategyPort",
-    # Cache policies
     "HotSliceCachePolicy",
     "KernelOneCacheManager",
     "LoIRenderer",
@@ -289,7 +278,6 @@ __all__ = [
     "RepoIntelligenceRanker",
     "RepoMapCachePolicy",
     "RepoMapSnapshot",
-    # Role overlays
     "ResolvedOverlayStrategy",
     "ResolvedStrategy",
     "RoleContextCompressor",
@@ -299,6 +287,7 @@ __all__ = [
     "RunCard",
     "ScoreDiff",
     "Scorecard",
+    "SectionAllocation",
     "SessionContinuityEngine",
     "SessionContinuityPack",
     "SessionContinuityPolicy",
@@ -313,10 +302,8 @@ __all__ = [
     "StrategyMetadata",
     "StrategyProfile",
     "StrategyReceipt",
-    # Strategy receipts
     "StrategyReceiptEmitter",
     "StrategyRegistry",
-    # Strategy run context
     "StrategyRunContext",
     "SymbolCandidate",
     "SymbolIndexCachePolicy",
@@ -325,14 +312,12 @@ __all__ = [
     "TagsCacheStats",
     "TagsExtractor",
     "TieredAssetCacheManager",
-    # Cache (5-tier blueprint §5.7)
     "TieredCacheEntry",
     "TieredCacheStats",
     "TieredCacheTier",
     "WorkingSet",
     "WorkingSetAssembler",
     "architect_analysis",
-    # Compaction / continuity
     "build_continuity_summary_text",
     "build_session_continuity_pack",
     "canonical_balanced",

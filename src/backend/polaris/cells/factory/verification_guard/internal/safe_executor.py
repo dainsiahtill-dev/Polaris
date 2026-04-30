@@ -9,7 +9,6 @@ This module provides a sandboxed command execution environment with:
 
 from __future__ import annotations
 
-import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -23,6 +22,7 @@ from polaris.cells.factory.verification_guard.public.contracts import (
     ExecutionResult,
     VerificationGuardErrorV1,
 )
+from polaris.kernelone.security.dangerous_patterns import is_dangerous_command
 
 # Default whitelist of safe commands
 DEFAULT_COMMAND_WHITELIST: frozenset[str] = frozenset(
@@ -53,30 +53,6 @@ DEFAULT_COMMAND_WHITELIST: frozenset[str] = frozenset(
         "find",
         "ls",
     }
-)
-
-# Dangerous commands that are explicitly blocked
-DANGEROUS_PATTERNS: tuple[str, ...] = (
-    r"\brm\b",
-    r"\bsudo\b",
-    r"\bcurl\b.*\|\s*sh",
-    r"\bwget\b.*\|\s*sh",
-    r"\beval\b",
-    r"\bexec\b",
-    r"\bunlink\b",
-    r"\bmkfs\b",
-    r"\bdd\b",
-    r"\bformat\b",
-    r">\s*/dev/",
-    r"\bchmod\b.*777",
-    r"\bchown\b",
-    r"\bmount\b",
-    r"\bumount\b",
-    r"\bshutdown\b",
-    r"\breboot\b",
-    r"\bkill\b",
-    r"\bpkill\b",
-    r"\bkillall\b",
 )
 
 # Maximum output size to prevent memory exhaustion
@@ -147,14 +123,14 @@ class SafeExecutor:
                 reason="Empty command",
             )
 
-        # Check for dangerous patterns
-        for pattern in DANGEROUS_PATTERNS:
-            if re.search(pattern, command, re.IGNORECASE):
-                return SafetyCheckResult(
-                    is_safe=False,
-                    reason=f"Command contains dangerous pattern: {pattern}",
-                    blocked_pattern=pattern,
-                )
+        # Check for dangerous patterns using canonical kernelone security module
+        is_dangerous_result = is_dangerous_command(command)
+        if is_dangerous_result:
+            return SafetyCheckResult(
+                is_safe=False,
+                reason=f"Command contains dangerous pattern: {is_dangerous_result}",
+                blocked_pattern=str(is_dangerous_result),
+            )
 
         # Extract the base command (first word)
         base_command = command.strip().split()[0].lower()

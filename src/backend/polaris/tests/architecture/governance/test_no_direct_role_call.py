@@ -30,9 +30,6 @@ Violations:
 from __future__ import annotations
 
 import os
-import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -344,7 +341,6 @@ def test_task_market_uses_task_publication() -> None:
         pytest.skip("runtime/task_market directory not found")
 
     # Check for task publication methods
-    found_publish = False
     for py_file in task_market_dir.rglob("*.py"):
         if "test" in py_file.parts:
             continue
@@ -355,7 +351,6 @@ def test_task_market_uses_task_publication() -> None:
             continue
 
         if "publish" in content.lower() or "publish_task" in content.lower():
-            found_publish = True
             break
 
     # This is informational - task market should have publish functionality

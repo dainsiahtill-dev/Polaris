@@ -1,4 +1,13 @@
-"""Cognitive Orchestrator - Top-level entry point for Cognitive Life Form."""
+"""Cognitive Orchestrator - Top-level entry point for Cognitive Life Form.
+
+.. note::
+    The AlignmentServiceAdapter import from polaris.cells.adapters.kernelone
+    (line ~112) is a known kernelone→cells dependency violation. The adapter
+    import is guarded by try/except and the orchestrator gracefully degrades.
+    Long-term fix: define IAlignmentService port in kernelone and inject the
+    adapter from the application/bootstrap layer.
+    TODO(architecture): Resolve via Port/Adapter injection pattern.
+"""
 
 from __future__ import annotations
 

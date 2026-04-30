@@ -134,7 +134,7 @@ class TestChiefEngineerCliMain:
 
         with (
             patch(
-                "polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli.run_tui",
+                "polaris.cells.roles.runtime.public.service.run_tui",
                 side_effect=ImportError("no textual"),
             ),
             patch("sys.argv", ["chief_engineer_cli", "--workspace", "/ws", "--mode", "tui"]),

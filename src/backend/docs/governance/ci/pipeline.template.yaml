@@ -86,8 +86,36 @@ stages:
     commands:
       - python docs/governance/ci/scripts/check_directory_hygiene.py --workspace .
 
+  - id: contextos_governance_gate
+    purpose: >
+      Enforce ContextOS State-First architecture: ProviderFormatter Protocol,
+      EpisodeCard dataclass, SSOT constraint coverage. Validates context plane
+      isolation and ContextOS component integrity.
+    commands:
+      - python docs/governance/ci/scripts/run_contextos_governance_gate.py --workspace . --mode hard-fail --report workspace/meta/governance_reports/contextos_governance_gate.json
+      - python -m pytest -q polaris/tests/contextos/
+
+  - id: explicit_utf8_text_io_gate
+    purpose: >
+      Enforce that all text file I/O uses explicit UTF-8 encoding. Scans for
+      open() calls and codec uses that do not specify encoding='utf-8'.
+    commands:
+      - python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode utf8-audit --report workspace/meta/governance_reports/utf8_io_gate.json
+
+  - id: migration_preflight_gate
+    purpose: >
+      Require migration preflight suite to pass before formal write operations.
+      Prevents direct execution of write scripts without fixture experiments,
+      UTF-8 checks, and consistency guards.
+    commands:
+      - python docs/governance/ci/scripts/check_catalog_presence.py --workspace . --mode preflight
+      - python -m pytest -q tests/architecture/test_catalog_governance_gate.py -k "migration"
+
 notes:
   - catalog_governance_fail_on_new is the default gate during migration and blocks regressions.
   - catalog_governance_hard_fail can be enabled per branch once baseline debt is burned down.
   - Keep report paths stable to preserve machine-readable audit history.
   - structural_bug_governance_gate is intended for high-risk runtime fixes, not every trivial bug.
+  - contextos_governance_gate enforces ContextOS plane isolation architecture (2026-04-30).
+  - explicit_utf8_text_io_gate added to close the partially_enforced gap (2026-04-30).
+  - migration_preflight_gate added for migration safety (2026-04-30).

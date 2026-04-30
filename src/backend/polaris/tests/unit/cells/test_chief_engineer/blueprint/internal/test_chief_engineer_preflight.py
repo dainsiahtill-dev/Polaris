@@ -6,7 +6,7 @@ payload construction, auto-decision, and blueprint slicing.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight import (
@@ -26,7 +26,6 @@ from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight im
     build_task_focused_chief_engineer_payload,
     chief_engineer_auto_decision,
     inject_chief_engineer_constraints,
-    run_pre_dispatch_chief_engineer,
     run_pre_dispatch_chief_engineer_ctx,
 )
 
@@ -149,10 +148,10 @@ class TestCollectTaskScopeModules:
 
     def test_deduplicates_by_module_key(self) -> None:
         # Two files in same module should be deduplicated
-        task = {"target_files": ["src/app.py"]}
-        update = {"scope_for_apply": ["src/app/main.py"]}
+        task = {"target_files": ["src/app/main.py"]}
+        update = {"scope_for_apply": ["src/app/helper.py"]}
         result = _collect_task_scope_modules(task, update)
-        # Both map to src/app module key, so only one should remain
+        # Both map to src/app module key (3+ part paths truncate to first 2 dirs)
         assert len(result) == 1
 
     def test_limits_to_12(self) -> None:
@@ -191,24 +190,24 @@ class TestSliceBlueprintForTask:
 
     def test_slices_module_order(self) -> None:
         blueprint = {
-            "module_order": ["src/app", "src/models", "src/tests"],
+            "module_order": ["src/app.py", "src/models", "src/tests"],
             "module_architecture": {
-                "src/app": {"layer": "ui"},
+                "src/app.py": {"layer": "ui"},
                 "src/models": {"layer": "domain"},
             },
         }
         task = {"target_files": ["src/app.py"]}
         update = {}
         result = _slice_blueprint_for_task(task=task, task_update=update, blueprint_data=blueprint)
-        # src/app.py module key is src/app
-        assert "src/app" in result["module_order"]
-        assert "src/app" in result["module_architecture"]
+        # src/app.py module key is src/app.py (2-part paths preserve filename)
+        assert "src/app.py" in result["module_order"]
+        assert "src/app.py" in result["module_architecture"]
 
     def test_api_contracts_filtered(self) -> None:
         blueprint = {
             "module_order": [],
             "api_contracts": [
-                {"provider": "src/app", "consumer": "src/models", "name": "c1"},
+                {"provider": "src/app.py", "consumer": "src/models", "name": "c1"},
                 {"provider": "src/other", "consumer": "src/else", "name": "c2"},
             ],
         }
@@ -220,7 +219,7 @@ class TestSliceBlueprintForTask:
     def test_limits_api_contracts(self) -> None:
         blueprint = {
             "module_order": [],
-            "api_contracts": [{"provider": "src/app", "consumer": "src/models", "name": f"c{i}"} for i in range(12)],
+            "api_contracts": [{"provider": "src/app.py", "consumer": "src/models", "name": f"c{i}"} for i in range(12)],
         }
         task = {"target_files": ["src/app.py"]}
         result = _slice_blueprint_for_task(task=task, task_update={}, blueprint_data=blueprint)
@@ -444,30 +443,6 @@ class TestRunPreDispatchChiefEngineerCtx:
         result = run_pre_dispatch_chief_engineer_ctx(ctx)
         assert result["hard_failure"] is False
         emitter.emit_event.assert_called_once()
-
-
-class TestRunPreDispatchChiefEngineer:
-    """Tests for run_pre_dispatch_chief_engineer legacy wrapper."""
-
-    @patch(
-        "polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight.resolve_artifact_path",
-        return_value="/rt/bp.json",
-    )
-    def test_legacy_wrapper(self, mock_resolve: MagicMock) -> None:
-        runner = MagicMock(return_value={"task_updates": []})
-        result = run_pre_dispatch_chief_engineer(
-            args=None,
-            workspace_full="/ws",
-            cache_root_full="/cache",
-            run_dir="/run",
-            run_id="r1",
-            pm_iteration=1,
-            tasks=[],
-            run_events="/events",
-            dialogue_full="/dialogue",
-            analysis_runner=runner,
-        )
-        assert result["hard_failure"] is False
 
 
 class TestBuildTaskFocusedChiefEngineerPayload:

@@ -100,8 +100,31 @@ def resolve_runtime_path(
     return Path(workspace) / "runtime" / relative_path
 
 
+def resolve_preferred_logical_prefix(
+    kernel_fs,  # type: ignore[no-untyped-def]
+    *,
+    runtime_prefix: str,
+    workspace_fallback_prefix: str,
+) -> str:
+    """Resolve a writable logical prefix without direct filesystem paths.
+
+    This function enforces the "no direct path" policy:
+    1) Prefer canonical runtime/* logical paths.
+    2) If runtime roots are unavailable, fall back to workspace/runtime/*.
+
+    Both branches remain inside KernelOne storage policy boundaries.
+    """
+    try:
+        kernel_fs.resolve_path(runtime_prefix)
+        return runtime_prefix
+    except (RuntimeError, ValueError):
+        kernel_fs.resolve_path(workspace_fallback_prefix)
+        return workspace_fallback_prefix
+
+
 __all__ = [
     "resolve_artifact_path",
+    "resolve_preferred_logical_prefix",
     "resolve_runtime_path",
     "resolve_session_path",
     "resolve_signal_path",

@@ -32,9 +32,6 @@ Violations:
 from __future__ import annotations
 
 import os
-import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -160,7 +157,7 @@ class TestResolveSignalPath:
         )
 
         assert "execution.pm.signals.json" in str(result)
-        assert "runtime/signals/" in str(result)
+        assert os.path.join("runtime", "signals") in str(result)
 
 
 class TestResolveArtifactPath:
@@ -186,8 +183,8 @@ class TestResolveArtifactPath:
             artifact_id="dir/subdir/file.txt",
         )
 
-        assert "runtime/artifacts/" in str(result)
-        assert "dir/subdir/file.txt" in str(result)
+        assert os.path.join("runtime", "artifacts") in str(result)
+        assert os.path.join("dir", "subdir", "file.txt") in str(result)
 
 
 class TestResolveSessionPath:
@@ -240,8 +237,8 @@ class TestResolveRuntimePath:
             relative_path="signals/planning.director.signals.json",
         )
 
-        assert "runtime/" in str(result)
-        assert "signals/" in str(result)
+        assert os.path.join("runtime") in str(result)
+        assert os.path.join("signals") in str(result)
 
 
 # =============================================================================

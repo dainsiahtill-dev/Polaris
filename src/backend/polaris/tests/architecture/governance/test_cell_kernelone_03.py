@@ -27,9 +27,6 @@ Violations:
 from __future__ import annotations
 
 import os
-import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -349,9 +346,7 @@ def test_known_locations_import_correctly() -> None:
                 and not line.strip().startswith("#")
                 and "from" not in line
             ]
-            assert False, (
-                f"{file_path.relative_to(BACKEND_ROOT)} still has local _DANGEROUS_PATTERNS definitions: {local_defs}"
-            )
+            raise AssertionError(f"{file_path.relative_to(BACKEND_ROOT)} still has local _DANGEROUS_PATTERNS definitions: {local_defs}")
 
 
 # =============================================================================

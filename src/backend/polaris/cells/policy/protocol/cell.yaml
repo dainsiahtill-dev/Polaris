@@ -1,0 +1,35 @@
+id: policy.protocol
+title: Policy Protocol
+kind: policy
+visibility: public
+stateful: false
+owner: policy
+purpose: 'Policy protocol definitions and enforcement primitives for cross-cell
+  governance. Owns protocol-level policy contracts that other cells can
+  consume to validate compliance with system-wide rules.'
+current_modules:
+- polaris.cells.policy.protocol.public.contracts
+tags: []
+owned_paths:
+- polaris/cells/policy/protocol/**/*.py
+public_contracts:
+  modules:
+  - polaris.cells.policy.protocol.public.contracts
+  commands: []
+  queries: []
+  events: []
+  results: []
+  errors: []
+depends_on: []
+subgraphs: []
+state_owners: []
+effects_allowed:
+- fs.read:workspace/policy/**
+verification:
+  tests: []
+  gaps:
+  - Public contracts not yet fully defined.
+  - Protocol enforcement mechanisms still being designed.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import os
 import shutil
 import sys
@@ -424,4 +424,3 @@ def omniscient_audit_bus():
     bus_name = f"test_{uuid.uuid4().hex[:8]}"
 
     return OmniscientAuditBus(name=bus_name)
-

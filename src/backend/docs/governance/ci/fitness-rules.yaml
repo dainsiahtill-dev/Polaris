@@ -894,11 +894,12 @@ rules:
       - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
       - docs/AGENT_COLLABORATION_EDA_IMPLEMENTATION_STATUS_2026-04-14.md
       - polaris/cells/runtime/task_market/internal/service.py
-    current_status: seeded
+    current_status: enforced_non_regressive
     desired_automation:
       - fail if runtime.task_market mainline writes state and calls append_fact_event directly without an outbox relay path
       - validate runtime.task_market owns an outbox persistence path or table and a relay worker contract
     notes: >
+      Upgraded from seeded to enforced_non_regressive (2026-04-30).
       _emit_fact no longer calls append_fact_event inline (PR-00 core fix).
       Outbox record written as pending; relay_outbox_messages handles delivery
       to fact_stream. State+outbox write atomicity implemented via

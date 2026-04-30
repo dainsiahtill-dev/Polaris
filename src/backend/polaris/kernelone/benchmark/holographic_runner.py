@@ -27,10 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from polaris.cells.roles.kernel.internal.error_recovery.retry_policy import (
-    RetryConfig,
-    RetryPolicy,
-)
+from polaris.kernelone.resilience.retry_policy import RetryPolicy
 from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
     BaseExtractor,
     ExtractionOptions,
@@ -355,7 +352,7 @@ async def _exec_tc_phx_004(case: HolographicCase) -> dict[str, float]:
     diffs_ms: list[float] = []
     repeats = max(1, case.min_samples // 28)
     for base_delay in (0.1, 0.5, 1.0, 2.0):
-        policy = RetryPolicy(RetryConfig(base_delay=base_delay, exponential_backoff=True))
+        policy = RetryPolicy(base_delay_seconds=base_delay)
         for attempt in range(1, 8):
             for _ in range(repeats):
                 left = calculate_backoff_with_jitter(

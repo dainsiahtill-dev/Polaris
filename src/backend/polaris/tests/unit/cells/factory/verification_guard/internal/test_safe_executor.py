@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from polaris.cells.factory.verification_guard.internal.safe_executor import (
-    DANGEROUS_PATTERNS,
     DEFAULT_COMMAND_WHITELIST,
     MAX_OUTPUT_SIZE_BYTES,
     SafeExecutor,

@@ -32,8 +32,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -147,7 +145,6 @@ class TestTaskMarketServiceContract:
             pytest.skip("runtime/task_market directory not found")
 
         # Look for publish method in service files
-        found_publish = False
         for py_file in task_market_dir.rglob("*.py"):
             if "test" in py_file.parts:
                 continue
@@ -158,7 +155,6 @@ class TestTaskMarketServiceContract:
                 continue
 
             if "def publish" in content or "async def publish" in content:
-                found_publish = True
                 break
 
         # Informational - task market should have publish
@@ -172,7 +168,6 @@ class TestTaskMarketServiceContract:
             pytest.skip("runtime/task_market directory not found")
 
         # Look for claim method in service files
-        found_claim = False
         for py_file in task_market_dir.rglob("*.py"):
             if "test" in py_file.parts:
                 continue
@@ -183,7 +178,6 @@ class TestTaskMarketServiceContract:
                 continue
 
             if "def claim" in content or "async def claim" in content:
-                found_claim = True
                 break
 
         # Informational - task market should have claim
@@ -197,7 +191,6 @@ class TestTaskMarketServiceContract:
             pytest.skip("runtime/task_market directory not found")
 
         # Look for acknowledge method
-        found_ack = False
         for py_file in task_market_dir.rglob("*.py"):
             if "test" in py_file.parts:
                 continue
@@ -208,7 +201,6 @@ class TestTaskMarketServiceContract:
                 continue
 
             if "def acknowledge" in content or "async def acknowledge" in content:
-                found_ack = True
                 break
 
         # Informational
@@ -222,7 +214,6 @@ class TestTaskMarketServiceContract:
             pytest.skip("runtime/task_market directory not found")
 
         # Look for state transition methods
-        found_state_transitions = False
         for py_file in task_market_dir.rglob("*.py"):
             if "test" in py_file.parts:
                 continue
@@ -234,7 +225,6 @@ class TestTaskMarketServiceContract:
 
             # Check for any state transition methods
             if any(method in content for method in ["fail", "requeue", "dead_letter", "dead-letter"]):
-                found_state_transitions = True
                 break
 
         # Informational
@@ -295,7 +285,6 @@ def test_execution_broker_is_for_process_execution_only() -> None:
 
     # Execution broker should have execution-related methods
     # Not business task routing
-    found_execution = False
     for py_file in execution_broker_dir.rglob("*.py"):
         if "test" in py_file.parts:
             continue
@@ -306,7 +295,6 @@ def test_execution_broker_is_for_process_execution_only() -> None:
             continue
 
         if any(keyword in content for keyword in ["execute", "run", "process", "subprocess"]):
-            found_execution = True
             break
 
     # Informational - execution broker should do execution
@@ -326,7 +314,7 @@ def test_execution_governance_pipeline_routes_through_task_market() -> None:
         pytest.skip("execution_governance_pipeline.yaml not found")
 
     content = subgraph_file.read_text(encoding="utf-8")
-    data = yaml.safe_load(content)
+    yaml.safe_load(content)
 
     # Check that task_market is referenced
     # This is informational
@@ -340,7 +328,7 @@ def test_pm_pipeline_declares_task_market_integration() -> None:
     if not subgraph_file.exists():
         pytest.skip("pm_pipeline.yaml not found")
 
-    content = subgraph_file.read_text(encoding="utf-8")
+    subgraph_file.read_text(encoding="utf-8")
 
     # pm_pipeline should mention task_market or task coordination
     # This is informational
@@ -360,17 +348,19 @@ def test_no_alternative_task_publication_in_mainline() -> None:
         pytest.skip("cells directory not found")
 
     # Patterns that would indicate alternative task publication
+    # Note: create_task is allowed in task lifecycle services (task_lifecycle_service)
+    # and asyncio task groups (task_group). Only publish/claim work items are
+    # restricted to task_market canonical source.
     forbidden_patterns = [
-        r"def\s+publish_work_item",
-        r"def\s+create_task",
+        r"def\s+publish_work_item\b",
         r"class\s+\w*TaskBroker\w*",
-        r"def\s+claim_work_item",
+        r"def\s+claim_work_item\b",
     ]
 
     violations: list[str] = []
 
     for py_file in cells_dir.rglob("*.py"):
-        if "test" in py_file.parts or "__pycache__" in str(py_file):
+        if "test" in py_file.parts or "tests" in py_file.parts or "__pycache__" in str(py_file):
             continue
 
         # Skip task_market itself (it's the canonical source)
@@ -403,7 +393,6 @@ def test_task_state_must_go_through_task_market() -> None:
 
     # Check that direct task state mutations are not happening
     # This is a stricter check
-    violations: list[str] = []
 
     for py_file in cells_dir.rglob("*.py"):
         if "test" in py_file.parts or "__pycache__" in str(py_file):
@@ -500,7 +489,6 @@ def test_director_uses_task_market_for_work_coordination() -> None:
         pytest.skip("director directory not found")
 
     # Director should import from task_market for work coordination
-    found_task_market_import = False
     for py_file in director_dir.rglob("*.py"):
         if "test" in py_file.parts:
             continue
@@ -511,7 +499,6 @@ def test_director_uses_task_market_for_work_coordination() -> None:
             continue
 
         if "task_market" in content and "import" in content:
-            found_task_market_import = True
             break
 
     # Informational
@@ -526,7 +513,6 @@ def test_pm_uses_task_market_for_work_coordination() -> None:
         pytest.skip("pm directory not found")
 
     # PM should import from task_market for work coordination
-    found_task_market_import = False
     for py_file in pm_dir.rglob("*.py"):
         if "test" in py_file.parts:
             continue
@@ -537,7 +523,6 @@ def test_pm_uses_task_market_for_work_coordination() -> None:
             continue
 
         if "task_market" in content and "import" in content:
-            found_task_market_import = True
             break
 
     # Informational

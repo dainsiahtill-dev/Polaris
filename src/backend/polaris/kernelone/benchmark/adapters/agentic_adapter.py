@@ -2,6 +2,12 @@
 
 This adapter bridges the unified benchmark interface to the
 roles.runtime streaming interface for Agentic evaluation.
+
+.. deprecated::
+    This module lives in kernelone/benchmark/ but imports from polaris.cells,
+    violating the kernelone->cells dependency rule. It should be moved to
+    polaris/tests/benchmark/ or a dedicated benchmark cell.
+    TODO(architecture): Relocate to polaris/tests/benchmark/adapters/
 """
 
 from __future__ import annotations

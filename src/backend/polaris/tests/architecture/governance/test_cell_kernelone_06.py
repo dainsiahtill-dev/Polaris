@@ -27,9 +27,6 @@ Violations:
 from __future__ import annotations
 
 import os
-import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -268,7 +265,7 @@ class TestFactoryMethods:
 
     def test_from_role_policy_uses_min_budget_for_zero(self) -> None:
         """Test that from_role_policy uses MIN_BUDGET_TOKENS for zero input."""
-        from polaris.kernelone.context.budget_gate import ContextBudgetGate, MIN_BUDGET_TOKENS
+        from polaris.kernelone.context.budget_gate import MIN_BUDGET_TOKENS, ContextBudgetGate
 
         gate = ContextBudgetGate.from_role_policy(max_context_tokens=0)
         assert gate.model_window == MIN_BUDGET_TOKENS

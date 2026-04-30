@@ -1,0 +1,52 @@
+id: kernelone.core
+title: KernelOne Core
+kind: capability
+visibility: public
+stateful: false
+owner: kernelone
+purpose: 'Core kernel capabilities for Context OS, Workflow Engine, and shared
+  kernel utilities. Provides the foundational OS-level capabilities used by
+  business cells through explicit contracts. This cell must not depend on any
+  application or domain cell.'
+current_modules:
+- polaris.kernelone.context.context_os.models
+- polaris.kernelone.context.context_os.models_v2
+- polaris.kernelone.context.context_os.content_store
+- polaris.kernelone.context.context_os.receipt_store
+- polaris.kernelone.context.context_os.runtime
+- polaris.kernelone.context.context_os.storage
+- polaris.kernelone.context.context_os.snapshot
+- polaris.kernelone.context.context_os.budget_optimizer
+- polaris.kernelone.context.context_os.classifier
+- polaris.kernelone.context.context_os.policies
+- polaris.kernelone.context.context_os.ports
+- polaris.kernelone.workflow.engine
+tags: []
+owned_paths:
+- polaris/kernelone/context/context_os/**
+- polaris/kernelone/workflow/engine.py
+public_contracts:
+  modules:
+  - polaris.kernelone.context.context_os
+  - polaris.kernelone.workflow
+  commands: []
+  queries: []
+  events: []
+  results: []
+  errors: []
+depends_on: []
+subgraphs: []
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+- fs.read:runtime/**
+verification:
+  tests:
+  - polaris/kernelone/context/context_os/tests/**
+  - polaris/kernelone/workflow/tests/**
+  gaps:
+  - Context OS contracts not yet fully defined.
+  - Workflow engine contracts not yet fully defined.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

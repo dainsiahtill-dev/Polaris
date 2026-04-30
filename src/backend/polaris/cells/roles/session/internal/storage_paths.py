@@ -15,29 +15,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from polaris.kernelone.db import KernelDatabase
-    from polaris.kernelone.fs import KernelFileSystem
 
 logger = logging.getLogger(__name__)
 
-
-def resolve_preferred_logical_prefix(
-    kernel_fs: KernelFileSystem,
-    *,
-    runtime_prefix: str,
-    workspace_fallback_prefix: str,
-) -> str:
-    """Resolve a writable logical prefix without direct filesystem paths."""
-    try:
-        kernel_fs.resolve_path(runtime_prefix)
-        return runtime_prefix
-    except (RuntimeError, ValueError) as runtime_exc:
-        logger.warning(
-            "roles.session runtime prefix unavailable (%s), fallback to %s",
-            runtime_exc,
-            workspace_fallback_prefix,
-        )
-        kernel_fs.resolve_path(workspace_fallback_prefix)
-        return workspace_fallback_prefix
+# Re-export canonical function from kernelone.storage.paths
+from polaris.kernelone.storage.paths import resolve_preferred_logical_prefix
 
 
 def resolve_preferred_sqlite_path(

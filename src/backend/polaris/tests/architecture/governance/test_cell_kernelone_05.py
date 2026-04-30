@@ -28,9 +28,6 @@ Violations:
 from __future__ import annotations
 
 import os
-import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -127,6 +124,7 @@ class TestEmitFactEvent:
     def test_emit_fact_event_signature(self) -> None:
         """Test that emit_fact_event has the expected signature."""
         import inspect
+
         from polaris.kernelone.events.fact_events import emit_fact_event
 
         sig = inspect.signature(emit_fact_event)
@@ -139,6 +137,7 @@ class TestEmitFactEvent:
     def test_emit_fact_event_has_optional_actor(self) -> None:
         """Test that emit_fact_event accepts optional actor parameter."""
         import inspect
+
         from polaris.kernelone.events.fact_events import emit_fact_event
 
         sig = inspect.signature(emit_fact_event)
@@ -165,6 +164,7 @@ class TestEmitSessionEvent:
     def test_emit_session_event_signature(self) -> None:
         """Test that emit_session_event has the expected signature."""
         import inspect
+
         from polaris.kernelone.events.session_events import emit_session_event
 
         sig = inspect.signature(emit_session_event)

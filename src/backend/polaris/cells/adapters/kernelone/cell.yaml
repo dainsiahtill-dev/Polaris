@@ -1,0 +1,39 @@
+id: adapters.kernelone
+title: KernelOne Adapters
+kind: capability
+visibility: public
+stateful: false
+owner: adapters
+purpose: 'Adapter layer bridging KernelOne runtime contracts with Cell-level service
+  interfaces. Provides bus adapter, role provider adapter, alignment adapter, and
+  tool integration adapter implementations that translate between KernelOne ports
+  and Cell public contracts.'
+current_modules:
+- polaris.cells.adapters.kernelone.alignment_adapter
+- polaris.cells.adapters.kernelone.bus_adapter
+- polaris.cells.adapters.kernelone.role_provider_adapter
+- polaris.cells.adapters.kernelone.role_tool_integration_adapter
+tags: []
+owned_paths:
+- polaris/cells/adapters/kernelone/**/*.py
+public_contracts:
+  modules: []
+  commands: []
+  queries: []
+  events: []
+  results: []
+  errors: []
+depends_on:
+- roles.runtime
+subgraphs: []
+state_owners: []
+effects_allowed:
+- role.execute:*
+verification:
+  tests: []
+  gaps:
+  - Public contracts not yet defined; adapters currently expose internal modules directly.
+  - Needs contract-first refactoring before production promotion.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json

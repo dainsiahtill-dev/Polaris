@@ -1,0 +1,47 @@
+id: kernelone.traceability
+title: Traceability Kernel
+kind: capability
+visibility: public
+stateful: true
+owner: kernelone
+purpose: 'Platform-level traceability service for registering execution nodes,
+  linking artifacts, and persisting immutable traceability matrices.
+  Must not depend on any application-level cell.'
+current_modules:
+- polaris.kernelone.traceability.public.contracts
+- polaris.kernelone.traceability.public.service
+- polaris.kernelone.traceability.internal.service_impl
+- polaris.kernelone.traceability.internal.safety
+tags: []
+owned_paths:
+- polaris/kernelone/traceability/**
+public_contracts:
+  modules:
+  - polaris.kernelone.traceability.public.contracts
+  - polaris.kernelone.traceability.public.service
+  commands: []
+  queries:
+  - QueryTraceabilityMatrixV1
+  events: []
+  results:
+  - TraceabilityMatrixV1
+  - TraceNodeV1
+  - TraceLinkV1
+  errors:
+  - TraceabilityErrorV1
+depends_on: []
+subgraphs: []
+state_owners:
+- runtime/traceability/*
+effects_allowed:
+- fs.read:runtime/traceability/*
+- fs.write:runtime/traceability/*
+verification:
+  tests:
+  - polaris/kernelone/traceability/tests/test_traceability.py
+  - polaris/kernelone/traceability/tests/test_safety.py
+  gaps:
+  - Vector/graph query backend not yet implemented.
+  smoke_commands: []
+generated_artifacts:
+- generated/context.pack.json
