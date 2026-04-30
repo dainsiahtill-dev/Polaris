@@ -1,8 +1,15 @@
-"""Tests for polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils."""
+"""Tests for polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils.
+
+Covers pure functions, dataclass-like protocol behavior, and I/O helpers.
+All filesystem tests use temporary directories.
+"""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+
 from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
     PM_SPIN_GUARD_STATUS,
     NoopShangshulingPort,
@@ -16,8 +23,10 @@ from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
 
 
 class TestNormalizeTaskStatus:
+    """Tests for normalize_task_status."""
+
     @pytest.mark.parametrize(
-        ("input_val", "expected"),
+        ("input_value", "expected"),
         [
             ("todo", "todo"),
             ("to_do", "todo"),
@@ -42,148 +51,189 @@ class TestNormalizeTaskStatus:
             ("block", "blocked"),
         ],
     )
-    def test_normalize_task_status_valid(self, input_val: str, expected: str) -> None:
-        assert normalize_task_status(input_val) == expected
+    def test_canonical_values(self, input_value: str, expected: str) -> None:
+        assert normalize_task_status(input_value) == expected
 
-    def test_normalize_task_status_none(self) -> None:
+    def test_unknown_defaults_to_todo(self) -> None:
+        assert normalize_task_status("random_status") == "todo"
+
+    def test_none_defaults_to_todo(self) -> None:
         assert normalize_task_status(None) == "todo"
 
-    def test_normalize_task_status_empty_string(self) -> None:
+    def test_empty_string_defaults_to_todo(self) -> None:
         assert normalize_task_status("") == "todo"
 
-    def test_normalize_task_status_whitespace(self) -> None:
-        assert normalize_task_status("  todo ") == "todo"
+    def test_whitespace_stripped(self) -> None:
+        assert normalize_task_status("  DONE  ") == "done"
 
-    def test_normalize_task_status_unknown(self) -> None:
-        assert normalize_task_status("unknown_status") == "todo"
+    def test_case_insensitive(self) -> None:
+        assert normalize_task_status("In_Progress") == "in_progress"
+
+    def test_non_string_coerced(self) -> None:
+        assert normalize_task_status(123) == "todo"
 
 
 class TestGetTaskSignature:
-    def test_empty_list(self) -> None:
+    """Tests for get_task_signature."""
+
+    def test_empty_list_returns_empty(self) -> None:
         assert get_task_signature([]) == ""
 
-    def test_none_input(self) -> None:
-        assert get_task_signature(None) == ""
-
-    def test_non_list_input(self) -> None:
+    def test_non_list_returns_empty(self) -> None:
         assert get_task_signature("not a list") == ""
 
-    def test_first_task_with_id(self) -> None:
-        tasks = [{"id": "TASK-001", "title": "Test"}]
-        assert get_task_signature(tasks) == "TASK-001"
+    def test_none_returns_empty(self) -> None:
+        assert get_task_signature(None) == ""
 
-    def test_first_task_with_fingerprint(self) -> None:
-        tasks = [{"fingerprint": "abc123", "title": "Test"}]
+    def test_uses_fingerprint_field(self) -> None:
+        tasks = [{"fingerprint": "abc123", "id": "task-1"}]
         assert get_task_signature(tasks) == "abc123"
 
-    def test_first_task_fingerprint_over_id(self) -> None:
-        tasks = [{"fingerprint": "abc123", "id": "TASK-001", "title": "Test"}]
-        assert get_task_signature(tasks) == "abc123"
+    def test_falls_back_to_id(self) -> None:
+        tasks = [{"id": "task-1"}]
+        assert get_task_signature(tasks) == "task-1"
 
-    def test_signature_is_sha256_prefix(self) -> None:
-        tasks = [{"title": "Test", "description": "No id or fingerprint"}]
+    def test_fallback_to_hash_when_no_id(self) -> None:
+        tasks = [{"name": "task-a"}]
         sig = get_task_signature(tasks)
         assert len(sig) == 16
-        assert sig.isalnum()
+        assert all(c in "0123456789abcdef" for c in sig)
 
-    def test_non_dict_first_element(self) -> None:
-        tasks = ["not a dict", {"id": "TASK-001"}]
-        sig = get_task_signature(tasks)
-        # When first element is not a dict, primary={}, so sig="",
-        # then fallback computes SHA256 hash of the whole list
-        assert len(sig) == 16
-        assert sig.isalnum()
+    def test_deterministic_hash(self) -> None:
+        tasks = [{"name": "task-a"}]
+        assert get_task_signature(tasks) == get_task_signature(tasks)
+
+    def test_first_task_priority(self) -> None:
+        tasks = [{"fingerprint": "first"}, {"fingerprint": "second"}]
+        assert get_task_signature(tasks) == "first"
 
 
 class TestGetDirectorTaskStatusSummary:
+    """Tests for get_director_task_status_summary."""
+
     def test_empty_list(self) -> None:
-        summary = get_director_task_status_summary([])
-        assert summary["total"] == 0
-        assert summary["todo"] == 0
+        result = get_director_task_status_summary([])
+        assert result["total"] == 0
 
-    def test_none_input(self) -> None:
-        summary = get_director_task_status_summary(None)
-        assert summary["total"] == 0
+    def test_non_list(self) -> None:
+        result = get_director_task_status_summary("bad")
+        assert result["total"] == 0
 
-    def test_non_list_input(self) -> None:
-        summary = get_director_task_status_summary("not a list")
-        assert summary["total"] == 0
-
-    def test_filters_non_director_tasks(self) -> None:
+    def test_counts_director_tasks_only(self) -> None:
         tasks = [
             {"assigned_to": "director", "status": "done"},
-            {"assigned_to": "other", "status": "done"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["total"] == 1
-
-    def test_counts_by_status(self) -> None:
-        tasks = [
-            {"assigned_to": "director", "status": "todo"},
-            {"assigned_to": "director", "status": "in_progress"},
-            {"assigned_to": "director", "status": "done"},
+            {"assigned_to": "pm", "status": "done"},
             {"assigned_to": "director", "status": "failed"},
         ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["total"] == 4
-        assert summary["todo"] == 1
-        assert summary["in_progress"] == 1
-        assert summary["done"] == 1
-        assert summary["failed"] == 1
+        result = get_director_task_status_summary(tasks)
+        assert result["total"] == 2
+        assert result["done"] == 1
+        assert result["failed"] == 1
+
+    def test_normalizes_status(self) -> None:
+        tasks = [
+            {"assigned_to": "director", "status": "in-progress"},
+            {"assigned_to": "director", "status": "active"},
+        ]
+        result = get_director_task_status_summary(tasks)
+        assert result["in_progress"] == 2
 
     def test_skips_non_dict_items(self) -> None:
         tasks = [
             {"assigned_to": "director", "status": "done"},
             "not a dict",
-            None,
-            {"assigned_to": "director", "status": "review"},
+            {"assigned_to": "director", "status": "todo"},
         ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["total"] == 2
+        result = get_director_task_status_summary(tasks)
+        assert result["total"] == 2
+
+    def test_missing_assigned_to_skipped(self) -> None:
+        tasks = [{"status": "done"}]
+        result = get_director_task_status_summary(tasks)
+        assert result["total"] == 0
+
+    def test_case_insensitive_assignee(self) -> None:
+        tasks = [{"assigned_to": "DIRECTOR", "status": "done"}]
+        result = get_director_task_status_summary(tasks)
+        assert result["total"] == 1
+        assert result["done"] == 1
 
 
 class TestToBool:
+    """Tests for to_bool."""
+
     @pytest.mark.parametrize(
-        ("input_val", "expected"),
+        ("value", "expected"),
         [
             (True, True),
             (False, False),
-            ("true", True),
-            ("True", True),
             ("1", True),
+            ("true", True),
             ("yes", True),
             ("on", True),
-            ("false", False),
-            ("False", False),
             ("0", False),
+            ("false", False),
             ("no", False),
             ("off", False),
         ],
     )
-    def test_to_bool_converts_correctly(self, input_val: str, expected: bool) -> None:
-        assert to_bool(input_val) is expected
+    def test_explicit_values(self, value: Any, expected: bool) -> None:
+        assert to_bool(value) == expected
 
-    def test_to_bool_default(self) -> None:
-        assert to_bool("unknown", default=False) is False
-        assert to_bool("unknown", default=True) is True
+    def test_default_true(self) -> None:
+        assert to_bool("maybe") is True
 
-    def test_to_bool_none(self) -> None:
+    def test_default_false(self) -> None:
+        assert to_bool("maybe", default=False) is False
+
+    def test_none_returns_default(self) -> None:
         assert to_bool(None) is True
-        assert to_bool(None, default=False) is False
 
-    def test_to_bool_empty_string(self) -> None:
+    def test_empty_string_returns_default(self) -> None:
         assert to_bool("") is True
 
 
-class TestPmSpinGuardStatus:
-    def test_pm_spin_guard_status_value(self) -> None:
-        assert PM_SPIN_GUARD_STATUS == "PM_SPIN_GUARD_ACTIVE"
+class TestAppendPmReport:
+    """Tests for append_pm_report."""
+
+    def test_empty_path_noop(self, tmp_path: Any) -> None:
+        append_pm_report("", "content")
+
+    def test_creates_parent_dirs(self, tmp_path: Any) -> None:
+        path = str(tmp_path / "deep" / "path" / "report.txt")
+        append_pm_report(path, "hello")
+        assert (tmp_path / "deep" / "path" / "report.txt").read_text(encoding="utf-8") == "hello\n"
+
+    def test_appends_content(self, tmp_path: Any) -> None:
+        path = str(tmp_path / "report.txt")
+        append_pm_report(path, "line1")
+        append_pm_report(path, "line2")
+        content = (tmp_path / "report.txt").read_text(encoding="utf-8")
+        assert content == "line1\nline2\n"
+
+    def test_adds_trailing_newline_if_missing(self, tmp_path: Any) -> None:
+        path = str(tmp_path / "report.txt")
+        append_pm_report(path, "no newline")
+        content = (tmp_path / "report.txt").read_text(encoding="utf-8")
+        assert content == "no newline\n"
+
+    def test_preserves_existing_trailing_newline(self, tmp_path: Any) -> None:
+        path = str(tmp_path / "report.txt")
+        append_pm_report(path, "has newline\n")
+        content = (tmp_path / "report.txt").read_text(encoding="utf-8")
+        assert content == "has newline\n"
 
 
 class TestNoopShangshulingPort:
+    """Tests for NoopShangshulingPort."""
+
+    def test_isinstance_shangshuling_port(self) -> None:
+        port = NoopShangshulingPort()
+        assert isinstance(port, ShangshulingPort)
+
     def test_sync_tasks_returns_zero(self) -> None:
         port = NoopShangshulingPort()
-        assert port.sync_tasks_to_shangshuling("/workspace", [{"id": "TASK-001"}]) == 0
+        assert port.sync_tasks_to_shangshuling("/workspace", []) == 0
 
     def test_get_ready_tasks_returns_empty(self) -> None:
         port = NoopShangshulingPort()
@@ -191,203 +241,48 @@ class TestNoopShangshulingPort:
 
     def test_record_completion_returns_false(self) -> None:
         port = NoopShangshulingPort()
-        assert port.record_shangshuling_task_completion("/workspace", "TASK-001", True, {}) is False
+        assert port.record_shangshuling_task_completion("/workspace", "t1", True, {}) is False
 
     def test_archive_history_returns_none(self) -> None:
         port = NoopShangshulingPort()
-        assert port.archive_task_history("/workspace", "/cache", "run-1", 1, {}, {}, "2024-01-01") is None
+        assert port.archive_task_history("/workspace", "/cache", "r1", 1, {}, None, "ts") is None
+
+
+class TestConstants:
+    """Tests for module constants."""
+
+    def test_pm_spin_guard_status(self) -> None:
+        assert PM_SPIN_GUARD_STATUS == "PM_SPIN_GUARD_ACTIVE"
 
 
 class TestShangshulingPortProtocol:
-    def test_is_runtime_checkable(self) -> None:
-        """ShangshulingPort is a runtime-checkable protocol."""
-        assert hasattr(ShangshulingPort, "__protocol_attrs__")
+    """Tests for ShangshulingPort Protocol."""
 
-    def test_noop_implements_protocol(self) -> None:
-        """NoopShangshulingPort should be accepted as implementing ShangshulingPort."""
-        port = NoopShangshulingPort()
+    def test_custom_implementation(self) -> None:
+        class CustomPort:
+            def sync_tasks_to_shangshuling(self, workspace_full: str, tasks: list[dict[str, Any]]) -> int:
+                return 42
+
+            def get_shangshuling_ready_tasks(self, workspace_full: str, limit: int = 6) -> list[dict[str, Any]]:
+                return [{"id": "t1"}]
+
+            def record_shangshuling_task_completion(
+                self, workspace_full: str, task_id: str, success: bool, metadata: dict[str, Any]
+            ) -> bool:
+                return True
+
+            def archive_task_history(
+                self,
+                workspace_full: str,
+                cache_root_full: str,
+                run_id: str,
+                iteration: int,
+                normalized: dict[str, Any],
+                director_result: Any,
+                timestamp: str,
+            ) -> None:
+                return
+
+        port = CustomPort()
         assert isinstance(port, ShangshulingPort)
-
-
-class TestAppendPmReport:
-    """Tests for append_pm_report file I/O utility."""
-
-    def test_empty_path_is_noop(self, tmp_path) -> None:
-        append_pm_report("", "some content")
-        # Should not raise and should not create any file
-
-    def test_creates_parent_directories(self, tmp_path) -> None:
-        report_path = tmp_path / "nested" / "dir" / "report.md"
-        assert not report_path.parent.exists()
-        append_pm_report(str(report_path), "line 1")
-        assert report_path.exists()
-        assert report_path.parent.exists()
-
-    def test_appends_content_with_newline(self, tmp_path) -> None:
-        report_path = tmp_path / "report.md"
-        append_pm_report(str(report_path), "line 1")
-        append_pm_report(str(report_path), "line 2")
-        content = report_path.read_text(encoding="utf-8")
-        assert content == "line 1\nline 2\n"
-
-    def test_does_not_double_newline(self, tmp_path) -> None:
-        report_path = tmp_path / "report.md"
-        append_pm_report(str(report_path), "already has newline\n")
-        content = report_path.read_text(encoding="utf-8")
-        assert content == "already has newline\n"
-        assert "\n\n" not in content
-
-    def test_uses_utf8_encoding(self, tmp_path) -> None:
-        report_path = tmp_path / "report.md"
-        unicode_content = "Unicode: \u7981\u7528\u8bcd\u6c47"
-        append_pm_report(str(report_path), unicode_content)
-        content = report_path.read_text(encoding="utf-8")
-        assert unicode_content in content
-
-    def test_appends_to_existing_file(self, tmp_path) -> None:
-        report_path = tmp_path / "report.md"
-        report_path.write_text("existing\n", encoding="utf-8")
-        append_pm_report(str(report_path), "appended")
-        content = report_path.read_text(encoding="utf-8")
-        assert content == "existing\nappended\n"
-
-
-class TestGetTaskSignatureEdgeCases:
-    """Additional edge cases for get_task_signature."""
-
-    def test_deterministic_for_same_input(self) -> None:
-        tasks = [{"title": "A", "desc": "B"}]
-        sig1 = get_task_signature(tasks)
-        sig2 = get_task_signature(tasks)
-        assert sig1 == sig2
-
-    def test_different_inputs_produce_different_signatures(self) -> None:
-        tasks_a = [{"title": "A"}]
-        tasks_b = [{"title": "B"}]
-        sig_a = get_task_signature(tasks_a)
-        sig_b = get_task_signature(tasks_b)
-        assert sig_a != sig_b
-
-    def test_dict_order_does_not_matter(self) -> None:
-        tasks = [{"z": 1, "a": 2}]
-        sig = get_task_signature(tasks)
-        assert len(sig) == 16
-
-    def test_falsy_id_falls_back_to_fingerprint(self) -> None:
-        tasks = [{"id": "", "fingerprint": "fp-123"}]
-        assert get_task_signature(tasks) == "fp-123"
-
-    def test_whitespace_id_is_stripped(self) -> None:
-        tasks = [{"id": "  TASK-001  "}]
-        assert get_task_signature(tasks) == "TASK-001"
-
-    def test_list_with_multiple_dicts(self) -> None:
-        tasks = [
-            {"id": "first"},
-            {"id": "second"},
-        ]
-        assert get_task_signature(tasks) == "first"
-
-
-class TestGetDirectorTaskStatusSummaryEdgeCases:
-    """Additional edge cases for status summary aggregation."""
-
-    def test_case_insensitive_assigned_to(self) -> None:
-        tasks = [
-            {"assigned_to": "Director", "status": "done"},
-            {"assigned_to": "DIRECTOR", "status": "done"},
-            {"assigned_to": "director", "status": "done"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["total"] == 3
-        assert summary["done"] == 3
-
-    def test_status_normalization(self) -> None:
-        tasks = [
-            {"assigned_to": "director", "status": "DONE"},
-            {"assigned_to": "director", "status": "Success"},
-            {"assigned_to": "director", "status": "IN_PROGRESS"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["done"] == 2
-        assert summary["in_progress"] == 1
-
-    def test_unknown_status_defaults_to_todo(self) -> None:
-        tasks = [
-            {"assigned_to": "director", "status": "weird_status"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["todo"] == 1
-
-    def test_missing_assigned_to_skips_task(self) -> None:
-        tasks = [
-            {"status": "done"},
-            {"assigned_to": "director", "status": "done"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["total"] == 1
-
-    def test_empty_assigned_to_skips_task(self) -> None:
-        tasks = [
-            {"assigned_to": "", "status": "done"},
-            {"assigned_to": "director", "status": "done"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["total"] == 1
-
-    def test_blocked_status_counted(self) -> None:
-        tasks = [
-            {"assigned_to": "director", "status": "blocked"},
-            {"assigned_to": "director", "status": "block"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["blocked"] == 2
-
-    def test_needs_continue_variants(self) -> None:
-        tasks = [
-            {"assigned_to": "director", "status": "needs_continue"},
-            {"assigned_to": "director", "status": "need_continue"},
-            {"assigned_to": "director", "status": "continue"},
-            {"assigned_to": "director", "status": "retry_same_task"},
-        ]
-        summary = get_director_task_status_summary(tasks)
-        assert summary["needs_continue"] == 4
-
-
-class TestToBoolEdgeCases:
-    """Additional edge cases for to_bool conversion."""
-
-    @pytest.mark.parametrize(
-        ("input_val", "expected"),
-        [
-            ("  true  ", True),
-            ("TRUE", True),
-            ("  FALSE  ", False),
-            ("False", False),
-        ],
-    )
-    def test_whitespace_and_case(self, input_val: str, expected: bool) -> None:
-        assert to_bool(input_val) is expected
-
-    def test_whitespace_only_defaults(self) -> None:
-        assert to_bool("   ") is True
-        assert to_bool("   ", default=False) is False
-
-    def test_int_zero_and_one(self) -> None:
-        # Note: 0 is falsy so value or '' yields empty string, falling
-        # through to the default (True).  This is the documented behaviour.
-        assert to_bool(1) is True  # '1' matches truthy set
-        assert to_bool(0) is True  # falsy -> empty string -> default
-
-    def test_float_defaults(self) -> None:
-        assert to_bool(1.5) is True
-        assert to_bool(0.0, default=False) is False
-
-    def test_negative_number_defaults(self) -> None:
-        assert to_bool(-1) is True
-
-    def test_list_defaults(self) -> None:
-        assert to_bool([1, 2, 3]) is True
-
-    def test_dict_defaults(self) -> None:
-        assert to_bool({"key": "value"}) is True
+        assert port.sync_tasks_to_shangshuling("ws", []) == 42

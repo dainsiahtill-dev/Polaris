@@ -17,7 +17,7 @@ except ImportError:
 def generate_icons():
     """生成不同大小的图标文件"""
     current_dir = Path(__file__).parent
-    source_icon = current_dir / "Polaris-icon2.png"
+    source_icon = current_dir / "polaris-icon.png"
     
     if not source_icon.exists():
         print(f"错误: 找不到源图标文件 {source_icon}")

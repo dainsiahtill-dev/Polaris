@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
@@ -24,9 +25,7 @@ from polaris.kernelone.utils import utc_now_str
 logger = logging.getLogger(__name__)
 
 
-def _now_iso() -> str:
-    """Get current ISO format timestamp."""
-    return utc_now_str()
+_now_iso: Callable[[], str] = utc_now_str
 
 
 class RequirementStatus(str, Enum):

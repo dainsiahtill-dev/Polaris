@@ -136,6 +136,9 @@ class SkillTemplateService:
                     value_list: list[str] = [v.strip().strip("\"'") for v in value[1:-1].split(",") if v.strip()]
                     current_key = key
                     result[key] = value_list
+                else:
+                    result[key] = value
+                    current_key = key
 
         # Save last list
         if current_key and current_list:

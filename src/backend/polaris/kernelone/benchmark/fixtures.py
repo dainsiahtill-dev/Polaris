@@ -14,7 +14,6 @@ from collections.abc import Callable, Coroutine
 from functools import wraps
 from typing import Any, TypeVar, cast
 
-import pytest
 from polaris.kernelone.benchmark.models import (
     BenchmarkResult,
     BenchmarkStats,
@@ -323,35 +322,37 @@ def throughput_benchmark(
     return decorator
 
 
-# Pytest Fixtures
+# Pytest Fixtures — guarded so pytest remains a test-only dependency.
 
+try:
+    import pytest
 
-def pytest_configure(config: Any) -> None:
-    """Configure pytest with custom markers."""
-    config.addinivalue_line("markers", "benchmark: mark test as a benchmark")
+    def pytest_configure(config: Any) -> None:
+        """Configure pytest with custom markers."""
+        config.addinivalue_line("markers", "benchmark: mark test as a benchmark")
 
+    @pytest.fixture
+    def benchmark_stats() -> BenchmarkStats:
+        """Pytest fixture providing a fresh BenchmarkStats instance."""
+        return BenchmarkStats()
 
-@pytest.fixture
-def benchmark_stats() -> BenchmarkStats:
-    """Pytest fixture providing a fresh BenchmarkStats instance."""
-    return BenchmarkStats()
+    @pytest.fixture
+    def benchmark_context() -> Callable[[str], BenchmarkContext]:
+        """Pytest fixture providing a BenchmarkContext factory.
 
+        Returns:
+            Factory function that creates BenchmarkContext instances.
+        """
+        return lambda name: BenchmarkContext(metric_name=name)
 
-@pytest.fixture
-def benchmark_context() -> Callable[[str], BenchmarkContext]:
-    """Pytest fixture providing a BenchmarkContext factory.
+    @pytest.fixture
+    def memory_context() -> Callable[[], MemoryStats]:
+        """Pytest fixture providing a MemoryStats factory.
 
-    Returns:
-        Factory function that creates BenchmarkContext instances.
-    """
-    return lambda name: BenchmarkContext(metric_name=name)
+        Returns:
+            Factory function that creates MemoryStats instances.
+        """
+        return MemoryStats
 
-
-@pytest.fixture
-def memory_context() -> Callable[[], MemoryStats]:
-    """Pytest fixture providing a MemoryStats factory.
-
-    Returns:
-        Factory function that creates MemoryStats instances.
-    """
-    return MemoryStats
+except ImportError:
+    pass

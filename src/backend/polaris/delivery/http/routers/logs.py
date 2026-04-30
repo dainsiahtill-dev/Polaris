@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import APIRouter, Body, Depends, Query
 from polaris.delivery.http.routers._shared import require_auth
+from polaris.infrastructure.log_pipeline.canonical_event import LogChannel, LogSeverity
 from polaris.infrastructure.log_pipeline.query import (
     LogQuery,
     LogQueryService,
@@ -52,13 +55,13 @@ async def query_logs(
     # Validate and cast channel/severity to expected Literal types
     valid_channels = ("system", "process", "llm")
     valid_severities = ("debug", "info", "warn", "error", "critical")
-    typed_channel = channel if channel in valid_channels else None
-    typed_severity = severity if severity in valid_severities else None
+    typed_channel: LogChannel | None = cast(LogChannel, channel) if channel in valid_channels else None
+    typed_severity: LogSeverity | None = cast(LogSeverity, severity) if severity in valid_severities else None
 
     query = LogQuery(
         run_id=run_id,
-        channel=typed_channel,  # type: ignore[arg-type]
-        severity=typed_severity,  # type: ignore[arg-type]
+        channel=typed_channel,  
+        severity=typed_severity,  
         actor=actor,
         task_id=task_id,
         cursor=cursor,
@@ -113,7 +116,7 @@ async def log_user_action(
             "metadata": metadata,
         }
 
-        append_jsonl_atomic(log_path, payload)
+        append_jsonl_atomic(str(log_path), payload)
         return {"status": "logged", "action": action}
     except (RuntimeError, ValueError) as e:
         return {"status": "error", "message": str(e)}

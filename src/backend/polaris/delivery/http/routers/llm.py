@@ -15,6 +15,7 @@ from polaris.cells.llm.provider_runtime.public.service import get_provider_manag
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.cells.storage.layout.public.service import save_persisted_settings
 from polaris.delivery.http.routers._shared import get_state, require_auth
+from polaris.infrastructure.llm.providers.provider_registry import ProviderManager
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.runtime_config import load_role_config
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
@@ -23,7 +24,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Resolve provider_manager from the Cell layer (which delegates to kernelone)
-_provider_manager = get_provider_manager()
+_provider_manager: ProviderManager = get_provider_manager()
 
 
 def _normalize_runtime_role_id(role_id: str) -> str:
@@ -113,7 +114,7 @@ def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]
 @router.post("/llm/config/migrate", dependencies=[Depends(require_auth)])
 def migrate_config(payload: dict[str, Any]) -> dict[str, Any]:
     try:
-        return _provider_manager.migrate_legacy_config(payload)  # type: ignore[attr-defined]
+        return _provider_manager.migrate_legacy_config(payload)  
     except (RuntimeError, ValueError) as exc:  # pragma: no cover - defensive runtime path
         logger.error("migrate_config failed: %s", exc)
         raise HTTPException(status_code=500, detail="internal error") from exc

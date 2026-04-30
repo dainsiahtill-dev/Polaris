@@ -51,6 +51,7 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
     from polaris.delivery.http.app_factory import create_app
 
     app = create_app(settings=mock_settings)
+
     # Use a permissive auth handler for tests
     class _AllowAllAuth:
         def check(self, _auth_header: str) -> bool:
@@ -316,9 +317,7 @@ async def test_pm_run_orchestration(client: AsyncClient) -> None:
     mock_result.message = "PM run started"
 
     with (
-        patch(
-            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService"
-        ) as mock_service_cls,
+        patch("polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService") as mock_service_cls,
         patch(
             "polaris.delivery.http.v2.pm.get_orchestration_service",
             new_callable=AsyncMock,
@@ -373,12 +372,19 @@ async def test_director_start_stop(client: AsyncClient) -> None:
     mock_director.start = AsyncMock()
     mock_director.stop = AsyncMock()
     mock_director.state.name = "RUNNING"
+    mock_director.config.workspace = "."
 
     with patch(
         "polaris.delivery.http.dependencies.get_container",
         new_callable=AsyncMock,
     ) as mock_container:
-        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+
+        async def _resolve_start_stop(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_start_stop)
 
         start_resp = await client.post("/v2/director/start")
         assert start_resp.status_code == 200
@@ -406,12 +412,19 @@ async def test_director_create_task(client: AsyncClient) -> None:
 
     mock_director = MagicMock()
     mock_director.submit_task = AsyncMock(return_value=mock_task)
+    mock_director.config.workspace = "."
 
     with patch(
         "polaris.delivery.http.dependencies.get_container",
         new_callable=AsyncMock,
     ) as mock_container:
-        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+
+        async def _resolve_create(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_create)
 
         response = await client.post(
             "/v2/director/tasks",
@@ -432,12 +445,19 @@ async def test_director_get_task_not_found(client: AsyncClient) -> None:
     """Director get task should 404 when task doesn't exist."""
     mock_director = MagicMock()
     mock_director.get_task = AsyncMock(return_value=None)
+    mock_director.config.workspace = "."
 
     with patch(
         "polaris.delivery.http.dependencies.get_container",
         new_callable=AsyncMock,
     ) as mock_container:
-        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+
+        async def _resolve_get_task(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_get_task)
 
         response = await client.get("/v2/director/tasks/nonexistent")
         assert response.status_code == 404
@@ -448,12 +468,19 @@ async def test_director_cancel_task(client: AsyncClient) -> None:
     """Director cancel task should return ok when successful."""
     mock_director = MagicMock()
     mock_director.cancel_task = AsyncMock(return_value=True)
+    mock_director.config.workspace = "."
 
     with patch(
         "polaris.delivery.http.dependencies.get_container",
         new_callable=AsyncMock,
     ) as mock_container:
-        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+
+        async def _resolve_cancel(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_cancel)
 
         response = await client.post("/v2/director/tasks/task-123/cancel")
         assert response.status_code == 200
@@ -467,12 +494,19 @@ async def test_director_cancel_task_fails(client: AsyncClient) -> None:
     """Director cancel task should 400 when cancellation fails."""
     mock_director = MagicMock()
     mock_director.cancel_task = AsyncMock(return_value=False)
+    mock_director.config.workspace = "."
 
     with patch(
         "polaris.delivery.http.dependencies.get_container",
         new_callable=AsyncMock,
     ) as mock_container:
-        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+
+        async def _resolve(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve)
 
         response = await client.post("/v2/director/tasks/task-123/cancel")
         assert response.status_code == 400
@@ -660,9 +694,7 @@ async def test_orchestration_create_run(client: AsyncClient) -> None:
             json={
                 "workspace": ".",
                 "mode": "workflow",
-                "role_entries": [
-                    {"role_id": "pm", "input": "test", "scope_paths": []}
-                ],
+                "role_entries": [{"role_id": "pm", "input": "test", "scope_paths": []}],
             },
         )
         assert response.status_code == 200

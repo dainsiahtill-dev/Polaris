@@ -1,6 +1,7 @@
 const { spawn, execFileSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const { ensureLocalNatsServer } = require("./nats-server");
 
 const repoRoot = path.join(__dirname, "..", "..");
 const electronMain = path.join(repoRoot, "src", "electron", "main.cjs");
@@ -123,30 +124,53 @@ function resolveVenvPython() {
   return "";
 }
 
-const env = { ...process.env };
-if (env.ELECTRON_RUN_AS_NODE) {
-  delete env.ELECTRON_RUN_AS_NODE;
-}
-const venvPython = resolveVenvPython();
-const configuredPython = (env.KERNELONE_PYTHON || "").trim();
+async function main() {
+  const natsHandle = await ensureLocalNatsServer();
 
-if (venvPython) {
-  if (!configuredPython) {
-    env.KERNELONE_PYTHON = venvPython;
-  } else if (!fs.existsSync(configuredPython)) {
-    console.warn(`[polaris] KERNELONE_PYTHON not found: ${configuredPython}`);
-    env.KERNELONE_PYTHON = venvPython;
+  const env = { ...process.env };
+  if (env.ELECTRON_RUN_AS_NODE) {
+    delete env.ELECTRON_RUN_AS_NODE;
   }
+  const venvPython = resolveVenvPython();
+  const configuredPython = (env.KERNELONE_PYTHON || "").trim();
+
+  if (venvPython) {
+    if (!configuredPython) {
+      env.KERNELONE_PYTHON = venvPython;
+    } else if (!fs.existsSync(configuredPython)) {
+      console.warn(`[polaris] KERNELONE_PYTHON not found: ${configuredPython}`);
+      env.KERNELONE_PYTHON = venvPython;
+    }
+  }
+
+  console.log(`[polaris] python: ${env.KERNELONE_PYTHON || "python"}`);
+
+  const electronBinary = require("electron");
+  const child = spawn(electronBinary, [electronMain], {
+    stdio: "inherit",
+    env,
+  });
+
+  const cleanup = () => {
+    if (natsHandle) natsHandle.stop();
+  };
+
+  child.on("exit", (code) => {
+    cleanup();
+    process.exit(code ?? 0);
+  });
+
+  child.on("error", (error) => {
+    cleanup();
+    console.error(`[run-electron] electron error: ${error.message}`);
+    process.exit(1);
+  });
+
+  process.on("SIGINT", () => { cleanup(); process.exit(130); });
+  process.on("SIGTERM", () => { cleanup(); process.exit(143); });
 }
 
-console.log(`[polaris] python: ${env.KERNELONE_PYTHON || "python"}`);
-
-const electronBinary = require("electron");
-const child = spawn(electronBinary, [electronMain], {
-  stdio: "inherit",
-  env,
-});
-
-child.on("exit", (code) => {
-  process.exit(code ?? 0);
+main().catch((error) => {
+  console.error(`[run-electron] ${error.message}`);
+  process.exit(1);
 });

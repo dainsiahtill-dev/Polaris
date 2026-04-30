@@ -38,7 +38,7 @@ def _serialize(payload: Any) -> Any:
     if payload is None:
         return None
     if is_dataclass(payload) and not isinstance(payload, type):
-        return asdict(payload)  # type: ignore[arg-type]
+        return asdict(payload)  
     if isinstance(payload, dict):
         return dict(payload)
     if isinstance(payload, (list, tuple)):
