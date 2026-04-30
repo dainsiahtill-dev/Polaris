@@ -207,7 +207,7 @@ class TestToolLoopControllerHistory:
 
     def _make_role_turn_request(self, history_list: list[tuple], task_id: str = "task-1"):
         """Create a minimally valid RoleTurnRequest."""
-        from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+        from polaris.cells.roles.profile.public import RoleTurnRequest
 
         # SSOT: context_override must have context_os_snapshot (same as RoleTurnRequest.__init__ bootstrap)
         context_override = {
@@ -285,7 +285,7 @@ class TestToolLoopControllerHistory:
             "updated_at": "",
         }
         context_override = {"context_os_snapshot": snapshot_with_history}
-        from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+        from polaris.cells.roles.profile.public import RoleTurnRequest
 
         request = MagicMock(spec=RoleTurnRequest)
         request.message = "test"
@@ -376,7 +376,7 @@ class TestNoRegressions:
     def test_kernel_build_context_returns_context_request(self) -> None:
         """kernel._build_context returns correct type with list input."""
         from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
-        from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+        from polaris.cells.roles.profile.public import RoleTurnRequest
         from polaris.cells.roles.profile.public.service import RoleProfile
         from polaris.kernelone.context.contracts import TurnEngineContextRequest
 
@@ -401,7 +401,7 @@ class TestNoRegressions:
     def test_kernel_build_context_empty_history(self) -> None:
         """kernel._build_context handles empty history."""
         from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
-        from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+        from polaris.cells.roles.profile.public import RoleTurnRequest
         from polaris.cells.roles.profile.public.service import RoleProfile
         from polaris.kernelone.context.contracts import TurnEngineContextRequest
 
@@ -460,7 +460,7 @@ class TestPhase3ContextOSDirectIntegration:
     def test_kernel_build_context_extracts_context_os_snapshot(self) -> None:
         """kernel._build_context extracts context_os_snapshot from context_override."""
         from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
-        from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+        from polaris.cells.roles.profile.public import RoleTurnRequest
         from polaris.cells.roles.profile.public.service import RoleProfile
         from polaris.kernelone.context.contracts import TurnEngineContextRequest
 
@@ -573,7 +573,7 @@ class TestPhase5ScratchpadPattern:
         task_id: str = "task-1",
     ):
         """Create a RoleTurnRequest with context_os_snapshot in context_override."""
-        from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+        from polaris.cells.roles.profile.public import RoleTurnRequest
 
         context_override = {}
         if snapshot is not None:

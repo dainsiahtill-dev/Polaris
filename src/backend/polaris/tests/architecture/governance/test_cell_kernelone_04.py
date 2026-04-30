@@ -294,12 +294,11 @@ def test_no_local_resolve_signal_path_in_cells() -> None:
             continue
 
         for i, line in enumerate(content.splitlines(), 1):
-            if "resolve_signal_path" in line and "def " in line:
+            if "resolve_signal_path" in line and "def " in line and not line.strip().startswith("#"):
                 stripped = line.strip()
-                if not stripped.startswith("#"):
-                    # Allow if it's importing from kernelone
-                    if "from polaris.kernelone.storage.paths import" not in content:
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+                # Allow if it's importing from kernelone
+                if "from polaris.kernelone.storage.paths import" not in content:
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, (
         f"Found {len(violations)} local resolve_signal_path definitions in cells:\n" + "\n".join(violations[:10])
@@ -424,9 +423,8 @@ def test_known_locations_import_correctly() -> None:
 
         for i, line in enumerate(lines, 1):
             stripped = line.strip()
-            if "_resolve_" in line and "def " in line and not stripped.startswith("#"):
-                if not has_kernelone_import:
-                    violations.append(f"{file_path.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+            if "_resolve_" in line and "def " in line and not stripped.startswith("#") and not has_kernelone_import:
+                violations.append(f"{file_path.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, (
         f"Found {len(violations)} local path resolution definitions without kernelone imports:\n"

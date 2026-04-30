@@ -179,11 +179,12 @@ def test_no_direct_director_to_pm_service_calls() -> None:
 
         # Check for direct imports of pm public services
         for i, line in enumerate(content.splitlines(), 1):
-            if "from polaris.cells.pm.public" in line or "from polaris.cells.pm." in line:
-                if "service" in line.lower() or "client" in line.lower():
-                    stripped = line.strip()
-                    if not stripped.startswith("#"):
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+            if ("from polaris.cells.pm.public" in line or "from polaris.cells.pm." in line) and (
+                "service" in line.lower() or "client" in line.lower()
+            ):
+                stripped = line.strip()
+                if not stripped.startswith("#"):
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, f"Found {len(violations)} direct director->pm service calls:\n" + "\n".join(
         violations[:10]
@@ -210,11 +211,12 @@ def test_no_direct_director_to_chief_engineer_calls() -> None:
 
         # Check for direct imports of chief_engineer public services
         for i, line in enumerate(content.splitlines(), 1):
-            if "from polaris.cells.chief_engineer" in line:
-                if "public" in line and ("service" in line.lower() or "client" in line.lower()):
-                    stripped = line.strip()
-                    if not stripped.startswith("#"):
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+            if "from polaris.cells.chief_engineer" in line and "public" in line and (
+                "service" in line.lower() or "client" in line.lower()
+            ):
+                stripped = line.strip()
+                if not stripped.startswith("#"):
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, (
         f"Found {len(violations)} direct director->chief_engineer service calls:\n" + "\n".join(violations[:10])
@@ -241,11 +243,12 @@ def test_no_direct_pm_to_director_service_calls() -> None:
 
         # Check for direct imports of director public services
         for i, line in enumerate(content.splitlines(), 1):
-            if "from polaris.cells.director.public" in line:
-                if "service" in line.lower() or "client" in line.lower():
-                    stripped = line.strip()
-                    if not stripped.startswith("#"):
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+            if "from polaris.cells.director.public" in line and (
+                "service" in line.lower() or "client" in line.lower()
+            ):
+                stripped = line.strip()
+                if not stripped.startswith("#"):
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, f"Found {len(violations)} direct pm->director service calls:\n" + "\n".join(
         violations[:10]
@@ -272,11 +275,12 @@ def test_no_direct_chief_engineer_to_qa_calls() -> None:
 
         # Check for direct imports of qa public services
         for i, line in enumerate(content.splitlines(), 1):
-            if "from polaris.cells.qa.public" in line:
-                if "service" in line.lower() or "client" in line.lower():
-                    stripped = line.strip()
-                    if not stripped.startswith("#"):
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+            if "from polaris.cells.qa.public" in line and (
+                "service" in line.lower() or "client" in line.lower()
+            ):
+                stripped = line.strip()
+                if not stripped.startswith("#"):
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, f"Found {len(violations)} direct chief_engineer->qa service calls:\n" + "\n".join(
         violations[:10]
@@ -303,11 +307,12 @@ def test_no_direct_qa_to_chief_engineer_calls() -> None:
 
         # Check for direct imports of chief_engineer public services
         for i, line in enumerate(content.splitlines(), 1):
-            if "from polaris.cells.chief_engineer.public" in line:
-                if "service" in line.lower() or "client" in line.lower():
-                    stripped = line.strip()
-                    if not stripped.startswith("#"):
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+            if "from polaris.cells.chief_engineer.public" in line and (
+                "service" in line.lower() or "client" in line.lower()
+            ):
+                stripped = line.strip()
+                if not stripped.startswith("#"):
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, f"Found {len(violations)} direct qa->chief_engineer service calls:\n" + "\n".join(
         violations[:10]

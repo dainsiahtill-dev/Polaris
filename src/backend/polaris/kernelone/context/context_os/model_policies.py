@@ -95,7 +95,7 @@ def enforce_mutation_policy(policy: MutationPolicy) -> Callable[[type[T]], type[
 
             original_setattr(self, name, value)
 
-        cls.__setattr__ = frozen_setattr  # type: ignore[assignment]
+        cast(Any, cls).__setattr__ = frozen_setattr
 
         return cls
 

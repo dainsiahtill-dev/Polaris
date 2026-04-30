@@ -20,9 +20,9 @@ from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummarizationError,
     SummaryStrategy,
 )
-from sumy.nlp.tokenizers import Tokenizer  # type: ignore[attr-defined]
-from sumy.parsers.plaintext import PlaintextParser  # type: ignore[attr-defined]
-from sumy.summarizers.text_rank import TextRankSummarizer  # type: ignore[attr-defined]
+from sumy.nlp.tokenizers import Tokenizer
+from sumy.parsers.plaintext import PlaintextParser
+from sumy.summarizers.text_rank import TextRankSummarizer
 
 if TYPE_CHECKING:
     pass

@@ -58,7 +58,7 @@ class TestCliRouterSubparsers:
         subparsers_actions = [
             action
             for action in parser._actions
-            if isinstance(action, argparse._SubParsersAction)  # type: ignore[attr-defined]
+            if isinstance(action, argparse._SubParsersAction)
         ]
         assert len(subparsers_actions) == 1, "Expected exactly one subparsers action"
         choices = subparsers_actions[0].choices
@@ -295,7 +295,7 @@ class TestCliCompat:
         for ws in ("", None):
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
-                warn_if_no_workspace(ws)  # type: ignore[arg-type]
+                warn_if_no_workspace(ws)
                 assert len(w) == 1, f"Expected 1 warning for workspace={ws!r}"
                 assert issubclass(w[0].category, UserWarning)
 

@@ -366,7 +366,7 @@ class DirectorV2Runner:
                 subject=task_data["subject"],
                 description=task_data["description"],
                 priority=task_data["priority"],
-                blocked_by=runtime_blocked_by,  # type: ignore[arg-type]
+                blocked_by=runtime_blocked_by,
                 metadata=task_data.get("metadata", {}),
             )
             task_data["_runtime_task_id"] = task.id

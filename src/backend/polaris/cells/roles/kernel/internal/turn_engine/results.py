@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.profile.internal.schema import RoleTurnResult
+    from polaris.cells.roles.profile.public import RoleTurnResult
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 
@@ -47,7 +47,7 @@ def make_error_result(
     Returns:
         RoleTurnResult 实例，标记为失败。
     """
-    from polaris.cells.roles.profile.internal.schema import RoleTurnResult
+    from polaris.cells.roles.profile.public import RoleTurnResult
 
     return RoleTurnResult(
         content="",
@@ -97,7 +97,7 @@ def build_stream_complete_result(
     Returns:
         RoleTurnResult 实例。
     """
-    from polaris.cells.roles.profile.internal.schema import RoleTurnResult
+    from polaris.cells.roles.profile.public import RoleTurnResult
 
     execution_stats = {
         "stream_tool_rounds": rounds,

@@ -12,22 +12,22 @@ from typing import TYPE_CHECKING
 try:
     import readline
 except ImportError:
-    readline = None  # type: ignore[assignment]
+    readline = None
 
 # Optional prompt-toolkit import for enhanced input
 try:
     from prompt_toolkit import PromptSession
-    from prompt_toolkit.filters import is_tty as prompt_toolkit_is_tty  # type: ignore[attr-defined]
+    from prompt_toolkit.filters import is_tty as prompt_toolkit_is_tty
     from prompt_toolkit.lexers import SimpleLexer
     from prompt_toolkit.styles import Style
 
     _PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     _PROMPT_TOOLKIT_AVAILABLE = False
-    PromptSession = None  # type: ignore[misc,assignment]
-    prompt_toolkit_is_tty = None  # type: ignore[misc,assignment]
-    SimpleLexer = None  # type: ignore[misc,assignment]
-    Style = None  # type: ignore[misc,assignment]
+    PromptSession = None
+    prompt_toolkit_is_tty = None
+    SimpleLexer = None
+    Style = None
 
 # readline is conditionally imported; mypy cannot see its attributes when
 # the import is optional.  All readline usage is already guarded with
@@ -35,7 +35,7 @@ except ImportError:
 if TYPE_CHECKING:
     import readline as _readline_stub
 else:
-    _readline_stub = readline  # type: ignore[assignment]
+    _readline_stub = readline
 
 __all__ = [
     "CLICCompleter",
@@ -91,13 +91,13 @@ def load_history() -> None:
     if not history_path.exists():
         return
     try:
-        _readline_stub.read_history_file(str(history_path))  # type: ignore[attr-defined]
+        _readline_stub.read_history_file(str(history_path))
         # Trim to max entries
-        current_len = _readline_stub.get_current_history_length()  # type: ignore[attr-defined]
+        current_len = _readline_stub.get_current_history_length()
         if current_len > _MAX_HISTORY_ENTRIES:
             excess = current_len - _MAX_HISTORY_ENTRIES
             for _ in range(excess):
-                _readline_stub.remove_history_item(0)  # type: ignore[attr-defined]
+                _readline_stub.remove_history_item(0)
     except OSError:
         pass
 
@@ -108,7 +108,7 @@ def save_history() -> None:
         return
     history_path = get_history_file_path()
     with contextlib.suppress(OSError):
-        _readline_stub.write_history_file(str(history_path))  # type: ignore[attr-defined]
+        _readline_stub.write_history_file(str(history_path))
 
 
 class CLICCompleter:
@@ -240,11 +240,11 @@ def _setup_readline_completion(completer: CLICCompleter) -> None:
     if readline is None:
         return
     try:
-        _readline_stub.set_completer(completer.complete)  # type: ignore[attr-defined]
+        _readline_stub.set_completer(completer.complete)
         # Enable tab completion
-        _readline_stub.parse_and_bind("tab: complete")  # type: ignore[attr-defined]
+        _readline_stub.parse_and_bind("tab: complete")
         # For partial completions
-        _readline_stub.parse_and_bind("?: complete")  # type: ignore[attr-defined]
+        _readline_stub.parse_and_bind("?: complete")
     except (RuntimeError, ValueError):
         import logging
 
@@ -258,7 +258,7 @@ def _teardown_readline_completion() -> None:
     if readline is None:
         return
     with contextlib.suppress(Exception):
-        _readline_stub.set_completer(None)  # type: ignore[attr-defined]
+        _readline_stub.set_completer(None)
 
 
 def _prompt_toolkit_available() -> bool:
@@ -298,7 +298,9 @@ def _get_prompt_style() -> Style:
                 "toolbar-bg": "#1e1e1e",
             }
         )
-    return _PROMPT_STYLE  # type: ignore[return-value]
+    if _PROMPT_STYLE is None:
+        raise RuntimeError("Prompt style could not be initialized")
+    return _PROMPT_STYLE
 
 
 def _build_toolbar(role: str = "director", session_id: str = "") -> str:

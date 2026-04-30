@@ -121,10 +121,12 @@ export async function apiFetchFresh(path: string, init: RequestInit = {}) {
   return apiFetch(path, init);
 }
 
-export async function connectWebSocket(forceRefresh = false): Promise<WebSocket> {
-  if (forceRefresh) {
-    clearBackendInfoCache();
-  }
+export async function connectWebSocket(_forceRefresh = false): Promise<WebSocket> {
+  // Always clear cache to fetch the freshest backend info (token may have
+  // changed after a backend restart).  The previous forceRefresh-gated path
+  // caused a reconnect loop: stale cached token → 403 → reconnect → same
+  // stale token → 403 …
+  clearBackendInfoCache();
   let info = await getBackendInfo();
   if (!info.baseUrl) {
     clearBackendInfoCache();

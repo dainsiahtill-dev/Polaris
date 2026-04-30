@@ -267,10 +267,14 @@ def test_no_dangerous_patterns_class_attribute_in_cells() -> None:
         for i, line in enumerate(content.splitlines(), 1):
             if "DANGEROUS_PATTERNS" in line and "=" in line:
                 stripped = line.strip()
-                if not stripped.startswith("#") and not stripped.startswith('"""') and not stripped.startswith("'''"):
-                    # Allow imports
-                    if "from" not in stripped and "import" not in stripped:
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {line.strip()}")
+                if (
+                    not stripped.startswith("#")
+                    and not stripped.startswith('"""')
+                    and not stripped.startswith("'''")
+                    and "from" not in stripped
+                    and "import" not in stripped
+                ):
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {line.strip()}")
 
     assert len(violations) == 0, (
         f"Found {len(violations)} DANGEROUS_PATTERNS class attribute definitions:\n" + "\n".join(violations[:10])

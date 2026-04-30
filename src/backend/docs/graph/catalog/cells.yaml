@@ -2163,7 +2163,8 @@ cells:
       - polaris.infrastructure.accel.verify
     owned_paths:
       - polaris/infrastructure/code_intelligence/**
-      - polaris/infrastructure/accel/**
+      - polaris/infrastructure/accel/indexers/**
+      - polaris/infrastructure/accel/verify/**
     public_contracts:
       modules:
         - polaris.cells.code_intelligence.engine.public.contracts
@@ -2208,7 +2209,6 @@ cells:
       - polaris/cells/chief_engineer/blueprint/internal/**
       - polaris/cells/chief_engineer/blueprint/public/**
       - polaris/cells/chief_engineer/blueprint/tests/**
-      - polaris/infrastructure/code_intelligence/**
     public_contracts:
       modules:
         - polaris.cells.chief_engineer.blueprint.public.contracts
@@ -2727,8 +2727,6 @@ cells:
       - polaris.domain.entities.policy
     owned_paths:
       - polaris/cells/policy/permission/internal/**
-      - polaris/cells/policy/protocol/internal/**
-      - polaris/cells/policy/protocol/public/**
       - polaris/domain/entities/capability.py
       - polaris/domain/entities/policy.py
     public_contracts:
@@ -3253,3 +3251,121 @@ cells:
         - polaris/kernelone/traceability/tests/test_safety.py
       gaps:
         - Vector/graph query backend not yet implemented.
+
+  - id: adapters.kernelone
+    title: KernelOne Adapters
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: adapters
+    purpose: >
+      Adapter layer bridging KernelOne runtime contracts with Cell-level service
+      interfaces. Provides bus adapter, role provider adapter, alignment adapter, and
+      tool integration adapter implementations that translate between KernelOne ports
+      and Cell public contracts.
+    current_modules:
+      - polaris.cells.adapters.kernelone.alignment_adapter
+      - polaris.cells.adapters.kernelone.bus_adapter
+      - polaris.cells.adapters.kernelone.role_provider_adapter
+      - polaris.cells.adapters.kernelone.role_tool_integration_adapter
+    owned_paths:
+      - polaris/cells/adapters/kernelone/**/*.py
+    public_contracts:
+      modules: []
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on:
+      - roles.runtime
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - role.execute:*
+    verification:
+      tests: []
+      gaps:
+        - Public contracts not yet defined; adapters currently expose internal modules directly.
+        - Needs contract-first refactoring before production promotion.
+
+  - id: factory.verification_guard
+    title: Verification Guard
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: factory
+    purpose: >
+      Implements "Verification Before Completion" pattern to ensure all completion
+      claims are verified before acceptance. Provides safe command execution with
+      whitelist validation, timeout enforcement, and detailed verification reports.
+    current_modules:
+      - polaris.cells.factory.verification_guard.public.contracts
+      - polaris.cells.factory.verification_guard.internal.verification_engine
+      - polaris.cells.factory.verification_guard.internal.safe_executor
+    tags:
+      - verification
+      - safety
+      - quality-gate
+    owned_paths:
+      - polaris/cells/factory/verification_guard/**
+    public_contracts:
+      modules:
+        - polaris.cells.factory.verification_guard.public.contracts
+      commands:
+        - VerifyCompletionCommandV1
+      queries: []
+      events:
+        - VerificationCompletedEventV1
+      results:
+        - VerifyCompletionResultV1
+        - VerificationReport
+      errors:
+        - VerificationGuardErrorV1
+    depends_on:
+      - factory.pipeline
+      - policy.workspace_guard
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - process.spawn:verification/*
+    verification:
+      tests:
+        - polaris/cells/factory/verification_guard/tests/test_verification_guard.py
+      gaps:
+        - Integration with TurnTransactionController pending
+        - Metrics and telemetry collection not implemented
+
+  - id: policy.protocol
+    title: Policy Protocol
+    kind: policy
+    visibility: public
+    stateful: false
+    owner: policy
+    purpose: >
+      Policy protocol definitions and enforcement primitives for cross-cell
+      governance. Owns protocol-level policy contracts that other cells can
+      consume to validate compliance with system-wide rules.
+    current_modules:
+      - polaris.cells.policy.protocol.public.contracts
+    owned_paths:
+      - polaris/cells/policy/protocol/**/*.py
+    public_contracts:
+      modules:
+        - polaris.cells.policy.protocol.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results: []
+      errors: []
+    depends_on: []
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/policy/**
+    verification:
+      tests: []
+      gaps:
+        - Public contracts not yet fully defined.
+        - Protocol enforcement mechanisms still being designed.

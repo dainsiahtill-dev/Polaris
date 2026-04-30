@@ -270,11 +270,11 @@ class GenericContextDomainAdapter(ContextDomainAdapter):
             keys=_extract_json_keys(event.content),
             content=event.content,
             source_event_ids=(event.event_id,),
-            metadata={  # type: ignore[arg-type]
-                "role": event.role,
-                "sequence": event.sequence,
-                "adapter_id": self.adapter_id,
-            },
+            metadata=(
+                ("role", event.role),
+                ("sequence", event.sequence),
+                ("adapter_id", self.adapter_id),
+            ),
         )
 
     def extract_state_hints(self, event: TranscriptEvent) -> DomainStatePatchHints:

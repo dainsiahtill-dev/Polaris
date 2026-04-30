@@ -176,7 +176,7 @@ def main() -> int:
         for v in all_violations:
             by_file.setdefault(v.file_path, []).append(v)
 
-        for file_path, violations in by_file.items():  # type: ignore[assignment]
+        for file_path, violations in by_file.items():
             print(f"File: {file_path}")
             print("-" * 80)
             for v in violations:

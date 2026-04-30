@@ -175,8 +175,10 @@ class MemoryProvider(BaseProvider):
             return []
         results = self.store.retrieve(request.query, request.step, top_k=top_k, return_scores=True)
         # When return_scores=True, results is Sequence[tuple[RetrievedMemory, float]]
-        # We need to assert this for mypy
-        scored_results: Sequence[tuple[RetrievedMemory, float]] = results  # type: ignore[assignment]
+        # Narrow the type by checking the first element
+        scored_results: Sequence[tuple[RetrievedMemory, float]] = (
+            results if results and isinstance(results[0], tuple) else ()
+        )
         items: list[ContextItem] = []
         for mem, score in scored_results:
             has_refs = has_memory_refs(mem.context)

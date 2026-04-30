@@ -386,7 +386,7 @@ class PromptChunkAssembler:
                 current_goal_obj = task_state.get("current_goal")
                 if isinstance(current_goal_obj, Mapping):
                     goal_value_raw = current_goal_obj.get("value")
-                    goal_value: str = str(goal_value_raw or "").strip()  # type: ignore[assignment]
+                    goal_value = str(goal_value_raw or "").strip()
                     if goal_value and goal_value not in "\n".join(block_lines):
                         block_lines.append(f"Current goal: {goal_value}")
             decision_log = state_first.get("decision_log")
@@ -505,7 +505,7 @@ class PromptChunkAssembler:
         # Build receipt
         receipt = FinalRequestReceipt.build(
             chunks=admitted,
-            model=str(context.model) if context.model else str(self._model_window),  # type: ignore[arg-type]  # Fallback to window as identifier
+            model=str(context.model) if context.model else str(self._model_window),
             provider=context.provider,
             model_window=context.model_window or self._model_window,
             safety_margin=context.safety_margin or self._safety_margin,

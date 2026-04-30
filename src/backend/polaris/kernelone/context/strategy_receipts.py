@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.storage import resolve_runtime_path
 from polaris.kernelone.utils.time_utils import utc_now_iso as _utc_now_iso
@@ -19,9 +19,9 @@ if TYPE_CHECKING:
 
     # StrategyRunContext is imported for type hints but may not exist in all versions
     try:
-        from .strategy_contracts import StrategyRunContext  # type: ignore[attr-defined]
+        from .strategy_contracts import StrategyRunContext
     except ImportError:
-        StrategyRunContext = Any  # type: ignore[misc,assignment]
+        StrategyRunContext = Any
 
 _logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class StrategyReceiptEmitter:
                 prompt_tokens_estimate = run.budget.current_tokens
             elif hasattr(run, "resolved_overrides"):
                 # Fallback: extract from ContextOS BudgetPlan in resolved_overrides
-                ctx_os = run.resolved_overrides.get("context_os_snapshot")  # type: ignore[attr-defined]
+                ctx_os = cast(Any, run).resolved_overrides.get("context_os_snapshot")
                 if isinstance(ctx_os, dict):
                     budget_plan = ctx_os.get("budget_plan")
                     if isinstance(budget_plan, dict):
@@ -113,19 +113,19 @@ class StrategyReceiptEmitter:
                         if isinstance(cit, (int, float)) and int(cit) > 0:
                             prompt_tokens_estimate = int(cit)
             if hasattr(run, "_compaction_triggered"):
-                compaction_triggered = run._compaction_triggered  # type: ignore[attr-defined]
+                compaction_triggered = cast(Any, run)._compaction_triggered
             if hasattr(run, "_budget_decisions"):
-                budget_decisions = tuple(run._budget_decisions)  # type: ignore[attr-defined]
+                budget_decisions = tuple(cast(Any, run)._budget_decisions)
             if hasattr(run, "_read_escalations"):
-                read_escalations = tuple(run._read_escalations)  # type: ignore[attr-defined]
+                read_escalations = tuple(cast(Any, run)._read_escalations)
             if hasattr(run, "_tool_sequence"):
-                tool_sequence = tuple(run._tool_sequence)  # type: ignore[attr-defined]
+                tool_sequence = tuple(cast(Any, run)._tool_sequence)
             if hasattr(run, "_cache_hits"):
-                cache_hits = tuple(run._cache_hits)  # type: ignore[attr-defined]
+                cache_hits = tuple(cast(Any, run)._cache_hits)
             if hasattr(run, "_cache_misses"):
-                cache_misses = tuple(run._cache_misses)  # type: ignore[attr-defined]
+                cache_misses = tuple(cast(Any, run)._cache_misses)
             if hasattr(run, "exploration_phase_reached"):
-                phase_reached = run.exploration_phase_reached  # type: ignore[attr-defined]
+                phase_reached = cast(Any, run).exploration_phase_reached
 
         return SR(
             bundle_id=bundle_id,

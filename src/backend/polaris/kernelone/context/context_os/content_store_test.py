@@ -38,7 +38,7 @@ class TestContentRef:
         """ContentRef is immutable; assigning to a field raises AttributeError."""
         ref = ContentRef(hash="abc123", size=42, mime="text/plain")
         with pytest.raises(AttributeError):
-            ref.hash = "changed"  # type: ignore[misc]
+            ref.hash = "changed"
 
     def test_repr(self) -> None:
         """repr shows truncated hash and size for quick identification."""
@@ -126,7 +126,7 @@ class TestContentStoreIntern:
         # Manually inject content_b under content_a's hash
         store._store[target_hash] = content_b
         store._refs[target_hash] = 1
-        store._access[target_hash] = time.monotonic()  # type: ignore[assignment]
+        store._access[target_hash] = int(time.monotonic())
 
         # intern(content_a) should detect store[hash] != content_a → collision
         with pytest.raises(RuntimeError, match=r"[Cc]ollision"):

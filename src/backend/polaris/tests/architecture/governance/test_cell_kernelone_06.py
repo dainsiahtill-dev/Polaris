@@ -294,9 +294,8 @@ def test_cells_import_context_budget_gate() -> None:
         except (UnicodeDecodeError, OSError):
             continue
 
-        if "ContextBudgetGate" in content or "budget_gate" in content:
-            if "polaris.kernelone.context.budget_gate" in content:
-                importing_cells.append(str(py_file.relative_to(BACKEND_ROOT)))
+        if ("ContextBudgetGate" in content or "budget_gate" in content) and "polaris.kernelone.context.budget_gate" in content:
+            importing_cells.append(str(py_file.relative_to(BACKEND_ROOT)))
 
     # At least some cells should be importing from the canonical source
     assert len(importing_cells) > 0, (
@@ -323,12 +322,11 @@ def test_no_local_context_budget_gate_in_cells() -> None:
             continue
 
         for i, line in enumerate(content.splitlines(), 1):
-            if "class ContextBudgetGate" in line:
+            if "class ContextBudgetGate" in line and not line.strip().startswith("#"):
                 stripped = line.strip()
-                if not stripped.startswith("#"):
-                    # Allow if it's importing from kernelone
-                    if "from polaris.kernelone.context.budget_gate import" not in content:
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+                # Allow if it's importing from kernelone
+                if "from polaris.kernelone.context.budget_gate import" not in content:
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, (
         f"Found {len(violations)} local ContextBudgetGate class definitions in cells:\n" + "\n".join(violations[:10])

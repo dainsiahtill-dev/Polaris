@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from tree_sitter_language_pack import get_parser as _get_parser_tsp  # type: ignore
-    from tree_sitter_languages import get_parser as _get_parser_tsl  # type: ignore
+    from tree_sitter_language_pack import get_parser as _get_parser_tsp
+    from tree_sitter_languages import get_parser as _get_parser_tsl
 
     _TSParserGetter = _get_parser_tsp | _get_parser_tsl | None
 
@@ -242,7 +242,7 @@ def _get_ts_parser(language: str) -> Any:
     Returns a parser function (callable) or None if unavailable.
     """
     try:
-        from tree_sitter_language_pack import get_parser  # type: ignore
+        from tree_sitter_language_pack import get_parser
     except (RuntimeError, ValueError) as exc:
         _logger.warning(
             "kernelone.context.repo_map.get_parser import(tree_sitter_language_pack) failed: %s",
@@ -250,7 +250,7 @@ def _get_ts_parser(language: str) -> Any:
             exc_info=True,
         )
         try:
-            from tree_sitter_languages import get_parser  # type: ignore
+            from tree_sitter_languages import get_parser
         except (RuntimeError, ValueError) as exc2:
             _logger.warning(
                 "kernelone.context.repo_map.get_parser import(tree_sitter_languages) failed: %s",

@@ -13,13 +13,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+# Re-export canonical function from kernelone.storage.paths
+from polaris.kernelone.storage.paths import resolve_preferred_logical_prefix  # noqa: F401
+
 if TYPE_CHECKING:
     from polaris.kernelone.db import KernelDatabase
 
 logger = logging.getLogger(__name__)
-
-# Re-export canonical function from kernelone.storage.paths
-from polaris.kernelone.storage.paths import resolve_preferred_logical_prefix
 
 
 def resolve_preferred_sqlite_path(

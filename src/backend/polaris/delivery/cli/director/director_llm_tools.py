@@ -23,11 +23,15 @@ from polaris.cells.roles.profile.internal.schema import RoleProfile
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
 # 导入 Standard Toolkit 工具系统
-from polaris.kernelone.llm.toolkit import (  # type: ignore[attr-defined]
+from polaris.kernelone.llm.toolkit import (
     AgentAccelToolExecutor,
-    DirectorToolIntegration,
     has_tool_calls,
 )
+
+try:
+    from polaris.kernelone.llm.toolkit import DirectorToolIntegration
+except ImportError:
+    DirectorToolIntegration = None  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +55,8 @@ class DirectorLLMClient:
         self.enable_tools = enable_tools
         self.tool_executor: AgentAccelToolExecutor | None
 
-        if self.enable_tools:
-            self.tool_integration = DirectorToolIntegration(workspace)
+        if self.enable_tools and DirectorToolIntegration is not None:
+            self.tool_integration: Any = DirectorToolIntegration(workspace)
             self.tool_executor = AgentAccelToolExecutor(workspace)
         else:
             self.tool_integration = None

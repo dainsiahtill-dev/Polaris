@@ -23,7 +23,7 @@ from .sandbox import SandboxPolicy
 from .tool import ToolPolicy
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.profile.internal.schema import RoleProfile
+    from polaris.cells.roles.profile.public import RoleProfile
 
 
 class PolicyLayer:

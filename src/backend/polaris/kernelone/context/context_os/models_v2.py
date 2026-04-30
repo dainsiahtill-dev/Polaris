@@ -910,7 +910,7 @@ class DialogActResultV2(BaseModel):
             act=str(payload.get("act") or "").strip() or DialogAct.UNKNOWN,
             confidence=max(0.0, min(1.0, float(payload.get("confidence", 0.0)))),
             triggers=tuple(v for v in (payload.get("triggers") or []) if v),
-            metadata=payload.get("metadata", {}),  # type: ignore[arg-type]
+            metadata=payload.get("metadata", {}),
         )
 
 

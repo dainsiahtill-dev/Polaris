@@ -73,7 +73,7 @@ class TestAttentionScore:
     def test_frozen(self) -> None:
         score = AttentionScore()
         with pytest.raises(AttributeError):
-            score.semantic_similarity = 1.0  # type: ignore
+            score.semantic_similarity = 1.0
 
 
 class TestContextDecision:
@@ -143,7 +143,7 @@ class TestContextDecision:
             reason_codes=(),
         )
         with pytest.raises(AttributeError):
-            decision.reason = "changed"  # type: ignore
+            decision.reason = "changed"
 
 
 class TestProjectionReport:

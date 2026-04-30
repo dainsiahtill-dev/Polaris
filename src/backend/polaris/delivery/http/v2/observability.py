@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from polaris.cells.orchestration.workflow_runtime.public.service import (
@@ -30,9 +31,6 @@ from polaris.cells.orchestration.workflow_runtime.public.service import (
 from polaris.delivery.http.dependencies import get_workspace, require_auth
 from polaris.kernelone.storage import resolve_runtime_path
 from starlette.websockets import WebSocketState
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 router = APIRouter(prefix="/observability", tags=["observability"])
 

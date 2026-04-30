@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from polaris.delivery.cli.super_pipeline_config import (
     DEFAULT_SUPER_PIPELINE,

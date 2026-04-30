@@ -67,7 +67,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role, "short_reply": len(content) <= 5},  # type: ignore[arg-type]
+                metadata=(("role", role), ("short_reply", len(content) <= 5)),
             )
 
         act, conf, matched = self._check_patterns(content, _DIALOG_ACT_DENY_PATTERNS)
@@ -77,7 +77,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role, "short_reply": len(content) <= 5},  # type: ignore[arg-type]
+                metadata=(("role", role), ("short_reply", len(content) <= 5)),
             )
 
         act, conf, matched = self._check_patterns(content, _DIALOG_ACT_PAUSE_PATTERNS)
@@ -87,7 +87,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role, "short_reply": len(content) <= 5},  # type: ignore[arg-type]
+                metadata=(("role", role), ("short_reply", len(content) <= 5)),
             )
 
         act, conf, matched = self._check_patterns(content, _DIALOG_ACT_REDIRECT_PATTERNS)
@@ -97,7 +97,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role, "short_reply": len(content) <= 5},  # type: ignore[arg-type]
+                metadata=(("role", role), ("short_reply", len(content) <= 5)),
             )
 
         act, conf, matched = self._check_patterns(content, _DIALOG_ACT_CLARIFY_PATTERNS)
@@ -107,7 +107,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role},  # type: ignore[arg-type]
+                metadata=(("role", role),),
             )
 
         act, conf, matched = self._check_patterns(content, _DIALOG_ACT_COMMIT_PATTERNS)
@@ -117,7 +117,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role},  # type: ignore[arg-type]
+                metadata=(("role", role),),
             )
 
         act, conf, matched = self._check_patterns(content, _DIALOG_ACT_CANCEL_PATTERNS)
@@ -127,7 +127,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role},  # type: ignore[arg-type]
+                metadata=(("role", role),),
             )
 
         act, conf, matched = self._check_patterns(content, _DIALOG_ACT_STATUS_ACK_PATTERNS)
@@ -137,7 +137,7 @@ class DialogActClassifier:
                 act=act,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role},  # type: ignore[arg-type]
+                metadata=(("role", role),),
             )
 
         # Noise check (only for truly meaningless content)
@@ -148,14 +148,14 @@ class DialogActClassifier:
                 act=DialogAct.NOISE,
                 confidence=conf,
                 triggers=tuple(triggers),
-                metadata={"role": role, "is_noise": True},  # type: ignore[arg-type]
+                metadata=(("role", role), ("is_noise", True)),
             )
 
         # Default: unknown (requires extended analysis or LLM fallback)
         return DialogActResult(
             act=DialogAct.UNKNOWN,
             confidence=0.3,
-            metadata={"role": role, "requires_extended_analysis": True},  # type: ignore[arg-type]
+            metadata=(("role", role), ("requires_extended_analysis", True)),
         )
 
     def _check_patterns(

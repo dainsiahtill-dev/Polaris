@@ -14,8 +14,6 @@ current_modules:
 tags: []
 owned_paths:
 - polaris/cells/policy/permission/internal/**
-- polaris/cells/policy/protocol/internal/**
-- polaris/cells/policy/protocol/public/**
 - polaris/domain/entities/capability.py
 - polaris/domain/entities/policy.py
 public_contracts:

@@ -88,8 +88,8 @@ class RichConsole:
             args: 位置参数
             kwargs: 关键字参数
         """
-        if self.available:
-            self._rich_console.print(*args, **kwargs)  # type: ignore
+        if self.available and self._rich_console is not None:
+            self._rich_console.print(*args, **kwargs)
         else:
             # 回退到 print
             print(*args, **kwargs)
@@ -244,8 +244,8 @@ class RichConsole:
 
     def clear(self) -> None:
         """清屏"""
-        if self.available:
-            self._rich_console.clear()  # type: ignore
+        if self.available and self._rich_console is not None:
+            self._rich_console.clear()
         else:
             print("\033[2J\033[H", end="")  # ANSI 清屏
 
@@ -255,8 +255,8 @@ class RichConsole:
         Returns:
             (宽度, 高度)
         """
-        if self.available:
-            return self._rich_console.size  # type: ignore
+        if self.available and self._rich_console is not None:
+            return self._rich_console.size
         return (80, 24)
 
 

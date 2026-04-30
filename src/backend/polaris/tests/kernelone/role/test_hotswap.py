@@ -153,7 +153,7 @@ class TestHotSwapEngine:
     def test_swap_rate_limited(self) -> None:
         """Test swap is rate limited."""
         # First 5 swaps should succeed
-        for i in range(5):
+        for _i in range(5):
             result = self.engine.swap(
                 session_id="session_1",
                 new_profession="target",

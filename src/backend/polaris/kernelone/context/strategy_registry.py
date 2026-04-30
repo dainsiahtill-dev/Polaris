@@ -313,7 +313,7 @@ def resolve_profile_hash(profile: StrategyProfile) -> str:
 
 def reset_instance() -> None:
     """Reset the global singleton. Tests only."""
-    StrategyRegistry.reset_instance()  # type: ignore[arg-type]
+    StrategyRegistry.reset_instance()
 
 
 __all__ = [

@@ -241,6 +241,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         self._collector.start_request(method, path)
 
         start_time = time.time()
+        status_code = 0
 
         try:
             response = await call_next(request)

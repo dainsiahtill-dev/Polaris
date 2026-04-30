@@ -4,9 +4,12 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from polaris.delivery.cli import terminal_console
+
+if TYPE_CHECKING:
+    from polaris.delivery.cli.director.console_host import RoleConsoleHost
 
 
 class _FakeRoleConsoleHost:
@@ -537,7 +540,7 @@ def test_stream_turn_spinner_ignores_fingerprint_until_visible_event(monkeypatch
     try:
         asyncio.run(
             terminal_console._stream_turn(
-                host,  # type: ignore[arg-type]
+                cast("RoleConsoleHost", host),
                 role="director",
                 session_id="sess-1",
                 message="hi",

@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from tree_sitter_language_pack import get_parser as _get_parser_tsp  # type: ignore
-    from tree_sitter_languages import get_parser as _get_parser_tsl  # type: ignore
+    from tree_sitter_language_pack import get_parser as _get_parser_tsp
+    from tree_sitter_languages import get_parser as _get_parser_tsl
 
     _TSParserGetter = _get_parser_tsp | _get_parser_tsl | None
 
@@ -207,14 +207,14 @@ def _get_ts_parser(language: str) -> Any:
     Returns a parser function (callable) or None if unavailable.
     """
     try:
-        from tree_sitter_language_pack import get_parser  # type: ignore
+        from tree_sitter_language_pack import get_parser
     except (RuntimeError, ValueError) as exc:
         logger.warning(
             "TagsExtractor: failed to import tree_sitter_language_pack: %s",
             exc,
         )
         try:
-            from tree_sitter_languages import get_parser  # type: ignore
+            from tree_sitter_languages import get_parser
         except (RuntimeError, ValueError) as exc2:
             logger.warning(
                 "TagsExtractor: failed to import tree_sitter_languages: %s",

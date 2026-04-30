@@ -1720,9 +1720,9 @@ def main(argv: list[str] | None = None) -> int:
         # Try with workspace first, fall back to no args
         # CodeContextDomainAdapter may or may not accept workspace parameter
         try:
-            domain_adapter = CodeContextDomainAdapter(workspace=args.workspace)  # type: ignore[call-arg]
+            domain_adapter = CodeContextDomainAdapter(workspace=args.workspace)
         except TypeError:
-            domain_adapter = CodeContextDomainAdapter()  # type: ignore[call-arg]
+            domain_adapter = CodeContextDomainAdapter()
     else:
         domain_adapter = GenericContextDomainAdapter()
 

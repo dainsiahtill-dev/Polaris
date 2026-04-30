@@ -44,7 +44,7 @@ class RendererRegistry:
         if renderer is None:
             return []
 
-        update = renderer.render(event)  # type: ignore[union-attr]
+        update = renderer.render(event)
         if update is None:
             return []
         return [update]

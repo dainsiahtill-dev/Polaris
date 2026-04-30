@@ -127,14 +127,11 @@ class TraceabilityAdminService:
         Returns:
             The created TraceNode, or None if registration failed.
         """
+        service = self._get_service()
+        if service is None:
+            return None
         try:
-            from polaris.kernelone.traceability.internal.safety import (
-                safe_register_node as _safe_register_node,
-            )
-
-            service = self._get_service()
-            return _safe_register_node(
-                trace_service=service,
+            return service.register_node(
                 node_kind=node_kind,
                 role=role,
                 external_id=external_id,
@@ -169,18 +166,13 @@ class TraceabilityAdminService:
         Returns:
             The created TraceLink, or None if linking failed.
         """
+        if source is None or target is None:
+            return None
+        service = self._get_service()
+        if service is None:
+            return None
         try:
-            from polaris.kernelone.traceability.internal.safety import (
-                safe_link as _safe_link,
-            )
-
-            service = self._get_service()
-            return _safe_link(
-                trace_service=service,
-                source=source,
-                target=target,
-                link_kind=link_kind,
-            )
+            return service.link(source, target, link_kind)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "safe_link failed: %s",
@@ -205,17 +197,11 @@ class TraceabilityAdminService:
         Returns:
             The matching TraceNode, or None if not found.
         """
+        service = self._get_service()
+        if service is None:
+            return None
         try:
-            from polaris.kernelone.traceability.internal.safety import (
-                safe_find_node as _safe_find_node,
-            )
-
-            service = self._get_service()
-            return _safe_find_node(
-                trace_service=service,
-                external_id=external_id,
-                node_kind=node_kind,
-            )
+            return service.find_node(external_id, node_kind)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "safe_find_node failed (kind=%s, external_id=%s): %s",
@@ -242,17 +228,12 @@ class TraceabilityAdminService:
         Returns:
             True if persistence succeeded, False otherwise.
         """
+        service = self._get_service()
+        if service is None or matrix is None:
+            return False
         try:
-            from polaris.kernelone.traceability.internal.safety import (
-                safe_persist_matrix as _safe_persist_matrix,
-            )
-
-            service = self._get_service()
-            return _safe_persist_matrix(
-                trace_service=service,
-                matrix=matrix,
-                path=path,
-            )
+            service.persist(matrix, path)
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "safe_persist_matrix failed (path=%s): %s",
@@ -270,13 +251,12 @@ class TraceabilityAdminService:
         Returns:
             True if reset succeeded, False otherwise.
         """
+        service = self._get_service()
+        if service is None:
+            return False
         try:
-            from polaris.kernelone.traceability.internal.safety import (
-                safe_reset as _safe_reset,
-            )
-
-            service = self._get_service()
-            return _safe_reset(trace_service=service)
+            service.reset()
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "safe_reset failed: %s",

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.conversation_state import ConversationState
-    from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+    from polaris.cells.roles.profile.public import RoleTurnRequest
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 
@@ -151,7 +151,7 @@ class ResultBuilder:
         Returns:
             RoleTurnResult instance.
         """
-        from polaris.cells.roles.profile.internal.schema import RoleTurnResult
+        from polaris.cells.roles.profile.public import RoleTurnResult
 
         computed_complete = (error is None) if is_complete is None else bool(is_complete)
 

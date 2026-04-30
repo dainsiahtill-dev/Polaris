@@ -288,14 +288,14 @@ class CodeContextDomainAdapter(GenericContextDomainAdapter):
             content=artifact.content,
             source_event_ids=artifact.source_event_ids,
             restore_tool=artifact.restore_tool,
-            metadata={  # type: ignore[arg-type]
+            metadata=tuple(sorted({
                 **dict(artifact.metadata),
                 "adapter_id": self.adapter_id,
                 "entities": list(_extract_code_entities(event.content)),
                 "code_weight": code_weight,
                 "code_intent": code_intent,
                 "code_workflow_hint": _get_code_workflow_hint(code_intent),
-            },
+            }.items())),
         )
 
     def extract_state_hints(self, event: TranscriptEvent) -> DomainStatePatchHints:

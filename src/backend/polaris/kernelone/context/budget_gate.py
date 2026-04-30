@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
@@ -276,7 +276,7 @@ class ContextBudgetGate:
     @classmethod
     def from_model_window(cls, window: int, **kwargs: object) -> ContextBudgetGate:
         """Construct a gate directly from a known model context window."""
-        return cls(model_window=window, **kwargs)  # type: ignore[arg-type]
+        return cast(ContextBudgetGate, cls(model_window=window, **kwargs))
 
     @classmethod
     def from_provider_spec(
@@ -293,7 +293,7 @@ class ContextBudgetGate:
             3. DEFAULT_FALLBACK_WINDOW
         """
         window = _resolve_model_window_from_spec(provider_name, model_name)
-        return cls(model_window=window, **kwargs)  # type: ignore[arg-type]
+        return cast(ContextBudgetGate, cls(model_window=window, **kwargs))
 
     @classmethod
     def from_role_policy(
@@ -306,12 +306,12 @@ class ContextBudgetGate:
         If max_context_tokens is 0 or negative, falls back to MIN_BUDGET_TOKENS.
         """
         window = max(max_context_tokens, MIN_BUDGET_TOKENS)
-        return cls(model_window=window, **kwargs)  # type: ignore[arg-type]
+        return cast(ContextBudgetGate, cls(model_window=window, **kwargs))
 
     @classmethod
     def default_gate(cls, **kwargs: object) -> ContextBudgetGate:
         """Construct a gate with the absolute safe fallback window."""
-        return cls(model_window=MIN_BUDGET_TOKENS, **kwargs)  # type: ignore[arg-type]
+        return cast(ContextBudgetGate, cls(model_window=MIN_BUDGET_TOKENS, **kwargs))
 
 
 # ------------------------------------------------------------------

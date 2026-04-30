@@ -43,6 +43,13 @@ from polaris.kernelone.benchmark.fixtures import (
     memory_benchmark,
     throughput_benchmark,
 )
+from polaris.kernelone.benchmark.holographic import (
+    HolographicRunResult,
+    HolographicSuiteResult,
+    RunStatus,
+    run_case,
+    run_holographic_suite,
+)
 from polaris.kernelone.benchmark.holographic_models import (
     CaseReadiness,
     HolographicCase,
@@ -52,13 +59,6 @@ from polaris.kernelone.benchmark.holographic_registry import (
     case_ids,
     list_holographic_cases,
     ready_case_ids,
-)
-from polaris.kernelone.benchmark.holographic_runner import (
-    HolographicRunResult,
-    HolographicSuiteResult,
-    RunStatus,
-    run_case,
-    run_holographic_suite,
 )
 from polaris.kernelone.benchmark.latency import (
     LatencyBenchmarker,

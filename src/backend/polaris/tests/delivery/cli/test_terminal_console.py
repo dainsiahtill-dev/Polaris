@@ -336,7 +336,6 @@ class TestDirectorOutputHeuristic:
 class TestInfrastructureLogSuppression:
     def test_suppress_and_restore(self):
         logger1 = logging.getLogger("polaris.infrastructure.llm.provider_bootstrap")
-        original_level = logger1.level
         logger1.setLevel(logging.DEBUG)
         prev = _suppress_infrastructure_logs()
         assert logger1.level == logging.WARNING

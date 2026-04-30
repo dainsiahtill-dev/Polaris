@@ -246,7 +246,7 @@ class TestKernelConfigIntegration:
     def test_kernel_request_max_retries_priority(self) -> None:
         """测试 request.max_retries 优先级高于 config"""
         from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
-        from polaris.cells.roles.profile.internal.schema import RoleExecutionMode, RoleTurnRequest
+        from polaris.cells.roles.profile.public import RoleExecutionMode, RoleTurnRequest
 
         kernel = RoleExecutionKernel(workspace=".", config=KernelConfig(max_retries=3))
 

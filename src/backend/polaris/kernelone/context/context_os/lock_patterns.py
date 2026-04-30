@@ -10,7 +10,7 @@ import asyncio
 import functools
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Protocol, TypeVar
+from typing import Any, Callable, Protocol, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def snapshot_compute_commit(
                 else:
                     raise RuntimeError("Validation failed - result rejected")
 
-        return wrapper  # type: ignore[return-value]
+        return cast(Callable[..., R], wrapper)
 
     return decorator
 

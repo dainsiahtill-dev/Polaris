@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.public.transcript_ir import TranscriptDelta
-    from polaris.cells.roles.profile.internal.schema import RoleTurnRequest, RoleTurnResult
+    from polaris.cells.roles.profile.public import RoleTurnRequest, RoleTurnResult
 
 
 # ─────────────────────────────────────────────────────────────────────────────

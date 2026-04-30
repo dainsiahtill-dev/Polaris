@@ -58,10 +58,10 @@ def handle_corruption(args: argparse.Namespace, runtime_root: Path | None) -> in
     from polaris.delivery.cli.audit.audit.formatters import format_relative_time
 
     workspace = str(runtime_root) if runtime_root else "."
-    result = get_corruption_log(workspace=workspace, limit=args.limit)  # type: ignore[call-arg]
+    result = get_corruption_log(workspace=workspace, limit=args.limit)
     if args.format == "compact":
-        records: list[dict[str, Any]] = result  # type: ignore[assignment]
-        mode = result.get("mode", "unknown") if isinstance(result, dict) else "unknown"  # type: ignore[assignment]
+        records: list[dict[str, Any]] = result
+        mode = result.get("mode", "unknown") if isinstance(result, dict) else "unknown"
         print(f"Corruption records: {len(records)} (mode: {mode})\n")
 
         for record in records:

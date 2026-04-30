@@ -102,6 +102,16 @@ stages:
     commands:
       - python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode utf8-audit --report workspace/meta/governance_reports/utf8_io_gate.json
 
+  - id: cell_internal_fence_gate
+    purpose: >
+      Enforce that no Cell imports from another Cell's internal namespace.
+      Cross-Cell communication must go through public contracts. Audit-only
+      during migration; fail-on-new blocks new violations against baseline.
+    commands:
+      - python docs/governance/ci/scripts/check_cell_internal_fence.py --workspace . --mode audit-only --output workspace/meta/governance_reports/cell_internal_fence_gate.audit.json
+      - python docs/governance/ci/scripts/check_cell_internal_fence.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/cell_internal_fence.baseline.json --output workspace/meta/governance_reports/cell_internal_fence_gate.fail_on_new.json
+      - python -m pytest -q docs/governance/ci/scripts/tests/test_check_cell_internal_fence.py
+
   - id: migration_preflight_gate
     purpose: >
       Require migration preflight suite to pass before formal write operations.

@@ -1035,7 +1035,7 @@ class RoleConsoleHost:
             session_payload = self.create_session(context_config=_copy_mapping(context))
             session_id = str(session_payload.get("id") or "")
         else:
-            session_payload = self._load_session_payload(session_id, message_limit=history_limit)  # type: ignore[assignment]
+            session_payload: dict[str, Any] | None = self._load_session_payload(session_id, message_limit=history_limit)
             if session_payload is None:
                 raise RoleSessionNotFoundError(f"Session not found: {session_id}")
 
@@ -1284,7 +1284,7 @@ class RoleConsoleHost:
             if use_orchestrator:
                 orchestrator = RoleSessionOrchestrator(
                     session_id=session_id,
-                    kernel=tx_controller,  # type: ignore[operator]
+                    kernel=tx_controller,
                     workspace=self.workspace,
                     role=runtime_role,
                     max_auto_turns=int(capability_profile.get("max_auto_turns", 10)) if capability_profile else 10,

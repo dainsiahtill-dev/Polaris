@@ -83,15 +83,15 @@ _has_select: bool = False
 
 if not _is_windows:
     try:
-        import termios  # noqa: F401  # type: ignore[attr-defined,import-not-found]
-        import tty  # noqa: F401  # type: ignore[attr-defined,import-not-found]
+        import termios  # noqa: F401
+        import tty  # noqa: F401
 
         _has_termios = True
     except ImportError:
         _has_termios = False
 
 try:
-    import select as _select_module  # type: ignore[attr-defined,import-not-found]
+    import select as _select_module
 
     _has_select = True
 except ImportError:
@@ -100,9 +100,9 @@ except ImportError:
 # Windows 特定的导入
 if _is_windows:
     try:
-        import msvcrt as _msvcrt_module  # type: ignore[attr-defined,import-not-found]
+        import msvcrt as _msvcrt_module
     except ImportError:
-        _msvcrt_module = None  # type: ignore[assignment]
+        _msvcrt_module = None
 
 
 class MouseTracker:
@@ -157,10 +157,10 @@ class MouseTracker:
                 termios = builtins.__dict__.get("_termios_module") or __import__("termios")
                 tty = builtins.__dict__.get("_tty_module") or __import__("tty")
                 # 保存终端设置
-                self._saved_terminal_settings = termios.tcgetattr(sys.stdin)  # type: ignore[arg-type]
+                self._saved_terminal_settings = termios.tcgetattr(sys.stdin.fileno())
 
                 # 设置终端为 cbreak 模式（按键可用，但保留 Ctrl+C 等）
-                tty.setcbreak(sys.stdin.fileno())  # type: ignore[arg-type]
+                tty.setcbreak(sys.stdin.fileno())
 
             # 输出启用序列
             sys.stdout.write(self._ENABLE_MOUSE)
@@ -186,7 +186,7 @@ class MouseTracker:
                 import builtins
 
                 termios = builtins.__dict__.get("_termios_module") or __import__("termios")
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._saved_terminal_settings)  # type: ignore[arg-type]
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._saved_terminal_settings)
 
             self._enabled = False
             self._saved_terminal_settings = None
@@ -284,13 +284,14 @@ class MouseTracker:
             return None
 
         # 检查是否有数据可用
+        stdin_fileno = sys.stdin.fileno()
         if _has_select:
-            readable, _, _ = _select_module.select([sys.stdin], [], [], timeout_ms / 1000.0)  # type: ignore[arg-type]
+            readable, _, _ = _select_module.select([stdin_fileno], [], [], timeout_ms / 1000.0)
             if not readable:
                 return None
         elif _is_windows and _msvcrt_module is not None:
             # Windows 平台使用 msvcrt
-            if not _msvcrt_module.kbhit():  # type: ignore[union-attr]
+            if not _msvcrt_module.kbhit():
                 return None
         else:
             return None
@@ -301,7 +302,7 @@ class MouseTracker:
             if _is_windows and _msvcrt_module is not None:
                 # Windows: 使用 msvcrt
                 while True:
-                    raw_char = _msvcrt_module.getch()  # type: ignore[union-attr]
+                    raw_char = _msvcrt_module.getch()
                     char: str
                     if isinstance(raw_char, bytes):
                         char = raw_char.decode("latin-1", errors="replace")
@@ -314,7 +315,7 @@ class MouseTracker:
                         break
             # Unix: 使用 select + read
             elif hasattr(sys.stdin, "read"):
-                first_char: str = sys.stdin.read(1)  # type: ignore[union-attr]
+                first_char: str = sys.stdin.read(1)
                 if first_char != "\x1b":
                     # 非转义字符，可能不是鼠标事件
                     return None
@@ -323,10 +324,10 @@ class MouseTracker:
                 remaining = ""
                 while True:
                     if _has_select:
-                        readable, _, _ = _select_module.select([sys.stdin], [], [], 0.05)  # type: ignore[arg-type]
+                        readable, _, _ = _select_module.select([stdin_fileno], [], [], 0.05)
                         if not readable:
                             break
-                    next_char = sys.stdin.read(1)  # type: ignore[union-attr]
+                    next_char = sys.stdin.read(1)
                     remaining += next_char
                     if next_char in ("M", "m", "t"):
                         break

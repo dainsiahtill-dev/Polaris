@@ -38,7 +38,7 @@ from polaris.cells.roles.kernel.internal.turn_engine import (
     TurnEngine,
     TurnEngineConfig,
 )
-from polaris.cells.roles.profile.internal.schema import RoleTurnRequest as RoleTurnRequestSchema
+from polaris.cells.roles.profile.public import RoleTurnRequest as RoleTurnRequestSchema
 from polaris.cells.roles.profile.public.service import (
     RoleExecutionMode,
     RoleProfile,

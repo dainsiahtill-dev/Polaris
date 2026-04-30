@@ -134,7 +134,7 @@ export function ContextSidebar({
                             <div className="flex-none p-3 border-b border-white/5 flex items-center justify-between bg-white/5 backdrop-blur-md">
                                 <div className="flex items-center gap-2">
                                     <MessageSquare className="size-4 text-blue-400" />
-                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">Discussion录</span>
+                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">对话流</span>
                                 </div>
                                 <div className="text-[10px] text-text-dim px-2 py-0.5 rounded-full bg-black/30 border border-white/5">
                                     {live ? 'Active' : '离线'}

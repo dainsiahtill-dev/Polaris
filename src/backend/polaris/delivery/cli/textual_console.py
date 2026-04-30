@@ -22,6 +22,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 # Textual 导入
@@ -894,7 +895,8 @@ I'm your AI assistant. How can I help you today?
                 self.set_status("Error")
                 self.set_current_tool(None)
 
-        self.run_worker(respond)  # type: ignore[arg-type]  # textual run_worker expects Never return type for coroutine, but respond returns None
+        work: Callable[[], Coroutine[None, None, None]] = respond
+        self.run_worker(work)
 
     def _update_stream_message(self, msg_id: str, content: MessageContent) -> None:
         """更新流式消息内容"""

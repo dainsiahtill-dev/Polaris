@@ -91,7 +91,7 @@ class ArtifactSelectorOutput:
     episode_cards: tuple[EpisodeCard, ...]
     head_anchor: str = field(default="")
     tail_anchor: str = field(default="")
-    run_card: RunCard = field(default=None)  # type: ignore[assignment]
+    run_card: RunCard | None = field(default=None)
     context_slice_plan: Any = field(default=None)  # ContextSlicePlan
 
 

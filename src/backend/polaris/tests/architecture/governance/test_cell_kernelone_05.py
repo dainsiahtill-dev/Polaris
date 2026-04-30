@@ -200,12 +200,11 @@ def test_no_local_emit_fact_event_in_cells() -> None:
 
         # Check for local emit_fact_event definitions
         for i, line in enumerate(content.splitlines(), 1):
-            if "def emit_fact_event" in line:
+            if "def emit_fact_event" in line and not line.strip().startswith("#"):
                 stripped = line.strip()
-                if not stripped.startswith("#"):
-                    # Allow if it's importing from kernelone
-                    if "from polaris.kernelone.events.fact_events import emit_fact_event" not in content:
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+                # Allow if it's importing from kernelone
+                if "from polaris.kernelone.events.fact_events import emit_fact_event" not in content:
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, f"Found {len(violations)} local emit_fact_event definitions in cells:\n" + "\n".join(
         violations[:10]
@@ -232,12 +231,11 @@ def test_no_local_emit_session_event_in_cells() -> None:
 
         # Check for local emit_session_event definitions
         for i, line in enumerate(content.splitlines(), 1):
-            if "def emit_session_event" in line:
+            if "def emit_session_event" in line and not line.strip().startswith("#"):
                 stripped = line.strip()
-                if not stripped.startswith("#"):
-                    # Allow if it's importing from kernelone
-                    if "from polaris.kernelone.events.session_events import emit_session_event" not in content:
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+                # Allow if it's importing from kernelone
+                if "from polaris.kernelone.events.session_events import emit_session_event" not in content:
+                    violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, (
         f"Found {len(violations)} local emit_session_event definitions in cells:\n" + "\n".join(violations[:10])
@@ -318,10 +316,10 @@ def test_cells_import_from_kernelone_events() -> None:
         except (UnicodeDecodeError, OSError):
             continue
 
-        if "emit_fact_event" in content or "emit_session_event" in content:
-            # Should import from kernelone
-            if "polaris.kernelone.events" in content or "kernelone.events" in content:
-                importing_cells.append(str(py_file.relative_to(BACKEND_ROOT)))
+        if ("emit_fact_event" in content or "emit_session_event" in content) and (
+            "polaris.kernelone.events" in content or "kernelone.events" in content
+        ):
+            importing_cells.append(str(py_file.relative_to(BACKEND_ROOT)))
 
     # At least some cells should be importing from the canonical source
     assert len(importing_cells) > 0, (
@@ -358,9 +356,8 @@ def test_known_locations_import_correctly() -> None:
         lines = content.splitlines()
         for i, line in enumerate(lines, 1):
             stripped = line.strip()
-            if ("def emit_fact_event" in line or "def emit_session_event" in line) and not stripped.startswith("#"):
-                if not has_kernelone_import:
-                    violations.append(f"{file_path.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+            if ("def emit_fact_event" in line or "def emit_session_event" in line) and not stripped.startswith("#") and not has_kernelone_import:
+                violations.append(f"{file_path.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
 
     assert len(violations) == 0, (
         f"Found {len(violations)} local event definitions without kernelone imports:\n"

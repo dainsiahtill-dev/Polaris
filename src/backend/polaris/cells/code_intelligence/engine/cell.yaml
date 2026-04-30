@@ -22,11 +22,17 @@ tags:
 
 owned_paths:
   - polaris/infrastructure/code_intelligence/**
-  - polaris/infrastructure/accel/**
+  - polaris/infrastructure/accel/indexers/**
+  - polaris/infrastructure/accel/verify/**
 
 public_contracts:
   modules:
     - polaris.cells.code_intelligence.engine.public.contracts
+  commands: []
+  queries: []
+  events: []
+  results: []
+  errors: []
 
 depends_on:
   - workspace.integrity

@@ -789,13 +789,16 @@ rules:
     evidence:
       - polaris/cells/director/tasking/internal/worker_executor.py (cross-cell import)
       - docs/governance/audit/log-audit-architecture-contracts-20260413.md
-    current_status: enforced
+    current_status: enforced_non_regressive
     # Migrated 2026-04-24: Catalog governance gate already audits this; fail-on-new mode is active.
+    # Upgraded 2026-04-29: Dedicated check_cell_internal_fence.py gate now runs in audit-only
+    # and fail-on-new modes. Baseline tracks existing debt; new violations are blocked.
     desired_automation:
       - parse Python imports in polaris/cells/**/
       - map import paths to owning Cells via cells.yaml
       - fail if import crosses Cell boundary without going through public contract
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
+      - run docs/governance/ci/scripts/check_cell_internal_fence.py --workspace . --mode audit-only
+      - run docs/governance/ci/scripts/check_cell_internal_fence.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/cell_internal_fence.baseline.json
 
   - id: canonical_dangerous_patterns
     severity: high

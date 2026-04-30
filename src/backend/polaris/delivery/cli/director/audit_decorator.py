@@ -77,7 +77,7 @@ async def _publish_audit_event(
         from polaris.kernelone.events.message_bus import Message
 
         msg = Message(
-            type=MessageType.USER,  # type: ignore[attr-defined]
+            type=MessageType.AUDIT_COMPLETED,
             sender="audit_stream_turn",
             recipient=None,
             payload=payload,
@@ -98,7 +98,7 @@ def _audit_event_payload(
     session_id: str,
     event: dict[str, Any],
     # TODO: ToolFingerprint exposed via public contract (audit.diagnosis.public)
-    fingerprint: Any,  # type: ignore[type-named]  # ToolFingerprint | None
+    fingerprint: Any,
 ) -> dict[str, Any]:
     """Build a structured audit event payload from a stream_turn event."""
     event_type = str(event.get("type", ""))
@@ -291,10 +291,10 @@ def apply_audit_decorator(
     if not hasattr(host_instance, "stream_turn"):
         raise TypeError(f"Expected object with 'stream_turn' method; got {type(host_instance).__name__}")
 
-    original_method = host_instance.stream_turn  # type: ignore[attr-defined]
+    original_method = host_instance.stream_turn
 
     # Build a decorated version
-    decorated = audit_stream_turn(bus=bus, workspace=workspace)(original_method)  # type: ignore[assignment]
+    decorated = audit_stream_turn(bus=bus, workspace=workspace)(original_method)
 
     # Replace on the instance
     host_instance.stream_turn = decorated

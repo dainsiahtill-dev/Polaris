@@ -47,10 +47,10 @@ try:
     from polaris.kernelone.single_agent.role_framework import RoleBase, RoleCapability, RoleInfo, RoleState
 except ImportError:
     # Fallback for bootstrap scenario
-    RoleBase = None  # type: ignore[assignment, misc]
-    RoleCapability = None  # type: ignore[misc, assignment]
-    RoleInfo = None  # type: ignore[misc, assignment]
-    RoleState = None  # type: ignore[misc, assignment]
+    RoleBase = None  # type: ignore[assignment,misc]
+    RoleCapability = None  # type: ignore[misc,assignment]
+    RoleInfo = None  # type: ignore[misc,assignment]
+    RoleState = None  # type: ignore[misc,assignment]
 
 
 logger = logging.getLogger(__name__)

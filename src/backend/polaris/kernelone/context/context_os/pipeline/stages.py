@@ -227,7 +227,7 @@ class TranscriptMerger:
                 source_turns=(f"t{int(call_sequence)}",),
                 artifact_id=None,
                 created_at=_utc_now_iso(),
-                metadata=tc_metadata,  # type: ignore[arg-type]
+                metadata=tc_metadata,
                 content_ref_hash=content_ref.hash if content_ref else "",
                 content_ref_size=int(content_ref.size) if content_ref else 0,
                 content_ref_mime=content_ref.mime if content_ref else "",
@@ -287,7 +287,7 @@ class TranscriptMerger:
                 source_turns=source_turns,
                 artifact_id=artifact_id,
                 created_at=created_at,
-                metadata=metadata,  # type: ignore[arg-type]
+                metadata=metadata,
                 content_ref_hash=content_ref.hash if content_ref else "",
                 content_ref_size=int(content_ref.size) if content_ref else 0,
                 content_ref_mime=content_ref.mime if content_ref else "",

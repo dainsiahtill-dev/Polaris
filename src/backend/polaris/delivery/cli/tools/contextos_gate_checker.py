@@ -86,7 +86,7 @@ class GateChecker(ast.NodeVisitor):
             }
         )
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         old_func = self.current_function
         old_deser = self.is_deserialization_path
 
@@ -100,8 +100,11 @@ class GateChecker(ast.NodeVisitor):
         self.current_function = old_func
         self.is_deserialization_path = old_deser
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self.visit_FunctionDef(node)  # type: ignore[arg-type]
+        self._visit_function(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         # Gate 1: Check for model_copy(update=...) on critical models

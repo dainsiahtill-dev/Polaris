@@ -1480,7 +1480,7 @@ class StateFirstContextOSPolicy:
 
         # Create instance with overrides using replace()
         if kwargs:
-            return replace(cls(), **kwargs)  # type: ignore[arg-type]
+            return replace(cls(), **kwargs)
         return cls()
 
 
@@ -1523,7 +1523,7 @@ class SnapshotSummaryView:
 # We suppress the error per-line to preserve runtime behavior while
 # keeping the file type-check clean.
 with contextlib.suppress(ImportError):
-    from .models_v2 import (  # type: ignore[assignment]  # v2 classes shadow v1 dataclasses intentionally
+    from .models_v2 import (  # v2 classes shadow v1 dataclasses intentionally
         ArtifactRecordV2 as ArtifactRecord,
         BudgetPlanV2 as BudgetPlan,
         ContextOSProjectionV2 as ContextOSProjection,

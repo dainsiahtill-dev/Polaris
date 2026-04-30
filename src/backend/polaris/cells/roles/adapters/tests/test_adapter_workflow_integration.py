@@ -62,7 +62,7 @@ def test_factory_registration_is_idempotent(tmp_path) -> None:
 
 def test_unified_orchestration_service_stores_factory(tmp_path) -> None:
     """UnifiedOrchestrationService.set_role_adapter_factory must store the factory."""
-    from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+    from polaris.cells.orchestration.workflow_runtime.public import (
         UnifiedOrchestrationService,
     )
     from polaris.cells.roles.adapters.public.service import create_role_adapter
@@ -95,6 +95,7 @@ def test_generic_pipeline_source_uses_public_factory() -> None:
 def test_orchestration_service_reload_is_graceful(tmp_path, monkeypatch) -> None:
     """Reloading roles.adapters.public.service while workflow_runtime is active must not crash."""
     # Patch configure_orchestration_role_adapter_factory to simulate a race condition
+    # TODO: migrate to public contract once configure_orchestration_role_adapter_factory is exported
     import polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service as uos_mod
     import polaris.cells.roles.adapters.public.service as svc_mod
 

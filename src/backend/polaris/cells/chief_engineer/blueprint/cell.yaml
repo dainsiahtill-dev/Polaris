@@ -13,7 +13,8 @@ current_modules:
 tags: []
 owned_paths:
 - polaris/cells/chief_engineer/blueprint/internal/**
-- polaris/infrastructure/code_intelligence/**
+- polaris/cells/chief_engineer/blueprint/public/**
+- polaris/cells/chief_engineer/blueprint/tests/**
 public_contracts:
   modules:
   - polaris.cells.chief_engineer.blueprint.public.contracts

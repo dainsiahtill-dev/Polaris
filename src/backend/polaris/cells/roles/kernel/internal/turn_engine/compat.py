@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.conversation_state import ConversationState
     from polaris.cells.roles.kernel.internal.llm_caller import LLMResponse
-    from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
+    from polaris.cells.roles.profile.public import RoleTurnRequest
 
 logger = logging.getLogger(__name__)
 

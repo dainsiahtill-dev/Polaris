@@ -30,7 +30,7 @@ class MockApp:
         self.errors: list[str] = []
 
     def add_message(self, content: str, msg_type: str = "assistant") -> None:
-        self.messages.append((msg_type, content))  # type: ignore[arg-type]
+        self.messages.append((msg_type, content))
 
     def add_debug(
         self,
@@ -170,7 +170,7 @@ class TestTextualEventBridge:
     def bridge(self, mock_app: MockApp) -> TextualEventBridge:
         """Create a bridge for testing."""
         config = EventStreamConfig(workspace="/tmp", role="director")
-        return TextualEventBridge(mock_app, config)  # type: ignore[arg-type]
+        return TextualEventBridge(mock_app, config)
 
     @pytest.mark.asyncio
     async def test_process_event_content_chunk(self, bridge: TextualEventBridge, mock_app: MockApp) -> None:

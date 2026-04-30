@@ -261,7 +261,7 @@ class TestConversationMessageSanitization:
         """ConversationMessage.meta is stored as JSON string."""
         import json
 
-        from polaris.cells.roles.session.internal.conversation import ConversationMessage
+        from polaris.cells.roles.session.public import ConversationMessage
 
         msg = ConversationMessage(
             id="msg1",
@@ -294,7 +294,7 @@ class TestConversationMessageSanitization:
         """to_dict() returns all stored fields including meta."""
         import json
 
-        from polaris.cells.roles.session.internal.conversation import ConversationMessage
+        from polaris.cells.roles.session.public import ConversationMessage
 
         msg = ConversationMessage(
             id="msg3",
@@ -313,7 +313,7 @@ class TestConversationMessageSanitization:
         """RoleSessionService.add_message accepts meta parameter."""
         from unittest.mock import MagicMock
 
-        from polaris.cells.roles.session.internal.role_session_service import (
+        from polaris.cells.roles.session.public import (
             RoleSessionService,
         )
 

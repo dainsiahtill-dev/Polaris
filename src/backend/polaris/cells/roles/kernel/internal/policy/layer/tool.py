@@ -28,7 +28,7 @@ from polaris.kernelone.tool_execution.tool_categories import (
 from .core import CanonicalToolCall, PolicyViolation
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.profile.internal.schema import RoleProfile
+    from polaris.cells.roles.profile.public import RoleProfile
 
 logger = logging.getLogger(__name__)
 

@@ -15,8 +15,8 @@ try:
     _PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     _PROMPT_TOOLKIT_AVAILABLE = False
-    Style = None  # type: ignore[assignment, misc]
-    HTML = None  # type: ignore[assignment, misc]
+    Style = None
+    HTML = None
 
 if TYPE_CHECKING:
     pass
@@ -39,8 +39,10 @@ def _get_prompt_style() -> Style:
             }
         )
     # Return a dummy style if still None (shouldn't happen when prompt_toolkit is available)
+    if _PROMPT_STYLE is None and Style is not None:
+        _PROMPT_STYLE = Style.from_dict({})
     if _PROMPT_STYLE is None:
-        _PROMPT_STYLE = Style.from_dict({})  # type: ignore[operator]
+        raise RuntimeError("Prompt style could not be initialized")
     return _PROMPT_STYLE
 
 

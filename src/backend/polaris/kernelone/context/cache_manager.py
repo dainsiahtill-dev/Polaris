@@ -565,7 +565,8 @@ class TieredAssetCacheManager:
     def _read_json_file(self, path: Path) -> dict[str, Any]:
         """Read JSON file synchronously (called via asyncio.to_thread)."""
         with open(path, encoding="utf-8") as f:
-            return json.load(f)  # type: ignore[no-any-return]
+            data: dict[str, Any] = json.load(f)
+            return data
 
     def _write_json_file(self, path: Path, entry_data: dict[str, Any]) -> None:
         """Write JSON file atomically (called via asyncio.to_thread)."""

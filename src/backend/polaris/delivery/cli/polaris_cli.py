@@ -462,10 +462,10 @@ def _run_workflow(args: argparse.Namespace) -> int:
         }
         exit_code = 0 if payload.get("ok") else 1
         if payload.get("ok") and bool(getattr(args, "wait", False)):
-            submission = payload.get("submission")  # type: ignore[assignment]
-            workflow_id_val = str(submission.get("workflow_id") or "") if isinstance(submission, dict) else ""
+            submission_data: dict[str, Any] | None = payload.get("submission")
+            workflow_id_val = str(submission_data.get("workflow_id") or "") if isinstance(submission_data, dict) else ""
             wait_payload = wait_for_workflow_completion_sync(
-                workflow_id_val,  # type: ignore[arg-type]
+                workflow_id_val,
                 timeout_seconds=float(getattr(args, "timeout_seconds", 300.0) or 300.0),
             )
             payload["final"] = wait_payload

@@ -128,6 +128,7 @@ def test_import_succeeds_when_orchestration_service_not_ready(tmp_path, monkeypa
     ensures the module can still be imported; the factory is applied lazily.
     """
     # Patch the singleton to raise — simulating "not yet fully initialised"
+    # TODO: migrate to public contract once configure_orchestration_role_adapter_factory is exported
     import polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service as _uos
     import polaris.cells.roles.adapters.public.service as _svc
 
