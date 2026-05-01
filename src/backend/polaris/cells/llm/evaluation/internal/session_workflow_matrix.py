@@ -38,9 +38,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     TurnEvent,
 )
-from polaris.cells.roles.runtime.internal.session_orchestrator import (
-    RoleSessionOrchestrator,
-)
+from polaris.cells.roles.runtime.public import RoleSessionOrchestrator
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .benchmark_loader import build_case_sandbox_key, copy_fixture_tree

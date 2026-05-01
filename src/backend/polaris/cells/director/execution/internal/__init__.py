@@ -104,8 +104,8 @@ from polaris.cells.director.execution.internal.repair_service import (
 # --------------------------------------------------------------------------
 # Lazy import to avoid ImportError when director_cli is not yet migrated
 with contextlib.suppress(ImportError):
-    from polaris.cells.director.execution.internal.director_cli import (  # type: ignore[attr-defined]
-        DirectorCLI,  # type: ignore[attr-defined]
+    from polaris.cells.director.execution.internal.director_cli import (
+        DirectorCLI,
     )
 
 warnings.warn(

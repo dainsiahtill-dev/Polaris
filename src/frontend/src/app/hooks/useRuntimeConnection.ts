@@ -110,7 +110,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   const updateSubscription = useCallback(
     (nextRoles: ('pm' | 'director' | 'qa')[]) => {
       rolesRef.current = nextRoles;
-      sendCommand({ type: 'SUBSCRIBE', roles: nextRoles });
+      sendCommand({ type: 'SUBSCRIBE', protocol: 'runtime.v2', roles: nextRoles });
     },
     [sendCommand]
   );

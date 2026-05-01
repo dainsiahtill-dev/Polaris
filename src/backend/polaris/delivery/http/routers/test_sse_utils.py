@@ -142,7 +142,7 @@ class TestSSEJetStreamConsumer:
         assert consumer.is_connected is False
 
         # After setting _jetstream (simulating connection)
-        consumer._jetstream = MagicMock()  # type: ignore[assignment]
+        consumer._jetstream = MagicMock()
         assert consumer.is_connected is True
 
         # After setting _closed
@@ -159,8 +159,8 @@ class TestSSEJetStreamConsumer:
 
         # Mock subscription
         mock_subscription = AsyncMock()
-        consumer._subscription = mock_subscription  # type: ignore[assignment]
-        consumer._jetstream = MagicMock()  # type: ignore[assignment]
+        consumer._subscription = mock_subscription
+        consumer._jetstream = MagicMock()
 
         await consumer.disconnect()
 
@@ -208,7 +208,7 @@ class TestSseJetstreamGenerator:
         async def mock_stream() -> AsyncGenerator[dict[str, Any], None]:
             yield {"type": "message", "payload": {"text": "hello"}, "cursor": 1, "ts": None}
 
-        consumer.stream = mock_stream  # type: ignore[method-assign]
+        consumer.stream = mock_stream
         disconnect_called = False
 
         original_disconnect = consumer.disconnect
@@ -218,7 +218,7 @@ class TestSseJetstreamGenerator:
             disconnect_called = True
             await original_disconnect()
 
-        consumer.disconnect = tracked_disconnect  # type: ignore[method-assign]
+        consumer.disconnect = tracked_disconnect
 
         events = []
         async for event in sse_jetstream_generator(consumer):
@@ -246,7 +246,7 @@ class TestSseJetstreamGenerator:
             for i in range(100):
                 yield {"type": "message", "payload": {"text": str(i)}, "cursor": i + 1, "ts": None}
 
-        consumer.stream = mock_stream  # type: ignore[method-assign]
+        consumer.stream = mock_stream
         disconnect_called = False
 
         original_disconnect = consumer.disconnect
@@ -256,7 +256,7 @@ class TestSseJetstreamGenerator:
             disconnect_called = True
             await original_disconnect()
 
-        consumer.disconnect = tracked_disconnect  # type: ignore[method-assign]
+        consumer.disconnect = tracked_disconnect
 
         generator = sse_jetstream_generator(consumer)
         events = []
@@ -284,7 +284,7 @@ class TestSseJetstreamGenerator:
             yield {"type": "message", "payload": {"text": "hello"}, "cursor": 1, "ts": None}
             raise RuntimeError("stream error")
 
-        consumer.stream = mock_stream  # type: ignore[method-assign]
+        consumer.stream = mock_stream
         disconnect_called = False
 
         original_disconnect = consumer.disconnect
@@ -294,7 +294,7 @@ class TestSseJetstreamGenerator:
             disconnect_called = True
             await original_disconnect()
 
-        consumer.disconnect = tracked_disconnect  # type: ignore[method-assign]
+        consumer.disconnect = tracked_disconnect
 
         events = []
         with pytest.raises(RuntimeError):
@@ -316,8 +316,8 @@ class TestSseJetstreamGenerator:
             yield {"type": "ping", "cursor": 0}
             yield {"type": "message", "payload": {"text": "data"}, "cursor": 1, "ts": None}
 
-        consumer.stream = mock_stream  # type: ignore[method-assign]
-        consumer.disconnect = AsyncMock()  # type: ignore[method-assign]
+        consumer.stream = mock_stream
+        consumer.disconnect = AsyncMock()
 
         events = []
         async for event in sse_jetstream_generator(consumer):
@@ -355,6 +355,102 @@ class TestCreateSseJetstreamConsumer:
         )
 
         assert consumer.last_event_id == 50
+
+
+# =============================================================================
+# Regression tests for confirmed defects
+# =============================================================================
+# M4: sse_jetstream_generator finally block shadowing original exception
+#     The disconnect() call in the finally block can raise its own exception,
+#     which in Python's async generator cleanup replaces the original one,
+#     making debugging harder and masking root-cause errors.
+
+
+class TestJetstreamGeneratorExceptionPreservation:
+    """Regression tests for M4: exception shadowing in sse_jetstream_generator."""
+
+    @pytest.mark.asyncio
+    async def test_jetstream_stream_exception_not_shadowed_by_disconnect_error(self) -> None:
+        """Verify the original stream exception is preserved when disconnect() also fails.
+
+        Bug (M4): The finally block in sse_jetstream_generator is:
+            finally:
+                await consumer.disconnect()
+        If consumer.disconnect() raises an exception (e.g. cleanup failure),
+        it can shadow the original RuntimeError from the stream.
+
+        After fix: disconnect errors should be caught and logged, preserving
+        the original stream exception as the propagated error.
+        """
+        consumer = SSEJetStreamConsumer(workspace_key="test", subject="events")
+
+        async def mock_stream() -> AsyncGenerator[dict[str, Any], None]:
+            yield {"type": "message", "payload": {"text": "hello"}, "cursor": 1, "ts": None}
+            raise RuntimeError("stream_error_original")  # original exception
+
+        async def mock_disconnect() -> None:
+            raise RuntimeError("disconnect_error_secondary")  # shadowing exception
+
+        consumer.stream = mock_stream  # type: ignore[method-assign]
+        consumer.disconnect = mock_disconnect  # type: ignore[method-assign]
+
+        gen = sse_jetstream_generator(consumer)
+        collected: list[str] = []
+
+        with pytest.raises(RuntimeError) as exc_info:
+            async for event in gen:
+                collected.append(event)
+
+        # The original stream exception must be preserved, not the disconnect error
+        assert "stream_error_original" in str(exc_info.value), (
+            f"BUG M4: Expected 'stream_error_original' in raised exception, "
+            f"got: {exc_info.value!s}. The disconnect error is shadowing the root cause."
+        )
+        # Disconnect error must NOT be the primary exception
+        assert "disconnect_error_secondary" not in str(exc_info.value), (
+            "BUG M4: disconnect_error_secondary should not be the raised exception; "
+            "it masks the original stream error."
+        )
+
+    @pytest.mark.asyncio
+    async def test_jetstream_disconnect_error_on_normal_exit_still_raises(self) -> None:
+        """Verify disconnect error during normal completion is also handled.
+
+        Even when the stream completes normally, a failing disconnect()
+        should not prevent clean exit or should be logged, not raised.
+        """
+        consumer = SSEJetStreamConsumer(workspace_key="test", subject="events")
+
+        disconnect_called = False
+
+        async def mock_stream() -> AsyncGenerator[dict[str, Any], None]:
+            # Stream has only one message event, then completes
+            yield {"type": "message", "payload": {"text": "done"}, "cursor": 1, "ts": None}
+
+        async def mock_disconnect() -> None:
+            nonlocal disconnect_called
+            disconnect_called = True
+            raise RuntimeError("disconnect_cleanup_error")
+
+        consumer.stream = mock_stream  # type: ignore[method-assign]
+        consumer.disconnect = mock_disconnect  # type: ignore[method-assign]
+
+        gen = sse_jetstream_generator(consumer)
+        collected: list[str] = []
+
+        # After fix: should not raise; disconnect error is caught and logged
+        try:
+            async for event in gen:
+                collected.append(event)
+        except RuntimeError as e:
+            # Before fix, this would raise the disconnect error
+            pytest.fail(
+                f"BUG M4: sse_jetstream_generator leaked disconnect error as: {e!s}. "
+                "Disconnect errors during cleanup should be caught and logged."
+            )
+
+        assert disconnect_called, "disconnect() should still be called even on normal exit"
+        assert len(collected) == 1, "Should have collected exactly one event"
 
 
 # -----------------------------------------------------------------------------

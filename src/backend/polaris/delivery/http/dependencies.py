@@ -118,14 +118,9 @@ def require_auth(request: Request) -> None:
     """
     auth = getattr(request.app.state, "auth", None)
     if auth is None:
-        # Auth disabled — bind an anonymous context so require_permission
-        # can distinguish "no auth configured" from "no token provided".
-        request.state.auth_context = SimpleAuthContext(
-            principal="anonymous",
-            auth_token="",
-            scopes=frozenset(),
-        )
-        return
+        # Defence-in-depth: if auth was never initialized, reject rather
+        # than silently allowing anonymous access.
+        raise HTTPException(status_code=503, detail="auth not initialized")
     auth_header = request.headers.get("authorization", "")
     if not auth.check(auth_header):
         raise HTTPException(status_code=401, detail="unauthorized")

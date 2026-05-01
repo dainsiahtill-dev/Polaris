@@ -16,9 +16,20 @@ from polaris.cells.roles.runtime.public.service import (
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 
+def _parse_iso_timestamp(value: Any) -> datetime:
+    """Safely parse an ISO timestamp, falling back to now() on empty/invalid input."""
+    raw = value
+    if not raw or not isinstance(raw, str) or not raw.strip():
+        return datetime.now()
+    try:
+        return datetime.fromisoformat(raw.strip())
+    except (TypeError, ValueError):
+        return datetime.now()
+
+
 # Lazy import to avoid circular dependency at module level
 def _get_polaris_home() -> str:
-    from polaris.cells.storage.layout.internal.layout_business import polaris_home
+    from polaris.cells.storage.layout.public.service import polaris_home
 
     return polaris_home()
 
@@ -77,8 +88,8 @@ class LLMConfig:
             model=str(payload.get("model") or ""),
             profile=str(payload.get("profile") or ""),
             provider_cfg=dict(payload.get("provider_cfg") or {}),
-            created_at=datetime.fromisoformat(str(payload.get("created_at") or datetime.now().isoformat())),
-            updated_at=datetime.fromisoformat(str(payload.get("updated_at") or datetime.now().isoformat())),
+            created_at=_parse_iso_timestamp(payload.get("created_at")),
+            updated_at=_parse_iso_timestamp(payload.get("updated_at")),
             is_active=bool(payload.get("is_active", True)),
         )
 

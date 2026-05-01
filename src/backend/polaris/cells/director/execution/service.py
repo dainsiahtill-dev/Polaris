@@ -62,7 +62,7 @@ except (RuntimeError, ValueError) as exc:
     _code_intel_logger.debug("DirectorCodeIntelMixin unavailable (code intelligence disabled): %s", exc)
     CODE_INTEL_AVAILABLE = False
 
-    class DirectorCodeIntelMixin:  # type: ignore[no-redef]
+    class DirectorCodeIntelMixin:
         def __init__(self, workspace: str, *args: object, **kwargs: object) -> None:
             pass
 

@@ -275,8 +275,10 @@ def _execute_pending_tool_calls_via_orchestrator(
 
 # 角色输出质量分数阈值，可通过环境变量配置
 # 低于此分数的输出将被视为不成功
-_ROLE_QUALITY_SCORE_THRESHOLD = int(os.environ.get("KERNELONE_ROLE_QUALITY_THRESHOLD", "60"))
-# 验证阈值范围
+try:
+    _ROLE_QUALITY_SCORE_THRESHOLD = int(os.environ.get("KERNELONE_ROLE_QUALITY_THRESHOLD", "60"))
+except (TypeError, ValueError):
+    _ROLE_QUALITY_SCORE_THRESHOLD = 60
 if not 0 <= _ROLE_QUALITY_SCORE_THRESHOLD <= 100:
     logger.warning(f"Invalid KERNELONE_ROLE_QUALITY_THRESHOLD value: {_ROLE_QUALITY_SCORE_THRESHOLD}, using default 60")
     _ROLE_QUALITY_SCORE_THRESHOLD = 60
@@ -637,7 +639,7 @@ async def generate_role_response_streaming(
     from polaris.cells.roles.runtime.public.service import (
         stream_role_session_command,
     )
-    from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
+    from polaris.cells.roles.session.public import RoleSessionService
     from polaris.cells.roles.session.public.service import RoleHostKind
 
     final_appendix = prompt_appendix or ""

@@ -55,7 +55,9 @@ async def sse_event_generator(
         except (RuntimeError, ValueError) as exc:
             await queue.put({"type": "error", "data": {"error": str(exc)}})
 
-    task = asyncio.create_task(_wrapper())
+    task = asyncio.create_task(
+        asyncio.wait_for(_wrapper(), timeout=max(timeout * 3, 600.0))
+    )
 
     try:
         while True:
@@ -90,7 +92,7 @@ async def sse_event_generator(
             try:
                 await cleanup_fn()
             except (RuntimeError, ValueError) as exc:
-                logger.debug("[FIX] sse_utils.py silent exception", exc)
+                logger.debug("[FIX] sse_utils.py silent exception: %s", exc)
 
 
 def create_sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
@@ -152,8 +154,8 @@ class SSEJetStreamConsumer:
         self.last_event_id = last_event_id
         self.timeout = timeout
         self.consumer_name = consumer_name or f"sse-{workspace_key}-{id(self)}"
-        self._consumer = None
-        self._subscription = None
+        self._consumer: Any = None
+        self._subscription: Any = None
         self._jetstream: Any = None
         self._closed = False
         self._stream_iter: AsyncGenerator[dict[str, Any], None] | None = None
@@ -219,7 +221,7 @@ class SSEJetStreamConsumer:
             try:
                 await self._subscription.unsubscribe()
             except (RuntimeError, ValueError) as exc:
-                logger.debug("[FIX] sse_utils.py silent exception", exc)
+                logger.debug("[FIX] sse_utils.py silent exception: %s", exc)
         self._subscription = None
         self._jetstream = None
         logger.info(f"SSE JetStream consumer disconnected: {self.consumer_name}")
