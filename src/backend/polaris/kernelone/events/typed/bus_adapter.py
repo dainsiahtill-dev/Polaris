@@ -419,7 +419,7 @@ class TypedEventBusAdapter:
 
         try:
             # Reconstruct the event from flattened payload
-            # Use cast to handle Optional values that BaseModel expects to be non-None
+            # Use model_validate for runtime validation + cast for static type satisfaction
             from typing import cast
 
             from polaris.kernelone.events.typed.schemas import EventCategory
@@ -427,15 +427,15 @@ class TypedEventBusAdapter:
             event_data: dict[str, Any] = {
                 "event_name": payload.get("event_name", ""),
                 "event_id": payload.get("event_id", ""),
-                "category": cast("EventCategory", payload.get("category", EventCategory.SYSTEM)),
+                "category": payload.get("category", EventCategory.SYSTEM),
                 "run_id": payload.get("run_id", ""),
                 "workspace": payload.get("workspace", ""),
                 "timestamp": payload.get("timestamp", datetime.now(timezone.utc)),
                 "payload": payload.get("payload"),
             }
 
-            # event_type is a specific subclass of EventBase, cast to TypedEvent for mypy
-            return cast("TypedEvent", event_type(**event_data))
+            # model_validate provides runtime validation; cast satisfies static type checker
+            return cast("TypedEvent", event_type.model_validate(event_data))
 
         except (RuntimeError, ValueError) as e:
             logger.error(f"Failed to construct TypedEvent: {e}")

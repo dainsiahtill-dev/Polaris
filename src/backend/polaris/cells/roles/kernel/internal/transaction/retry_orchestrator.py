@@ -748,7 +748,7 @@ class RetryOrchestrator:
             )
 
             retry_decision = self.decoder.decode(retry_response, TurnId(turn_id))
-            ledger.record_decision(retry_decision)
+            ledger.replace_decision(retry_decision)
             if retry_decision.get("kind") != TurnDecisionKind.TOOL_BATCH:
                 if attempt_index < max_retry_attempts - 1:
                     retry_context = append_retry_enforcement_hint(
@@ -932,7 +932,7 @@ class RetryOrchestrator:
                         "single_batch_contract_violation_retry_failed: bootstrap follow-up did not materialize response"
                     )
                 followup_decision = self.decoder.decode(followup_response, TurnId(turn_id))
-                ledger.record_decision(followup_decision)
+                ledger.replace_decision(followup_decision)
                 if followup_decision.get("kind") != TurnDecisionKind.TOOL_BATCH:
                     raise RuntimeError(
                         "single_batch_contract_violation_retry_failed: bootstrap follow-up did not produce tool batch"

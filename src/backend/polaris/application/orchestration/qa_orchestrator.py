@@ -9,8 +9,27 @@ Call chain::
 
     delivery -> QaOrchestrator -> cells.qa.audit_verdict.public
                                 -> cells.audit.verdict.public
-                                -> cells.audit.evidence.public
-                                -> kernelone.*
+
+Usage example::
+
+    >>> from polaris.application.orchestration import (
+    ...     QaOrchestrator,
+    ...     QaAuditConfig,
+    ... )
+    >>> config = QaAuditConfig(
+    ...     workspace="/path/to/project",
+    ...     run_id="qa-run-001",
+    ...     auto_audit=True,
+    ...     min_coverage=0.8,
+    ... )
+    >>> orch = QaOrchestrator(config)
+    >>> # Run full lifecycle
+    >>> result = await orch.run_audit_lifecycle(
+    ...     task_id="TASK-123",
+    ...     task_subject="User login feature",
+    ...     changed_files=["src/auth.py", "tests/test_auth.py"],
+    ... )
+    >>> print(result.verdict.verdict)
 
 Architecture constraints (AGENTS.md):
     - Imports ONLY from Cell ``public/`` boundaries and ``kernelone`` contracts.
@@ -188,7 +207,7 @@ class QaOrchestrator:
         *,
         task_id: str,
         criteria: Mapping[str, Any] | None = None,
-        evidence_paths: tuple[str, ...] | None = None,
+        evidence_paths: str | tuple[str, ...] | list[str] | None = None,
     ) -> dict[str, Any]:
         """Plan an audit by gathering criteria and evidence paths.
 
@@ -218,8 +237,13 @@ class QaOrchestrator:
         if criteria is not None:
             merged_criteria.update(criteria)
 
-        merged_evidence = tuple(self._config.evidence_paths)
-        if evidence_paths is not None:
+        # Normalize evidence_paths: handle string, None, or iterable inputs
+        # to avoid string-iteration bug (a string "path" would iterate over characters)
+        if evidence_paths is None:
+            merged_evidence = tuple(self._config.evidence_paths)
+        elif isinstance(evidence_paths, str):
+            merged_evidence = (evidence_paths,) if evidence_paths.strip() else ()
+        else:
             merged_evidence = tuple(str(p) for p in evidence_paths if str(p).strip())
 
         return {
@@ -280,7 +304,9 @@ class QaOrchestrator:
                 metadata={
                     "verdict": str(raw.verdict),
                     "metrics": dict(raw.metrics) if isinstance(raw.metrics, dict) else {},
-                    "timestamp": raw.timestamp.isoformat() if hasattr(raw.timestamp, "isoformat") else str(raw.timestamp),
+                    "timestamp": raw.timestamp.isoformat()
+                    if hasattr(raw.timestamp, "isoformat")
+                    else str(raw.timestamp),
                 },
             )
         except (AttributeError, RuntimeError, ValueError) as exc:

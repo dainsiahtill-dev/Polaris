@@ -1,8 +1,9 @@
-﻿"""HR role agent and LLM configuration store implementation."""
+"""HR role agent and LLM configuration store implementation."""
 
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -36,13 +37,13 @@ def _get_polaris_home() -> str:
 
 def _infer_workspace_from_storage_path(storage_path: str) -> str:
     target = Path(str(storage_path or "")).expanduser().resolve()
-    lower = [part.lower() for part in target.parts]
+    path_str = str(target).lower()
     for marker in (".polaris", ".polaris", ".polaris-cache", ".polaris-cache", "runtime"):
-        if marker not in lower:
-            continue
-        idx = lower.index(marker)
+        idx = path_str.find(marker)
         if idx > 0:
-            return str(Path(*target.parts[:idx]).resolve())
+            parent = str(target)[:idx]
+            if parent:
+                return str(Path(parent).resolve())
     return str(Path.cwd().resolve())
 
 
@@ -79,15 +80,24 @@ class LLMConfig:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> LLMConfig:
+        raw_config_id = payload.get("config_id")
+        raw_role = payload.get("role")
+        raw_provider_id = payload.get("provider_id")
+        raw_provider_type = payload.get("provider_type")
+        raw_provider_kind = payload.get("provider_kind")
+        raw_model = payload.get("model")
+        raw_profile = payload.get("profile")
+        raw_provider_cfg = payload.get("provider_cfg")
+
         return cls(
-            config_id=str(payload.get("config_id") or ""),
-            role=str(payload.get("role") or ""),
-            provider_id=str(payload.get("provider_id") or ""),
-            provider_type=str(payload.get("provider_type") or ""),
-            provider_kind=str(payload.get("provider_kind") or ""),
-            model=str(payload.get("model") or ""),
-            profile=str(payload.get("profile") or ""),
-            provider_cfg=dict(payload.get("provider_cfg") or {}),
+            config_id=str(raw_config_id) if raw_config_id else "",
+            role=str(raw_role) if raw_role else "",
+            provider_id=str(raw_provider_id) if raw_provider_id else "",
+            provider_type=str(raw_provider_type) if raw_provider_type else "",
+            provider_kind=str(raw_provider_kind) if raw_provider_kind else "",
+            model=str(raw_model) if raw_model else "",
+            profile=str(raw_profile) if raw_profile else "",
+            provider_cfg=dict(raw_provider_cfg) if raw_provider_cfg else {},
             created_at=_parse_iso_timestamp(payload.get("created_at")),
             updated_at=_parse_iso_timestamp(payload.get("updated_at")),
             is_active=bool(payload.get("is_active", True)),
@@ -95,12 +105,25 @@ class LLMConfig:
 
 
 class LLMConfigStore:
-    """Thread-safe config store backed by KernelFileSystem.
+    """Thread-safe config store backed by KernelFileSystem with dict cache.
 
     Configs are stored at Global layer: ~/.polaris/config/llm/configs.json
+
+    Performance optimizations:
+    - In-memory dict cache avoids repeated JSON parsing
+    - TTL-based cache invalidation (5 minutes default)
+    - Dirty flag tracks pending writes
+    - Optional preload on initialization
     """
 
-    def __init__(self, storage_path: str) -> None:
+    DEFAULT_CACHE_TTL: float = 300.0  # 5 minutes
+
+    def __init__(
+        self,
+        storage_path: str,
+        *,
+        cache_ttl: float | None = None,
+    ) -> None:
         self._storage_path = str(storage_path)
         self._workspace = _infer_workspace_from_storage_path(self._storage_path)
         self._fs = KernelFileSystem(self._workspace, get_default_adapter())
@@ -108,28 +131,63 @@ class LLMConfigStore:
         self._configs_file_abs = str(Path(self._storage_path) / "configs.json")
         self._configs_file_logical = self._fs.to_logical_path(self._configs_file_abs)
 
+        # Performance optimization: dict cache
+        self._cache_ttl = cache_ttl if cache_ttl is not None else self.DEFAULT_CACHE_TTL
+        self._cache: dict[str, dict[str, Any]] | None = None
+        self._cache_timestamp: float = 0.0
+        self._cache_dirty: bool = False
+
+    def _is_cache_valid(self) -> bool:
+        """Check if in-memory cache is still valid (not expired)."""
+        if self._cache is None:
+            return False
+        return (time.monotonic() - self._cache_timestamp) < self._cache_ttl
+
     def _load_all_unlocked(self) -> dict[str, dict[str, Any]]:
+        """Load all configs with dict cache optimization."""
+        if self._cache is not None and not self._cache_dirty and self._is_cache_valid():
+            return self._cache
+
         if not self._fs.exists(self._configs_file_logical):
+            self._cache = {}
+            self._cache_timestamp = time.monotonic()
+            self._cache_dirty = False
             return {}
+
         payload = self._fs.read_json(self._configs_file_logical)
-        return payload if isinstance(payload, dict) else {}
+        result = payload if isinstance(payload, dict) else {}
+
+        self._cache = result
+        self._cache_timestamp = time.monotonic()
+        self._cache_dirty = False
+        return result
 
     def _save_all_unlocked(self, payload: dict[str, dict[str, Any]]) -> None:
-        self._fs.write_json(
+        self._fs.write_json_atomic(
             self._configs_file_logical,
             payload,
             indent=2,
             ensure_ascii=False,
         )
+        self._cache_dirty = False
+
+    def preload(self) -> None:
+        """Eagerly load all configs into cache. Call after construction for faster first access."""
+        with self._lock:
+            self._load_all_unlocked()
 
     def save(self, config: LLMConfig) -> None:
+        token = (config.role or "").strip()
         with self._lock:
             rows = self._load_all_unlocked()
-            rows[str(config.role)] = config.to_dict()
+            rows[token] = config.to_dict()
+            self._cache_dirty = True
             self._save_all_unlocked(rows)
+            self._cache = rows
+            self._cache_timestamp = time.monotonic()
 
     def get(self, role: str) -> LLMConfig | None:
-        token = str(role or "").strip()
+        token = (role or "").strip()
         if not token:
             return None
         with self._lock:
@@ -156,7 +214,7 @@ class LLMConfigStore:
         return sorted(configs, key=lambda item: item.role)
 
     def delete(self, role: str) -> bool:
-        token = str(role or "").strip()
+        token = (role or "").strip()
         if not token:
             return False
         with self._lock:
@@ -164,8 +222,17 @@ class LLMConfigStore:
             existed = token in rows
             if existed:
                 rows.pop(token, None)
+                self._cache_dirty = True
                 self._save_all_unlocked(rows)
+                self._cache = rows
+                self._cache_timestamp = time.monotonic()
             return existed
+
+    def invalidate_cache(self) -> None:
+        """Manually invalidate the cache (e.g., after external modification)."""
+        with self._lock:
+            self._cache = None
+            self._cache_dirty = False
 
 
 class HRAgent(RoleAgent):
@@ -173,9 +240,9 @@ class HRAgent(RoleAgent):
 
     def __init__(self, workspace: str) -> None:
         super().__init__(workspace=workspace, agent_name="HR")
-        # LLM config is global (per-user), stored under ~/.polaris/config/llm/
         config_dir = str(Path(_get_polaris_home()) / "config" / "llm")
         self._config_store = LLMConfigStore(config_dir)
+        self._config_store.preload()
 
     def _resolve_provider_kind(
         self,

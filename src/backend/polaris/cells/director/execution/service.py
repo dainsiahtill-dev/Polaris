@@ -62,7 +62,7 @@ except (RuntimeError, ValueError) as exc:
     _code_intel_logger.debug("DirectorCodeIntelMixin unavailable (code intelligence disabled): %s", exc)
     CODE_INTEL_AVAILABLE = False
 
-    class DirectorCodeIntelMixin:
+    class DirectorCodeIntelMixin:  # type: ignore[no-redef]
         def __init__(self, workspace: str, *args: object, **kwargs: object) -> None:
             pass
 
@@ -207,110 +207,112 @@ class DirectorService(DirectorCodeIntelMixin):
         await self._bus.unsubscribe(MessageType.WORKER_FAILED, self._on_worker_failed)
 
     async def start(self) -> None:
-        if self.state not in {DirectorState.IDLE, DirectorState.STOPPED}:
-            raise RuntimeError(f"Cannot start from state {self.state}")
+        async with self._state_lock:
+            if self.state not in {DirectorState.IDLE, DirectorState.STOPPED}:
+                raise RuntimeError(f"Cannot start from state {self.state}")
 
-        self._stop_event = asyncio.Event()
-        self.state = DirectorState.RUNNING
-        self._started_at = time.time()
-        self._stopped_at = None
+            self._stop_event = asyncio.Event()
+            self.state = DirectorState.RUNNING
+            self._started_at = time.time()
+            self._stopped_at = None
 
-        try:
-            if not self._event_handlers_ready:
-                await self._setup_event_handlers()
-                self._event_handlers_ready = True
-
-            self.transcript.start_session(
-                session_id=f"director-{uuid.uuid4().hex[:8]}",
-                metadata={"workspace": self.config.workspace, "max_workers": self.config.max_workers},
-            )
-
-            await self._worker_service.initialize()
-            self._main_loop_task = asyncio.create_task(self._main_loop())
-            # Attach a done-callback so that when the loop exits for any reason
-            # (natural convergence, external cancel, or unhandled exception) we
-            # explicitly finalize the Director state.  This is the *only* place
-            # RUNNING -> IDLE can be triggered from the loop-exit path (CQS).
-            self._main_loop_task.add_done_callback(lambda _t: asyncio.ensure_future(self._try_finalize_idle()))
-
-            # Emit events (typed + legacy MessageBus for backward compatibility)
-            typed_event = TypedDirectorStarted.create(
-                workspace=self.config.workspace,
-                max_workers=self.config.max_workers,
-                config={},
-            )
-            await self._emit_typed_event(typed_event)
-            await self._bus.broadcast(MessageType.DIRECTOR_START, "director", {"workspace": self.config.workspace})
-        except (RuntimeError, ValueError) as e:
-            logger.error(
-                "Director start failed, rolling back: error=%s, type=%s, workspace=%s",
-                e,
-                type(e).__name__,
-                self.config.workspace,
-            )
-            self._stop_event.set()
             try:
-                await self._worker_service.shutdown()
-            except (RuntimeError, ValueError) as exc:
-                logger.error(
-                    "Director rollback: worker_service.shutdown failed: error=%s, type=%s",
-                    exc,
-                    type(exc).__name__,
+                if not self._event_handlers_ready:
+                    await self._setup_event_handlers()
+                    self._event_handlers_ready = True
+
+                self.transcript.start_session(
+                    session_id=f"director-{uuid.uuid4().hex[:8]}",
+                    metadata={"workspace": self.config.workspace, "max_workers": self.config.max_workers},
                 )
-            self.state = DirectorState.IDLE
-            self._stopped_at = time.time()
-            self._main_loop_task = None
-            if self._event_handlers_ready:
+
+                await self._worker_service.initialize()
+                self._main_loop_task = asyncio.create_task(self._main_loop())
+                # Attach a done-callback so that when the loop exits for any reason
+                # (natural convergence, external cancel, or unhandled exception) we
+                # explicitly finalize the Director state.  This is the *only* place
+                # RUNNING -> IDLE can be triggered from the loop-exit path (CQS).
+                self._main_loop_task.add_done_callback(lambda _t: asyncio.ensure_future(self._try_finalize_idle()))
+
+                # Emit events (typed + legacy MessageBus for backward compatibility)
+                typed_event = TypedDirectorStarted.create(
+                    workspace=self.config.workspace,
+                    max_workers=self.config.max_workers,
+                    config={},
+                )
+                await self._emit_typed_event(typed_event)
+                await self._bus.broadcast(MessageType.DIRECTOR_START, "director", {"workspace": self.config.workspace})
+            except (RuntimeError, ValueError) as e:
+                logger.error(
+                    "Director start failed, rolling back: error=%s, type=%s, workspace=%s",
+                    e,
+                    type(e).__name__,
+                    self.config.workspace,
+                )
+                self._stop_event.set()
                 try:
-                    await self._unsubscribe_event_handlers()
+                    await self._worker_service.shutdown()
                 except (RuntimeError, ValueError) as exc:
                     logger.error(
-                        "Director rollback: _unsubscribe_event_handlers failed: error=%s, type=%s",
+                        "Director rollback: worker_service.shutdown failed: error=%s, type=%s",
                         exc,
                         type(exc).__name__,
                     )
-                self._event_handlers_ready = False
-            try:
-                self.transcript.end_session()
-            except (RuntimeError, ValueError) as exc:
-                logger.error(
-                    "Director rollback: transcript.end_session failed: error=%s, type=%s",
-                    exc,
-                    type(exc).__name__,
-                )
-            raise
+                self.state = DirectorState.IDLE
+                self._stopped_at = time.time()
+                self._main_loop_task = None
+                if self._event_handlers_ready:
+                    try:
+                        await self._unsubscribe_event_handlers()
+                    except (RuntimeError, ValueError) as exc:
+                        logger.error(
+                            "Director rollback: _unsubscribe_event_handlers failed: error=%s, type=%s",
+                            exc,
+                            type(exc).__name__,
+                        )
+                    self._event_handlers_ready = False
+                try:
+                    self.transcript.end_session()
+                except (RuntimeError, ValueError) as exc:
+                    logger.error(
+                        "Director rollback: transcript.end_session failed: error=%s, type=%s",
+                        exc,
+                        type(exc).__name__,
+                    )
+                raise
 
     async def stop(self) -> None:
-        if self.state in {DirectorState.IDLE, DirectorState.STOPPED}:
-            return
+        async with self._state_lock:
+            if self.state in {DirectorState.IDLE, DirectorState.STOPPED}:
+                return
 
-        self.state = DirectorState.STOPPING
-        self._stop_event.set()
+            self.state = DirectorState.STOPPING
+            self._stop_event.set()
 
-        # Emit typed event for stop
-        typed_event = TypedDirectorStopped.create(
-            workspace=self.config.workspace,
-            reason="stop_requested",
-            auto=False,
-            metrics=self._metrics.copy(),
-        )
-        await self._emit_typed_event(typed_event)
-        await self._bus.broadcast(MessageType.DIRECTOR_STOP, "director")
+            # Emit typed event for stop
+            typed_event = TypedDirectorStopped.create(
+                workspace=self.config.workspace,
+                reason="stop_requested",
+                auto=False,
+                metrics=self._metrics.copy(),
+            )
+            await self._emit_typed_event(typed_event)
+            await self._bus.broadcast(MessageType.DIRECTOR_STOP, "director")
 
-        if self._main_loop_task:
-            self._main_loop_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._main_loop_task
+            if self._main_loop_task:
+                self._main_loop_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._main_loop_task
 
-        if self._event_handlers_ready:
-            await self._unsubscribe_event_handlers()
-            self._event_handlers_ready = False
+            if self._event_handlers_ready:
+                await self._unsubscribe_event_handlers()
+                self._event_handlers_ready = False
 
-        await self._worker_service.shutdown()
+            await self._worker_service.shutdown()
 
-        self.state = DirectorState.STOPPED
-        self._stopped_at = time.time()
-        self.transcript.end_session()
+            self.state = DirectorState.STOPPED
+            self._stopped_at = time.time()
+            self.transcript.end_session()
 
     async def submit_task(
         self,
@@ -423,9 +425,11 @@ class DirectorService(DirectorCodeIntelMixin):
         """Return a pure snapshot of Director state.  Does not modify any state (CQS)."""
         tasks = await self._task_service.get_tasks()
         workers = await self._worker_service.get_workers()
+        async with self._state_lock:
+            state_name = self.state.name
 
         return {
-            "state": self.state.name,
+            "state": state_name,
             "started_at": self._started_at,
             "stopped_at": self._stopped_at,
             "workspace": self.config.workspace,
@@ -829,7 +833,8 @@ class DirectorService(DirectorCodeIntelMixin):
             return
         status = self.token.get_budget_status()
         if status.is_exceeded and self.state == DirectorState.RUNNING:
-            self.state = DirectorState.PAUSED
+            async with self._state_lock:
+                self.state = DirectorState.PAUSED
             # Emit typed event for budget exceeded
             typed_event = TypedBudgetExceeded.create(
                 used_tokens=status.used_tokens,

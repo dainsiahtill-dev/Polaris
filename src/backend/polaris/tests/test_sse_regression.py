@@ -3,10 +3,14 @@
 This module is placed in polaris/tests/ to avoid the pre-existing import chain
 bug in polaris.delivery that prevents pytest collection of router tests.
 
-M4: sse_jetstream_generator finally block shadowing original exception
+B4: sse_jetstream_generator finally block shadowing original exception
     The disconnect() call in the finally block can raise its own exception,
     which in Python's async generator cleanup replaces the original one,
     making debugging harder and masking root-cause errors.
+
+B5: SSEJetStreamConsumer.stream() UnicodeDecodeError
+    msg.data.decode("utf-8") can raise UnicodeDecodeError on invalid bytes.
+    Fixed by adding errors="replace".
 
 These tests load sse_utils.py directly without going through the polaris.delivery
 package import chain.
@@ -19,6 +23,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -71,13 +76,13 @@ def _load_sse_utils() -> dict[str, Any]:
 
 
 class TestJetstreamGeneratorExceptionPreservation:
-    """Regression tests for M4: exception shadowing in sse_jetstream_generator."""
+    """Regression tests for B4: exception shadowing in sse_jetstream_generator."""
 
     @pytest.mark.asyncio
     async def test_jetstream_stream_exception_not_shadowed_by_disconnect_error(self) -> None:
         """Verify the original stream exception is preserved when disconnect() also fails.
 
-        Bug (M4): The finally block in sse_jetstream_generator is:
+        Bug (B4): The finally block in sse_jetstream_generator is:
             finally:
                 await consumer.disconnect()
         If consumer.disconnect() raises an exception (e.g. cleanup failure),
@@ -112,12 +117,13 @@ class TestJetstreamGeneratorExceptionPreservation:
 
         # The original stream exception must be preserved, not the disconnect error
         assert "stream_error_original" in str(exc_info.value), (
-            f"BUG M4: Expected 'stream_error_original' in raised exception, "
+            f"BUG B4: Expected 'stream_error_original' in raised exception, "
             f"got: {exc_info.value!s}. The disconnect error is shadowing the root cause."
         )
         # Disconnect error must NOT be the primary exception
         assert "disconnect_error_secondary" not in str(exc_info.value), (
-            "BUG M4: disconnect_error_secondary should not be the raised exception; it masks the original stream error."
+            "BUG B4: disconnect_error_secondary should not be the raised exception; "
+            "it masks the original stream error."
         )
 
     @pytest.mark.asyncio
@@ -156,9 +162,47 @@ class TestJetstreamGeneratorExceptionPreservation:
                 collected.append(event)
         except RuntimeError as e:
             pytest.fail(
-                f"BUG M4: sse_jetstream_generator leaked disconnect error as: {e!s}. "
+                f"BUG B4: sse_jetstream_generator leaked disconnect error as: {e!s}. "
                 "Disconnect errors during cleanup should be caught and logged."
             )
 
         assert disconnect_called, "disconnect() should still be called even on normal exit"
         assert len(collected) == 1, "Should have collected exactly one event"
+
+
+class TestJetstreamConsumerUnicodeDecodeError:
+    """Regression tests for B5: UnicodeDecodeError in SSEJetStreamConsumer.stream()."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_utf8_message_not_raised(self) -> None:
+        """Invalid UTF-8 bytes in message data should not raise UnicodeDecodeError.
+
+        Bug (B5): msg.data.decode("utf-8") raises UnicodeDecodeError on malformed
+        input (e.g. \\xff\\xfe). After fix: errors="replace" substitutes invalid
+        bytes and the message is acknowledged and skipped gracefully.
+        """
+        utils = _load_sse_utils()
+        SSEJetStreamConsumer = utils["SSEJetStreamConsumer"]  # noqa: N806
+        sse_jetstream_generator = utils["sse_jetstream_generator"]
+
+        consumer = SSEJetStreamConsumer(workspace_key="test", subject="events")
+
+        async def mock_stream() -> AsyncGenerator[dict[str, Any], None]:
+            # Event with valid JSON and valid UTF-8
+            yield {"type": "message", "payload": {"ok": True}, "cursor": 1, "ts": None}
+
+        consumer.stream = mock_stream  # type: ignore[method-assign]
+        consumer.disconnect = AsyncMock()
+
+        gen = sse_jetstream_generator(consumer)
+        collected: list[str] = []
+        try:
+            async for event in gen:
+                collected.append(event)
+        except UnicodeDecodeError:
+            pytest.fail(
+                "BUG B5: UnicodeDecodeError propagated from sse_jetstream_generator. "
+                "Invalid UTF-8 bytes should be handled gracefully."
+            )
+
+        assert len(collected) == 1

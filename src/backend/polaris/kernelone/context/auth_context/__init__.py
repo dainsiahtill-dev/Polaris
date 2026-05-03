@@ -14,10 +14,13 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
 __all__ = ["AuthContext"]
+
+logger = logging.getLogger(__name__)
 
 
 class AuthContext:
@@ -221,8 +224,14 @@ class AuthContext:
             Dict with 'read', 'write', 'admin' boolean access flags.
 
         Note:
-            This is a STUB implementation that returns full read/write access.
+            This is a STUB implementation that returns NO access by default.
             In production, this must query a real permission store (e.g., RBAC database,
             workspace ACLs, or session permissions) based on user_id and workspace.
+            Until then, access is denied to enforce the principle of least privilege.
         """
-        return {"read": True, "write": True, "admin": False}
+        logger.warning(
+            "get_user_workspace_access is a stub - denying access for user=%s workspace=%s",
+            user_id,
+            workspace,
+        )
+        return {"read": False, "write": False, "admin": False}

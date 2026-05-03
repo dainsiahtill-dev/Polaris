@@ -357,11 +357,14 @@ class WorkerService:
                                             timeout_seconds=task.timeout_seconds or 300.0,
                                         )
 
-                                        # Parse result from subprocess output
-                                        # The subprocess writes JSON result to stdout
+                                        # TODO(BLOCKER): The subprocess writes TaskResult JSON to stdout but
+                                        # ExecutionProcessWaitResultV1 doesn't capture stdout. This means
+                                        # output, duration_ms, and evidence are always empty/zero.
+                                        # Fix: Extend ExecutionProcessWaitResultV1 to include stdout, capture
+                                        # it in wait_process, and parse JSON here to build proper TaskResult.
                                         result = TaskResult(
                                             success=wait_result.success,
-                                            output="",
+                                            output="<stdout not captured - see TODO>",
                                             exit_code=wait_result.exit_code or 0,
                                             duration_ms=0,
                                             evidence=(),

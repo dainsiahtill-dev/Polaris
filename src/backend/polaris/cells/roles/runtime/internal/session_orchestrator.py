@@ -545,6 +545,7 @@ class RoleSessionOrchestrator:
                 # Inject skill system information
                 try:
                     from polaris.kernelone.single_agent.skill_system import SkillLoader
+
                     skill_loader = SkillLoader(self.workspace)
                     skill_section = skill_loader.get_system_prompt_section()
                     if skill_section and skill_section != "(No skills available)":
@@ -552,8 +553,8 @@ class RoleSessionOrchestrator:
                         parts.append("## Available Skills")
                         parts.append("You can load these skills for detailed guidance using the load_skill tool:")
                         parts.append(skill_section)
-                except Exception:  # noqa: BLE001
-                    pass
+                except (ImportError, AttributeError, RuntimeError) as exc:
+                    logger.debug("SkillLoader failed for role %s: %s", self.role, exc)
 
                 role_def = "\n".join(parts)
 
@@ -564,12 +565,14 @@ class RoleSessionOrchestrator:
                     )
 
                     tool_defs = build_native_tool_schemas(profile)
-                except Exception:  # noqa: BLE001
+                except (ImportError, AttributeError, RuntimeError) as exc:
+                    logger.warning("build_native_tool_schemas failed for role %s: %s", self.role, exc)
                     tool_defs = []
 
             _role_profile_cache[self.role] = (role_def, tool_defs)
-        except Exception:  # noqa: BLE001
-            _role_profile_cache[self.role] = ("", [])
+        except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
+            logger.error("Failed to build role profile for role %s: %s", self.role, exc)
+            raise
 
         return _role_profile_cache.get(self.role, ("", []))
 
@@ -851,23 +854,24 @@ class RoleSessionOrchestrator:
                 envelope = self._state_reducer.enforce_materialize_changes_guard(envelope)
                 envelope = self._apply_read_only_termination_exemption(envelope)
 
-                self.state.turn_count += 1
+                new_turn_index = self.state.turn_count + 1
                 if envelope.artifacts_to_persist:
                     await self._artifact_store.persist(envelope.artifacts_to_persist)
                     self.state.artifacts.update(self._artifact_store.get_artifact_map())
                 if envelope.artifacts_to_persist or self.state.artifacts:
                     self._update_artifact_hashes()
 
-                if self.state.turn_count == 1 and not self.state.goal:
+                if new_turn_index == 1 and not self.state.goal:
                     self.state.goal = first_prompt
                     if envelope.session_patch and (instruction := envelope.session_patch.get("instruction")):
                         self.state.goal = f"{first_prompt}\n\n[补充指令]: {instruction}"
 
                 turn_record = self._state_reducer.apply_turn_outcome(
                     envelope,
-                    turn_index=self.state.turn_count,
+                    turn_index=new_turn_index,
                     timestamp_ms=completion_event.timestamp_ms if completion_event else None,
                 )
+                self.state.turn_count = new_turn_index
 
                 if "_user_progression_hint" in self.state.structured_findings:
                     del self.state.structured_findings["_user_progression_hint"]

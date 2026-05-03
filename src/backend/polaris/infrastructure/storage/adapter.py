@@ -205,6 +205,8 @@ class StorageAdapter:
             List of records
         """
         abs_path = self._to_absolute(path)
+        if not os.path.exists(abs_path):
+            return []
         size_mb = os.path.getsize(abs_path) / (1024 * 1024)
         if size_mb > max_size_mb:
             raise MemoryError(f"JSONL file too large: {size_mb:.1f}MB > {max_size_mb}MB limit")
@@ -235,6 +237,8 @@ class StorageAdapter:
             Records one at a time without loading entire file into memory.
         """
         abs_path = self._to_absolute(path)
+        if not os.path.exists(abs_path):
+            return
         size_mb = os.path.getsize(abs_path) / (1024 * 1024)
         if size_mb > max_size_mb:
             raise MemoryError(f"JSONL file too large: {size_mb:.1f}MB > {max_size_mb}MB limit")

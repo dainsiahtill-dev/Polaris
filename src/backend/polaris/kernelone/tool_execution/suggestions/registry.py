@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.tool_execution.suggestions.protocols import SuggestionBuilder
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+_REGISTRY_LOCK = threading.Lock()
 
 # 全局注册表：name -> builder instance
 _BUILDER_REGISTRY: dict[str, SuggestionBuilder] = {}
@@ -25,9 +28,10 @@ _SORTED_BUILDERS: list[SuggestionBuilder] | None = None
 def _get_sorted_builders() -> list[SuggestionBuilder]:
     """Get builders sorted by priority (ascending)."""
     global _SORTED_BUILDERS
-    if _SORTED_BUILDERS is None:
-        _SORTED_BUILDERS = sorted(_BUILDER_REGISTRY.values(), key=lambda b: b.priority)
-    return _SORTED_BUILDERS
+    with _REGISTRY_LOCK:
+        if _SORTED_BUILDERS is None:
+            _SORTED_BUILDERS = sorted(_BUILDER_REGISTRY.values(), key=lambda b: b.priority)
+        return _SORTED_BUILDERS
 
 
 def register_builder(builder: SuggestionBuilder) -> None:
@@ -37,8 +41,9 @@ def register_builder(builder: SuggestionBuilder) -> None:
         builder: 实现 SuggestionBuilder 协议的对象
     """
     global _SORTED_BUILDERS
-    _BUILDER_REGISTRY[builder.name] = builder
-    _SORTED_BUILDERS = None  # invalidate cache
+    with _REGISTRY_LOCK:
+        _BUILDER_REGISTRY[builder.name] = builder
+        _SORTED_BUILDERS = None  # invalidate cache
     logger.debug("Registered suggestion builder: %s (priority=%d)", builder.name, builder.priority)
 
 

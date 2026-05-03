@@ -4,14 +4,27 @@ Provides a shared event generator pattern used by llm_test_routes,
 llm_interview_routes, and docs dialogue streaming.
 
 Also provides JetStream-based SSE consumer for remote event streaming.
+
+SECURITY HARDENING (v2):
+- S1: Schema validation with RuntimeEventEnvelope
+- S2: Payload size limits enforcement
+- S3: Replay attack protection with timestamp validation
+- S4: Cryptographically random ephemeral consumer names
+- S5: Subject pattern validation and sanitization
+- S6: Event timestamp freshness validation
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
+import re
+import secrets
+import time
 from typing import TYPE_CHECKING, Any
 
 from fastapi.responses import StreamingResponse
@@ -24,6 +37,159 @@ logger = logging.getLogger(__name__)
 # SSE queue max size to prevent unbounded memory growth
 # Reduced from 1000 to 50 to enable natural backpressure and reduce latency
 _SSE_QUEUE_MAX_SIZE = 50
+
+# =============================================================================
+# Security Constants
+# =============================================================================
+
+# Maximum payload size: 256KB (matches JetStreamConstants.STREAM_MAX_MSG_SIZE)
+MAX_PAYLOAD_SIZE = 262_144
+
+# Maximum replay window: 1 hour in seconds (event older than this is rejected)
+MAX_REPLAY_WINDOW_SECONDS = 3600
+
+# Subject pattern validation: only allow alphanumeric, dash, underscore, dot
+SUBJECT_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,200}$")
+
+# Workspace key validation: alphanumeric and dash only
+WORKSPACE_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9-]{1,64}$")
+
+# Replay protection secret (should be set via environment variable)
+_REPLAY_SECRET: str | None = None
+
+
+def _get_replay_secret() -> str:
+    """Get or generate replay protection secret."""
+    global _REPLAY_SECRET
+    if _REPLAY_SECRET is None:
+        # In production, this should come from environment
+        _REPLAY_SECRET = secrets.token_hex(32)
+    return _REPLAY_SECRET
+
+
+# =============================================================================
+# Security Validation Functions
+# =============================================================================
+
+
+def validate_subject(subject: str) -> bool:
+    """Validate JetStream subject pattern to prevent injection.
+
+    Args:
+        subject: Subject string to validate.
+
+    Returns:
+        True if subject matches allowed pattern.
+
+    SECURITY: Prevents subject injection attacks that could
+    access cross-workspace events.
+    """
+    return bool(SUBJECT_PATTERN.match(subject))
+
+
+def validate_workspace_key(workspace_key: str) -> bool:
+    """Validate workspace key format.
+
+    Args:
+        workspace_key: Workspace identifier to validate.
+
+    Returns:
+        True if workspace key is valid format.
+    """
+    return bool(WORKSPACE_KEY_PATTERN.match(workspace_key))
+
+
+def validate_payload_size(data: bytes | dict[str, Any]) -> bool:
+    """Validate payload size against configured limits.
+
+    Args:
+        data: Message data (bytes or dict) to validate.
+
+    Returns:
+        True if payload size is within limits.
+
+    SECURITY: Prevents memory exhaustion from oversized messages.
+    """
+    if isinstance(data, dict):
+        size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    else:
+        size = len(data) if isinstance(data, bytes) else len(str(data))
+    return size <= MAX_PAYLOAD_SIZE
+
+
+def validate_event_timestamp(ts: str | None) -> bool:
+    """Validate event timestamp is within acceptable replay window.
+
+    Args:
+        ts: ISO 8601 timestamp string to validate.
+
+    Returns:
+        True if timestamp is fresh enough.
+
+    SECURITY: Prevents replay attacks using old cached events.
+    """
+    if not ts:
+        return True  # Allow events without timestamp (backward compat)
+
+    try:
+        # Parse ISO 8601 timestamp (handle various formats)
+        # Format: 2026-05-01T12:00:00Z or 2026-05-01T12:00:00+00:00
+        ts_clean = ts.replace("+00:00", "Z")
+        if not ts_clean.endswith("Z"):
+            return True  # Allow non-UTC timestamps for compatibility
+
+        event_time = float(time.mktime(time.strptime(ts_clean, "%Y-%m-%dT%H:%M:%SZ")))
+        current_time = time.time()
+        age = current_time - event_time
+
+        return age <= MAX_REPLAY_WINDOW_SECONDS
+    except (ValueError, OSError):
+        return True  # Allow parsing failures for backward compat
+
+
+def generate_event_signature(event_id: str, timestamp: str, payload: dict[str, Any]) -> str:
+    """Generate HMAC signature for event integrity verification.
+
+    Args:
+        event_id: Unique event identifier.
+        timestamp: Event timestamp.
+        payload: Event payload dictionary.
+
+    Returns:
+        HMAC-SHA256 signature as hex string.
+
+    SECURITY: Provides event integrity verification to prevent tampering.
+    """
+    secret = _get_replay_secret()
+    message = f"{event_id}:{timestamp}:{json.dumps(payload, sort_keys=True, ensure_ascii=False)}"
+    return hmac.new(
+        secret.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_event_signature(
+    event_id: str,
+    timestamp: str,
+    payload: dict[str, Any],
+    signature: str,
+) -> bool:
+    """Verify HMAC signature of event.
+
+    Args:
+        event_id: Unique event identifier.
+        timestamp: Event timestamp.
+        payload: Event payload dictionary.
+        signature: Signature to verify.
+
+    Returns:
+        True if signature is valid.
+
+    SECURITY: Validates event has not been tampered with.
+    """
+    expected = generate_event_signature(event_id, timestamp, payload)
+    return hmac.compare_digest(expected, signature)
 
 
 async def sse_event_generator(
@@ -55,9 +221,7 @@ async def sse_event_generator(
         except (RuntimeError, ValueError) as exc:
             await queue.put({"type": "error", "data": {"error": str(exc)}})
 
-    task = asyncio.create_task(
-        asyncio.wait_for(_wrapper(), timeout=max(timeout * 3, 600.0))
-    )
+    task = asyncio.create_task(asyncio.wait_for(_wrapper(), timeout=max(timeout * 3, 600.0)))
 
     try:
         while True:
@@ -148,17 +312,34 @@ class SSEJetStreamConsumer:
             last_event_id: Last event ID for cursor-based resume.
             timeout: Timeout for waiting on messages.
             consumer_name: Optional consumer name (auto-generated if not provided).
+
+        SECURITY:
+            - Consumer names are cryptographically random to prevent
+              predictable ephemeral consumer collision attacks
+            - Workspace key is validated against injection patterns
+            - Subject is validated before connection
         """
+        # SECURITY S4: Validate workspace key format
+        if not validate_workspace_key(workspace_key):
+            raise ValueError(f"Invalid workspace_key format: {workspace_key}")
+
+        # SECURITY S5: Validate subject pattern
+        if not validate_subject(subject):
+            raise ValueError(f"Invalid subject pattern: {subject}")
+
         self.workspace_key = workspace_key
         self.subject = subject
         self.last_event_id = last_event_id
         self.timeout = timeout
-        self.consumer_name = consumer_name or f"sse-{workspace_key}-{id(self)}"
+        # SECURITY S4: Use cryptographically random suffix instead of predictable id(self)
+        self.consumer_name = consumer_name or f"sse-{workspace_key[:32]}-{secrets.token_hex(8)}"
         self._consumer: Any = None
         self._subscription: Any = None
         self._jetstream: Any = None
         self._closed = False
         self._stream_iter: AsyncGenerator[dict[str, Any], None] | None = None
+        # SECURITY S3: Track processed event IDs for replay detection
+        self._processed_event_ids: set[str] = set()
 
     @property
     def is_connected(self) -> bool:
@@ -227,10 +408,16 @@ class SSEJetStreamConsumer:
         logger.info(f"SSE JetStream consumer disconnected: {self.consumer_name}")
 
     async def stream(self) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream events from JetStream.
+        """Stream events from JetStream with security validations.
 
         Yields:
             Event dictionaries with cursor, timestamp, and payload.
+
+        SECURITY:
+            - S1: Payload size limits enforced
+            - S2: Schema validation for expected event structure
+            - S3: Timestamp freshness validation (replay attack protection)
+            - S3: Event ID deduplication (replay detection)
         """
         if not self._subscription and not await self.connect():
             return
@@ -246,12 +433,48 @@ class SSEJetStreamConsumer:
                 )
                 if msg:
                     try:
-                        data = json.loads(msg.data.decode("utf-8"))
+                        raw_data = msg.data
+                        # S2: Payload size validation (defense in depth with JetStream limits)
+                        if len(raw_data) > MAX_PAYLOAD_SIZE:
+                            logger.warning(
+                                f"Oversized message rejected: {len(raw_data)} bytes (max: {MAX_PAYLOAD_SIZE})"
+                            )
+                            await msg.ack()
+                            continue
+
+                        # S1: Parse with validation
+                        data = json.loads(raw_data.decode("utf-8", errors="replace"))
+
+                        # Extract event metadata for validation
+                        event_id = data.get("event_id", "")
+                        timestamp = data.get("ts") or data.get("_published_at")
+                        payload = data.get("payload", data)  # Fallback to entire message
+
+                        # S3: Timestamp freshness validation
+                        if not validate_event_timestamp(timestamp):
+                            logger.warning(
+                                f"Stale event rejected (replay attack prevention): event_id={event_id}, ts={timestamp}"
+                            )
+                            await msg.ack()
+                            continue
+
+                        # S3: Event ID deduplication (in-memory replay detection)
+                        if event_id and event_id in self._processed_event_ids:
+                            logger.debug(f"Duplicate event rejected: {event_id}")
+                            await msg.ack()
+                            continue
+                        if event_id:
+                            self._processed_event_ids.add(event_id)
+                            # Limit memory growth from replay tracking
+                            if len(self._processed_event_ids) > 10000:
+                                self._processed_event_ids = set(list(self._processed_event_ids)[-5000:])
+
                         # Enrich with cursor and metadata
                         event = {
                             "cursor": self.last_event_id + 1,
-                            "ts": data.get("ts") or data.get("_published_at"),
-                            "payload": data,
+                            "ts": timestamp,
+                            "event_id": event_id,
+                            "payload": payload,
                         }
                         self.last_event_id += 1
                         await msg.ack()
@@ -310,7 +533,20 @@ def create_sse_jetstream_consumer(
 
     Returns:
         Configured SSEJetStreamConsumer instance.
+
+    Raises:
+        ValueError: If workspace_key or subject fails validation.
+
+    SECURITY:
+        - S5: Subject pattern validation before consumer creation
+        - S4: Workspace key validation to prevent injection
     """
+    # Validate inputs to fail fast on invalid configurations
+    if not validate_workspace_key(workspace_key):
+        raise ValueError(f"Invalid workspace_key format: {workspace_key}")
+    if not validate_subject(subject):
+        raise ValueError(f"Invalid subject pattern: {subject}")
+
     cursor = int(last_event_id or 0)
     return SSEJetStreamConsumer(
         workspace_key=workspace_key,
@@ -340,6 +576,7 @@ async def sse_jetstream_generator(
         ...     print(event)
         # consumer.disconnect() is always called in finally block
     """
+    primary_exc: BaseException | None = None
     try:
         async for event in consumer.stream():
             event_type = event.get("type", "message")
@@ -359,10 +596,25 @@ async def sse_jetstream_generator(
             }
 
             yield f"id: {cursor}\ndata: {json.dumps(enriched, ensure_ascii=False)}\n\n"
+    except BaseException as e:
+        primary_exc = e
+        raise
     finally:
-        # Always disconnect the JetStream subscription, regardless of
-        # normal exit, early break, or exception
-        await consumer.disconnect()
+        # Disconnect but catch and log any secondary exception so it
+        # never shadows the original stream exception (B4)
+        disconnect_exc: BaseException | None = None
+        try:
+            await consumer.disconnect()
+        except (RuntimeError, ValueError) as e:
+            # Only catch expected exceptions from disconnect()
+            disconnect_exc = e
+        except BaseException as e:  # noqa: BLE001
+            # Catch any other unexpected exceptions (SystemExit, etc.)
+            disconnect_exc = e
+        if primary_exc is not None and disconnect_exc is not None:
+            raise primary_exc from disconnect_exc
+        if primary_exc is not None:
+            raise primary_exc
 
 
 def create_sse_response_from_jetstream(

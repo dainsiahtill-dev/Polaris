@@ -509,6 +509,12 @@ class RuntimeSocketManager {
       return;
     }
 
+    // Guard: clear existing timer to prevent double-schedule from onerror→onclose
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     const attempt = this.state.attemptCount + 1;
     this.updateState({ attemptCount: attempt, reconnecting: true });
 

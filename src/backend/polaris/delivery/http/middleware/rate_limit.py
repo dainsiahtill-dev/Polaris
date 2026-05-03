@@ -39,25 +39,53 @@ class RateLimitEntry:
 class RateLimitStore:
     """Thread-safe store for rate limit tracking."""
 
-    def __init__(self, window_seconds: float = 60.0, max_entries: int = 10000) -> None:
+    def __init__(
+        self,
+        window_seconds: float = 60.0,
+        max_entries: int = 10000,
+        trusted_proxies: list[str] | None = None,
+    ) -> None:
         self._window = window_seconds
         self._max_entries = max_entries
         self._store: dict[str, RateLimitEntry] = {}
         self._lock = RLock()
+        self._trusted_proxies = set(trusted_proxies or [])
+        self._trust_x_forwarded_for = bool(self._trusted_proxies)
 
     def _get_client_key(self, request: Request) -> str:
-        """Generate unique key for client identification."""
-        # Prefer X-Forwarded-For for proxied deployments
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        """Generate unique key for client identification.
 
-        real_ip = request.headers.get("X-Real-Ip")
-        if real_ip:
-            return real_ip.strip()
+        Only trusts X-Forwarded-For and X-Real-IP headers when the request
+        comes from a trusted proxy. Otherwise, falls back to direct client IP.
+        """
+        client_host = str(request.client.host) if request.client else "unknown"
 
-        client = request.client
-        return str(client.host) if client else "unknown"
+        if self._trust_x_forwarded_for:
+            direct_client_ip = client_host
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                first_ip = forwarded.split(",")[0].strip()
+                if first_ip in self._trusted_proxies or direct_client_ip in self._trusted_proxies:
+                    return first_ip
+                logger.debug(
+                    "X-Forwarded-For from untrusted source: forwarded=%s, client=%s",
+                    first_ip,
+                    direct_client_ip,
+                )
+                return direct_client_ip
+
+            real_ip = request.headers.get("X-Real-Ip")
+            if real_ip:
+                real_ip_stripped = real_ip.strip()
+                if real_ip_stripped in self._trusted_proxies or direct_client_ip in self._trusted_proxies:
+                    return real_ip_stripped
+                logger.debug(
+                    "X-Real-IP from untrusted source: real_ip=%s, client=%s",
+                    real_ip_stripped,
+                    direct_client_ip,
+                )
+
+        return client_host
 
     def _cleanup_old_entries(self) -> None:
         """Remove expired entries to prevent memory growth."""

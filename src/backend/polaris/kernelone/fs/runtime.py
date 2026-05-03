@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +111,66 @@ class KernelFileSystem:
     ) -> FileWriteReceipt:
         data = json.dumps(payload, ensure_ascii=ensure_ascii, indent=indent)
         return self.write_text(logical_path, data + "\n", encoding="utf-8")
+
+    def write_json_atomic(
+        self,
+        logical_path: str,
+        payload: Any,
+        *,
+        indent: int = 2,
+        ensure_ascii: bool = False,
+    ) -> FileWriteReceipt:
+        """Atomically write JSON payload via temp-file-then-rename pattern.
+
+        Uses adapter's atomic write when available, falling back to manual
+        temp-file-rename if adapter lacks native support.
+        """
+        normalized = self.to_logical_path(logical_path)
+        path = self.resolve_path(normalized)
+
+        # Try adapter's atomic write first (adapter handles serialization)
+        adapter = self._adapter
+        if hasattr(adapter, "write_json_atomic"):
+            try:
+                receipt = adapter.write_json_atomic(str(path), payload, indent=indent)
+                return FileWriteReceipt(
+                    logical_path=normalized,
+                    absolute_path=str(path),
+                    bytes_written=receipt.bytes_written,
+                )
+            except (AttributeError, TypeError, OSError):
+                pass  # Fall through to manual implementation
+
+        # Manual implementation: temp-file-then-rename
+        data = json.dumps(payload, ensure_ascii=ensure_ascii, indent=indent) + "\n"
+
+        parent_dir = Path(path).parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=str(parent_dir),
+            prefix=".write_tmp_",
+            suffix=".json",
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_file:
+                tmp_file.write(data)
+                tmp_file.flush()
+                os.fsync(tmp_fd)
+
+            # Atomic rename (POSIX guarantees atomicity on same filesystem)
+            target_path = Path(path)
+            tmp_path = Path(tmp_path_str)
+            tmp_path.replace(target_path)  # raises OSError on failure
+            return FileWriteReceipt(
+                logical_path=normalized,
+                absolute_path=str(path),
+                bytes_written=len(data.encode("utf-8")),
+            )
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path_str)
+            raise
 
     def append_jsonl(self, logical_path: str, payload: dict[str, Any]) -> FileWriteReceipt:
         if not isinstance(payload, dict):

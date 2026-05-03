@@ -8,8 +8,32 @@ internals directly.
 Call chain::
 
     delivery -> ArchitectOrchestrator -> cells.architect.design.public
-                                       -> cells.audit.verdict.public
-                                       -> kernelone.*
+
+Usage example::
+
+    >>> from polaris.application.orchestration import (
+    ...     ArchitectOrchestrator,
+    ...     ArchitectDesignConfig,
+    ... )
+    >>> config = ArchitectDesignConfig(
+    ...     workspace="/path/to/project",
+    ...     docs_dir="docs/product",
+    ...     objective="Design user authentication system",
+    ... )
+    >>> orch = ArchitectOrchestrator(config)
+    >>> # Run full lifecycle
+    >>> result = await orch.run_design_lifecycle(
+    ...     objective="Design user authentication system",
+    ...     requirements={
+    ...         "goal": "Implement OAuth 2.0 + JWT auth",
+    ...         "in_scope": ["login", "logout", "token refresh"],
+    ...         "out_of_scope": ["SSO integration", "MFA"],
+    ...         "constraints": ["Must use existing DB schema"],
+    ...         "definition_of_done": ["All tests pass"],
+    ...         "backlog": [],
+    ...     },
+    ... )
+    >>> print(result.blueprint.blueprint_id)
 
 Architecture constraints (AGENTS.md):
     - Imports ONLY from Cell ``public/`` boundaries and ``kernelone`` contracts.
@@ -263,9 +287,7 @@ class ArchitectOrchestrator:
                 metadata={
                     "version": str(doc.version),
                     "created_at": (
-                        doc.created_at.isoformat()
-                        if hasattr(doc.created_at, "isoformat")
-                        else str(doc.created_at)
+                        doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") else str(doc.created_at)
                     ),
                 },
             )
@@ -317,9 +339,7 @@ class ArchitectOrchestrator:
                 metadata={
                     "version": str(doc.version),
                     "created_at": (
-                        doc.created_at.isoformat()
-                        if hasattr(doc.created_at, "isoformat")
-                        else str(doc.created_at)
+                        doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") else str(doc.created_at)
                     ),
                 },
             )
@@ -365,9 +385,7 @@ class ArchitectOrchestrator:
                 metadata={
                     "version": str(doc.version),
                     "created_at": (
-                        doc.created_at.isoformat()
-                        if hasattr(doc.created_at, "isoformat")
-                        else str(doc.created_at)
+                        doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") else str(doc.created_at)
                     ),
                 },
             )
@@ -416,9 +434,7 @@ class ArchitectOrchestrator:
                 metadata={
                     "version": str(doc.version),
                     "created_at": (
-                        doc.created_at.isoformat()
-                        if hasattr(doc.created_at, "isoformat")
-                        else str(doc.created_at)
+                        doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") else str(doc.created_at)
                     ),
                 },
             )

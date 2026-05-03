@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -104,26 +105,35 @@ class ScopeConflictDetector:
 
     def __init__(self) -> None:
         self._active_files: dict[str, str] = {}  # file_path -> director_id
+        self._lock = threading.Lock()
 
     def detect(self, director_id: str, files: list[str]) -> list[str]:
         """Return files that conflict with another active Director."""
-        conflicts: list[str] = []
-        for f in files:
-            owner = self._active_files.get(f)
-            if owner and owner != director_id:
-                conflicts.append(f)
-        return conflicts
+        with self._lock:
+            conflicts: list[str] = []
+            for f in files:
+                owner = self._active_files.get(f)
+                if owner and owner != director_id:
+                    conflicts.append(f)
+            return conflicts
 
     def acquire(self, director_id: str, files: list[str]) -> None:
         """Register file ownership for a Director."""
-        for f in files:
-            self._active_files[f] = director_id
+        with self._lock:
+            for f in files:
+                self._active_files[f] = director_id
 
     def release(self, director_id: str) -> None:
         """Release all file ownerships held by a Director."""
-        to_remove = [f for f, d in self._active_files.items() if d == director_id]
-        for f in to_remove:
-            del self._active_files[f]
+        with self._lock:
+            to_remove = [f for f, d in self._active_files.items() if d == director_id]
+            for f in to_remove:
+                del self._active_files[f]
+
+    def active_snapshot(self) -> dict[str, str]:
+        """Return a copy of active files for read-only access."""
+        with self._lock:
+            return dict(self._active_files)
 
 
 class DirectorPool:
@@ -711,12 +721,12 @@ class DirectorPool:
         return None
 
     def _current_global_conflicts(self) -> list[dict[str, Any]]:
+        active_files = self._conflict_detector.active_snapshot()
         conflicts: list[dict[str, Any]] = []
         seen_pairs: set[str] = set()
         seen_files: set[str] = set()
-        # Group files by director to find overlaps more efficiently
         files_by_director: dict[str, list[str]] = {}
-        for f, d in self._conflict_detector._active_files.items():
+        for f, d in active_files.items():
             files_by_director.setdefault(d, []).append(f)
 
         directors = list(files_by_director.keys())

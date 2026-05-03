@@ -1,5 +1,8 @@
 """Public boundary for `audit.verdict` cell."""
 
+from polaris.cells.audit.verdict.internal.independent_audit_service import (
+    IndependentAuditService,
+)
 from polaris.cells.audit.verdict.public.contracts import (
     AuditVerdictError,
     AuditVerdictIssuedEventV1,
@@ -28,6 +31,7 @@ __all__ = [
     "AuditVerdictResultV1",
     "CodeChange",
     "IAuditVerdictService",
+    "IndependentAuditService",
     "QueryAuditVerdictV1",
     "Review",
     "ReviewEventType",

@@ -1672,6 +1672,7 @@ class TurnTransactionController:
                 }
             )
 
+        messages = [msg for msg in messages if msg.get("metadata", {}).get("plane") != "control"]
         return messages
 
     # ---------------------------------------------------------------------------

@@ -9,6 +9,14 @@ Call chain (canonical pattern)::
 
     delivery -> application.orchestration -> cells.*.public / kernelone
 
+Migration guide (from old ``app/orchestration/``)::
+
+    # OLD (deprecated, will be removed after 2026-06-30)
+    from app.orchestration.pm_orchestrator import PmOrchestrator
+
+    # NEW (canonical)
+    from polaris.application.orchestration import PmOrchestrator
+
 Public surface:
     - ``PmOrchestrator``:  PM iteration lifecycle (planning, dispatch,
       blocked-policy, finalization).
@@ -48,6 +56,13 @@ from polaris.application.orchestration.pm_orchestrator import (
     PmOrchestrator,
     PmOrchestratorError,
 )
+from polaris.application.orchestration.protocols import (
+    IArchitectDesignDoc,
+    IArchitectService,
+    IAuditVerdictService,
+    IQaReviewResult,
+    IQAService,
+)
 from polaris.application.orchestration.qa_orchestrator import (
     QaAuditConfig,
     QaAuditLifecycleResult,
@@ -58,6 +73,7 @@ from polaris.application.orchestration.qa_orchestrator import (
 )
 
 __all__ = [
+    # Orchestrators
     "ArchitectDesignConfig",
     "ArchitectDesignLifecycleResult",
     "ArchitectOrchestrator",
@@ -69,6 +85,12 @@ __all__ = [
     "DirectorOrchestrator",
     "DirectorOrchestratorError",
     "DirectorTaskResult",
+    # Protocols
+    "IArchitectDesignDoc",
+    "IArchitectService",
+    "IAuditVerdictService",
+    "IQAService",
+    "IQaReviewResult",
     "PmIterationContext",
     "PmIterationResult",
     "PmOrchestrator",

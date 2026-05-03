@@ -51,12 +51,22 @@ class LocalFileSystemAdapter:
                 handle.write(data)
         return len(data.encode(encoding))
 
-    def write_bytes(self, path: str, content: bytes) -> int:
+    def write_bytes(self, path: str, content: bytes, *, atomic: bool = False) -> int:
         """Write bytes content to file."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         data = bytes(content)
-        with open(path, "wb") as handle:
-            handle.write(data)
+        if atomic:
+            with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=str(Path(path).parent)) as tmp:
+                tmp.write(data)
+                tmp_path = Path(tmp.name)
+            try:
+                tmp_path.replace(path)
+            except (RuntimeError, ValueError):
+                tmp_path.unlink(missing_ok=True)
+                raise
+        else:
+            with open(path, "wb") as handle:
+                handle.write(data)
         return len(data)
 
     def append_text(self, path: str, content: str, *, encoding: str = "utf-8") -> int:

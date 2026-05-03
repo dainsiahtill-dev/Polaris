@@ -587,7 +587,6 @@ class BackendToolRuntime:
                 check_result = self._budget_guard.check_file_budget(file_arg, cwd)
                 if check_result is not None:
                     self._budget_guard.raise_if_exceeded(check_result)
-                    return check_result
 
         executor = AgentAccelToolExecutor(workspace=cwd)
         try:

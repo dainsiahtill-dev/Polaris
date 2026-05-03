@@ -425,7 +425,7 @@ class MessageBus:
                     metadata={"handler_type": type(handler).__name__, "error": str(e)},
                 )
         if pending_async_handlers:
-            handler_tasks = [asyncio.ensure_future(coro) for coro in pending_async_handlers]
+            handler_tasks = [create_task_with_context(coro) for coro in pending_async_handlers]
             try:
                 results = await asyncio.wait_for(
                     asyncio.gather(*handler_tasks, return_exceptions=True),

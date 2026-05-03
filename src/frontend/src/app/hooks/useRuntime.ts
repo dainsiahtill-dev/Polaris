@@ -879,7 +879,13 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               if (eventId && seenLlmEventIdsRef.current.has(eventId)) {
                 return false;
               }
-              if (eventId) seenLlmEventIdsRef.current.add(eventId);
+              if (eventId) {
+                seenLlmEventIdsRef.current.add(eventId);
+                if (seenLlmEventIdsRef.current.size > 5000) {
+                  const entries = Array.from(seenLlmEventIdsRef.current);
+                  seenLlmEventIdsRef.current = new Set(entries.slice(-2500));
+                }
+              }
               return true;
             });
             if (uniqueLogs.length > 0) {

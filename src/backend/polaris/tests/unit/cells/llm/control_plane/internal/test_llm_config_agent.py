@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from polaris.cells.llm.control_plane.internal.llm_config_agent import (
@@ -200,7 +201,7 @@ class TestLLMConfigStore:
         # Mock the lock to do nothing
         with patch.object(store, "_lock"):
             store.save(config)
-        mock_fs.write_json.assert_called_once()
+        mock_fs.write_json_atomic.assert_called_once()
 
     def test_get_config_not_found(self) -> None:
         store, mock_fs = self._make_store_with_mock_fs("/tmp/llm")
@@ -235,7 +236,7 @@ class TestLLMConfigStore:
         with patch.object(store, "_lock"):
             result = store.delete("pm")
         assert result is True
-        mock_fs.write_json.assert_called_once()
+        mock_fs.write_json_atomic.assert_called_once()
 
     def test_delete_config_not_found(self) -> None:
         store, mock_fs = self._make_store_with_mock_fs("/tmp/llm")
@@ -341,3 +342,166 @@ class TestHRAgent:
 
         mock_store.get_all.assert_called_once_with()
         assert result == []
+
+
+class TestWriteJsonAtomic:
+    """Integration tests for write_json_atomic temp-file-then-rename pattern."""
+
+    def test_atomic_write_creates_temp_then_renames(self, tmp_path: Path) -> None:
+        """Verify atomic write creates temp file then atomically renames."""
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+        from polaris.kernelone.fs.runtime import KernelFileSystem
+
+        adapter = LocalFileSystemAdapter()
+        fs = KernelFileSystem(str(tmp_path), adapter)
+
+        # Write a config file atomically
+        test_data = {"role": "pm", "model": "test-model"}
+        fs.write_json_atomic("config/test.json", test_data)
+
+        # Verify target file exists
+        target = tmp_path / "config" / "test.json"
+        assert target.exists()
+
+        # Verify no temp files remain
+        temp_files = list(tmp_path.glob(".write_tmp_*.json"))
+        assert len(temp_files) == 0
+
+    def test_atomic_write_preserves_content(self, tmp_path: Path) -> None:
+        """Verify atomic write preserves exact JSON content."""
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+        from polaris.kernelone.fs.runtime import KernelFileSystem
+
+        adapter = LocalFileSystemAdapter()
+        fs = KernelFileSystem(str(tmp_path), adapter)
+
+        # Write multiple configs
+        configs = {
+            "pm": {"role": "pm", "model": "claude-3-5-sonnet"},
+            "architect": {"role": "architect", "model": "gpt-4"},
+        }
+        fs.write_json_atomic("llm/configs.json", configs)
+
+        # Read back and verify
+        result = fs.read_json("llm/configs.json")
+        assert result == configs
+        assert result["pm"]["model"] == "claude-3-5-sonnet"
+        assert result["architect"]["model"] == "gpt-4"
+
+    def test_atomic_write_overwrites_existing(self, tmp_path: Path) -> None:
+        """Verify atomic write correctly overwrites existing file."""
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+        from polaris.kernelone.fs.runtime import KernelFileSystem
+
+        adapter = LocalFileSystemAdapter()
+        fs = KernelFileSystem(str(tmp_path), adapter)
+
+        # Write initial content
+        fs.write_json_atomic("data.json", {"version": 1})
+
+        # Overwrite with new content
+        fs.write_json_atomic("data.json", {"version": 2, "extra": "data"})
+
+        # Verify only new content exists
+        result = fs.read_json("data.json")
+        assert result == {"version": 2, "extra": "data"}
+
+    def test_atomic_write_creates_parent_directories(self, tmp_path: Path) -> None:
+        """Verify atomic write creates parent directories as needed."""
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+        from polaris.kernelone.fs.runtime import KernelFileSystem
+
+        adapter = LocalFileSystemAdapter()
+        fs = KernelFileSystem(str(tmp_path), adapter)
+
+        # Write to nested path that doesn't exist
+        fs.write_json_atomic("a/b/c/deep.json", {"nested": True})
+
+        # Verify path was created
+        deep_file = tmp_path / "a" / "b" / "c" / "deep.json"
+        assert deep_file.exists()
+        assert fs.read_json("a/b/c/deep.json") == {"nested": True}
+
+    def test_atomic_write_with_special_chars_in_json(self, tmp_path: Path) -> None:
+        """Verify atomic write handles special characters correctly."""
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+        from polaris.kernelone.fs.runtime import KernelFileSystem
+
+        adapter = LocalFileSystemAdapter()
+        fs = KernelFileSystem(str(tmp_path), adapter)
+
+        # Write JSON with special characters
+        data = {
+            "chinese": "中文测试",
+            "emoji": "🎉",
+            "unicode": "  ",
+            "quotes": 'he said "hello"',
+        }
+        fs.write_json_atomic("special.json", data)
+
+        # Verify round-trip
+        result = fs.read_json("special.json")
+        assert result["chinese"] == "中文测试"
+        assert result["emoji"] == "🎉"
+
+    def test_atomic_write_fallback_when_adapter_lacks_support(self, tmp_path: Path) -> None:
+        """Verify fallback works when adapter lacks write_json_atomic."""
+        from polaris.kernelone.fs.runtime import KernelFileSystem
+
+        # Create a mock adapter without write_json_atomic
+        class MinimalAdapter:
+            def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
+                with open(path, encoding=encoding) as f:
+                    return f.read()
+
+            def read_bytes(self, path: str) -> bytes:
+                with open(path, "rb") as f:
+                    return f.read()
+
+            def exists(self, path: str) -> bool:
+                import os
+                return os.path.exists(path)
+
+            def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
+                import os
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding=encoding) as f:
+                    f.write(content)
+                return len(content.encode(encoding))
+
+            def write_bytes(self, path: str, content: bytes) -> int:
+                import os
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(content)
+                return len(content)
+
+            def append_text(self, path: str, content: str, *, encoding: str = "utf-8") -> int:
+                with open(path, "a", encoding=encoding) as f:
+                    f.write(content)
+                return len(content.encode(encoding))
+
+            def remove(self, path: str, *, missing_ok: bool = True) -> bool:
+                import os
+                try:
+                    os.remove(path)
+                    return True
+                except FileNotFoundError:
+                    return missing_ok
+
+            def is_file(self, path: str) -> bool:
+                import os
+                return os.path.isfile(path)
+
+            def is_dir(self, path: str) -> bool:
+                import os
+                return os.path.isdir(path)
+
+        adapter = MinimalAdapter()
+        fs = KernelFileSystem(str(tmp_path), adapter)
+
+        # write_json_atomic should work even without adapter support
+        fs.write_json_atomic("fallback.json", {"test": "fallback"})
+
+        # Verify content
+        assert fs.read_json("fallback.json") == {"test": "fallback"}

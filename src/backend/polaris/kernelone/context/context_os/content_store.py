@@ -291,10 +291,10 @@ class ContentStore:
         Returns:
             A frozen :class:`ContentRef` handle for the content.
         """
-        ref = self._intern_sync(content)
         if self._async_lock is None:
             self._async_lock = asyncio.Lock()
         async with self._async_lock:
+            ref = self._intern_sync(content)
             # Store key -> hash mapping for key-based lookup
             self._key_index[key] = ref.hash
             return ref

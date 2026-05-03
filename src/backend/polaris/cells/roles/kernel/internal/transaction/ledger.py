@@ -311,20 +311,32 @@ class TurnLedger:
         }
 
     def record_decision(self, decision: TurnDecision) -> None:
-        """记录决策"""
-        # NOTE: 历史实现将 decision 按 dict 访问；为保持兼容保留原逻辑
+        """记录决策（追加到决策列表）"""
+        self.decisions.append(self._decision_to_dict(decision))
+
+    def replace_decision(self, decision: TurnDecision) -> None:
+        """替换当前决策（用于重试场景，保持单一决策不变量）。
+
+        根据 TransactionKernel 协议，每个 turn 只能有一个最终决策。
+        重试时使用此方法替换已有决策，而不是追加新决策。
+        """
+        if self.decisions:
+            self.decisions[-1] = self._decision_to_dict(decision)
+        else:
+            self.decisions.append(self._decision_to_dict(decision))
+
+    def _decision_to_dict(self, decision: TurnDecision) -> dict[str, Any]:
+        """将决策转换为字典格式"""
         _decision: Any = decision  # type: ignore[assignment]
-        self.decisions.append(
-            {
-                "kind": _decision.get("kind", "").value
-                if hasattr(_decision.get("kind"), "value")
-                else str(_decision.get("kind", "")),
-                "finalize_mode": _decision.get("finalize_mode", "").value
-                if hasattr(_decision.get("finalize_mode"), "value")
-                else str(_decision.get("finalize_mode", "")),
-                "tool_count": (lambda tb: len(tb.get("invocations", [])) if tb else 0)(_decision.get("tool_batch")),
-            }
-        )
+        return {
+            "kind": _decision.get("kind", "").value
+            if hasattr(_decision.get("kind"), "value")
+            else str(_decision.get("kind", "")),
+            "finalize_mode": _decision.get("finalize_mode", "").value
+            if hasattr(_decision.get("finalize_mode"), "value")
+            else str(_decision.get("finalize_mode", "")),
+            "tool_count": (lambda tb: len(tb.get("invocations", [])) if tb else 0)(_decision.get("tool_batch")),
+        }
 
     def record_tool_batch_resolved(self, resolution_kind: str = "final_answer") -> None:
         """标记最后一个 tool_batch 决策已解决（收口或移交），以满足 KernelGuard 断言。"""

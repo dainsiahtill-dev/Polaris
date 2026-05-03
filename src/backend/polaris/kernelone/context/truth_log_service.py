@@ -398,9 +398,10 @@ class TruthLogService:
 
     async def append_async(self, entry: dict[str, Any] | Any) -> None:
         """Append an entry to the truth log (async version with proper indexing)."""
-        normalized = self._normalize_entry(entry)
-        entry_id = f"tl_{len(self._entries)}"
-        self._entries.append(normalized)
+        async with self._index_lock:
+            normalized = self._normalize_entry(entry)
+            entry_id = f"tl_{len(self._entries)}"
+            self._entries.append(normalized)
         await self._index_entry_async(normalized, entry_id)
 
     def append_many(self, entries: Iterable[dict[str, Any] | Any]) -> None:
@@ -409,7 +410,15 @@ class TruthLogService:
             self.append(entry)
 
     def replace(self, entries: Iterable[dict[str, Any] | Any]) -> None:
-        """Replace the in-memory view with a canonical transcript snapshot."""
+        """Replace the in-memory view with a canonical transcript snapshot.
+
+        WARNING: This method violates the append-only principle of TruthLog.
+        It should ONLY be used during trusted snapshot restore (e.g., after crash recovery
+        or when loading a checkpoint). Normal operation should use append() only.
+
+        This method exists because snapshot restore needs to rebuild the in-memory state
+        from a canonical transcript, not append to existing entries.
+        """
         self._entries = [self._normalize_entry(entry) for entry in entries]
 
     def get_entries(self) -> tuple[dict[str, Any], ...]:
