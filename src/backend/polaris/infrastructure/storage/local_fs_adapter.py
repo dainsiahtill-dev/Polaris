@@ -6,6 +6,7 @@ Paths use str for cross-platform consistency.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -36,16 +37,19 @@ class LocalFileSystemAdapter:
         data = str(content)
         if atomic:
             # Atomic write: write to temp file then rename
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding=encoding, delete=False, dir=str(Path(path).parent)
-            ) as tmp:
-                tmp.write(data)
-                tmp_path = Path(tmp.name)
+            tmp_path: Path | None = None
             try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding=encoding, delete=False, dir=str(Path(path).parent)
+                ) as tmp:
+                    tmp.write(data)
+                    tmp_path = Path(tmp.name)
                 tmp_path.replace(path)
-            except (RuntimeError, ValueError):
-                tmp_path.unlink(missing_ok=True)
-                raise
+                tmp_path = None
+            finally:
+                if tmp_path:
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink(missing_ok=True)
         else:
             with open(path, "w", encoding=encoding) as handle:
                 handle.write(data)
@@ -56,14 +60,17 @@ class LocalFileSystemAdapter:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         data = bytes(content)
         if atomic:
-            with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=str(Path(path).parent)) as tmp:
-                tmp.write(data)
-                tmp_path = Path(tmp.name)
+            tmp_path: Path | None = None
             try:
+                with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=str(Path(path).parent)) as tmp:
+                    tmp.write(data)
+                    tmp_path = Path(tmp.name)
                 tmp_path.replace(path)
-            except (RuntimeError, ValueError):
-                tmp_path.unlink(missing_ok=True)
-                raise
+                tmp_path = None
+            finally:
+                if tmp_path:
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink(missing_ok=True)
         else:
             with open(path, "wb") as handle:
                 handle.write(data)
@@ -100,5 +107,5 @@ class LocalFileSystemAdapter:
         try:
             os.remove(path)
             return True
-        except FileNotFoundError:
+        except OSError:
             return bool(missing_ok)

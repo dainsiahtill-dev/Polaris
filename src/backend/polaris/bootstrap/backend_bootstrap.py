@@ -229,7 +229,7 @@ class BackendBootstrapper:
                 timeout=timeout,
             )
             return status_code == 200
-        except (RuntimeError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.debug("health_check failed for port %d: %s", port, exc)
             return False
 

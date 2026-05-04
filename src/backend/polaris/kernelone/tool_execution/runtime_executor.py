@@ -7,6 +7,7 @@ CLI-style handlers when those are still available.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import json
 import logging
@@ -47,6 +48,9 @@ class ReadBudgetGuard:
     - Warning zone: >500 lines → warning appended to result
     """
 
+    _SAMPLE_SIZE: int = 4096
+    _FALLBACK_BYTES_PER_LINE: int = 50
+
     def __init__(
         self,
         warn_lines: int = FILE_READ_WARN_LINES,
@@ -54,6 +58,30 @@ class ReadBudgetGuard:
     ) -> None:
         self._warn_lines = warn_lines
         self._hard_limit = hard_limit
+
+    def _estimate_lines(self, path: str, file_size: int) -> int:
+        """Estimate line count via sampling, with conservative fallback.
+
+        Reads up to _SAMPLE_SIZE bytes from the start of the file,
+        counts actual newlines, and extrapolates. If sampling fails,
+        falls back to file_size // _FALLBACK_BYTES_PER_LINE.
+        """
+        if file_size <= 0:
+            return 0
+        try:
+            sample_size = min(file_size, self._SAMPLE_SIZE)
+            with open(path, "rb") as f:
+                sample = f.read(sample_size)
+            newline_count = sample.count(b"\n")
+            if newline_count == 0:
+                # No newlines in sample: either single-line file or binary.
+                # Fall back to conservative heuristic.
+                return max(1, file_size // self._FALLBACK_BYTES_PER_LINE)
+            # Extrapolate: lines in sample / bytes in sample * total bytes
+            estimated = int(newline_count / sample_size * file_size)
+            return max(1, estimated)
+        except OSError:
+            return max(1, file_size // self._FALLBACK_BYTES_PER_LINE)
 
     def check_file_budget(self, file_arg: str, cwd: str) -> dict[str, Any] | None:
         """Check if a file is within read budget.
@@ -74,7 +102,7 @@ class ReadBudgetGuard:
             if not os.path.isfile(target):
                 return None
             file_size = os.path.getsize(target)
-            estimated_lines = max(1, file_size // 104)
+            estimated_lines = self._estimate_lines(target, file_size)
             if estimated_lines > self._hard_limit:
                 return {
                     "ok": False,
@@ -94,9 +122,14 @@ class ReadBudgetGuard:
                     ),
                 }
             if estimated_lines > self._warn_lines:
-                pass
+                logger.warning(
+                    "ReadBudgetGuard: file '%s' has ~%d lines (warn threshold: %d)",
+                    raw_path,
+                    estimated_lines,
+                    self._warn_lines,
+                )
             return None
-        except (RuntimeError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             logger.warning(
                 "ReadBudgetGuard: failed to check budget for %s: %r",
                 file_arg,
@@ -423,9 +456,12 @@ class BackendToolRuntime:
     path resolution, and execution through composed helper classes.
     """
 
+    _EXECUTOR_CACHE_MAX: int = 4
+
     def __init__(self, workspace: str) -> None:
         self.workspace = str(workspace or ".")
         self._handlers: dict[str, ToolFn] | None = None
+        self._executor_cache: dict[str, Any] = {}
 
         self._path_resolver = WorkspacePathResolver(self.workspace)
         self._argument_normalizer = ToolArgumentNormalizer()
@@ -554,6 +590,35 @@ class BackendToolRuntime:
 
         return _handler
 
+    def _get_executor(self, cwd: str) -> Any:
+        """Get or create a cached AgentAccelToolExecutor for the given cwd."""
+        from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
+
+        if cwd in self._executor_cache:
+            return self._executor_cache[cwd]
+
+        # Evict oldest entry if at capacity
+        if len(self._executor_cache) >= self._EXECUTOR_CACHE_MAX:
+            oldest_cwd = next(iter(self._executor_cache))
+            oldest_executor = self._executor_cache.pop(oldest_cwd)
+            close_sync = getattr(oldest_executor, "close_sync", None)
+            if callable(close_sync):
+                with contextlib.suppress(Exception):
+                    close_sync()
+
+        executor = AgentAccelToolExecutor(workspace=cwd)
+        self._executor_cache[cwd] = executor
+        return executor
+
+    def close(self) -> None:
+        """Close all cached executors and release resources."""
+        for executor in list(self._executor_cache.values()):
+            close_sync = getattr(executor, "close_sync", None)
+            if callable(close_sync):
+                with contextlib.suppress(Exception):
+                    close_sync()
+        self._executor_cache.clear()
+
     def _invoke_with_direct_executor(
         self,
         *,
@@ -573,8 +638,6 @@ class BackendToolRuntime:
         Raises:
             ToolExecutionError: If tool execution fails.
         """
-        from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
-
         tool_arguments = dict(arguments)
         if tool_name == "execute_command":
             tool_arguments.setdefault("timeout", timeout_sec)
@@ -588,7 +651,7 @@ class BackendToolRuntime:
                 if check_result is not None:
                     self._budget_guard.raise_if_exceeded(check_result)
 
-        executor = AgentAccelToolExecutor(workspace=cwd)
+        executor = self._get_executor(cwd)
         try:
             result = executor.execute(tool_name, tool_arguments)
         except BudgetExceededError:
@@ -601,17 +664,6 @@ class BackendToolRuntime:
                 tool_name=tool_name,
                 cause=exc,
             ) from exc
-        finally:
-            close_sync = getattr(executor, "close_sync", None)
-            if callable(close_sync):
-                try:
-                    close_sync()
-                except (RuntimeError, ValueError) as exc:
-                    logger.warning(
-                        "Failed to close tool executor for %s: %s",
-                        tool_name,
-                        str(exc),
-                    )
 
         if not isinstance(result, dict):
             raise ToolExecutionError(

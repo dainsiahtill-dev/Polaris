@@ -6,6 +6,7 @@ abstraction for testing and future storage backend variations.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -133,19 +134,26 @@ class StorageAdapter:
         if atomic:
             # Use tempfile with random suffix to prevent symlink attacks
             tmp_dir = os.path.dirname(abs_path) or "."
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                dir=tmp_dir,
-                suffix=".tmp",
-                encoding=encoding,
-                newline="\n",
-                delete=False,
-            ) as f:
-                tmp_path = f.name
-                f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, abs_path)
+            tmp_path: str | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    dir=tmp_dir,
+                    suffix=".tmp",
+                    encoding=encoding,
+                    newline="\n",
+                    delete=False,
+                ) as f:
+                    tmp_path = f.name
+                    f.write(content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, abs_path)
+                tmp_path = None
+            finally:
+                if tmp_path:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp_path)
         else:
             with open(abs_path, "w", encoding=encoding, newline="\n") as f:
                 f.write(content)
@@ -190,8 +198,10 @@ class StorageAdapter:
         abs_path = self._to_absolute(path)
         self.ensure_dir(os.path.dirname(abs_path))
 
-        with open(abs_path, "a", encoding="utf-8", newline="\n") as f:
+        with self._lock, open(abs_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def read_jsonl(self, path: str, max_size_mb: float = 10.0) -> list[dict[str, Any]]:
         """Read all records from JSONL file.
@@ -329,7 +339,7 @@ class StorageAdapter:
                     os.rmdir(abs_path)
                 return True
             return False
-        except (RuntimeError, ValueError):
+        except OSError:
             logger.exception("delete failed: path=%s", abs_path)
             return False
 
@@ -347,18 +357,21 @@ class StorageAdapter:
 
         # Already absolute — validate it stays within workspace boundary
         if os.path.isabs(path):
-            # Use commonpath to ensure the path is within workspace
+            normalized = os.path.normpath(path)
             try:
-                common = os.path.commonpath([path, self._workspace])
-                if common == self._workspace or path.startswith(self._workspace + os.sep):
-                    return path
+                common = os.path.commonpath([normalized, self._workspace])
+                if common == self._workspace or normalized.startswith(self._workspace + os.sep):
+                    return normalized
             except ValueError:
                 # commonpath raises ValueError on paths on different drives (Windows)
                 pass
             raise ValueError(f"Path '{path}' is outside workspace boundary")
 
-        # Relative to workspace
-        return os.path.join(self._workspace, path)
+        # Relative to workspace — normalize and validate boundary
+        target = os.path.normpath(os.path.join(self._workspace, path))
+        if not target.startswith(self._workspace + os.sep):
+            raise ValueError(f"Path '{path}' is outside workspace boundary")
+        return target
 
 
 class FileSystemAdapter(StorageAdapter):

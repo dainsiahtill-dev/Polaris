@@ -811,7 +811,8 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
 
           const primaryStatus = selectPrimaryStatus(projection);
           const systemActive = isSystemActive(projection);
-          const nextPhase = systemActive ? primaryStatus.replace(/-/g, '_') : 'idle';
+          const rawPhase = systemActive ? primaryStatus.replace(/-/g, '_') : 'idle';
+          const nextPhase = Parsing.normalizePhaseToken(rawPhase) || 'idle';
           setCurrentPhase(nextPhase);
 
           const canonicalTasks = selectTaskRows(projection);

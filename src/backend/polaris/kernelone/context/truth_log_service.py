@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -65,6 +66,7 @@ class TruthLogIndex:
         # In-memory keyword index as fallback
         self._keyword_index: dict[str, set[str]] = {}  # term -> entry_ids
         self._entries_by_id: dict[str, TruthLogIndexEntry] = {}
+        self._data_lock = threading.RLock()
 
     def _get_embedding_port(self) -> Any | None:
         """Get embedding port (lazy initialization)."""
@@ -153,14 +155,27 @@ class TruthLogIndex:
             searchable_text=searchable_text,
         )
 
-        self._entries_by_id[entry_id] = index_entry
+        with self._data_lock:
+            self._entries_by_id[entry_id] = index_entry
 
-        # Update keyword index
-        tokens = self._tokenize(searchable_text)
-        for token in tokens:
-            if token not in self._keyword_index:
-                self._keyword_index[token] = set()
-            self._keyword_index[token].add(entry_id)
+            # Update keyword index
+            tokens = self._tokenize(searchable_text)
+            for token in tokens:
+                if token not in self._keyword_index:
+                    self._keyword_index[token] = set()
+                self._keyword_index[token].add(entry_id)
+
+    def add_entry_sync(self, entry: dict[str, Any], entry_id: str | None = None) -> str:
+        """Add an entry to the keyword index synchronously.
+
+        This is the synchronous fallback for contexts without an event loop.
+        Semantic memory indexing is skipped; only the keyword index is updated.
+        """
+        with self._data_lock:
+            if entry_id is None:
+                entry_id = f"tl_{len(self._entries_by_id)}_{datetime.now(timezone.utc).timestamp()}"
+            self._index_entry(entry_id, entry)
+        return entry_id
 
     async def add_entry(self, entry: dict[str, Any], entry_id: str | None = None) -> str:
         """Add an entry to the semantic index.
@@ -233,39 +248,41 @@ class TruthLogIndex:
             if self._semantic_memory is not None and query.strip():
                 try:
                     semantic_results = await self._semantic_memory.search(query, top_k=top_k * 2)
-                    for item in semantic_results:
-                        entry_id = item.metadata.get("entry_id") if hasattr(item, "metadata") else None
-                        if entry_id and entry_id in self._entries_by_id:
-                            entry_data = self._entries_by_id[entry_id]
-                            if self._passes_filters(entry_data, role_filter, event_type_filter, time_range):
-                                results.append(
-                                    TruthLogSearchResult(
-                                        entry=entry_data.entry,
-                                        score=getattr(item, "score", 1.0),
-                                        matched_on=["semantic_embedding"],
+                    with self._data_lock:
+                        for item in semantic_results:
+                            entry_id = item.metadata.get("entry_id") if hasattr(item, "metadata") else None
+                            if entry_id and entry_id in self._entries_by_id:
+                                entry_data = self._entries_by_id[entry_id]
+                                if self._passes_filters(entry_data, role_filter, event_type_filter, time_range):
+                                    results.append(
+                                        TruthLogSearchResult(
+                                            entry=entry_data.entry,
+                                            score=getattr(item, "score", 1.0),
+                                            matched_on=["semantic_embedding"],
+                                        )
                                     )
-                                )
                 except (RuntimeError, ValueError, TypeError) as exc:
                     logger.debug("Semantic search failed, falling back to keyword: %s", exc)
 
             # Keyword search fallback / supplement
             query_tokens = self._tokenize(query)
-            for token in query_tokens:
-                if token in self._keyword_index:
-                    for entry_id in self._keyword_index[token]:
-                        idx_entry: TruthLogIndexEntry | None = self._entries_by_id.get(entry_id)
-                        if (
-                            idx_entry
-                            and self._passes_filters(idx_entry, role_filter, event_type_filter, time_range)
-                            and not any(r.entry == idx_entry.entry for r in results)
-                        ):
-                            results.append(
-                                TruthLogSearchResult(
-                                    entry=idx_entry.entry,
-                                    score=0.5,  # Keyword match score
-                                    matched_on=[f"keyword:{token}"],
+            with self._data_lock:
+                for token in query_tokens:
+                    if token in self._keyword_index:
+                        for entry_id in self._keyword_index[token]:
+                            idx_entry: TruthLogIndexEntry | None = self._entries_by_id.get(entry_id)
+                            if (
+                                idx_entry
+                                and self._passes_filters(idx_entry, role_filter, event_type_filter, time_range)
+                                and not any(r.entry == idx_entry.entry for r in results)
+                            ):
+                                results.append(
+                                    TruthLogSearchResult(
+                                        entry=idx_entry.entry,
+                                        score=0.5,  # Keyword match score
+                                        matched_on=[f"keyword:{token}"],
+                                    )
                                 )
-                            )
 
         # Sort by score and limit
         results.sort(key=lambda r: r.score, reverse=True)
@@ -291,30 +308,35 @@ class TruthLogIndex:
 
     def query_by_role(self, role: str) -> list[dict[str, Any]]:
         """Get all entries from a specific role."""
-        return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.role and role.lower() in e.role.lower()]
+        with self._data_lock:
+            return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.role and role.lower() in e.role.lower()]
 
     def query_by_event_type(self, event_type: str) -> list[dict[str, Any]]:
         """Get all entries of a specific event type."""
-        return [
-            deepcopy(e.entry)
-            for e in self._entries_by_id.values()
-            if e.event_type and event_type.lower() in e.event_type.lower()
-        ]
+        with self._data_lock:
+            return [
+                deepcopy(e.entry)
+                for e in self._entries_by_id.values()
+                if e.event_type and event_type.lower() in e.event_type.lower()
+            ]
 
     def query_by_time_range(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Get all entries within a time range."""
-        return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.timestamp and start <= e.timestamp <= end]
+        with self._data_lock:
+            return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.timestamp and start <= e.timestamp <= end]
 
     def get_recent(self, n: int = 10) -> list[dict[str, Any]]:
         """Get the N most recent entries by insertion order."""
-        all_entries = list(self._entries_by_id.values())
-        all_entries.sort(key=lambda e: e.entry_id, reverse=True)
-        return [deepcopy(e.entry) for e in all_entries[:n]]
+        with self._data_lock:
+            all_entries = list(self._entries_by_id.values())
+            all_entries.sort(key=lambda e: e.entry_id, reverse=True)
+            return [deepcopy(e.entry) for e in all_entries[:n]]
 
     def clear(self) -> None:
         """Clear the index."""
-        self._entries_by_id.clear()
-        self._keyword_index.clear()
+        with self._data_lock:
+            self._entries_by_id.clear()
+            self._keyword_index.clear()
         self._initialized = False
 
 
@@ -337,12 +359,14 @@ class TruthLogService:
         session_id: str | None = None,
     ) -> None:
         self._entries: list[dict[str, Any]] = []
+        self._entries_lock = threading.Lock()
         self._workspace = str(workspace or ".")
         self._session_id = session_id
         self._index: TruthLogIndex | None = None
         self._enable_semantic_index = enable_semantic_index
         self._index_lock = asyncio.Lock()
         self._index_initialized = False
+        self._pending_index_tasks: set[asyncio.Task[Any]] = set()
 
     def _ensure_index(self) -> TruthLogIndex:
         """Lazily create the semantic index."""
@@ -367,38 +391,39 @@ class TruthLogService:
 
     async def _index_entry_async(self, entry: dict[str, Any], entry_id: str) -> None:
         """Index an entry in the semantic index (async)."""
-        if not self._enable_semantic_index:
-            return
         index = self._ensure_index()
         await index.add_entry(entry, entry_id)
 
     def append(self, entry: dict[str, Any] | Any) -> None:
         """Append an entry to the truth log (sync)."""
         normalized = self._normalize_entry(entry)
-        self._entries.append(normalized)
-        # Fire-and-forget index update (sync wrapper)
+        with self._entries_lock:
+            entry_id = f"tl_{len(self._entries)}"
+            self._entries.append(normalized)
+        # Index update: fire-and-forget in async context, sync fallback otherwise
         try:
-            import asyncio
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(self._index_entry_async(normalized, entry_id))
+            self._pending_index_tasks.add(task)
 
-            # Store reference to prevent GC, but don't wait on it
-            task = asyncio.create_task(self._index_entry_async(normalized, f"tl_{len(self._entries) - 1}"))
-
-            def _handle_index_error(t: Any) -> None:
+            def _handle_index_error(t: asyncio.Task[Any]) -> None:
+                self._pending_index_tasks.discard(t)
                 try:
                     t.result()
                 except (RuntimeError, asyncio.InvalidStateError, asyncio.CancelledError) as e:
                     import logging
 
-                    logging.getLogger(__name__).debug(f"Truth log background indexing failed (safe to ignore): {e}")
+                    logging.getLogger(__name__).debug("Truth log background indexing failed (safe to ignore): %s", e)
 
             task.add_done_callback(_handle_index_error)
         except RuntimeError:
-            # No event loop running, skip indexing
-            pass
+            # No event loop running - index synchronously
+            index = self._ensure_index()
+            index.add_entry_sync(normalized, entry_id)
 
     async def append_async(self, entry: dict[str, Any] | Any) -> None:
         """Append an entry to the truth log (async version with proper indexing)."""
-        async with self._index_lock:
+        with self._entries_lock:
             normalized = self._normalize_entry(entry)
             entry_id = f"tl_{len(self._entries)}"
             self._entries.append(normalized)
@@ -419,15 +444,21 @@ class TruthLogService:
         This method exists because snapshot restore needs to rebuild the in-memory state
         from a canonical transcript, not append to existing entries.
         """
-        self._entries = [self._normalize_entry(entry) for entry in entries]
+        with self._entries_lock:
+            self._entries = [self._normalize_entry(entry) for entry in entries]
+        # Invalidate semantic index to prevent stale data
+        if self._index is not None:
+            self._index.clear()
 
     def get_entries(self) -> tuple[dict[str, Any], ...]:
         """Return all entries as an immutable tuple."""
-        return tuple(self._normalize_entry(e) for e in self._entries)
+        with self._entries_lock:
+            return tuple(self._normalize_entry(e) for e in self._entries)
 
     def replay(self) -> list[dict[str, Any]]:
         """Return a deep-copied list suitable for replay."""
-        return [self._normalize_entry(e) for e in self._entries]
+        with self._entries_lock:
+            return [self._normalize_entry(e) for e in self._entries]
 
     # ── Semantic Search API ──────────────────────────────────────────────────
 
@@ -456,9 +487,6 @@ class TruthLogService:
         Returns:
             List of search results sorted by score descending
         """
-        if not self._enable_semantic_index:
-            logger.warning("search called but semantic index is disabled")
-            return []
         index = self._ensure_index()
         return await index.search(
             query,

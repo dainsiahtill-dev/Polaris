@@ -417,8 +417,12 @@ class MessageBus:
                 result = handler(message)
                 if inspect.isawaitable(result):
                     pending_async_handlers.append(result)
-            except (RuntimeError, ValueError) as e:
-                logger.warning(f"Message handler error for {message.type.name}: {e}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Message handler error for %s: %s",
+                    message.type.name,
+                    e,
+                )
                 self._record_dead_letter(
                     message,
                     "handler_error",
@@ -439,6 +443,11 @@ class MessageBus:
                     "Async message handlers timed out for %s after %.1fs",
                     message.type.name,
                     _ASYNC_HANDLER_TIMEOUT_SECONDS,
+                )
+                self._record_dead_letter(
+                    message,
+                    "handler_timeout",
+                    metadata={"timeout": _ASYNC_HANDLER_TIMEOUT_SECONDS},
                 )
                 return
             for result in results:

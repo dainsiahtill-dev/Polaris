@@ -278,7 +278,13 @@ async def runtime_websocket(
             {"client": client, "error_type": type(exc).__name__, "error": str(exc), **workspace_details},
         )
     finally:
-        # Cleanup
+        # Cleanup — each step guarded so one failure doesn't block others.
+        async def _safe_cleanup(coro: Any, label: str) -> None:
+            try:
+                await asyncio.shield(coro)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("WS cleanup %s failed for %s: %s", label, connection_id, exc)
+
         with suppress(Exception):
             await asyncio.shield(
                 _log_connection_event(
@@ -295,15 +301,19 @@ async def runtime_websocket(
                     },
                 )
             )
-        with suppress(Exception):
-            await asyncio.shield(RUNTIME_EVENT_FANOUT.unregister_connection(connection_id))
-        with suppress(Exception):
-            await asyncio.shield(LOG_REALTIME_FANOUT.unregister_connection(connection_id))
-        with suppress(Exception):
+
+        await _safe_cleanup(
+            RUNTIME_EVENT_FANOUT.unregister_connection(connection_id), "fanout_unregister"
+        )
+        await _safe_cleanup(
+            LOG_REALTIME_FANOUT.unregister_connection(connection_id), "log_unregister"
+        )
+        try:
             REALTIME_SIGNAL_HUB.release_watch(cache_root)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("WS cleanup signal_hub failed for %s: %s", connection_id, exc)
         if v2_consumer_manager:
-            with suppress(Exception):
-                await asyncio.shield(v2_consumer_manager.disconnect())
+            await _safe_cleanup(v2_consumer_manager.disconnect(), "v2_consumer_disconnect")
 
 
 async def _log_connection_event(

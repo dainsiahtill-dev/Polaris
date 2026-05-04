@@ -25,13 +25,17 @@ _BUILDER_REGISTRY: dict[str, SuggestionBuilder] = {}
 _SORTED_BUILDERS: list[SuggestionBuilder] | None = None
 
 
-def _get_sorted_builders() -> list[SuggestionBuilder]:
-    """Get builders sorted by priority (ascending)."""
+def _get_sorted_builders() -> tuple[SuggestionBuilder, ...]:
+    """Get builders sorted by priority (ascending).
+
+    Returns an immutable tuple to prevent callers from mutating the
+    cached sort order and to ensure cache consistency across threads.
+    """
     global _SORTED_BUILDERS
     with _REGISTRY_LOCK:
         if _SORTED_BUILDERS is None:
             _SORTED_BUILDERS = sorted(_BUILDER_REGISTRY.values(), key=lambda b: b.priority)
-        return _SORTED_BUILDERS
+        return tuple(_SORTED_BUILDERS)
 
 
 def register_builder(builder: SuggestionBuilder) -> None:
@@ -50,19 +54,22 @@ def register_builder(builder: SuggestionBuilder) -> None:
 def _register_default_builders() -> None:
     """Register all built-in builders.
 
-    Called once at module import time.
+    Called lazily on first build_suggestion() invocation.
+    Thread-safe via module-level lock.
     """
-    global _BUILDER_REGISTRY
-    if _BUILDER_REGISTRY:
-        return  # Already registered
+    global _SORTED_BUILDERS
+    with _REGISTRY_LOCK:
+        if _BUILDER_REGISTRY:
+            return  # Already registered
 
-    from polaris.kernelone.tool_execution.suggestions.exploration import (
-        ExplorationBuilder,
-    )
-    from polaris.kernelone.tool_execution.suggestions.fuzzy import FuzzyMatchBuilder
+        from polaris.kernelone.tool_execution.suggestions.exploration import (
+            ExplorationBuilder,
+        )
+        from polaris.kernelone.tool_execution.suggestions.fuzzy import FuzzyMatchBuilder
 
-    register_builder(FuzzyMatchBuilder())
-    register_builder(ExplorationBuilder())
+        _BUILDER_REGISTRY["fuzzy_match"] = FuzzyMatchBuilder()
+        _BUILDER_REGISTRY["exploration"] = ExplorationBuilder()
+        _SORTED_BUILDERS = None  # invalidate cache
 
 
 def build_suggestion(
@@ -83,27 +90,31 @@ def build_suggestion(
     _register_default_builders()
 
     for builder in _get_sorted_builders():
-        if builder.should_apply(error_result):
-            try:
-                suggestion = builder.build(error_result, **kwargs)
-                if suggestion:
-                    logger.debug(
-                        "Suggestion from %s for error '%s': %s",
-                        builder.name,
-                        error_result.get("error", ""),
-                        suggestion[:100],
-                    )
-                    return suggestion
-            except (RuntimeError, ValueError) as exc:
-                logger.warning(
-                    "SuggestionBuilder '%s' raised: %s",
-                    builder.name,
-                    exc,
-                )
+        try:
+            if not builder.should_apply(error_result):
                 continue
+            suggestion = builder.build(error_result, **kwargs)
+            if suggestion:
+                logger.debug(
+                    "Suggestion from %s for error '%s': %s",
+                    builder.name,
+                    error_result.get("error", ""),
+                    suggestion[:100],
+                )
+                return suggestion
+        except Exception as exc:  # noqa: BLE001
+            # Builders are plugin-like; isolate failures so one bad builder
+            # does not break the entire suggestion pipeline.
+            logger.warning(
+                "SuggestionBuilder '%s' raised %s: %s",
+                builder.name,
+                type(exc).__name__,
+                exc,
+            )
+            continue
 
     return None
 
 
-# 延迟注册，在第一次 build_suggestion 调用时初始化
-_register_default_builders()
+# Lazy registration: _register_default_builders() is called on first
+# build_suggestion() invocation to avoid import-time side effects.

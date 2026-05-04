@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -34,6 +35,7 @@ class AuthContext:
     def __init__(self) -> None:
         self._current_user: dict[str, Any] | None = None
         self._session_store: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
 
     # ─────────────────────────────────────────────────────────────────
     # Session management
@@ -48,11 +50,12 @@ class AuthContext:
         Returns:
             True if session is valid and not expired, False otherwise.
         """
-        session = self._session_store.get(session_id)
-        if not session:
-            return False
-        expires_at = session.get("expires_at", 0)
-        return expires_at > time.time()
+        with self._lock:
+            session = self._session_store.get(session_id)
+            if not session:
+                return False
+            expires_at = session.get("expires_at", 0)
+            return expires_at > time.time()
 
     def create_session(
         self,
@@ -73,11 +76,12 @@ class AuthContext:
         import secrets
 
         session_id = f"session_{user_id}_{secrets.token_urlsafe(24)}"
-        self._session_store[session_id] = {
-            "user_id": user_id,
-            "roles": roles or [],
-            "expires_at": time.time() + ttl_seconds,
-        }
+        with self._lock:
+            self._session_store[session_id] = {
+                "user_id": user_id,
+                "roles": roles or [],
+                "expires_at": time.time() + ttl_seconds,
+            }
         return session_id
 
     # ─────────────────────────────────────────────────────────────────
@@ -91,13 +95,14 @@ class AuthContext:
             User context dict with user_id, roles, and permissions keys,
             or None if no user is authenticated.
         """
-        if self._current_user is None:
-            return None
-        return {
-            "user_id": self._current_user.get("user_id"),
-            "roles": self._current_user.get("roles", []),
-            "permissions": self._current_user.get("permissions", []),
-        }
+        with self._lock:
+            if self._current_user is None:
+                return None
+            return {
+                "user_id": self._current_user.get("user_id"),
+                "roles": self._current_user.get("roles", []),
+                "permissions": self._current_user.get("permissions", []),
+            }
 
     def set_current_user(self, user_id: str, roles: list[str] | None = None) -> None:
         """Set the current authenticated user.
@@ -106,15 +111,17 @@ class AuthContext:
             user_id: The user identifier.
             roles: Optional list of roles for the user.
         """
-        self._current_user = {
-            "user_id": user_id,
-            "roles": roles or [],
-            "permissions": self._get_role_permissions(roles or []),
-        }
+        with self._lock:
+            self._current_user = {
+                "user_id": user_id,
+                "roles": roles or [],
+                "permissions": self._get_role_permissions(roles or []),
+            }
 
     def clear_current_user(self) -> None:
         """Clear the current authenticated user context."""
-        self._current_user = None
+        with self._lock:
+            self._current_user = None
 
     # ─────────────────────────────────────────────────────────────────
     # Permission checking
@@ -129,10 +136,11 @@ class AuthContext:
         Returns:
             True if the current user has the permission, False otherwise.
         """
-        if not self._current_user:
-            return False
-        permissions = self._current_user.get("permissions", [])
-        return permission in permissions
+        with self._lock:
+            if not self._current_user:
+                return False
+            permissions = self._current_user.get("permissions", [])
+            return permission in permissions
 
     def get_user_context(self, user_id: str) -> dict[str, Any]:
         """Get auth context for a specific user.

@@ -518,10 +518,13 @@ class TestServiceResolution:
     """Tests for lazy service resolution."""
 
     def test_get_architect_service_import_error(self, config: ArchitectDesignConfig) -> None:
-        """Verify ImportError is wrapped correctly."""
+        """Verify ImportError during service resolution is wrapped correctly."""
         orch = ArchitectOrchestrator(config)
 
-        with patch("builtins.__import__", side_effect=ImportError("Module not found")):
+        with patch(
+            "polaris.cells.architect.design.public.ArchitectService",
+            side_effect=ImportError("Module not found"),
+        ):
             with pytest.raises(ArchitectOrchestratorError) as exc_info:
                 orch._get_architect_service()
 
@@ -531,17 +534,15 @@ class TestServiceResolution:
         """Verify service is cached after first call."""
         orch = ArchitectOrchestrator(config)
 
-        with patch.object(orch, "_get_architect_service") as mock_get:
-            mock_service = MagicMock()
-            mock_get.return_value = mock_service
-
-            # First call
+        mock_instance = MagicMock()
+        with patch(
+            "polaris.cells.architect.design.public.ArchitectService",
+            return_value=mock_instance,
+        ):
             service1 = orch._get_architect_service()
-            # Second call should return cached service
             service2 = orch._get_architect_service()
 
-            assert service1 is service2
-            assert mock_get.call_count == 2  # Called twice because mock replaces method
+            assert service1 is service2 is mock_instance
 
 
 # =============================================================================

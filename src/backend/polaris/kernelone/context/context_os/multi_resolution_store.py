@@ -267,8 +267,8 @@ class MultiResolutionStore:
 
         content = self._content_store.get(entry.content_ref)
 
-        # If we got an evicted placeholder, try to reconstruct
-        if content.startswith("<evicted:"):
+        # If content was evicted, try to reconstruct from higher resolution
+        if content is None:
             content = self._try_reconstruct(multi_res, preferred_level)
 
         return content
@@ -292,7 +292,7 @@ class MultiResolutionStore:
             if next_level in multi_res.resolutions:
                 entry = multi_res.resolutions[next_level]
                 content = self._content_store.get(entry.content_ref)
-                if not content.startswith("<evicted:"):
+                if content is not None:
                     # Got higher resolution content
                     logger.info(
                         "Reconstructed %s from %s for content_id=%s",

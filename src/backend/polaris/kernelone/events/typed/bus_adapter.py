@@ -9,8 +9,8 @@ Reference: OpenCode packages/opencode/src/bus/index.ts (GlobalBus integration)
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -146,8 +146,11 @@ class TypedEventBusAdapter:
         # Mapping from MessageTypes to TypedEvent names
         self._message_type_to_event: dict[str, str] = {}
 
-        # Track subscriptions for cleanup
-        self._subscriptions: list[tuple[MessageType, Callable[[Message], Any]]] = []  # (MessageType, handler_ref)
+        # Track MessageBus subscriptions for cleanup
+        self._subscriptions: list[tuple[MessageType, Callable[[Message], Any], str]] = []  # (MessageType, handler_ref, subscription_id)
+
+        # Track Registry subscriptions for cleanup
+        self._registry_subscriptions: list[tuple[str, str]] = []  # (pattern, subscription_id)
 
         # Statistics
         self._events_converted: int = 0
@@ -346,7 +349,7 @@ class TypedEventBusAdapter:
         self,
         message_type: MessageType,
         handler: Any,
-    ) -> int:
+    ) -> str | None:
         """Subscribe to MessageBus and re-emit as TypedEvent.
 
         When a matching Message is received from MessageBus, it is
@@ -387,12 +390,15 @@ class TypedEventBusAdapter:
 
         # Subscribe to MessageBus
         subscribed = await self._bus.subscribe(message_type, wrapped_handler)
-        if subscribed:
-            # Store handler reference for proper unsubscribe
-            self._subscriptions.append((message_type, wrapped_handler))
-            logger.info(f"Subscribed MessageBus {message_type.name} -> TypedEvent")
+        if not subscribed:
+            return None
 
-        return id(wrapped_handler)
+        # Store handler reference for proper unsubscribe
+        subscription_id = uuid.uuid4().hex
+        self._subscriptions.append((message_type, wrapped_handler, subscription_id))
+        logger.info("Subscribed MessageBus %s -> TypedEvent", message_type.name)
+
+        return subscription_id
 
     async def _convert_message_to_event(self, message: Message) -> TypedEvent | None:
         """Convert a Message to a TypedEvent.
@@ -477,16 +483,18 @@ class TypedEventBusAdapter:
             except (RuntimeError, ValueError) as e:
                 logger.error(f"Failed to emit TypedEvent to MessageBus: {e}")
 
-        return self._registry.subscribe(
+        registry_subscription_id = self._registry.subscribe(
             EventPattern.from_string(pattern),
             wrapped_handler,
         )
+        self._registry_subscriptions.append((pattern, registry_subscription_id))
+        return registry_subscription_id
 
     # -------------------------------------------------------------------------
     # Cleanup
     # -------------------------------------------------------------------------
 
-    async def unsubscribe(self, subscription_id: int) -> bool:
+    async def unsubscribe(self, subscription_id: str) -> bool:
         """Unsubscribe a specific handler by subscription ID.
 
         Args:
@@ -495,21 +503,35 @@ class TypedEventBusAdapter:
         Returns:
             True if unsubscribed successfully, False if not found
         """
-        # Find the subscription matching the ID
-        for i, (message_type, handler) in enumerate(self._subscriptions):
-            if id(handler) == subscription_id:
+        # Search MessageBus subscriptions
+        for i, (message_type, handler, sid) in enumerate(self._subscriptions):
+            if sid == subscription_id:
                 try:
                     success = await self._bus.unsubscribe(message_type, handler)
                     if success:
                         self._subscriptions.pop(i)
-                        logger.debug(f"Unsubscribed handler {subscription_id} from {message_type.name}")
+                        logger.debug(
+                            "Unsubscribed handler %s from %s", subscription_id, message_type.name
+                        )
                         return True
                     return False
-                except (RuntimeError, ValueError) as e:
-                    logger.error(f"Error unsubscribing handler {subscription_id}: {e}")
+                except (RuntimeError, ValueError) as exc:
+                    logger.error("Error unsubscribing handler %s: %s", subscription_id, exc)
                     return False
 
-        logger.warning(f"Subscription ID {subscription_id} not found in _subscriptions")
+        # Search Registry subscriptions
+        for i, (pattern, sid) in enumerate(self._registry_subscriptions):
+            if sid == subscription_id:
+                try:
+                    self._registry.unsubscribe(sid)
+                    self._registry_subscriptions.pop(i)
+                    logger.debug("Unsubscribed registry handler %s from %s", subscription_id, pattern)
+                    return True
+                except (RuntimeError, ValueError) as exc:
+                    logger.error("Error unsubscribing registry handler %s: %s", subscription_id, exc)
+                    return False
+
+        logger.warning("Subscription ID %s not found", subscription_id)
         return False
 
     async def unsubscribe_all(self) -> None:
@@ -525,24 +547,39 @@ class TypedEventBusAdapter:
         removed_count = 0
         failed_count = 0
 
-        # Create a copy to avoid modifying during iteration
-        subscriptions_to_remove = list(self._subscriptions)
-
-        for message_type, handler in subscriptions_to_remove:
+        # Unsubscribe MessageBus handlers — only remove from internal list on success
+        for message_type, handler, sid in list(self._subscriptions):
             try:
                 success = await self._bus.unsubscribe(message_type, handler)
                 if success:
+                    self._subscriptions = [
+                        s for s in self._subscriptions if s[2] != sid
+                    ]
                     removed_count += 1
                 else:
                     failed_count += 1
-                    logger.warning(f"Failed to unsubscribe MessageBus {message_type.name}: handler not found")
-            except (RuntimeError, ValueError) as e:
+                    logger.warning(
+                        "Failed to unsubscribe MessageBus %s: handler not found", message_type.name
+                    )
+            except (RuntimeError, ValueError) as exc:
                 failed_count += 1
-                logger.error(f"Error unsubscribing MessageBus {message_type.name}: {e}")
+                logger.error("Error unsubscribing MessageBus %s: %s", message_type.name, exc)
 
-        self._subscriptions.clear()
+        # Unsubscribe Registry handlers
+        for pattern, sid in list(self._registry_subscriptions):
+            try:
+                self._registry.unsubscribe(sid)
+                self._registry_subscriptions = [
+                    s for s in self._registry_subscriptions if s[1] != sid
+                ]
+                removed_count += 1
+            except (RuntimeError, ValueError) as exc:
+                failed_count += 1
+                logger.error("Error unsubscribing Registry %s: %s", pattern, exc)
 
-        logger.info(f"Unsubscribed all MessageBus adapters: {removed_count} removed, {failed_count} failed")
+        logger.info(
+            "Unsubscribed all adapters: %s removed, %s failed", removed_count, failed_count
+        )
 
 
 # =============================================================================
@@ -590,11 +627,15 @@ def reset_default_adapter() -> None:
     and calls unsubscribe_all() to properly clean up any MessageBus subscriptions.
     """
     global _default_adapter
-    if _default_adapter is not None:
-        # Clean up subscriptions before clearing
-        # Check for running loop without storing it (subscriptions cleared separately)
-        # Can't await in sync function, but we can try cleanup synchronously
-        # The subscriptions will be lost, but that's acceptable for test cleanup
-        with contextlib.suppress(RuntimeError):
-            asyncio.get_running_loop()
+    adapter = _default_adapter
     _default_adapter = None
+    if adapter is not None:
+        # Attempt async cleanup if we are inside a running event loop.
+        try:
+            loop = asyncio.get_running_loop()
+            # Schedule fire-and-forget cleanup; exceptions are logged inside unsubscribe_all.
+            _cleanup_task = loop.create_task(adapter.unsubscribe_all())
+            _cleanup_task.add_done_callback(lambda _t: None)
+        except RuntimeError:
+            # No running loop — synchronous contexts cannot await cleanup.
+            pass

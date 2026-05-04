@@ -1546,7 +1546,11 @@ class TurnTransactionController:
         ledger: TurnLedger | None = None,
     ) -> list[dict]:
         """Build decision-stage messages with single-batch execution constraints."""
-        messages: list[dict] = [dict(message) for message in context]
+        messages: list[dict] = [
+            dict(message)
+            for message in context
+            if message.get("metadata", {}).get("plane") != "control"
+        ]
         if not tool_definitions:
             return messages
 
@@ -1672,7 +1676,6 @@ class TurnTransactionController:
                 }
             )
 
-        messages = [msg for msg in messages if msg.get("metadata", {}).get("plane") != "control"]
         return messages
 
     # ---------------------------------------------------------------------------

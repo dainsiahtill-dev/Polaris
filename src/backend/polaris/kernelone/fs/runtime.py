@@ -122,27 +122,25 @@ class KernelFileSystem:
     ) -> FileWriteReceipt:
         """Atomically write JSON payload via temp-file-then-rename pattern.
 
-        Uses adapter's atomic write when available, falling back to manual
-        temp-file-rename if adapter lacks native support.
+        Delegates to the adapter's atomic write capability. The protocol
+        guarantees that write_text supports atomic=True; manual fallback
+        is only used for non-compliant adapters.
         """
         normalized = self.to_logical_path(logical_path)
         path = self.resolve_path(normalized)
-
-        # Try adapter's atomic write first (adapter handles serialization)
-        adapter = self._adapter
-        if hasattr(adapter, "write_json_atomic"):
-            try:
-                receipt = adapter.write_json_atomic(str(path), payload, indent=indent)
-                return FileWriteReceipt(
-                    logical_path=normalized,
-                    absolute_path=str(path),
-                    bytes_written=receipt.bytes_written,
-                )
-            except (AttributeError, TypeError, OSError):
-                pass  # Fall through to manual implementation
-
-        # Manual implementation: temp-file-then-rename
         data = json.dumps(payload, ensure_ascii=ensure_ascii, indent=indent) + "\n"
+
+        # Prefer adapter's atomic write (protocol guarantees atomic support)
+        try:
+            size = self._adapter.write_text(str(path), data, encoding="utf-8", atomic=True)
+            return FileWriteReceipt(
+                logical_path=normalized,
+                absolute_path=str(path),
+                bytes_written=size,
+            )
+        except TypeError:
+            # Non-compliant adapter lacking atomic parameter - manual fallback
+            pass
 
         parent_dir = Path(path).parent
         parent_dir.mkdir(parents=True, exist_ok=True)
@@ -158,10 +156,9 @@ class KernelFileSystem:
                 tmp_file.flush()
                 os.fsync(tmp_fd)
 
-            # Atomic rename (POSIX guarantees atomicity on same filesystem)
             target_path = Path(path)
             tmp_path = Path(tmp_path_str)
-            tmp_path.replace(target_path)  # raises OSError on failure
+            tmp_path.replace(target_path)
             return FileWriteReceipt(
                 logical_path=normalized,
                 absolute_path=str(path),

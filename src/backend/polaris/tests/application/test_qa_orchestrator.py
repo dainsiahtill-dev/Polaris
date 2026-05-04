@@ -580,21 +580,24 @@ class TestServiceResolution:
     """Tests for lazy service resolution."""
 
     def test_get_qa_service_import_error(self, config: QaAuditConfig) -> None:
-        """Verify ImportError is wrapped correctly."""
+        """Verify ImportError during service resolution is wrapped correctly."""
         orch = QaOrchestrator(config)
 
-        with patch("builtins.__import__", side_effect=ImportError("Module not found")):
+        with patch(
+            "polaris.cells.qa.audit_verdict.public.QAService",
+            side_effect=ImportError("Module not found"),
+        ):
             with pytest.raises(QaOrchestratorError) as exc_info:
                 orch._get_qa_service()
 
             assert exc_info.value.code == "qa_service_resolution_error"
 
     def test_get_audit_service_import_error(self, config: QaAuditConfig) -> None:
-        """Verify ImportError is wrapped correctly."""
+        """Verify ImportError during service resolution is wrapped correctly."""
         orch = QaOrchestrator(config)
 
         with patch(
-            "builtins.__import__",
+            "polaris.cells.audit.verdict.public.IndependentAuditService",
             side_effect=ImportError("Module not found"),
         ):
             with pytest.raises(QaOrchestratorError) as exc_info:
@@ -606,14 +609,15 @@ class TestServiceResolution:
         """Verify service is cached after first call."""
         orch = QaOrchestrator(config)
 
-        with patch.object(orch, "_get_qa_service") as mock_get:
-            mock_service = MagicMock()
-            mock_get.return_value = mock_service
-
+        mock_instance = MagicMock()
+        with patch(
+            "polaris.cells.qa.audit_verdict.public.QAService",
+            return_value=mock_instance,
+        ):
             service1 = orch._get_qa_service()
             service2 = orch._get_qa_service()
 
-            assert service1 is service2
+            assert service1 is service2 is mock_instance
 
 
 # =============================================================================
