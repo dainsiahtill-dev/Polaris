@@ -292,14 +292,15 @@ class QaOrchestrator:
                 changed_files=files,
             )
 
-            findings = tuple(str(i.get("message", "")) for i in raw.issues if isinstance(i, dict))
+            issues = raw.issues if raw.issues is not None else []
+            findings = tuple(str(i.get("message", "")) for i in issues if isinstance(i, dict))
             status = "completed" if raw.verdict in ("PASS", "FAIL") else "skipped"
 
             return QaReviewResult(
                 review_id=str(raw.audit_id),
                 target=str(raw.target),
                 status=status,
-                issue_count=len(raw.issues),
+                issue_count=len(issues),
                 findings=findings,
                 metadata={
                     "verdict": str(raw.verdict),
@@ -309,7 +310,7 @@ class QaOrchestrator:
                     else str(raw.timestamp),
                 },
             )
-        except (AttributeError, RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise QaOrchestratorError(
                 f"QA review execution failed: {exc}",
                 code="qa_review_failed",
@@ -360,16 +361,23 @@ class QaOrchestrator:
             if verdict_str not in {"PASS", "FAIL", "NEEDS_REVIEW"}:
                 verdict_str = "NEEDS_REVIEW"
 
+            suggestions_raw = raw.details.get("suggestions") if isinstance(raw.details, dict) else None
+            suggestions = (
+                tuple(str(s) for s in suggestions_raw)
+                if isinstance(suggestions_raw, (list, tuple))
+                else ()
+            )
+
             return QaVerdictResult(
                 verdict=verdict_str,
                 verdict_id=f"verdict-{review_result.review_id}",
                 summary=str(raw.details.get("summary", "")) if isinstance(raw.details, dict) else "",
                 findings=review_result.findings,
-                suggestions=review_result.findings,
+                suggestions=suggestions,
                 score=float(raw.details.get("score", 0.0)) if isinstance(raw.details, dict) else 0.0,
                 metadata=dict(raw.details) if isinstance(raw.details, dict) else {},
             )
-        except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise QaOrchestratorError(
                 f"QA verdict compilation failed: {exc}",
                 code="qa_verdict_failed",
@@ -487,7 +495,7 @@ class QaOrchestrator:
                 "error_code": str(raw.error_code) if raw.error_code else None,
                 "error_message": str(raw.error_message) if raw.error_message else None,
             }
-        except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise QaOrchestratorError(
                 f"QA verdict query failed: {exc}",
                 code="qa_verdict_query_failed",

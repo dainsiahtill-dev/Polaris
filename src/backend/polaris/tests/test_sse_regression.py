@@ -67,6 +67,7 @@ def _load_sse_utils() -> dict[str, Any]:
     _imported["sse_event_generator"] = m.sse_event_generator
     _imported["create_sse_response"] = m.create_sse_response
     _imported["create_sse_jetstream_consumer"] = m.create_sse_jetstream_consumer
+    _imported["publish_to_jetstream"] = m.publish_to_jetstream
     return _imported
 
 
@@ -206,3 +207,85 @@ class TestJetstreamConsumerUnicodeDecodeError:
             )
 
         assert len(collected) == 1
+
+
+class TestJetstreamConsumerLastEventIdValidation:
+    """Regression tests for last_event_id range validation."""
+
+    def test_negative_last_event_id_rejected(self) -> None:
+        """Negative last_event_id must raise ValueError to prevent invalid JetStream cursor.
+
+        Bug: Negative last_event_id could be passed through to opt_start_seq,
+        causing undefined behavior in JetStream consumer configuration.
+        """
+        utils = _load_sse_utils()
+        create_sse_jetstream_consumer = utils["create_sse_jetstream_consumer"]
+
+        with pytest.raises(ValueError) as exc_info:
+            create_sse_jetstream_consumer(
+                workspace_key="test",
+                subject="events",
+                last_event_id=-1,
+            )
+        assert "non-negative" in str(exc_info.value).lower()
+
+    def test_zero_last_event_id_accepted(self) -> None:
+        """Zero is a valid last_event_id (start from beginning)."""
+        utils = _load_sse_utils()
+        create_sse_jetstream_consumer = utils["create_sse_jetstream_consumer"]
+
+        consumer = create_sse_jetstream_consumer(
+            workspace_key="test",
+            subject="events",
+            last_event_id=0,
+        )
+        assert consumer.last_event_id == 0
+
+    def test_none_last_event_id_defaults_to_zero(self) -> None:
+        """None last_event_id should default to 0."""
+        utils = _load_sse_utils()
+        create_sse_jetstream_consumer = utils["create_sse_jetstream_consumer"]
+
+        consumer = create_sse_jetstream_consumer(
+            workspace_key="test",
+            subject="events",
+            last_event_id=None,
+        )
+        assert consumer.last_event_id == 0
+
+
+class TestPublishToJetstreamSubjectValidation:
+    """Regression tests for publish_to_jetstream subject validation."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_subject_rejected(self) -> None:
+        """Subject injection attempts must be rejected before publishing.
+
+        Bug: publish_to_jetstream did not validate the subject parameter,
+        allowing potential cross-workspace event injection.
+        """
+        utils = _load_sse_utils()
+        publish_to_jetstream = utils.get("publish_to_jetstream")
+        if publish_to_jetstream is None:
+            pytest.skip("publish_to_jetstream not exported by _load_sse_utils")
+
+        # Subject with spaces and special chars should be rejected
+        result = await publish_to_jetstream(
+            subject="hp.runtime.>inject",
+            payload={"test": True},
+        )
+        assert result is False, (
+            "BUG: publish_to_jetstream accepted invalid subject pattern. "
+            "Subjects must be validated before publishing."
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_subject_rejected(self) -> None:
+        """Empty subject must be rejected."""
+        utils = _load_sse_utils()
+        publish_to_jetstream = utils.get("publish_to_jetstream")
+        if publish_to_jetstream is None:
+            pytest.skip("publish_to_jetstream not exported by _load_sse_utils")
+
+        result = await publish_to_jetstream(subject="", payload={"test": True})
+        assert result is False

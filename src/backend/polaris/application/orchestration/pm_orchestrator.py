@@ -163,7 +163,7 @@ class PmOrchestrator:
                 state=state,
                 context=context,
             )
-        except (ImportError, RuntimeError, ValueError) as exc:
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             raise PmOrchestratorError(
                 f"PM planning iteration failed: {exc}",
                 code="pm_planning_failed",
@@ -223,9 +223,7 @@ class PmOrchestrator:
                 exception.
         """
         try:
-            from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
-                run_dispatch_pipeline,
-            )
+            from polaris.cells.orchestration.pm_dispatch.public import run_dispatch_pipeline
 
             return run_dispatch_pipeline(
                 callbacks=callbacks,
@@ -243,7 +241,7 @@ class PmOrchestrator:
                 run_director_result=run_director_result,
                 docs_stage=docs_stage,
             )
-        except (ImportError, RuntimeError, ValueError) as exc:
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             raise PmOrchestratorError(
                 f"PM dispatch pipeline failed: {exc}",
                 code="pm_dispatch_failed",
@@ -310,7 +308,7 @@ class PmOrchestrator:
                     dict(result.task_status_update) if result.task_status_update is not None else None
                 ),
             }
-        except (ImportError, RuntimeError, ValueError) as exc:
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             raise PmOrchestratorError(
                 f"Blocked policy evaluation failed: {exc}",
                 code="blocked_policy_failed",
@@ -361,7 +359,7 @@ class PmOrchestrator:
                 context=context,
                 result=result,
             )
-        except (ImportError, RuntimeError, ValueError) as exc:
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             raise PmOrchestratorError(
                 f"PM iteration finalization failed: {exc}",
                 code="pm_finalize_failed",
@@ -415,7 +413,7 @@ class PmOrchestrator:
                 iteration=iteration,
                 args=args,
             )
-        except (ImportError, RuntimeError, ValueError) as exc:
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             raise PmOrchestratorError(
                 f"PM spin-guard handling failed: {exc}",
                 code="pm_spin_guard_failed",
@@ -471,7 +469,7 @@ class PmOrchestrator:
                     exit_code=stop_code,
                 )
             return stop_code
-        except (ImportError, RuntimeError, ValueError) as exc:
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("PM stop-condition check failed: %s", exc)
             return None
 

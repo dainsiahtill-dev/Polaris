@@ -21,6 +21,7 @@ from .service import (
     handle_spin_guard,
     record_stop,
     resolve_director_dispatch_tasks,
+    run_dispatch_pipeline,
     run_post_dispatch_integration_qa,
 )
 
@@ -41,5 +42,6 @@ __all__ = [
     "handle_spin_guard",
     "record_stop",
     "resolve_director_dispatch_tasks",
+    "run_dispatch_pipeline",
     "run_post_dispatch_integration_qa",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
     resolve_director_dispatch_tasks,
+    run_dispatch_pipeline,
     run_post_dispatch_integration_qa,
 )
 from polaris.cells.orchestration.pm_dispatch.internal.iteration_state import (
@@ -42,5 +43,6 @@ __all__ = [
     "handle_spin_guard",
     "record_stop",
     "resolve_director_dispatch_tasks",
+    "run_dispatch_pipeline",
     "run_post_dispatch_integration_qa",
 ]

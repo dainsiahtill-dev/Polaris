@@ -291,7 +291,7 @@ class ArchitectOrchestrator:
                     ),
                 },
             )
-        except (AttributeError, RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise ArchitectOrchestratorError(
                 f"Requirements design failed: {exc}",
                 code="requirements_design_failed",
@@ -343,7 +343,7 @@ class ArchitectOrchestrator:
                     ),
                 },
             )
-        except (AttributeError, RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise ArchitectOrchestratorError(
                 f"ADR design failed: {exc}",
                 code="adr_design_failed",
@@ -389,7 +389,7 @@ class ArchitectOrchestrator:
                     ),
                 },
             )
-        except (AttributeError, RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise ArchitectOrchestratorError(
                 f"Interface contract design failed: {exc}",
                 code="interface_contract_design_failed",
@@ -438,7 +438,7 @@ class ArchitectOrchestrator:
                     ),
                 },
             )
-        except (AttributeError, RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise ArchitectOrchestratorError(
                 f"Implementation plan design failed: {exc}",
                 code="implementation_plan_design_failed",

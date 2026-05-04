@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -47,7 +47,7 @@ def _infer_workspace_from_storage_path(storage_path: str) -> str:
     return str(Path.cwd().resolve())
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class LLMConfig:
     """LLM configuration for a role."""
 
@@ -318,36 +318,40 @@ class HRAgent(RoleAgent):
         item = self._config_store.get(role)
         if item is None:
             return {"ok": False, "error": "config_not_found", "role": role}
+        kwargs: dict[str, Any] = {"updated_at": datetime.now()}
         if provider_id is not None:
-            item.provider_id = str(provider_id or "").strip()
+            kwargs["provider_id"] = str(provider_id or "").strip()
         if model is not None:
-            item.model = str(model or "").strip()
+            kwargs["model"] = str(model or "").strip()
         if profile is not None:
-            item.profile = str(profile or "").strip()
+            kwargs["profile"] = str(profile or "").strip()
         if provider_cfg is not None:
-            item.provider_cfg = dict(provider_cfg)
-        item.provider_kind = self._resolve_provider_kind(item.provider_id, item.provider_type, item.provider_cfg)
-        item.updated_at = datetime.now()
-        self._config_store.save(item)
-        return {"ok": True, "config": item.to_dict()}
+            kwargs["provider_cfg"] = dict(provider_cfg)
+        new_item = replace(item, **kwargs)
+        new_item = replace(
+            new_item,
+            provider_kind=self._resolve_provider_kind(
+                new_item.provider_id, new_item.provider_type, new_item.provider_cfg
+            ),
+        )
+        self._config_store.save(new_item)
+        return {"ok": True, "config": new_item.to_dict()}
 
     def _tool_deactivate_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
         if item is None:
             return {"ok": False, "error": "config_not_found", "role": role}
-        item.is_active = False
-        item.updated_at = datetime.now()
-        self._config_store.save(item)
-        return {"ok": True, "config": item.to_dict()}
+        new_item = replace(item, is_active=False, updated_at=datetime.now())
+        self._config_store.save(new_item)
+        return {"ok": True, "config": new_item.to_dict()}
 
     def _tool_activate_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
         if item is None:
             return {"ok": False, "error": "config_not_found", "role": role}
-        item.is_active = True
-        item.updated_at = datetime.now()
-        self._config_store.save(item)
-        return {"ok": True, "config": item.to_dict()}
+        new_item = replace(item, is_active=True, updated_at=datetime.now())
+        self._config_store.save(new_item)
+        return {"ok": True, "config": new_item.to_dict()}
 
     def _tool_delete_config(self, role: str) -> dict[str, Any]:
         return {"ok": True, "deleted": self._config_store.delete(role), "role": role}

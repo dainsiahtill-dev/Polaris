@@ -889,15 +889,16 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               return true;
             });
             if (uniqueLogs.length > 0) {
-              setLlmStreamEvents([...llmStreamEvents, ...uniqueLogs].slice(-180));
+              const current = useRuntimeStore.getState().llmStreamEvents;
+              setLlmStreamEvents([...current, ...uniqueLogs].slice(-180));
             }
           } else if (isProcessStreamChannel(channel)) {
             const processLogs = payload.lines
               .map((line) => parseProcessStreamLine(channel, line))
               .filter((entry): entry is LogEntry => Boolean(entry));
             if (processLogs.length > 0) {
-              const merged = Parsing.appendLogEntries(processStreamEvents, processLogs, 240);
-              setProcessStreamEvents(merged);
+              const current = useRuntimeStore.getState().processStreamEvents;
+              setProcessStreamEvents(Parsing.appendLogEntries(current, processLogs, 240));
             }
           }
           return;
@@ -979,8 +980,6 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
       connection,
       isWorkspaceControlled,
       loadRuntimeSettings,
-      llmStreamEvents,
-      processStreamEvents,
       setCurrentPhase,
       setDialogueEvents,
       setEngineStatus,

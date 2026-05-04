@@ -548,6 +548,8 @@ def create_sse_jetstream_consumer(
         raise ValueError(f"Invalid subject pattern: {subject}")
 
     cursor = int(last_event_id or 0)
+    if cursor < 0:
+        raise ValueError(f"last_event_id must be non-negative, got {cursor}")
     return SSEJetStreamConsumer(
         workspace_key=workspace_key,
         subject=subject,
@@ -656,7 +658,15 @@ async def publish_to_jetstream(
 
     Returns:
         True if publish succeeded.
+
+    SECURITY:
+        - S5: Subject pattern validation before publishing
+          to prevent cross-workspace event injection.
     """
+    if not validate_subject(subject):
+        logger.warning("Invalid subject rejected for JetStream publish: %s", subject)
+        return False
+
     try:
         from polaris.infrastructure.messaging import get_default_client
 
@@ -671,5 +681,5 @@ async def publish_to_jetstream(
         )
         return True
     except (RuntimeError, ValueError) as e:
-        logger.warning(f"Failed to publish to JetStream: {e}")
+        logger.warning("Failed to publish to JetStream: %s", e)
         return False

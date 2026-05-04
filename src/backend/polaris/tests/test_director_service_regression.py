@@ -119,7 +119,19 @@ def _load_director_service() -> dict[str, Any]:
     sys.modules["polaris.kernelone.context.runtime_feature_flags"] = Mock(
         CognitiveRuntimeMode=object, resolve_cognitive_runtime_mode=Mock()
     )
-    sys.modules["polaris.kernelone.events.message_bus"] = Mock(Message=object, MessageBus=Mock, MessageType=Mock)
+    class _MessageType:
+        TASK_COMPLETED = "TASK_COMPLETED"
+        TASK_FAILED = "TASK_FAILED"
+        WORKER_FAILED = "WORKER_FAILED"
+        DIRECTOR_START = "DIRECTOR_START"
+        DIRECTOR_STOP = "DIRECTOR_STOP"
+        TASK_SUBMITTED = "TASK_SUBMITTED"
+        NAG_REMINDER = "NAG_REMINDER"
+        BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
+
+    sys.modules["polaris.kernelone.events.message_bus"] = Mock(
+        Message=object, MessageBus=Mock, MessageType=_MessageType
+    )
 
     # Stub typed events with proper class structure
     class _TypedEvent:
@@ -321,3 +333,171 @@ class TestDirectorStateConcurrencyRegression:
 
         # No unexpected errors during concurrent access
         assert not errors, f"BUG M5: get_status() raised unexpected error during concurrent state access: {errors}"
+
+
+class TestDirectorPausedStateRecovery:
+    """Regression tests for PAUSED state dead-end bug."""
+
+    @pytest.mark.asyncio
+    async def test_start_from_paused_resumes_running(self) -> None:
+        """Verify start() can recover from PAUSED state back to RUNNING.
+
+        Bug: PAUSED was a dead state. After _check_budget() set state=PAUSED,
+        there was no way to resume. start() only accepted IDLE and STOPPED.
+
+        After fix: start() accepts PAUSED and transitions back to RUNNING.
+        """
+        utils = _load_director_service()
+        DirectorConfig = utils["DirectorConfig"]  # noqa: N806
+        DirectorService = utils["DirectorService"]  # noqa: N806
+        DirectorState = utils["DirectorState"]  # noqa: N806
+
+        config = DirectorConfig(workspace="/workspace")
+        service = DirectorService(config=config)
+
+        service._worker_service = Mock(
+            initialize=AsyncMock(),
+            shutdown=AsyncMock(),
+            get_workers=AsyncMock(return_value=[]),
+        )
+        service.transcript = Mock(
+            start_session=Mock(),
+            end_session=Mock(),
+            record_message=Mock(),
+        )
+        service._bus = Mock(
+            subscribe=AsyncMock(),
+            unsubscribe=AsyncMock(),
+            broadcast=AsyncMock(),
+        )
+        service._emit_typed_event = AsyncMock()
+
+        async def fake_main_loop() -> None:
+            await service._stop_event.wait()
+
+        service._main_loop = fake_main_loop  # type: ignore[method-assign]
+
+        # Skip event handler setup to avoid mock attribute issues
+        service._event_handlers_ready = True
+
+        # Start normally
+        await service.start()
+        assert service.state == DirectorState.RUNNING
+
+        # Simulate budget exceeded -> PAUSED
+        service.state = DirectorState.PAUSED
+
+        # Resume from PAUSED
+        await service.start()
+        assert service.state == DirectorState.RUNNING, (
+            "BUG: start() failed to resume from PAUSED. PAUSED is a dead state."
+        )
+
+        await service.stop()
+
+    @pytest.mark.asyncio
+    async def test_paused_resume_with_running_loop_does_not_duplicate(self) -> None:
+        """Verify resuming from PAUSED with a live loop does not spawn a second task.
+
+        Bug: If PAUSED occurred while the main loop was still running (it does not
+        set _stop_event), calling start() would create a second _main_loop_task.
+
+        After fix: start() detects the existing running loop and only flips state.
+        """
+        utils = _load_director_service()
+        DirectorConfig = utils["DirectorConfig"]  # noqa: N806
+        DirectorService = utils["DirectorService"]  # noqa: N806
+        DirectorState = utils["DirectorState"]  # noqa: N806
+
+        config = DirectorConfig(workspace="/workspace")
+        service = DirectorService(config=config)
+
+        service._worker_service = Mock(
+            initialize=AsyncMock(),
+            shutdown=AsyncMock(),
+            get_workers=AsyncMock(return_value=[]),
+        )
+        service.transcript = Mock(
+            start_session=Mock(),
+            end_session=Mock(),
+            record_message=Mock(),
+        )
+        service._bus = Mock(
+            subscribe=AsyncMock(),
+            unsubscribe=AsyncMock(),
+            broadcast=AsyncMock(),
+        )
+        service._emit_typed_event = AsyncMock()
+
+        loop_started = asyncio.Event()
+
+        async def fake_main_loop() -> None:
+            loop_started.set()
+            await service._stop_event.wait()
+
+        service._main_loop = fake_main_loop  # type: ignore[method-assign]
+        service._event_handlers_ready = True
+
+        await service.start()
+        await loop_started.wait()
+        original_task = service._main_loop_task
+        assert original_task is not None
+
+        # Simulate budget exceeded -> PAUSED (loop still running)
+        service.state = DirectorState.PAUSED
+
+        # Resume
+        await service.start()
+        assert service._main_loop_task is original_task, (
+            "BUG: start() from PAUSED created a new _main_loop_task. "
+            "This causes duplicate main loops."
+        )
+        assert service.state == DirectorState.RUNNING
+
+        await service.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_from_paused_transitions_to_stopped(self) -> None:
+        """Verify stop() works correctly when called from PAUSED state.
+
+        stop() should always be able to clean up regardless of whether the
+        service is RUNNING or PAUSED.
+        """
+        utils = _load_director_service()
+        DirectorConfig = utils["DirectorConfig"]  # noqa: N806
+        DirectorService = utils["DirectorService"]  # noqa: N806
+        DirectorState = utils["DirectorState"]  # noqa: N806
+
+        config = DirectorConfig(workspace="/workspace")
+        service = DirectorService(config=config)
+
+        service._worker_service = Mock(
+            initialize=AsyncMock(),
+            shutdown=AsyncMock(),
+            get_workers=AsyncMock(return_value=[]),
+        )
+        service.transcript = Mock(
+            start_session=Mock(),
+            end_session=Mock(),
+            record_message=Mock(),
+        )
+        service._bus = Mock(
+            subscribe=AsyncMock(),
+            unsubscribe=AsyncMock(),
+            broadcast=AsyncMock(),
+        )
+        service._emit_typed_event = AsyncMock()
+
+        async def fake_main_loop() -> None:
+            await service._stop_event.wait()
+
+        service._main_loop = fake_main_loop  # type: ignore[method-assign]
+        service._event_handlers_ready = True
+
+        await service.start()
+        service.state = DirectorState.PAUSED
+
+        await service.stop()
+        assert service.state == DirectorState.STOPPED, (
+            f"BUG: stop() from PAUSED left state as {service.state!r} instead of STOPPED"
+        )

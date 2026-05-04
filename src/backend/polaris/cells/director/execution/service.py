@@ -193,7 +193,7 @@ class DirectorService(DirectorCodeIntelMixin):
         if adapter is not None:
             try:
                 await adapter.emit_to_both(event)
-            except (RuntimeError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("Failed to emit typed event %s: %s", event.event_name, exc)
 
     async def _setup_event_handlers(self) -> None:
@@ -208,8 +208,17 @@ class DirectorService(DirectorCodeIntelMixin):
 
     async def start(self) -> None:
         async with self._state_lock:
-            if self.state not in {DirectorState.IDLE, DirectorState.STOPPED}:
+            if self.state not in {DirectorState.IDLE, DirectorState.STOPPED, DirectorState.PAUSED}:
                 raise RuntimeError(f"Cannot start from state {self.state}")
+
+            # If resuming from PAUSED with a still-running loop, just flip state back.
+            if (
+                self.state == DirectorState.PAUSED
+                and self._main_loop_task is not None
+                and not self._main_loop_task.done()
+            ):
+                self.state = DirectorState.RUNNING
+                return
 
             self._stop_event = asyncio.Event()
             self.state = DirectorState.RUNNING
@@ -242,7 +251,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 )
                 await self._emit_typed_event(typed_event)
                 await self._bus.broadcast(MessageType.DIRECTOR_START, "director", {"workspace": self.config.workspace})
-            except (RuntimeError, ValueError) as e:
+            except Exception as e:
                 logger.error(
                     "Director start failed, rolling back: error=%s, type=%s, workspace=%s",
                     e,
@@ -252,7 +261,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 self._stop_event.set()
                 try:
                     await self._worker_service.shutdown()
-                except (RuntimeError, ValueError) as exc:
+                except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Director rollback: worker_service.shutdown failed: error=%s, type=%s",
                         exc,
@@ -264,7 +273,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 if self._event_handlers_ready:
                     try:
                         await self._unsubscribe_event_handlers()
-                    except (RuntimeError, ValueError) as exc:
+                    except Exception as exc:  # noqa: BLE001
                         logger.error(
                             "Director rollback: _unsubscribe_event_handlers failed: error=%s, type=%s",
                             exc,
@@ -273,7 +282,7 @@ class DirectorService(DirectorCodeIntelMixin):
                     self._event_handlers_ready = False
                 try:
                     self.transcript.end_session()
-                except (RuntimeError, ValueError) as exc:
+                except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Director rollback: transcript.end_session failed: error=%s, type=%s",
                         exc,
@@ -392,7 +401,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 "error": "Task not found or not cancellable",
                 "task_id": task_id,
             }
-        except (RuntimeError, ValueError) as e:
+        except Exception as e:  # noqa: BLE001
             logger.error("Error cancelling task %s: %s", task_id, e)
             return {
                 "ok": False,
@@ -462,7 +471,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 should_stop = await self._check_run_convergence()
                 if should_stop:
                     break
-            except (RuntimeError, ValueError) as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error("Director main loop error on iteration %d: %s", self._current_iteration, e)
                 self.transcript.record_message(
                     role="system", content=f"Director loop error: {e}", metadata={"error": str(e)}
@@ -549,13 +558,14 @@ class DirectorService(DirectorCodeIntelMixin):
         self._metrics["deadlock_breaks"] += 1
 
     async def _auto_stop(self, reason: str) -> None:
-        if self.state != DirectorState.RUNNING:
-            return
+        async with self._state_lock:
+            if self.state != DirectorState.RUNNING:
+                return
+            self.state = DirectorState.IDLE
+            self._stopped_at = time.time()
+            self._metrics["auto_stopped_runs"] += 1
         self._stop_event.set()
         await self._worker_service.shutdown()
-        self.state = DirectorState.IDLE
-        self._stopped_at = time.time()
-        self._metrics["auto_stopped_runs"] += 1
         # Emit typed event for auto stop
         typed_event = TypedDirectorStopped.create(
             workspace=self.config.workspace,
@@ -643,7 +653,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 },
                 export_handoff=True,
             )
-        except (RuntimeError, ValueError) as e:
+        except Exception as e:  # noqa: BLE001
             from polaris.domain.entities import TaskResult
 
             result = TaskResult(
@@ -750,7 +760,7 @@ class DirectorService(DirectorCodeIntelMixin):
                     )
             finally:
                 service.close()
-        except (RuntimeError, ValueError):
+        except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to emit Cognitive Runtime shadow task artifacts for task=%s type=%s",
                 getattr(task, "id", ""),
@@ -804,7 +814,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 error=result.get("stderr", "") or result.get("error", ""),
                 duration_ms=duration_ms,
             )
-        except (RuntimeError, ValueError) as e:
+        except Exception as e:  # noqa: BLE001
             return TaskResult(
                 success=False,
                 output="",

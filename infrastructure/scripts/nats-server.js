@@ -163,8 +163,16 @@ async function ensureLocalNatsServer(options) {
   const args = ["-js", "-a", host, "-p", String(port), "-sd", storageDir];
   console.log(`${TAG} starting: ${executable} ${args.join(" ")}`);
 
-  const stdoutFd = fs.openSync(stdoutLog, "a");
-  const stderrFd = fs.openSync(stderrLog, "a");
+  let stdoutFd;
+  let stderrFd;
+  try {
+    stdoutFd = fs.openSync(stdoutLog, "a");
+    stderrFd = fs.openSync(stderrLog, "a");
+  } catch {
+    console.warn(`${TAG} failed to open log files, writing to stdout/stderr instead`);
+    stdoutFd = "ignore";
+    stderrFd = "ignore";
+  }
 
   const child = spawn(executable, args, {
     stdio: ["ignore", stdoutFd, stderrFd],
@@ -176,9 +184,13 @@ async function ensureLocalNatsServer(options) {
 
   const ready = await waitUntilAccepts(host, port, STARTUP_TIMEOUT_MS);
 
-  // Close log file handles in this process (child keeps its own)
-  fs.closeSync(stdoutFd);
-  fs.closeSync(stderrFd);
+  // Close log file handles in this process (child has its own dup'd copy)
+  if (typeof stdoutFd === "number") {
+    try { fs.closeSync(stdoutFd); } catch { /* ignore */ }
+  }
+  if (typeof stderrFd === "number") {
+    try { fs.closeSync(stderrFd); } catch { /* ignore */ }
+  }
 
   if (!ready) {
     console.error(`${TAG} nats-server failed to start within ${STARTUP_TIMEOUT_MS}ms`);

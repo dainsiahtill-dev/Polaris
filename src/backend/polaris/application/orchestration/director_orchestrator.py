@@ -194,7 +194,7 @@ class DirectorOrchestrator:
         try:
             raw_tasks = board.get_ready_tasks()
             return [task.to_dict() for task in raw_tasks]
-        except (AttributeError, RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             raise DirectorOrchestratorError(
                 f"Task board query failed: {exc}",
                 code="task_board_query_error",
@@ -231,7 +231,7 @@ class DirectorOrchestrator:
         try:
             normalized_id = self._normalize_task_id(task_id)
             board.update(normalized_id, status="in_progress")
-        except (AttributeError, RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Failed to update task %s to in_progress: %s", task_id, exc)
 
         message = self._build_director_message(subject, description)
@@ -264,7 +264,7 @@ class DirectorOrchestrator:
                         }
                     },
                 )
-            except (AttributeError, RuntimeError, ValueError) as exc:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 logger.warning("Failed to update task %s to completed: %s", task_id, exc)
 
             return DirectorTaskResult(
