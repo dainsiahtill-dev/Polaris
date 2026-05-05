@@ -421,18 +421,31 @@ def resolve_ramdisk_root(cli_value: str | None = None) -> str:
 def kernelone_home() -> str:
     """Return the KernelOne global home directory.
 
-    Priority: KERNELONE_HOME > KERNELONE_HOME > ~/.polaris
+    Priority: KERNELONE_HOME > APPDATA/.polaris (Windows, if exists) > ~/.polaris
 
-    This is the product-agnostic counterpart. Polaris-specific callers
-    should use ``PolarisStorageLayout`` or ``polaris_home()`` from
-    ``polaris.cells.storage.layout``.
+    Must match Electron's resolvepolarisRoot() in config-paths.cjs.
     """
     raw = resolve_env_str("home")
     if raw:
         return os.path.abspath(os.path.expanduser(os.path.expandvars(raw)))
-    # Default fallback: ~/.polaris
-    default_home = os.path.expanduser("~/.polaris")
-    return os.path.abspath(os.path.expanduser(default_home))
+    root_override = str(os.environ.get("KERNELONE_ROOT") or "").strip()
+    if root_override:
+        root = os.path.abspath(os.path.expanduser(os.path.expandvars(root_override)))
+        return os.path.join(root, ".polaris")
+    # Match Electron: on Windows, prefer APPDATA
+    if os.name == "nt":
+        appdata = str(os.environ.get("APPDATA") or "").strip()
+        if appdata:
+            appdata_home = os.path.abspath(os.path.join(appdata, ".polaris"))
+            # Backward compat: if settings exist at legacy ~/.polaris but not at
+            # APPDATA/.polaris, keep using legacy path to avoid losing user config.
+            legacy_home = os.path.abspath(os.path.expanduser("~/.polaris"))
+            legacy_settings = os.path.join(legacy_home, "config", "settings.json")
+            appdata_settings = os.path.join(appdata_home, "config", "settings.json")
+            if os.path.isfile(legacy_settings) and not os.path.isfile(appdata_settings):
+                return legacy_home
+            return appdata_home
+    return os.path.abspath(os.path.expanduser("~/.polaris"))
 
 
 # NOTE: The backward-compat alias `polaris_home = kernelone_home` has been removed.

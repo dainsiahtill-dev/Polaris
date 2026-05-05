@@ -8,7 +8,11 @@ try:
     from polaris._env_compat import normalize_env_prefix
 
     normalize_env_prefix()
-except Exception:  # noqa: BLE001
-    # If the compat module is missing or broken, do not block package import.
-    # The error will surface naturally when code tries to read unset env vars.
+except ImportError:
+    # Compat module missing — acceptable, kernel will see unset env vars.
     pass
+except Exception as exc:  # noqa: BLE001
+    # Unexpected error during normalization — log but don't block import.
+    import logging
+
+    logging.getLogger(__name__).warning("env compat normalization failed: %s", exc)

@@ -6,24 +6,7 @@ import asyncio
 
 import pytest
 from polaris.cells.director.execution.public.service import DirectorConfig, DirectorService, DirectorState
-from polaris.domain.entities import TaskResult, TaskStatus
-
-
-class _FastWorkerExecutor:
-    def __init__(self, workspace: str, message_bus=None, worker_id: str = "") -> None:
-        self.workspace = workspace
-        self._bus = message_bus
-        self._worker_id = worker_id
-
-    async def execute(self, task):
-        if bool(task.metadata.get("force_fail")):
-            raise RuntimeError("forced failure")
-        await asyncio.sleep(0.01)
-        return TaskResult(
-            success=True,
-            output="ok",
-            duration_ms=1,
-        )
+from polaris.domain.entities import TaskResult, TaskStatus, WorkerStatus
 
 
 async def _wait_for_state(service: DirectorService, expected: DirectorState, timeout: float = 8.0) -> None:
@@ -53,23 +36,64 @@ async def _wait_until(predicate, interval: float = 0.05) -> None:
         await asyncio.sleep(interval)
 
 
-# Shared patch targets for tests that exercise worker-loop task execution.
-# DirectorService uses two execution paths:
-#   Path A: _schedule_tasks() -> _execute_task() -> _run_command()  (tasks with commands)
-#   Path B: WorkerPoolService._worker_loop -> WorkerExecutor.execute() (all tasks)
-# All submitted tasks go through Path B.  WorkerPoolService caches the executor class
-# as a module-level variable `_WorkerExecutor` at import time — workers reference this
-# cached variable when spawned, NOT the class directly.  Both the class AND the cached
-# variable must be patched simultaneously, otherwise workers still use the real class.
-_WORKER_EXECUTOR_MODULE = "polaris.cells.director.tasking.internal.worker_pool_service"
-_WORKER_EXECUTOR_CLASS = "polaris.cells.director.tasking.internal.worker_executor.WorkerExecutor"
+# Phase 4 architecture note (2026-03-27):
+# WorkerService._worker_loop now delegates to execution_broker subprocesses.
+# Tests that need fast deterministic execution must bypass the subprocess path.
+# Strategy: make _worker_loop passive (heartbeats only) and patch
+# DirectorService._execute_task for fast in-process completion.
+
+
+async def _passive_worker_loop(self, worker) -> None:
+    """Heartbeat-only worker loop that does not claim or execute tasks."""
+    try:
+        while worker.status not in (WorkerStatus.STOPPED, WorkerStatus.FAILED):
+            worker.update_heartbeat()
+            if worker.status == WorkerStatus.STOPPING and not worker.current_task_id:
+                worker.status = WorkerStatus.STOPPED
+                break
+            await asyncio.sleep(0.05)
+    except asyncio.CancelledError:
+        worker.status = WorkerStatus.STOPPED
+        raise
+    finally:
+        asyncio.get_running_loop().call_soon(self._cleanup_worker_task, worker.id)
+
+
+async def _fast_execute_task(self, task, worker) -> None:
+    """Fast deterministic task execution for convergence tests."""
+    from datetime import datetime, timezone
+
+    task_id_str = str(task.id)
+    await self._task_service.on_task_started(task_id_str)
+    start_time = datetime.now(timezone.utc)
+    try:
+        if bool(task.metadata.get("force_fail")):
+            raise RuntimeError("forced failure")
+        result = TaskResult(success=True, output="ok", duration_ms=1)
+        await self._task_service.on_task_completed(task_id_str, result)
+        self._metrics["tasks_completed"] += 1
+    except Exception as e:  # noqa: BLE001
+        result = TaskResult(
+            success=False,
+            output="",
+            error=str(e),
+            duration_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000),
+        )
+        await self._task_service.on_task_failed(task_id_str, str(e), recoverable=False)
+        self._metrics["tasks_failed"] += 1
+    finally:
+        worker.release_task(result)
+
+
+_WORKER_POOL_MODULE = "polaris.cells.director.tasking.internal.worker_pool_service"
+_DIRECTOR_EXECUTION_MODULE = "polaris.cells.director.execution.service"
 
 
 @pytest.mark.asyncio
 async def test_director_auto_stops_after_all_tasks_terminal(monkeypatch, tmp_path) -> None:
-    # Patch both the class and the cached module-level variable that workers use.
-    monkeypatch.setattr(_WORKER_EXECUTOR_CLASS, _FastWorkerExecutor)
-    monkeypatch.setattr(f"{_WORKER_EXECUTOR_MODULE}._WorkerExecutor", _FastWorkerExecutor)
+    # Make workers passive so DirectorService._schedule_tasks is the only execution path.
+    monkeypatch.setattr(f"{_WORKER_POOL_MODULE}.WorkerService._worker_loop", _passive_worker_loop)
+    monkeypatch.setattr(f"{_DIRECTOR_EXECUTION_MODULE}.DirectorService._execute_task", _fast_execute_task)
 
     service = DirectorService(
         DirectorConfig(
@@ -99,8 +123,8 @@ async def test_director_auto_stops_after_all_tasks_terminal(monkeypatch, tmp_pat
 
 @pytest.mark.asyncio
 async def test_director_auto_stops_when_no_tasks_submitted(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(_WORKER_EXECUTOR_CLASS, _FastWorkerExecutor)
-    monkeypatch.setattr(f"{_WORKER_EXECUTOR_MODULE}._WorkerExecutor", _FastWorkerExecutor)
+    monkeypatch.setattr(f"{_WORKER_POOL_MODULE}.WorkerService._worker_loop", _passive_worker_loop)
+    monkeypatch.setattr(f"{_DIRECTOR_EXECUTION_MODULE}.DirectorService._execute_task", _fast_execute_task)
     monkeypatch.setattr(
         "polaris.cells.director.execution.service.EMPTY_QUEUE_STALL_TIMEOUT_SECONDS",
         0.25,
@@ -128,8 +152,8 @@ async def test_director_auto_stops_when_no_tasks_submitted(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_director_fails_deadlocked_pending_tasks_and_converges(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(_WORKER_EXECUTOR_CLASS, _FastWorkerExecutor)
-    monkeypatch.setattr(f"{_WORKER_EXECUTOR_MODULE}._WorkerExecutor", _FastWorkerExecutor)
+    monkeypatch.setattr(f"{_WORKER_POOL_MODULE}.WorkerService._worker_loop", _passive_worker_loop)
+    monkeypatch.setattr(f"{_DIRECTOR_EXECUTION_MODULE}.DirectorService._execute_task", _fast_execute_task)
 
     service = DirectorService(
         DirectorConfig(

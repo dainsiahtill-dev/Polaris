@@ -152,6 +152,54 @@ function toRuntimeEventPayload(payload: WebSocketMessage): Record<string, unknow
   return Parsing.tryParseJsonObject(rawText);
 }
 
+function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebSocketMessage {
+  const v2Channel = String(eventPayload.channel || eventPayload.category || '').trim().toLowerCase();
+  const v2Domain = String(eventPayload.domain || '').trim().toLowerCase();
+  const kind = String(eventPayload.kind || '').trim().toLowerCase();
+  const envelopePayload = Parsing.isRecord(eventPayload.payload) ? eventPayload.payload : null;
+  const rawPayload = Parsing.isRecord(envelopePayload?.raw) ? envelopePayload.raw : null;
+  const mergedPayload = {
+    ...(envelopePayload || {}),
+    ...eventPayload,
+    payload: envelopePayload || eventPayload.payload,
+  };
+  const source = String(eventPayload.source || envelopePayload?.source || '').trim().toLowerCase();
+
+  let targetChannel = v2Channel.startsWith('log.') ? v2Channel.slice(4) : v2Channel;
+  if (!targetChannel && v2Domain) {
+    if (v2Domain === 'llm') targetChannel = 'llm';
+    else if (v2Domain === 'process') targetChannel = 'process';
+    else if (v2Domain === 'system') targetChannel = 'system';
+  }
+
+  if (targetChannel === 'dialogue' || kind === 'dialogue' || source === 'dialogue') {
+    return { type: 'line', channel: 'dialogue', text: JSON.stringify(rawPayload || mergedPayload) };
+  }
+  if (targetChannel === 'runtime_events' || kind === 'runtime_event') {
+    return { type: 'line', channel: 'runtime_events', text: JSON.stringify(mergedPayload) };
+  }
+  if (targetChannel === 'llm' || v2Domain === 'llm' || kind.startsWith('llm.')) {
+    return { type: 'line', channel: 'llm', text: JSON.stringify(mergedPayload) };
+  }
+  if (
+    targetChannel === 'process' ||
+    v2Domain === 'process' ||
+    kind.startsWith('process.') ||
+    targetChannel === 'system' ||
+    v2Domain === 'system' ||
+    kind.startsWith('system.')
+  ) {
+    return { type: 'line', channel: targetChannel === 'system' ? 'system' : 'process', text: JSON.stringify(mergedPayload) };
+  }
+  return { type: 'line', channel: 'runtime_events', text: JSON.stringify(mergedPayload) };
+}
+
+function isRuntimeV2Envelope(payload: WebSocketMessage): boolean {
+  const record = payload as unknown as Record<string, unknown>;
+  const schemaVersion = String(record.schema_version || '').trim();
+  return schemaVersion === 'runtime.v2' || Boolean(record.channel && record.kind && record.payload);
+}
+
 function isLlmStreamChannel(channel: string): boolean {
   return channel === 'llm';
 }
@@ -665,7 +713,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         const eventData = message instanceof MessageEvent ? message.data : message;
         let payload: WebSocketMessage = typeof eventData === 'string' ? JSON.parse(eventData) : (eventData as WebSocketMessage);
         const msgType = String(payload.type || '').trim().toLowerCase();
-        const channel = String(payload.channel || '').trim();
+        let channel = String(payload.channel || '').trim();
 
         // Handle v2 protocol EVENT message
         if (msgType === 'event' && payload.event) {
@@ -683,27 +731,11 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
             }
           }
 
-          const v2Channel = String(eventPayload.channel || eventPayload.category || '').trim().toLowerCase();
-          const v2Domain = String(eventPayload.domain || '').trim().toLowerCase();
-
-          let targetChannel = v2Channel;
-          if (!targetChannel && v2Domain) {
-            if (v2Domain === 'llm') targetChannel = 'llm';
-            else if (v2Domain === 'process') targetChannel = 'process';
-            else if (v2Domain === 'system') targetChannel = 'system';
-          }
-
-          if (targetChannel === 'dialogue' || eventPayload.kind === 'dialogue') {
-            payload = { type: 'line', channel: 'dialogue', text: JSON.stringify(eventPayload) };
-          } else if (targetChannel === 'runtime_events' || eventPayload.kind === 'runtime_event') {
-            payload = { type: 'line', channel: 'runtime_events', text: JSON.stringify(eventPayload) };
-          } else if (targetChannel === 'llm' || v2Domain === 'llm') {
-            payload = { type: 'line', channel: 'llm', text: JSON.stringify(eventPayload) };
-          } else if (targetChannel === 'process' || v2Domain === 'process' || targetChannel === 'system' || v2Domain === 'system') {
-            payload = { type: 'line', channel: targetChannel || 'process', text: JSON.stringify(eventPayload) };
-          } else {
-            payload = { type: 'line', channel: 'runtime_events', text: JSON.stringify(eventPayload) };
-          }
+          payload = normalizeRuntimeV2Envelope(eventPayload);
+          channel = String(payload.channel || '').trim();
+        } else if (isRuntimeV2Envelope(payload)) {
+          payload = normalizeRuntimeV2Envelope(payload as unknown as Record<string, unknown>);
+          channel = String(payload.channel || '').trim();
         }
 
         const finalMsgType = String(payload.type || '').trim().toLowerCase();
@@ -913,7 +945,13 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               if (normalized) {
                 const eventId = String((raw as { event_id?: string }).event_id || '');
                 if (eventId && seenDialogueIdsRef.current.has(eventId)) return;
-                if (eventId) seenDialogueIdsRef.current.add(eventId);
+                if (eventId) {
+                  seenDialogueIdsRef.current.add(eventId);
+                  if (seenDialogueIdsRef.current.size > 5000) {
+                    const entries = Array.from(seenDialogueIdsRef.current);
+                    seenDialogueIdsRef.current = new Set(entries.slice(-2500));
+                  }
+                }
                 appendDialogueEvent(normalized);
               }
             } catch (err) {

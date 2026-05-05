@@ -13,7 +13,7 @@ from datetime import datetime
 from threading import RLock
 from typing import Any
 
-from polaris.cells.roles.runtime.public.service import (
+from polaris.cells.roles.runtime.internal.agent_runtime_base import (
     AgentMessage,
     MessageType,
     RoleAgent,

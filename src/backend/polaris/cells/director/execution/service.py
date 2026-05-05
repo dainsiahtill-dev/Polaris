@@ -167,6 +167,7 @@ class DirectorService(DirectorCodeIntelMixin):
 
         self._running_tasks: dict[str, asyncio.Task] = {}
         self._event_handlers_ready = False
+        self._finalize_idle_task: asyncio.Task | None = None
 
         self._metrics = {
             "tasks_submitted": 0,
@@ -241,7 +242,10 @@ class DirectorService(DirectorCodeIntelMixin):
                 # (natural convergence, external cancel, or unhandled exception) we
                 # explicitly finalize the Director state.  This is the *only* place
                 # RUNNING -> IDLE can be triggered from the loop-exit path (CQS).
-                self._main_loop_task.add_done_callback(lambda _t: asyncio.ensure_future(self._try_finalize_idle()))
+                def _on_main_loop_done(_t: asyncio.Task) -> None:
+                    self._finalize_idle_task = asyncio.ensure_future(self._try_finalize_idle())
+
+                self._main_loop_task.add_done_callback(_on_main_loop_done)
 
                 # Emit events (typed + legacy MessageBus for backward compatibility)
                 typed_event = TypedDirectorStarted.create(
@@ -312,6 +316,12 @@ class DirectorService(DirectorCodeIntelMixin):
                 self._main_loop_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._main_loop_task
+
+            if self._finalize_idle_task is not None:
+                self._finalize_idle_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._finalize_idle_task
+                self._finalize_idle_task = None
 
             if self._event_handlers_ready:
                 await self._unsubscribe_event_handlers()
@@ -620,12 +630,12 @@ class DirectorService(DirectorCodeIntelMixin):
             MessageType.TASK_STARTED, "director", {"task_id": task_id_str, "worker_id": worker.id}
         )
         start_time = datetime.now(timezone.utc)
+        result: Any = None
         try:
             from polaris.domain.entities import TaskResult
 
             result = await self._run_command(task.command, timeout=task.timeout_seconds)
             await self._task_service.on_task_completed(task_id_str, result)
-            worker.release_task(result)
             self._metrics["tasks_completed"] += 1
             changed_files = [e.path for e in (result.evidence or []) if e.type == "file" and e.path]
             # Emit typed event for task completed
@@ -663,7 +673,6 @@ class DirectorService(DirectorCodeIntelMixin):
                 duration_ms=int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000),
             )
             await self._task_service.on_task_failed(task_id_str, str(e), recoverable=False)
-            worker.release_task(result)
             self._metrics["tasks_failed"] += 1
             # Emit typed event for task failed
             typed_failed = TypedTaskFailed.create(
@@ -685,6 +694,11 @@ class DirectorService(DirectorCodeIntelMixin):
                 },
                 export_handoff=True,
             )
+        finally:
+            # Always release the worker so it can pick up the next task,
+            # even if on_task_completed/on_task_failed raised an exception.
+            if result is not None:
+                worker.release_task(result)
 
     def _emit_cognitive_runtime_shadow_task_artifacts(
         self,

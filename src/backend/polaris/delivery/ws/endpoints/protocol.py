@@ -102,6 +102,14 @@ async def handle_v2_message(
         # Mark protocol as activated
         protocol_activated = True
 
+        raw_roles = message.get("roles")
+        if isinstance(raw_roles, list):
+            roles_filter.clear()
+            for value in raw_roles:
+                role_token = str(value or "").strip().lower()
+                if role_token in {"pm", "director", "qa"}:
+                    roles_filter.add(role_token)
+
         # Extract subscription params
         client_id_ref[0] = str(message.get("client_id") or f"ws-{connection_id[:8]}").strip()
 

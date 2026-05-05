@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
 from polaris.cells.runtime.execution_broker.public.contracts import (
     LaunchExecutionProcessCommandV1,
 )
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 # Re-export for backwards compatibility - import from polaris.kernelone.constants
 _DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
+
+# Module-level cache for backwards compatibility with test patches.
+# Tests patch this variable to inject mock executors into worker loops.
+_WorkerExecutor = WorkerExecutor
 
 
 @dataclass
@@ -93,7 +98,10 @@ class WorkerService:
 
             # Wait for completion
             if self._worker_tasks:
-                await asyncio.gather(*self._worker_tasks.values(), return_exceptions=True)
+                results = await asyncio.gather(*self._worker_tasks.values(), return_exceptions=True)
+                for task, result in zip(self._worker_tasks.values(), results, strict=False):
+                    if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                        logger.warning("Worker task %s exited with exception: %s", task.get_name(), result)
 
             self._workers.clear()
             self._worker_tasks.clear()
@@ -102,11 +110,16 @@ class WorkerService:
         self,
         worker_type: WorkerType = WorkerType.LOCAL,
         capabilities: WorkerCapabilities | None = None,
-    ) -> Worker:
-        """Spawn a new worker."""
+    ) -> Worker | None:
+        """Spawn a new worker.
+
+        Returns:
+            The newly created Worker, or None if the pool is already at max capacity.
+        """
         async with self._lock:
             if len(self._workers) >= self.config.max_workers:
-                raise RuntimeError(f"Max workers ({self.config.max_workers}) reached")
+                logger.warning("Max workers (%d) reached; skipping spawn", self.config.max_workers)
+                return None
 
             worker_id = f"worker-{uuid.uuid4().hex[:8]}"
             worker = Worker(
@@ -207,8 +220,9 @@ class WorkerService:
                 if worker:
                     worker.mark_failed(reason)
                     await self.destroy_worker(worker_id)
-                    await self.spawn_worker(worker.worker_type, worker.capabilities)
-                    restarted.append(worker_id)
+                    new_worker = await self.spawn_worker(worker.worker_type, worker.capabilities)
+                    if new_worker is not None:
+                        restarted.append(worker_id)
 
         return restarted
 
@@ -242,8 +256,8 @@ class WorkerService:
                     can_add = pending_task_count > idle_count and current_count < self.config.max_workers
                 if not can_add:
                     break
-                success = await self.spawn_worker()
-                if not success:
+                new_worker = await self.spawn_worker()
+                if new_worker is None:
                     break
                 actions["scaled_up"] += 1
                 iterations += 1
@@ -418,3 +432,11 @@ class WorkerService:
         except (RuntimeError, ValueError) as e:
             worker.mark_failed(str(e))
             raise
+        finally:
+            # Clean up task reference when loop exits for any reason.
+            # Use a separate task to avoid blocking the finally block.
+            asyncio.get_running_loop().call_soon(self._cleanup_worker_task, worker.id)
+
+    def _cleanup_worker_task(self, worker_id: str) -> None:
+        """Remove completed worker task from internal tracking."""
+        self._worker_tasks.pop(worker_id, None)

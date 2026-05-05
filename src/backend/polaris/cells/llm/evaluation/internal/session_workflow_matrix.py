@@ -38,7 +38,6 @@ from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     TurnEvent,
 )
-from polaris.cells.roles.runtime.public import RoleSessionOrchestrator
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .benchmark_loader import build_case_sandbox_key, copy_fixture_tree
@@ -243,6 +242,8 @@ async def _run_session_workflow_case(
     # Prepare envelopes per turn
     envelopes = [spec.envelope for spec in case.turns]
     envelope_builder = _make_envelope_builder(envelopes)
+
+    from polaris.cells.roles.runtime.public import RoleSessionOrchestrator
 
     orch = RoleSessionOrchestrator(
         session_id=f"swm-{case.case_id}",

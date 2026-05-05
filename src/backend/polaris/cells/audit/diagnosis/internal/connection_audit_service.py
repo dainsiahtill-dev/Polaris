@@ -47,22 +47,25 @@ def write_ws_connection_event_sync(
     if not workspace_token:
         return ""
 
+    connection_token = str(connection_id or "").strip()
     record = {
         "timestamp": _now_iso(),
         "endpoint": str(endpoint or "").strip(),
-        "connection_id": str(connection_id or "").strip(),
+        "connection_id": connection_token,
         "event": str(event or "").strip().lower(),
         "details": _normalize_details(details),
     }
 
     runtime_root = str(cache_root or "").strip()
     try:
+        run_id = f"ws-{connection_token[:32]}" if connection_token else "ws-connection"
         runtime = KernelAuditRuntime.get_instance(Path(runtime_root).resolve())
         runtime.emit_event(
             event_type=KernelAuditEventType.POLICY_CHECK,
             role=SYSTEM_ROLE,
             workspace=workspace_token,
-            task_id=f"ws-{record['connection_id']}",
+            task_id=f"ws-{connection_token}",
+            run_id=run_id,
             action={"name": "ws_connection_event", "result": "success"},
             data={
                 "endpoint": record["endpoint"],
@@ -71,7 +74,7 @@ def write_ws_connection_event_sync(
             },
             context={"origin": "ws_runtime"},
         )
-    except OSError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         # Best-effort: runtime event emission failure should not propagate.
         _logger.debug("ws_runtime event write failed (best-effort): %s", exc)
     return ""

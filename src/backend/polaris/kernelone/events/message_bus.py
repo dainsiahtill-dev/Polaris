@@ -23,10 +23,14 @@ from polaris.kernelone.constants import MESSAGE_BUS_MAX_DEAD_LETTERS, MESSAGE_BU
 from polaris.kernelone.trace import create_task_with_context
 
 logger = logging.getLogger(__name__)
-_ASYNC_HANDLER_TIMEOUT_SECONDS = max(
-    0.1,
-    float(os.environ.get("KERNELONE_MESSAGE_HANDLER_TIMEOUT_SECONDS", "5.0") or 5.0),
-)
+
+try:
+    _ASYNC_HANDLER_TIMEOUT_SECONDS = max(
+        0.1,
+        float(os.environ.get("KERNELONE_MESSAGE_HANDLER_TIMEOUT_SECONDS", "5.0") or 5.0),
+    )
+except (ValueError, TypeError):
+    _ASYNC_HANDLER_TIMEOUT_SECONDS = 5.0
 
 
 class MessageType(Enum):

@@ -34,6 +34,6 @@ from polaris.delivery.ws.endpoints.websocket_core import runtime_websocket
 
 # Create router with the endpoint
 router = APIRouter(prefix="/ws", tags=["Runtime WebSocket"])
-router.add_api_route("/runtime", runtime_websocket, methods=["websocket"])
+router.add_api_websocket_route("/runtime", runtime_websocket)
 
 __all__ = ["router"]

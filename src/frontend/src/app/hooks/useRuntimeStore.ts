@@ -10,12 +10,15 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { enableMapSet } from 'immer';
 import type { BackendStatus, EngineStatus, LlmStatus, LanceDbStatus, AnthroState, SnapshotPayload } from '@/app/types/appContracts';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { QualityGateData } from '@/app/components/pm';
 import type { LogEntry } from '@/types/log';
 import { type PmTask } from '@/types/task';
 import type { TaskTraceEvent } from '../types/taskTrace';
+
+enableMapSet();
 
 // ============================================================================
 // Types

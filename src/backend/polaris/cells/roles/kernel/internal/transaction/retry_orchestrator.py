@@ -633,23 +633,29 @@ class RetryOrchestrator:
         stream_callable = self.call_llm_for_decision_stream
         use_stream_retry = stream and stream_callable is not None
         if use_stream_retry and stream_callable is not None:
-            async for retry_event in stream_callable(
-                attempt_context,
-                attempt_tool_definitions,
-                ledger,
-                shadow_engine=shadow_engine,
-                tool_choice_override=attempt_tool_choice_override,
-                model_override=attempt_model_override,
-            ):
-                if not isinstance(retry_event, Mapping):
-                    continue
-                event_type = str(retry_event.get("type") or "").strip()
-                if event_type == "_internal_materialize":
-                    candidate_response = retry_event.get("response")
-                    if isinstance(candidate_response, RawLLMResponse):
-                        retry_response = candidate_response
-                elif self.emit_event is not None and event_type:
-                    self.emit_event(retry_event)
+            try:
+                async for retry_event in stream_callable(
+                    attempt_context,
+                    attempt_tool_definitions,
+                    ledger,
+                    shadow_engine=shadow_engine,
+                    tool_choice_override=attempt_tool_choice_override,
+                    model_override=attempt_model_override,
+                ):
+                    if not isinstance(retry_event, Mapping):
+                        continue
+                    event_type = str(retry_event.get("type") or "").strip()
+                    if event_type == "_internal_materialize":
+                        candidate_response = retry_event.get("response")
+                        if isinstance(candidate_response, RawLLMResponse):
+                            retry_response = candidate_response
+                    elif self.emit_event is not None and event_type:
+                        self.emit_event(retry_event)
+            except Exception as stream_exc:
+                logger.exception("retry stream failed: turn_id=%s", turn_id)
+                raise RuntimeError(
+                    f"single_batch_contract_violation_retry_failed: retry stream error: {stream_exc}"
+                ) from stream_exc
             if retry_response is None:
                 raise RuntimeError(
                     "single_batch_contract_violation_retry_failed: retry stream did not materialize response"
@@ -761,6 +767,7 @@ class RetryOrchestrator:
                 raise RuntimeError(
                     "single_batch_contract_violation_retry_failed: retry decision did not produce a valid tool batch"
                 )
+            _batch_count_before = ledger.tool_batch_count
             try:
                 attempt_result = await self.execute_tool_batch(
                     retry_decision,
@@ -779,6 +786,9 @@ class RetryOrchestrator:
                 )
                 return attempt_result
             except RuntimeError as retry_exc:
+                # FIX-20260504: rollback batch count so failed attempts don't
+                # accumulate and cause assert_single_tool_batch to fail on retries.
+                ledger.tool_batch_count = _batch_count_before
                 retry_tool_batch = retry_decision.get("tool_batch")
                 if isinstance(retry_tool_batch, Mapping):
                     retry_invocations = list(retry_tool_batch.get("invocations", []))
@@ -896,23 +906,29 @@ class RetryOrchestrator:
                 retry_llm_call_ordinal += 1
                 followup_model_override = resolve_retry_model_override(retry_llm_call_ordinal)
                 if stream and self.call_llm_for_decision_stream is not None:
-                    async for retry_event in self.call_llm_for_decision_stream(
-                        current_write_context,
-                        followup_tool_definitions,
-                        ledger,
-                        shadow_engine=shadow_engine,
-                        tool_choice_override=followup_tool_choice_override,
-                        model_override=followup_model_override,
-                    ):
-                        if not isinstance(retry_event, Mapping):
-                            continue
-                        event_type = str(retry_event.get("type") or "").strip()
-                        if event_type == "_internal_materialize":
-                            candidate_response = retry_event.get("response")
-                            if isinstance(candidate_response, RawLLMResponse):
-                                followup_response = candidate_response
-                        elif self.emit_event is not None and event_type:
-                            self.emit_event(retry_event)
+                    try:
+                        async for retry_event in self.call_llm_for_decision_stream(
+                            current_write_context,
+                            followup_tool_definitions,
+                            ledger,
+                            shadow_engine=shadow_engine,
+                            tool_choice_override=followup_tool_choice_override,
+                            model_override=followup_model_override,
+                        ):
+                            if not isinstance(retry_event, Mapping):
+                                continue
+                            event_type = str(retry_event.get("type") or "").strip()
+                            if event_type == "_internal_materialize":
+                                candidate_response = retry_event.get("response")
+                                if isinstance(candidate_response, RawLLMResponse):
+                                    followup_response = candidate_response
+                            elif self.emit_event is not None and event_type:
+                                self.emit_event(retry_event)
+                    except Exception as stream_exc:
+                        logger.exception("bootstrap follow-up stream failed: turn_id=%s", turn_id)
+                        raise RuntimeError(
+                            f"single_batch_contract_violation_retry_failed: bootstrap follow-up stream error: {stream_exc}"
+                        ) from stream_exc
                 else:
                     followup_response = await self.call_llm_for_decision(
                         current_write_context,
@@ -937,6 +953,7 @@ class RetryOrchestrator:
                     raise RuntimeError(
                         "single_batch_contract_violation_retry_failed: bootstrap follow-up did not produce tool batch"
                     )
+                _batch_count_before = ledger.tool_batch_count
                 try:
                     followup_result = await self.execute_tool_batch(
                         followup_decision,
@@ -957,6 +974,9 @@ class RetryOrchestrator:
                     )
                     return followup_result
                 except RuntimeError as followup_exc:
+                    # FIX-20260504: rollback batch count so failed attempts don't
+                    # accumulate and cause assert_single_tool_batch to fail.
+                    ledger.tool_batch_count = _batch_count_before
                     rollback_state_after_retry_batch_failure(state_machine, ledger)
                     if (not is_stale_edit_contract_violation(followup_exc)) or (
                         followup_attempt >= max_followup_attempts - 1

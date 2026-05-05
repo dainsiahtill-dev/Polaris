@@ -150,8 +150,14 @@ def _track_background_task(task: asyncio.Task[Any]) -> None:
 # Lazy-loaded pools using UnifiedConcurrencyManager.
 # These are functions (not module-level singletons) to ensure proper event-loop
 # context initialization when get_concurrency_manager() is first called.
-_MAX_HTTP_WORKERS: int = int(os.environ.get("KERNELONE_HTTP_POOL_WORKERS", "32"))
-_MAX_SLEEP_WORKERS: int = int(os.environ.get("KERNELONE_SLEEP_POOL_WORKERS", "4"))
+try:
+    _MAX_HTTP_WORKERS: int = int(os.environ.get("KERNELONE_HTTP_POOL_WORKERS", "32"))
+except (ValueError, TypeError):
+    _MAX_HTTP_WORKERS = 32
+try:
+    _MAX_SLEEP_WORKERS: int = int(os.environ.get("KERNELONE_SLEEP_POOL_WORKERS", "4"))
+except (ValueError, TypeError):
+    _MAX_SLEEP_WORKERS = 4
 
 
 def _get_http_pool() -> concurrent.futures.ThreadPoolExecutor:

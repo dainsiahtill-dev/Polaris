@@ -368,14 +368,18 @@ class RealtimeSignalHub:
         # 使用锁保护 _loop 的访问
         with self._lock:
             loop = self._loop
-        if loop is None:
+        if loop is None or loop.is_closed():
             return
         try:
 
             def _schedule_notify() -> None:
+                if loop.is_closed():
+                    return
+                notify_coro = self.notify(source=source, path=path, root=root)
                 try:
-                    loop.create_task(self.notify(source=source, path=path, root=root))
+                    loop.create_task(notify_coro)
                 except (RuntimeError, ValueError) as e:
+                    notify_coro.close()
                     logger.debug(f"Failed to schedule notify: {e}")
 
             loop.call_soon_threadsafe(_schedule_notify)

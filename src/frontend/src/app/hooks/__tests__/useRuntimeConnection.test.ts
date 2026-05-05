@@ -12,6 +12,11 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import React from 'react';
 import { useRuntimeConnection } from '../useRuntimeConnection';
 
+const mockSubscribeChannels = vi.hoisted(() => vi.fn(() => vi.fn()));
+const mockSendCommand = vi.hoisted(() => vi.fn());
+const mockReconnect = vi.hoisted(() => vi.fn());
+const mockRegisterMessageHandler = vi.hoisted(() => vi.fn(() => vi.fn()));
+
 // Mock dependencies
 vi.mock('@/app/hooks/useRuntimeStore', () => ({
   useRuntimeStore: vi.fn((selector) => {
@@ -33,10 +38,10 @@ vi.mock('@/runtime/transport', () => ({
     reconnecting: false,
     error: null,
     attemptCount: 0,
-    subscribeChannels: vi.fn(() => vi.fn()),
-    sendCommand: vi.fn(),
-    reconnect: vi.fn(),
-    registerMessageHandler: vi.fn(() => vi.fn()),
+    subscribeChannels: mockSubscribeChannels,
+    sendCommand: mockSendCommand,
+    reconnect: mockReconnect,
+    registerMessageHandler: mockRegisterMessageHandler,
   })),
 }));
 
@@ -190,6 +195,21 @@ describe('useRuntimeConnection', () => {
   });
 
   describe('Role Subscription', () => {
+    it('subscribes concrete runtime stream channels instead of a roles pseudo-channel', async () => {
+      renderHook(() =>
+        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+      );
+
+      await waitFor(() => {
+        expect(mockSubscribeChannels).toHaveBeenCalled();
+      });
+
+      const subscriptions = mockSubscribeChannels.mock.calls[0]?.[0] ?? [];
+      const channels = subscriptions.map((item: { channel: string }) => item.channel);
+      expect(channels).toEqual(['system', 'process', 'llm', 'dialogue', 'runtime_events']);
+      expect(channels).not.toContain('roles:pm,director,qa');
+    });
+
     it('should use default roles when not specified', () => {
       const { result } = renderHook(() =>
         useRuntimeConnection({ autoConnect: false, workspace: '/test' })

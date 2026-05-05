@@ -38,10 +38,6 @@ from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleSessionCommandV1,
     RoleExecutionResultV1,
 )
-from polaris.cells.roles.runtime.public.service import (
-    execute_role_session_command,
-    stream_role_session_command,
-)
 from polaris.kernelone.storage import resolve_runtime_path
 from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
 
@@ -603,12 +599,16 @@ class RolesRuntimeMatrixExecutor:
         Yields:
             Event dictionaries from the roles.runtime streaming interface.
         """
+        from polaris.cells.roles.runtime.public.service import stream_role_session_command
+
         return stream_role_session_command(command)
 
     async def run_session(
         self,
         command: ExecuteRoleSessionCommandV1,
     ) -> RoleExecutionResultV1:
+        from polaris.cells.roles.runtime.public.service import execute_role_session_command
+
         return await execute_role_session_command(command)
 
 
@@ -647,6 +647,8 @@ def _resolve_executor(context: Mapping[str, Any] | None) -> RoleSessionMatrixExe
     Raises:
         TypeError: If the injected executor does not implement required methods.
     """
+    from polaris.cells.roles.runtime.public.service import execute_role_session_command
+
     payload = dict(context or {})
     injected = payload.get("role_session_executor")
     if injected is None:

@@ -7,7 +7,7 @@
  * - 订阅角色通道
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRuntimeStore } from './useRuntimeStore';
 import { useRuntimeTransport } from '@/runtime/transport';
 import { useSettings } from '@/hooks';
@@ -18,12 +18,13 @@ interface UseRuntimeConnectionOptions {
   workspace?: string;
 }
 
-function serializeRoles(roles: ('pm' | 'director' | 'qa')[]): string {
-  const unique = Array.from(new Set(roles.map((role) => role.trim().toLowerCase())));
-  return unique
-    .filter((role): role is 'pm' | 'director' | 'qa' => role === 'pm' || role === 'director' || role === 'qa')
-    .join(',');
-}
+const RUNTIME_STREAM_CHANNELS = [
+  'system',
+  'process',
+  'llm',
+  'dialogue',
+  'runtime_events',
+] as const;
 
 /**
  * useRuntimeConnection - 管理运行时连接状态
@@ -76,9 +77,10 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     });
   }, [transportConnected, transportError, transportReconnecting, transportAttemptCount, setConnectionState]);
 
-  // Subscribe to channels based on roles
+  // Subscribe to concrete runtime channels. Roles are sent as metadata on
+  // SUBSCRIBE; using a roles:* pseudo-channel would not match v2 log subjects.
   useEffect(() => {
-    const channels = [`roles:${serializeRoles(rolesRef.current)}`];
+    const channels = [...RUNTIME_STREAM_CHANNELS];
     const unsubscribe = subscribeChannels(channels.map(channel => ({ channel, tailLines: 100 })));
     return () => {
       unsubscribe();
@@ -110,7 +112,12 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   const updateSubscription = useCallback(
     (nextRoles: ('pm' | 'director' | 'qa')[]) => {
       rolesRef.current = nextRoles;
-      sendCommand({ type: 'SUBSCRIBE', protocol: 'runtime.v2', roles: nextRoles });
+      sendCommand({
+        type: 'SUBSCRIBE',
+        protocol: 'runtime.v2',
+        roles: nextRoles,
+        channels: [...RUNTIME_STREAM_CHANNELS],
+      });
     },
     [sendCommand]
   );
@@ -144,33 +151,52 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     };
   }, []);
 
-  return {
-    // State
-    live,
-    connected: live,
-    isConnected: live,
-    error,
-    reconnecting,
-    attemptCount,
+  return useMemo(
+    () => ({
+      // State
+      live,
+      connected: live,
+      isConnected: live,
+      error,
+      reconnecting,
+      attemptCount,
 
-    // Actions
-    connect,
-    disconnect,
-    reconnect,
-    updateSubscription,
+      // Actions
+      connect,
+      disconnect,
+      reconnect,
+      updateSubscription,
 
-    // Transport
-    transportConnected,
-    transportReconnecting,
-    transportError,
-    transportAttemptCount,
-    transportReconnect,
-    registerMessageHandler,
-    sendCommand,
+      // Transport
+      transportConnected,
+      transportReconnecting,
+      transportError,
+      transportAttemptCount,
+      transportReconnect,
+      registerMessageHandler,
+      sendCommand,
 
-    // Refs for message handler
-    workspaceRef,
-    rolesRef,
-    activeRef,
-  };
+      // Refs for message handler
+      workspaceRef,
+      rolesRef,
+      activeRef,
+    }),
+    [
+      live,
+      error,
+      reconnecting,
+      attemptCount,
+      connect,
+      disconnect,
+      reconnect,
+      updateSubscription,
+      transportConnected,
+      transportReconnecting,
+      transportError,
+      transportAttemptCount,
+      transportReconnect,
+      registerMessageHandler,
+      sendCommand,
+    ]
+  );
 }

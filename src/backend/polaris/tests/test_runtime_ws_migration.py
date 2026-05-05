@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.bootstrap.config import Settings
 from polaris.delivery.http.app_factory import create_app
@@ -16,15 +17,18 @@ from polaris.kernelone.storage.io_paths import build_cache_root
 from starlette.websockets import WebSocketDisconnect
 
 
-def _create_test_app(tmp_path, monkeypatch) -> tuple[object, str]:
+def _create_test_app(tmp_path, monkeypatch) -> tuple[FastAPI, str]:
     token = "runtime-ws-migration-token"
     monkeypatch.setenv("KERNELONE_TOKEN", token)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    runtime_cache = tmp_path / "runtime-cache"
+    runtime_cache.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(runtime_cache))
 
     settings = Settings(
-        workspace=str(workspace),
+        workspace=workspace,
         json_log_path="runtime/events/pm.events.jsonl",
     )
     return create_app(settings), token
@@ -128,6 +132,49 @@ def test_runtime_ws_journal_snapshot_routes_each_line_once(tmp_path, monkeypatch
     assert len([m for m in stream_messages if m.get("type") == "llm_stream" and m.get("channel") == "llm"]) == 1
 
 
+def test_runtime_ws_journal_dialogue_source_routes_to_dialogue_event(tmp_path, monkeypatch) -> None:
+    app, token = _create_test_app(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    cache_root = Path(build_cache_root("", str(workspace)))
+    run_id = "pm-dialogue-source"
+    latest_run_path = cache_root / "latest_run.json"
+    journal_path = cache_root / "runs" / run_id / "logs" / "journal.norm.jsonl"
+
+    latest_run_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_run_path.write_text(json.dumps({"run_id": run_id}, ensure_ascii=False), encoding="utf-8")
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "event_id": "evt-dialogue",
+                "run_id": run_id,
+                "seq": 1,
+                "channel": "system",
+                "domain": "system",
+                "severity": "info",
+                "kind": "observation",
+                "actor": "PM",
+                "source": "dialogue",
+                "message": "dialogue-line",
+                "raw": {"event_id": "dialogue-raw", "speaker": "PM", "type": "say", "text": "dialogue-line"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with TestClient(app) as client, client.websocket_connect(f"/v2/ws/runtime?token={token}") as ws:
+        status_payload = json.loads(ws.receive_text())
+        assert status_payload.get("type") == "status"
+        dialogue_payload = json.loads(ws.receive_text())
+
+    assert dialogue_payload.get("type") == "dialogue_event"
+    assert dialogue_payload.get("channel") == "dialogue"
+    assert dialogue_payload.get("event", {}).get("text") == "dialogue-line"
+
+
 def test_runtime_ws_realtime_fanout_pushes_llm_stream_without_file_poll_delay(tmp_path, monkeypatch) -> None:
     app, token = _create_test_app(tmp_path, monkeypatch)
     workspace = tmp_path / "workspace"
@@ -158,6 +205,59 @@ def test_runtime_ws_realtime_fanout_pushes_llm_stream_without_file_poll_delay(tm
                 break
         assert llm_payload is not None
         assert llm_payload.get("event", {}).get("message") == "realtime-llm"
+
+
+def test_runtime_ws_v2_subscribe_keeps_local_fanout_fallback(tmp_path, monkeypatch) -> None:
+    from polaris.infrastructure.messaging.nats.ws_consumer_manager import JetStreamConsumerManager
+
+    async def _jetstream_unavailable(self) -> bool:
+        del self
+        return False
+
+    monkeypatch.setattr(JetStreamConsumerManager, "connect", _jetstream_unavailable)
+
+    app, token = _create_test_app(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    cache_root = Path(build_cache_root("", str(workspace)))
+    run_id = "pm-v2-local-fallback"
+    latest_run_path = cache_root / "latest_run.json"
+    latest_run_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_run_path.write_text(json.dumps({"run_id": run_id}, ensure_ascii=False), encoding="utf-8")
+
+    with TestClient(app) as client, client.websocket_connect(f"/v2/ws/runtime?token={token}") as ws:
+        status_payload = json.loads(ws.receive_text())
+        assert status_payload.get("type") == "status"
+
+        ws.send_json(
+            {
+                "type": "SUBSCRIBE",
+                "protocol": "runtime.v2",
+                "channels": ["llm"],
+                "roles": ["pm", "director", "qa"],
+                "tail": 100,
+            }
+        )
+        subscribed_payload = ws.receive_json()
+        assert subscribed_payload.get("type") == "SUBSCRIBED"
+        assert subscribed_payload.get("payload", {}).get("jetstream") is False
+
+        writer = LogEventWriter(workspace=str(workspace), run_id=run_id)
+        writer.write_event(
+            message="v2-local-fanout-llm",
+            channel="llm",
+            domain="llm",
+            actor="pm",
+            raw={"stream_event": "content_chunk", "content": "hello"},
+        )
+
+        llm_payload = None
+        for _ in range(8):
+            payload = ws.receive_json()
+            if payload.get("type") == "llm_stream" and payload.get("channel") == "llm":
+                llm_payload = payload
+                break
+        assert llm_payload is not None
+        assert llm_payload.get("event", {}).get("message") == "v2-local-fanout-llm"
 
 
 def test_runtime_v2_workspace_key_uses_connection_workspace_context(tmp_path) -> None:

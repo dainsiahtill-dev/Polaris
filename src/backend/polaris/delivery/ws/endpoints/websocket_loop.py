@@ -102,7 +102,6 @@ async def run_main_loop(
 
             sent_any = False
             needs_resync = False
-            handled_client_message = False
 
             if receive_task in done:
                 raw = receive_task.result()
@@ -136,7 +135,6 @@ async def run_main_loop(
                     send_all_snapshots_func=send_all_snapshots_func,
                 )
                 receive_task = asyncio.create_task(websocket.receive_text())
-                handled_client_message = True
 
             signal_triggered = False
             if signal_task in done:
@@ -147,7 +145,7 @@ async def run_main_loop(
                     REALTIME_SIGNAL_HUB.wait_for_update(signal_seq, timeout_sec=0.5, workspace=cache_root)
                 )
 
-                if signal_triggered and not handled_client_message:
+                if signal_triggered:
                     if "court_status" in legacy_subscriptions:
                         status_payload = await build_status_payload(state, resolved_workspace, cache_root, roles_filter)
                         court_ok = await send_json_safe(
@@ -304,8 +302,9 @@ async def _drain_realtime_log_events(
     first_event: dict[str, Any] | None = None,
 ) -> tuple[bool, bool]:
     """Drain in-process canonical journal events from realtime fanout."""
-    if v2_protocol == "runtime.v2" or realtime_subscription is None:
+    if realtime_subscription is None:
         return False, False
+    del v2_protocol
 
     sent_any = False
     needs_resync = False

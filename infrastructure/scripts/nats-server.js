@@ -116,12 +116,35 @@ function parseNatsEndpoint(url) {
 }
 
 /**
- * Resolve the JetStream storage directory, mirroring the Python implementation.
- * Uses KERNELONE_HOME or defaults to ~/.polaris.
+ * Resolve the JetStream storage directory.
+ * Uses KERNELONE_HOME > KERNELONE_ROOT/.polaris > APPDATA/.polaris > ~/.polaris.
  */
 function resolveStorageDir() {
   const home = String(process.env.KERNELONE_HOME || "").trim();
-  const base = home || path.join(os.homedir(), ".polaris");
+  const root = String(process.env.KERNELONE_ROOT || "").trim();
+  let base;
+  if (home) {
+    base = home;
+  } else if (root) {
+    base = path.join(root, ".polaris");
+  } else if (process.platform === "win32") {
+    const appdata = String(process.env.APPDATA || "").trim();
+    if (appdata) {
+      const legacyHome = path.join(os.homedir(), ".polaris");
+      const legacySettings = path.join(legacyHome, "config", "settings.json");
+      const appdataHome = path.join(appdata, ".polaris");
+      const appdataSettings = path.join(appdataHome, "config", "settings.json");
+      if (fs.existsSync(legacySettings) && !fs.existsSync(appdataSettings)) {
+        base = legacyHome;
+      } else {
+        base = appdataHome;
+      }
+    } else {
+      base = path.join(os.homedir(), ".polaris");
+    }
+  } else {
+    base = path.join(os.homedir(), ".polaris");
+  }
   return path.join(base, "runtime", "nats", "jetstream");
 }
 

@@ -47,7 +47,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
-from polaris.cells.roles.runtime.public.service import stream_role_session_command
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .benchmark_loader import (
@@ -109,6 +108,8 @@ class RolesRuntimeStreamExecutor:
         self,
         command: ExecuteRoleSessionCommandV1,
     ) -> AsyncIterator[Mapping[str, Any]]:
+        from polaris.cells.roles.runtime.public.service import stream_role_session_command
+
         return stream_role_session_command(command)
 
 

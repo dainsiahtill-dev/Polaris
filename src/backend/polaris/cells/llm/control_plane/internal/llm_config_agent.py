@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.runtime.public.service import (
+from polaris.cells.roles.runtime.internal.agent_runtime_base import (
     AgentMessage,
     MessageType,
     RoleAgent,
@@ -35,15 +37,90 @@ def _get_polaris_home() -> str:
     return polaris_home()
 
 
+#: Sensitive keys that must be masked in API responses and logs.
+_SENSITIVE_PROVIDER_KEYS: frozenset[str] = frozenset(
+    {"api_key", "api_token", "access_token", "secret", "password", "auth_token"}
+)
+
+#: Allowed provider_cfg keys for generation params (data-plane).
+_ALLOWED_PROVIDER_CFG_KEYS: frozenset[str] = frozenset(
+    {
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "presence_penalty",
+        "frequency_penalty",
+        "timeout",
+        "stop",
+        "seed",
+    }
+)
+
+#: Validation ranges for numeric provider_cfg values.
+_PROVIDER_CFG_VALIDATION: dict[str, tuple[float, float]] = {
+    "temperature": (0.0, 2.0),
+    "top_p": (0.0, 1.0),
+    "presence_penalty": (-2.0, 2.0),
+    "frequency_penalty": (-2.0, 2.0),
+}
+
+#: Maximum allowed max_tokens to prevent runaway billing/OOM.
+_MAX_TOKENS_LIMIT: int = 32_768
+
+
+def _mask_sensitive_values(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep-copied provider_cfg with sensitive values masked."""
+    result = copy.deepcopy(cfg)
+    for key in result:
+        if key.lower() in _SENSITIVE_PROVIDER_KEYS:
+            result[key] = "***"
+    return result
+
+
+def _validate_provider_cfg(cfg: dict[str, Any]) -> None:
+    """Validate provider_cfg values for known generation parameters.
+
+    Only validates keys that are known generation parameters
+    (temperature, max_tokens, etc.). Other keys (e.g. api_key)
+    are allowed through without validation since they are
+    provider-specific and will be masked in responses.
+
+    Raises:
+        ValueError: If any known parameter value is invalid.
+    """
+    for key, value in cfg.items():
+        if key not in _ALLOWED_PROVIDER_CFG_KEYS:
+            continue
+        if key == "max_tokens":
+            try:
+                max_tokens = int(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"max_tokens must be an integer, got {value!r}") from exc
+            if not (1 <= max_tokens <= _MAX_TOKENS_LIMIT):
+                raise ValueError(
+                    f"max_tokens must be between 1 and {_MAX_TOKENS_LIMIT}, got {max_tokens}"
+                )
+        if key in _PROVIDER_CFG_VALIDATION and value is not None:
+            low, high = _PROVIDER_CFG_VALIDATION[key]
+            try:
+                num = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{key} must be a number, got {value!r}") from exc
+            if not (low <= num <= high):
+                raise ValueError(f"{key} must be between {low} and {high}, got {num}")
+
+
 def _infer_workspace_from_storage_path(storage_path: str) -> str:
     target = Path(str(storage_path or "")).expanduser().resolve()
     path_str = str(target).lower()
-    for marker in (".polaris", ".polaris", ".polaris-cache", ".polaris-cache", "runtime"):
+    for marker in (".polaris", ".polaris-cache", "runtime"):
         idx = path_str.find(marker)
         if idx > 0:
             parent = str(target)[:idx]
             if parent:
-                return str(Path(parent).resolve())
+                resolved = Path(parent).resolve()
+                if str(resolved) != ".":
+                    return str(resolved)
     return str(Path.cwd().resolve())
 
 
@@ -63,7 +140,8 @@ class LLMConfig:
     updated_at: datetime = field(default_factory=datetime.now)
     is_active: bool = True
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, mask_secrets: bool = False) -> dict[str, Any]:
+        cfg = _mask_sensitive_values(self.provider_cfg) if mask_secrets else copy.deepcopy(self.provider_cfg)
         return {
             "config_id": self.config_id,
             "role": self.role,
@@ -72,7 +150,7 @@ class LLMConfig:
             "provider_kind": self.provider_kind,
             "model": self.model,
             "profile": self.profile,
-            "provider_cfg": dict(self.provider_cfg),
+            "provider_cfg": cfg,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "is_active": bool(self.is_active),
@@ -97,7 +175,7 @@ class LLMConfig:
             provider_kind=str(raw_provider_kind) if raw_provider_kind else "",
             model=str(raw_model) if raw_model else "",
             profile=str(raw_profile) if raw_profile else "",
-            provider_cfg=dict(raw_provider_cfg) if raw_provider_cfg else {},
+            provider_cfg=copy.deepcopy(raw_provider_cfg) if raw_provider_cfg else {},
             created_at=_parse_iso_timestamp(payload.get("created_at")),
             updated_at=_parse_iso_timestamp(payload.get("updated_at")),
             is_active=bool(payload.get("is_active", True)),
@@ -192,26 +270,26 @@ class LLMConfigStore:
             return None
         with self._lock:
             rows = self._load_all_unlocked()
-        payload = rows.get(token)
-        if not isinstance(payload, dict):
-            return None
-        try:
-            return LLMConfig.from_dict(payload)
-        except (RuntimeError, ValueError):
-            return None
+            payload = rows.get(token)
+            if not isinstance(payload, dict):
+                return None
+            try:
+                return LLMConfig.from_dict(payload)
+            except (RuntimeError, ValueError):
+                return None
 
     def get_all(self) -> list[LLMConfig]:
         with self._lock:
             rows = self._load_all_unlocked()
-        configs: list[LLMConfig] = []
-        for payload in rows.values():
-            if not isinstance(payload, dict):
-                continue
-            try:
-                configs.append(LLMConfig.from_dict(payload))
-            except (RuntimeError, ValueError):
-                continue
-        return sorted(configs, key=lambda item: item.role)
+            configs: list[LLMConfig] = []
+            for payload in rows.values():
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    configs.append(LLMConfig.from_dict(payload))
+                except (RuntimeError, ValueError):
+                    continue
+            return sorted(configs, key=lambda item: item.role)
 
     def delete(self, role: str) -> bool:
         token = (role or "").strip()
@@ -281,8 +359,12 @@ class HRAgent(RoleAgent):
     ) -> dict[str, Any]:
         now = datetime.now()
         cfg = dict(provider_cfg or {})
+        try:
+            _validate_provider_cfg(cfg)
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_provider_cfg", "detail": str(exc)}
         item = LLMConfig(
-            config_id=f"config_{role}_{now.strftime('%Y%m%d%H%M%S%f')}",
+            config_id=f"config_{role}_{uuid.uuid4().hex[:12]}",
             role=str(role or "").strip(),
             provider_id=str(provider_id or "").strip(),
             provider_type=str(provider_type or "").strip().lower(),
@@ -295,17 +377,17 @@ class HRAgent(RoleAgent):
             is_active=True,
         )
         self._config_store.save(item)
-        return {"ok": True, "config": item.to_dict()}
+        return {"ok": True, "config": item.to_dict(mask_secrets=True)}
 
     def _tool_get_llm_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
         if item is None:
             return {"ok": True, "has_config": False, "role": role}
-        return {"ok": True, "has_config": True, "config": item.to_dict()}
+        return {"ok": True, "has_config": True, "config": item.to_dict(mask_secrets=True)}
 
     def _tool_list_all_configs(self) -> dict[str, Any]:
         rows = self._config_store.get_all()
-        return {"ok": True, "count": len(rows), "configs": [item.to_dict() for item in rows]}
+        return {"ok": True, "count": len(rows), "configs": [item.to_dict(mask_secrets=True) for item in rows]}
 
     def _tool_update_llm_config(
         self,
@@ -326,7 +408,12 @@ class HRAgent(RoleAgent):
         if profile is not None:
             kwargs["profile"] = str(profile or "").strip()
         if provider_cfg is not None:
-            kwargs["provider_cfg"] = dict(provider_cfg)
+            cfg = dict(provider_cfg)
+            try:
+                _validate_provider_cfg(cfg)
+            except ValueError as exc:
+                return {"ok": False, "error": "invalid_provider_cfg", "detail": str(exc)}
+            kwargs["provider_cfg"] = cfg
         new_item = replace(item, **kwargs)
         new_item = replace(
             new_item,
@@ -335,7 +422,7 @@ class HRAgent(RoleAgent):
             ),
         )
         self._config_store.save(new_item)
-        return {"ok": True, "config": new_item.to_dict()}
+        return {"ok": True, "config": new_item.to_dict(mask_secrets=True)}
 
     def _tool_deactivate_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
@@ -343,7 +430,7 @@ class HRAgent(RoleAgent):
             return {"ok": False, "error": "config_not_found", "role": role}
         new_item = replace(item, is_active=False, updated_at=datetime.now())
         self._config_store.save(new_item)
-        return {"ok": True, "config": new_item.to_dict()}
+        return {"ok": True, "config": new_item.to_dict(mask_secrets=True)}
 
     def _tool_activate_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
@@ -351,7 +438,7 @@ class HRAgent(RoleAgent):
             return {"ok": False, "error": "config_not_found", "role": role}
         new_item = replace(item, is_active=True, updated_at=datetime.now())
         self._config_store.save(new_item)
-        return {"ok": True, "config": new_item.to_dict()}
+        return {"ok": True, "config": new_item.to_dict(mask_secrets=True)}
 
     def _tool_delete_config(self, role: str) -> dict[str, Any]:
         return {"ok": True, "deleted": self._config_store.delete(role), "role": role}
@@ -361,21 +448,24 @@ class HRAgent(RoleAgent):
         if message.type != MessageType.TASK:
             return None
         action = str(payload.get("action") or "").strip().lower()
-        if action == "set_config":
-            result = self._tool_set_llm_config(
-                role=str(payload.get("role") or "").strip(),
-                provider_id=str(payload.get("provider_id") or "").strip(),
-                provider_type=str(payload.get("provider_type") or "").strip(),
-                model=str(payload.get("model") or "").strip(),
-                profile=str(payload.get("profile") or "").strip(),
-                provider_cfg=payload.get("provider_cfg") if isinstance(payload.get("provider_cfg"), dict) else {},
-            )
-        elif action == "get_config":
-            result = self._tool_get_llm_config(str(payload.get("role") or "").strip())
-        elif action == "list_configs":
-            result = self._tool_list_all_configs()
-        else:
-            result = {"ok": False, "error": "unsupported_action", "action": action}
+        try:
+            if action == "set_config":
+                result = self._tool_set_llm_config(
+                    role=str(payload.get("role") or "").strip(),
+                    provider_id=str(payload.get("provider_id") or "").strip(),
+                    provider_type=str(payload.get("provider_type") or "").strip(),
+                    model=str(payload.get("model") or "").strip(),
+                    profile=str(payload.get("profile") or "").strip(),
+                    provider_cfg=payload.get("provider_cfg") if isinstance(payload.get("provider_cfg"), dict) else {},
+                )
+            elif action == "get_config":
+                result = self._tool_get_llm_config(str(payload.get("role") or "").strip())
+            elif action == "list_configs":
+                result = self._tool_list_all_configs()
+            else:
+                result = {"ok": False, "error": "unsupported_action", "action": action}
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": "internal_error", "detail": str(exc)}
 
         return AgentMessage.create(
             msg_type=MessageType.RESULT,

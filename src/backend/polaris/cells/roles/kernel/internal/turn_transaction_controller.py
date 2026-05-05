@@ -52,6 +52,7 @@ TurnTransactionController 是**新架构**的事务化执行器，与 TurnEngine
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -1073,9 +1074,12 @@ class TurnTransactionController:
             self._active_truthlog_recorder = None
             if truthlog_recorder is not None:
                 await self._shutdown_turn_truthlog_recorder(truthlog_recorder)
-            _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
-            _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
-            _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
+            with contextlib.suppress(ValueError):
+                _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
+            with contextlib.suppress(ValueError):
+                _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
+            with contextlib.suppress(ValueError):
+                _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
 
     async def execute_stream(
         self,
@@ -1166,9 +1170,12 @@ class TurnTransactionController:
             self._active_truthlog_recorder = None
             if truthlog_recorder is not None:
                 await self._shutdown_turn_truthlog_recorder(truthlog_recorder)
-            _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
-            _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
-            _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
+            with contextlib.suppress(ValueError):
+                _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
+            with contextlib.suppress(ValueError):
+                _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
+            with contextlib.suppress(ValueError):
+                _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
 
     # ---------------------------------------------------------------------------
     # Core orchestration

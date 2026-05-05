@@ -7,11 +7,15 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from polaris.cells.llm.control_plane.internal.llm_config_agent import (
     HRAgent,
     LLMConfig,
     LLMConfigStore,
     _infer_workspace_from_storage_path,
+    _mask_sensitive_values,
+    _validate_provider_cfg,
 )
 
 
@@ -343,165 +347,285 @@ class TestHRAgent:
         mock_store.get_all.assert_called_once_with()
         assert result == []
 
+    def test_tool_set_llm_config_validates_provider_cfg(self) -> None:
+        agent = HRAgent.__new__(HRAgent)
+        agent.workspace = "/tmp"
+        mock_store = MagicMock()
+        agent._config_store = mock_store
+
+        result = agent._tool_set_llm_config(
+            role="pm",
+            provider_id="openai",
+            provider_type="openai",
+            model="gpt-4",
+            profile="default",
+            provider_cfg={"temperature": 3.0},
+        )
+        assert result["ok"] is False
+        assert result["error"] == "invalid_provider_cfg"
+        mock_store.save.assert_not_called()
+
+    def test_tool_set_llm_config_accepts_valid_provider_cfg(self) -> None:
+        agent = HRAgent.__new__(HRAgent)
+        agent.workspace = "/tmp"
+        mock_store = MagicMock()
+        agent._config_store = mock_store
+
+        result = agent._tool_set_llm_config(
+            role="pm",
+            provider_id="openai",
+            provider_type="openai",
+            model="gpt-4",
+            profile="default",
+            provider_cfg={"temperature": 0.7, "max_tokens": 2048},
+        )
+        assert result["ok"] is True
+        mock_store.save.assert_called_once()
+        saved_config = mock_store.save.call_args[0][0]
+        assert saved_config.provider_cfg == {"temperature": 0.7, "max_tokens": 2048}
+        # config_id should contain a UUID-like suffix, not just timestamp
+        assert len(saved_config.config_id) > len("config_pm_")
+
+    def test_tool_set_llm_config_masks_secrets_in_response(self) -> None:
+        agent = HRAgent.__new__(HRAgent)
+        agent.workspace = "/tmp"
+        mock_store = MagicMock()
+        agent._config_store = mock_store
+
+        result = agent._tool_set_llm_config(
+            role="pm",
+            provider_id="openai",
+            provider_type="openai",
+            model="gpt-4",
+            profile="default",
+            provider_cfg={"api_key": "sk-secret123", "temperature": 0.7},
+        )
+        assert result["ok"] is True
+        config_dict = result["config"]
+        assert config_dict["provider_cfg"]["api_key"] == "***"
+        assert config_dict["provider_cfg"]["temperature"] == 0.7
+
+    def test_tool_update_llm_config_validates_provider_cfg(self) -> None:
+        agent = HRAgent.__new__(HRAgent)
+        agent.workspace = "/tmp"
+        mock_store = MagicMock()
+        existing = LLMConfig(
+            config_id="cfg",
+            role="pm",
+            provider_id="openai",
+            provider_type="openai",
+            provider_kind="generic",
+            model="gpt-4",
+            profile="default",
+        )
+        mock_store.get.return_value = existing
+        agent._config_store = mock_store
+
+        result = agent._tool_update_llm_config(
+            role="pm",
+            provider_cfg={"max_tokens": 999999},
+        )
+        assert result["ok"] is False
+        assert result["error"] == "invalid_provider_cfg"
+        mock_store.save.assert_not_called()
+
+    def test_tool_update_llm_config_masks_secrets(self) -> None:
+        agent = HRAgent.__new__(HRAgent)
+        agent.workspace = "/tmp"
+        mock_store = MagicMock()
+        existing = LLMConfig(
+            config_id="cfg",
+            role="pm",
+            provider_id="openai",
+            provider_type="openai",
+            provider_kind="generic",
+            model="gpt-4",
+            profile="default",
+            provider_cfg={"api_key": "old-key"},
+        )
+        mock_store.get.return_value = existing
+        agent._config_store = mock_store
+
+        result = agent._tool_update_llm_config(
+            role="pm",
+            provider_cfg={"api_key": "new-key", "temperature": 0.5},
+        )
+        assert result["ok"] is True
+        assert result["config"]["provider_cfg"]["api_key"] == "***"
+        assert result["config"]["provider_cfg"]["temperature"] == 0.5
+
+    def test_handle_message_catches_exceptions(self) -> None:
+        agent = HRAgent.__new__(HRAgent)
+        agent.workspace = "/tmp"
+        agent.agent_name = "HR"
+        mock_store = MagicMock()
+        mock_store.get.side_effect = RuntimeError("store failure")
+        agent._config_store = mock_store
+
+        from polaris.cells.roles.runtime.internal.agent_runtime_base import AgentMessage, MessageType
+
+        msg = AgentMessage.create(
+            msg_type=MessageType.TASK,
+            sender="test",
+            receiver="hr",
+            payload={"action": "get_config", "role": "pm"},
+        )
+        response = agent.handle_message(msg)
+        assert response is not None
+        assert response.type == MessageType.RESULT
+        payload = dict(response.payload or {})
+        assert payload["result"]["ok"] is False
+        assert payload["result"]["error"] == "internal_error"
+        assert "store failure" in payload["result"]["detail"]
+
+    def test_handle_message_unsupported_action(self) -> None:
+        agent = HRAgent.__new__(HRAgent)
+        agent.workspace = "/tmp"
+        agent.agent_name = "HR"
+        agent._config_store = MagicMock()
+
+        from polaris.cells.roles.runtime.internal.agent_runtime_base import AgentMessage, MessageType
+
+        msg = AgentMessage.create(
+            msg_type=MessageType.TASK,
+            sender="test",
+            receiver="hr",
+            payload={"action": "unknown_action"},
+        )
+        response = agent.handle_message(msg)
+        assert response is not None
+        assert response.type == MessageType.RESULT
+        payload = dict(response.payload or {})
+        assert payload["result"]["ok"] is False
+        assert payload["result"]["error"] == "unsupported_action"
+
+
+class TestProviderCfgValidation:
+    """Tests for _validate_provider_cfg and _mask_sensitive_values."""
+
+    def test_validate_allowed_keys(self) -> None:
+        _validate_provider_cfg({"temperature": 0.5})
+        _validate_provider_cfg({"max_tokens": 100})
+        _validate_provider_cfg({"stop": ["\n"]})
+
+    def test_validate_allows_unknown_keys(self) -> None:
+        # Unknown keys are allowed (e.g. api_key, provider-specific settings)
+        _validate_provider_cfg({"unknown_key": 1, "api_key": "secret"})
+
+    def test_validate_max_tokens_range(self) -> None:
+        with pytest.raises(ValueError, match="between 1 and"):
+            _validate_provider_cfg({"max_tokens": 0})
+        with pytest.raises(ValueError, match="between 1 and"):
+            _validate_provider_cfg({"max_tokens": 100_000})
+
+    def test_validate_temperature_range(self) -> None:
+        with pytest.raises(ValueError, match="between 0.0 and 2.0"):
+            _validate_provider_cfg({"temperature": 5.0})
+
+    def test_validate_top_p_range(self) -> None:
+        with pytest.raises(ValueError, match="between 0.0 and 1.0"):
+            _validate_provider_cfg({"top_p": 1.5})
+
+    def test_validate_presence_penalty_range(self) -> None:
+        with pytest.raises(ValueError, match="between -2.0 and 2.0"):
+            _validate_provider_cfg({"presence_penalty": -5.0})
+
+    def test_mask_sensitive_values(self) -> None:
+        cfg = {"api_key": "secret", "temperature": 0.7, "password": "pass123"}
+        result = _mask_sensitive_values(cfg)
+        assert result["api_key"] == "***"
+        assert result["password"] == "***"
+        assert result["temperature"] == 0.7
+        # Original should be unchanged
+        assert cfg["api_key"] == "secret"
+
 
 class TestWriteJsonAtomic:
-    """Integration tests for write_json_atomic temp-file-then-rename pattern."""
+    """Integration tests for atomic write via LocalFileSystemAdapter."""
 
     def test_atomic_write_creates_temp_then_renames(self, tmp_path: Path) -> None:
         """Verify atomic write creates temp file then atomically renames."""
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
-        from polaris.kernelone.fs.runtime import KernelFileSystem
 
         adapter = LocalFileSystemAdapter()
-        fs = KernelFileSystem(str(tmp_path), adapter)
+        target = str(tmp_path / "config" / "test.json")
 
         # Write a config file atomically
-        test_data = {"role": "pm", "model": "test-model"}
-        fs.write_json_atomic("config/test.json", test_data)
+        data = '{"role": "pm", "model": "test-model"}\n'
+        adapter.write_text(target, data, atomic=True)
 
         # Verify target file exists
-        target = tmp_path / "config" / "test.json"
-        assert target.exists()
-
-        # Verify no temp files remain
-        temp_files = list(tmp_path.glob(".write_tmp_*.json"))
-        assert len(temp_files) == 0
+        assert Path(target).exists()
 
     def test_atomic_write_preserves_content(self, tmp_path: Path) -> None:
         """Verify atomic write preserves exact JSON content."""
+        import json
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
-        from polaris.kernelone.fs.runtime import KernelFileSystem
 
         adapter = LocalFileSystemAdapter()
-        fs = KernelFileSystem(str(tmp_path), adapter)
+        target = str(tmp_path / "llm" / "configs.json")
 
-        # Write multiple configs
         configs = {
             "pm": {"role": "pm", "model": "claude-3-5-sonnet"},
             "architect": {"role": "architect", "model": "gpt-4"},
         }
-        fs.write_json_atomic("llm/configs.json", configs)
+        adapter.write_text(target, json.dumps(configs), atomic=True)
 
-        # Read back and verify
-        result = fs.read_json("llm/configs.json")
+        result = json.loads(adapter.read_text(target))
         assert result == configs
-        assert result["pm"]["model"] == "claude-3-5-sonnet"
-        assert result["architect"]["model"] == "gpt-4"
 
     def test_atomic_write_overwrites_existing(self, tmp_path: Path) -> None:
         """Verify atomic write correctly overwrites existing file."""
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
-        from polaris.kernelone.fs.runtime import KernelFileSystem
 
         adapter = LocalFileSystemAdapter()
-        fs = KernelFileSystem(str(tmp_path), adapter)
+        target = str(tmp_path / "data.json")
 
-        # Write initial content
-        fs.write_json_atomic("data.json", {"version": 1})
+        adapter.write_text(target, '{"version": 1}', atomic=True)
+        adapter.write_text(target, '{"version": 2, "extra": "data"}', atomic=True)
 
-        # Overwrite with new content
-        fs.write_json_atomic("data.json", {"version": 2, "extra": "data"})
-
-        # Verify only new content exists
-        result = fs.read_json("data.json")
+        import json
+        result = json.loads(adapter.read_text(target))
         assert result == {"version": 2, "extra": "data"}
 
     def test_atomic_write_creates_parent_directories(self, tmp_path: Path) -> None:
         """Verify atomic write creates parent directories as needed."""
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
-        from polaris.kernelone.fs.runtime import KernelFileSystem
 
         adapter = LocalFileSystemAdapter()
-        fs = KernelFileSystem(str(tmp_path), adapter)
+        target = str(tmp_path / "a" / "b" / "c" / "deep.json")
 
-        # Write to nested path that doesn't exist
-        fs.write_json_atomic("a/b/c/deep.json", {"nested": True})
-
-        # Verify path was created
-        deep_file = tmp_path / "a" / "b" / "c" / "deep.json"
-        assert deep_file.exists()
-        assert fs.read_json("a/b/c/deep.json") == {"nested": True}
+        adapter.write_text(target, '{"nested": true}', atomic=True)
+        assert Path(target).exists()
 
     def test_atomic_write_with_special_chars_in_json(self, tmp_path: Path) -> None:
         """Verify atomic write handles special characters correctly."""
+        import json
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
-        from polaris.kernelone.fs.runtime import KernelFileSystem
 
         adapter = LocalFileSystemAdapter()
-        fs = KernelFileSystem(str(tmp_path), adapter)
+        target = str(tmp_path / "special.json")
 
-        # Write JSON with special characters
         data = {
             "chinese": "中文测试",
             "emoji": "🎉",
-            "unicode": "  ",
             "quotes": 'he said "hello"',
         }
-        fs.write_json_atomic("special.json", data)
+        adapter.write_text(target, json.dumps(data, ensure_ascii=False), atomic=True)
 
-        # Verify round-trip
-        result = fs.read_json("special.json")
+        result = json.loads(adapter.read_text(target))
         assert result["chinese"] == "中文测试"
         assert result["emoji"] == "🎉"
 
-    def test_atomic_write_fallback_when_adapter_lacks_support(self, tmp_path: Path) -> None:
-        """Verify fallback works when adapter lacks write_json_atomic."""
-        from polaris.kernelone.fs.runtime import KernelFileSystem
+    def test_atomic_write_no_temp_leak(self, tmp_path: Path) -> None:
+        """Verify atomic write does not leave temp files behind."""
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 
-        # Create a mock adapter without write_json_atomic
-        class MinimalAdapter:
-            def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
-                with open(path, encoding=encoding) as f:
-                    return f.read()
+        adapter = LocalFileSystemAdapter()
+        target = str(tmp_path / "config" / "test.json")
 
-            def read_bytes(self, path: str) -> bytes:
-                with open(path, "rb") as f:
-                    return f.read()
+        adapter.write_text(target, '{"role": "pm"}', atomic=True)
 
-            def exists(self, path: str) -> bool:
-                import os
-                return os.path.exists(path)
-
-            def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
-                import os
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding=encoding) as f:
-                    f.write(content)
-                return len(content.encode(encoding))
-
-            def write_bytes(self, path: str, content: bytes) -> int:
-                import os
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "wb") as f:
-                    f.write(content)
-                return len(content)
-
-            def append_text(self, path: str, content: str, *, encoding: str = "utf-8") -> int:
-                with open(path, "a", encoding=encoding) as f:
-                    f.write(content)
-                return len(content.encode(encoding))
-
-            def remove(self, path: str, *, missing_ok: bool = True) -> bool:
-                import os
-                try:
-                    os.remove(path)
-                    return True
-                except FileNotFoundError:
-                    return missing_ok
-
-            def is_file(self, path: str) -> bool:
-                import os
-                return os.path.isfile(path)
-
-            def is_dir(self, path: str) -> bool:
-                import os
-                return os.path.isdir(path)
-
-        adapter = MinimalAdapter()
-        fs = KernelFileSystem(str(tmp_path), adapter)
-
-        # write_json_atomic should work even without adapter support
-        fs.write_json_atomic("fallback.json", {"test": "fallback"})
-
-        # Verify content
-        assert fs.read_json("fallback.json") == {"test": "fallback"}
+        # Verify no temp files remain in parent dir
+        temp_files = list(Path(target).parent.glob(".tmp*"))
+        assert len(temp_files) == 0

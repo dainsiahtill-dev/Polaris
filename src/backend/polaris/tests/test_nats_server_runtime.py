@@ -25,3 +25,16 @@ def test_resolve_managed_nats_storage_root_uses_polaris_home(
 
     expected = (tmp_path / ".polaris" / "runtime" / "nats" / "jetstream").resolve()
     assert resolved == expected
+
+
+def test_resolve_managed_nats_storage_root_uses_kernelone_root(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("KERNELONE_HOME", raising=False)
+    monkeypatch.setenv("KERNELONE_ROOT", str(tmp_path))
+
+    resolved = server_runtime.resolve_managed_nats_storage_root()
+
+    expected = (tmp_path / ".polaris" / "runtime" / "nats" / "jetstream").resolve()
+    assert resolved == expected

@@ -284,6 +284,7 @@ def _is_common_code_file(path: str) -> bool:
 def _file_exists_in_workspace(path: str, workspace: str = ".") -> bool:
     """检查文件是否在 workspace 中已存在（路径遍历安全版）。"""
     import os
+    from pathlib import Path
 
     normalized = normalize_path_token(path)
     if not normalized:
@@ -293,8 +294,8 @@ def _file_exists_in_workspace(path: str, workspace: str = ".") -> bool:
     workspace_real = os.path.realpath(workspace or ".")
     full_path = os.path.realpath(os.path.join(workspace_real, normalized))
 
-    # 必须严格位于 workspace 内部
-    if not (full_path.startswith(workspace_real + os.sep) or full_path == workspace_real):
+    # 必须严格位于 workspace 内部（Path.is_relative_to 替代脆弱的字符串前缀匹配）
+    if not Path(full_path).is_relative_to(Path(workspace_real)):
         return False
 
     return os.path.isfile(full_path)

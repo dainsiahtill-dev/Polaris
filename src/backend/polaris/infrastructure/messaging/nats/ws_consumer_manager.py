@@ -23,6 +23,14 @@ _THROTTLED_LOG_STATE: dict[str, float] = {}
 _MESSAGE_QUEUE_MAX_SIZE = 100
 
 
+def _normalize_channel_filter(channel: str) -> str:
+    """Normalize client-facing channel tokens to envelope channel names."""
+    token = str(channel or "").strip()
+    if token.startswith("log."):
+        return token.split(".", 1)[1]
+    return token
+
+
 def _log_throttled(level: str, key: str, message: str, *args: Any, cooldown_sec: float = 5.0) -> None:
     """Log helper with cooldown to avoid repeated noisy errors."""
     now = time.monotonic()
@@ -47,7 +55,7 @@ class JetStreamConsumerManager:
     ) -> None:
         self.workspace_key = workspace_key
         self.client_id = client_id
-        self.channels = channels
+        self.channels = [_normalize_channel_filter(ch) for ch in channels if str(ch or "").strip()]
         self.current_cursor = initial_cursor
         self.tail = tail
         self._durable_name = f"{JetStreamConstants.CONSUMER_DELIVERY_PREFIX}{self.client_id}"
@@ -129,7 +137,7 @@ class JetStreamConsumerManager:
             )
             return True
 
-        except (RuntimeError, ValueError) as e:
+        except (ImportError, RuntimeError, ValueError) as e:
             error_text = str(e or "").strip()
             lowered = error_text.lower()
             if "temporarily unavailable" in lowered or "no servers available" in lowered:

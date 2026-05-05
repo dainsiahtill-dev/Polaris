@@ -16,6 +16,7 @@ const {
 test("resolvepolarisRoot prefers APPDATA on Windows when no overrides exist", () => {
   const env = {
     APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
+    USERPROFILE: "C:\\Users\\tester",
   };
 
   const result = resolvepolarisRoot(env, "win32");
@@ -31,9 +32,22 @@ test("resolvepolarisRoot trims KERNELONE_HOME when it already points at .polaris
   assert.equal(result, path.resolve("C:\\Users\\tester\\AppData\\Roaming"));
 });
 
+test("getGlobalSettingsPath treats KERNELONE_HOME as the complete home path", () => {
+  const env = {
+    KERNELONE_HOME: "C:\\KernelOne\\custom-home",
+  };
+
+  assert.equal(resolvepolarisHome(env, "win32"), path.resolve("C:\\KernelOne\\custom-home"));
+  assert.equal(
+    getGlobalSettingsPath(env, "win32"),
+    path.resolve("C:\\KernelOne\\custom-home\\config\\settings.json"),
+  );
+});
+
 test("getGlobalSettingsPath matches backend-style root resolution", () => {
   const env = {
     APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
+    USERPROFILE: "C:\\Users\\tester",
   };
 
   const home = resolvepolarisHome(env, "win32");
@@ -49,6 +63,7 @@ test("getGlobalSettingsPath matches backend-style root resolution", () => {
 test("getDesktopBackendInfoPath stores backend bridge state under Polaris runtime", () => {
   const env = {
     APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
+    USERPROFILE: "C:\\Users\\tester",
   };
 
   const backendInfoPath = getDesktopBackendInfoPath(env, "win32");

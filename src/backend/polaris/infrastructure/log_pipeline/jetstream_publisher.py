@@ -21,22 +21,25 @@ from polaris.infrastructure.messaging.nats.nats_types import JetStreamConstants
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_QUEUE_SIZE = max(
-    256,
-    int(os.environ.get("KERNELONE_JETSTREAM_PUBLISH_QUEUE_SIZE", "4096")),
-)
-_DEFAULT_RETRY_ATTEMPTS = max(
-    1,
-    int(os.environ.get("KERNELONE_JETSTREAM_PUBLISH_MAX_ATTEMPTS", "6")),
-)
-_DEFAULT_RETRY_BASE_SEC = max(
-    0.05,
-    float(os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_BASE_SEC", "0.25")),
-)
-_DEFAULT_RETRY_MAX_SEC = max(
-    _DEFAULT_RETRY_BASE_SEC,
-    float(os.environ.get("KERNELONE_JETSTREAM_PUBLISH_RETRY_MAX_SEC", "5.0")),
-)
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        return int(os.environ.get(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float(os.environ.get(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+_DEFAULT_QUEUE_SIZE = max(256, _env_int("KERNELONE_JETSTREAM_PUBLISH_QUEUE_SIZE", 4096))
+_DEFAULT_RETRY_ATTEMPTS = max(1, _env_int("KERNELONE_JETSTREAM_PUBLISH_MAX_ATTEMPTS", 6))
+_DEFAULT_RETRY_BASE_SEC = max(0.05, _env_float("KERNELONE_JETSTREAM_PUBLISH_RETRY_BASE_SEC", 0.25))
+_DEFAULT_RETRY_MAX_SEC = max(_DEFAULT_RETRY_BASE_SEC, _env_float("KERNELONE_JETSTREAM_PUBLISH_RETRY_MAX_SEC", 5.0))
 _QUEUE_GET_TIMEOUT_SEC = 0.25
 
 

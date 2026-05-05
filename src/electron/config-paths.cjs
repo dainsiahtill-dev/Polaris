@@ -1,3 +1,4 @@
+const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
@@ -7,6 +8,26 @@ function expandPath(rawPath) {
     return "";
   }
   return path.resolve(path.normalize(value));
+}
+
+function resolveUserHome(env = process.env, platform = process.platform) {
+  if (platform === "win32") {
+    const userProfile = String(env.USERPROFILE || "").trim();
+    if (userProfile) {
+      return expandPath(userProfile);
+    }
+    const homeDrive = String(env.HOMEDRIVE || "").trim();
+    const homePath = String(env.HOMEPATH || "").trim();
+    if (homeDrive && homePath) {
+      return expandPath(path.join(homeDrive, homePath));
+    }
+  }
+
+  const home = String(env.HOME || "").trim();
+  if (home) {
+    return expandPath(home);
+  }
+  return expandPath(os.homedir());
 }
 
 function isTruthyEnv(value) {
@@ -23,16 +44,22 @@ function resolvepolarisRoot(env = process.env, platform = process.platform) {
   const homeOverride = String(env.KERNELONE_HOME || "").trim();
   if (homeOverride) {
     const expanded = expandPath(homeOverride);
-    const trimmed = expanded.replace(/[\\/]+$/, "");
-    if (path.basename(trimmed).toLowerCase() === ".polaris") {
-      return path.dirname(trimmed) || trimmed;
-    }
-    return expanded;
+    return path.dirname(expanded.replace(/[\\/]+$/, "")) || expanded;
   }
 
   if (platform === "win32") {
     const appData = String(env.APPDATA || "").trim();
     if (appData) {
+      // Backward compat: if settings exist at legacy ~/.polaris but not at
+      // APPDATA/.polaris, keep using legacy path to match Python backend.
+      const userHome = resolveUserHome(env, platform);
+      const legacyHome = path.join(userHome, ".polaris");
+      const legacySettings = path.join(legacyHome, "config", "settings.json");
+      const appdataHome = path.join(appData, ".polaris");
+      const appdataSettings = path.join(appdataHome, "config", "settings.json");
+      if (fs.existsSync(legacySettings) && !fs.existsSync(appdataSettings)) {
+        return userHome;
+      }
       return expandPath(appData);
     }
   }
@@ -42,10 +69,14 @@ function resolvepolarisRoot(env = process.env, platform = process.platform) {
     return expandPath(xdg);
   }
 
-  return expandPath(os.homedir());
+  return resolveUserHome(env, platform);
 }
 
 function resolvepolarisHome(env = process.env, platform = process.platform) {
+  const homeOverride = String(env.KERNELONE_HOME || "").trim();
+  if (homeOverride) {
+    return expandPath(homeOverride);
+  }
   return path.join(resolvepolarisRoot(env, platform), ".polaris");
 }
 

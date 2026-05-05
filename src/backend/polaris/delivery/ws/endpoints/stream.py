@@ -165,6 +165,23 @@ async def emit_stream_line(
     """
     parsed = parse_json_line(line)
 
+    if channel == "system" and isinstance(parsed, dict):
+        source = str(parsed.get("source") or "").strip().lower()
+        raw = parsed.get("raw")
+        if source == "dialogue":
+            return await send_json_safe(
+                websocket,
+                {
+                    "type": "dialogue_event",
+                    "channel": "dialogue",
+                    "event": raw if isinstance(raw, dict) else parsed,
+                    "snapshot": from_snapshot,
+                },
+                connection_id=connection_id,
+                client=client,
+                workspace=workspace,
+            )
+
     if channel == "dialogue":
         return await send_json_safe(
             websocket,

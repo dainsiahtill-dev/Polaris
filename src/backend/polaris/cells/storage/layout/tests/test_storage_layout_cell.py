@@ -225,10 +225,19 @@ class TestPolarisHome:
         expected = os.path.abspath(kern_home)
         assert os.path.abspath(result) == expected
 
+    def test_polaris_home_from_kernelone_root(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        root = tmp_path / "config-root"
+        monkeypatch.delenv("KERNELONE_HOME", raising=False)
+        monkeypatch.setenv("KERNELONE_ROOT", str(root))
+        result = polaris_home()
+        expected = root / ".polaris"
+        assert os.path.abspath(result) == os.path.abspath(str(expected))
+
     def test_polaris_home_fallback_expanduser(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Without any env vars, fallback is ~/.polaris (current metadata dir)
         monkeypatch.delenv("KERNELONE_HOME", raising=False)
-        monkeypatch.delenv("KERNELONE_HOME", raising=False)
+        monkeypatch.delenv("KERNELONE_ROOT", raising=False)
+        monkeypatch.delenv("APPDATA", raising=False)
         result = polaris_home()
         expected = os.path.abspath(os.path.expanduser("~/.polaris"))
         assert os.path.abspath(result) == expected

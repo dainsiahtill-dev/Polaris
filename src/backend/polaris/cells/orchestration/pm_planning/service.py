@@ -295,6 +295,8 @@ class PMService:
             "mode": self._handle.mode,
             "started_at": self._handle.started_at,
             "log_path": log_path,
+            "source": "handle",
+            "status": None,
         }
 
     async def _check_backend_available(self) -> str | None:

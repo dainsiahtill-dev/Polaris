@@ -7,6 +7,7 @@ polaris.cells.roles.runtime.public.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import sys
 import threading
@@ -15,7 +16,11 @@ from pathlib import Path
 
 import pytest
 
-if importlib.util.find_spec("polaris.cells.roles.runtime.public") is None:
+_runtime_public_available = False
+with contextlib.suppress(ValueError, ModuleNotFoundError):
+    _runtime_public_available = importlib.util.find_spec("polaris.cells.roles.runtime.public") is not None
+
+if not _runtime_public_available:
     pytest.skip("Module not available: polaris.cells.roles.runtime.public", allow_module_level=True)
 
 from polaris.cells.roles.runtime.public import (
