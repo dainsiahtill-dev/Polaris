@@ -73,6 +73,22 @@ async def handle_client_message(
         )
         return status_sig, tail_lines, v2_protocol, v2_consumer_manager, v2_client_id, v2_channels, v2_cursor
 
+    if not isinstance(message, dict):
+        await send_json_safe(
+            websocket,
+            {
+                "type": "ERROR",
+                "payload": {
+                    "error": "Invalid message",
+                    "details": "WebSocket client messages must be JSON objects.",
+                },
+            },
+            connection_id=connection_id,
+            client=client,
+            workspace=resolved_workspace,
+        )
+        return status_sig, tail_lines, v2_protocol, v2_consumer_manager, v2_client_id, v2_channels, v2_cursor
+
     msg_type = str(message.get("type") or "").strip().upper()
     protocol_version = str(message.get("protocol") or "").strip()
 

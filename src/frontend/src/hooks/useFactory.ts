@@ -14,21 +14,34 @@ import { toast } from 'sonner';
 import {
   connectFactoryStream,
   getFactoryRun,
+  getFactoryRunArtifacts,
   listFactoryRuns,
   startFactoryRun,
   stopFactoryRun,
 } from '@/services';
 import type {
   FactoryAuditEvent,
+  FactoryRunArtifact,
+  FactoryRunArtifactsResponse,
   FactoryRunStatus,
   FactoryStartOptions,
 } from '@/services';
 import { QueryKeys } from '@/lib/queryClient';
 
-export type { FactoryAuditEvent, FactoryRunStatus, FactoryStartOptions };
+export type {
+  FactoryAuditEvent,
+  FactoryRunArtifact,
+  FactoryRunArtifactsResponse,
+  FactoryRunStatus,
+  FactoryStartOptions,
+};
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 1000;
+
+function factoryRunArtifactsKey(runId: string) {
+  return ['factory', 'run', runId, 'artifacts'] as const;
+}
 
 function isTerminalRun(run: FactoryRunStatus | null): boolean {
   if (!run) {
@@ -36,6 +49,23 @@ function isTerminalRun(run: FactoryRunStatus | null): boolean {
   }
   const status = String(run.status || '').trim().toLowerCase();
   return ['completed', 'failed', 'cancelled'].includes(status);
+}
+
+function mergeRunEvidenceFields(
+  run: FactoryRunStatus,
+  previous: FactoryRunStatus | null
+): FactoryRunStatus {
+  if (!previous || previous.run_id !== run.run_id) {
+    return run;
+  }
+
+  return {
+    ...run,
+    artifacts: run.artifacts ?? previous.artifacts,
+    summary_md: run.summary_md ?? previous.summary_md,
+    summary_json: run.summary_json ?? previous.summary_json,
+    artifacts_error: run.artifacts_error ?? previous.artifacts_error,
+  };
 }
 
 export interface UseFactoryOptions {
@@ -49,6 +79,9 @@ export function useFactory(options: UseFactoryOptions = {}) {
   const [currentRun, setCurrentRun] = useState<FactoryRunStatus | null>(null);
   const [events, setEvents] = useState<FactoryAuditEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [artifactsSnapshot, setArtifactsSnapshot] = useState<FactoryRunArtifactsResponse | null>(null);
+  const [artifactsError, setArtifactsError] = useState<string | null>(null);
+  const [isArtifactsLoading, setIsArtifactsLoading] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -59,6 +92,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
   const manualDisconnectRef = useRef(false);
   const activeWorkspaceRef = useRef<string>('');
   const abortControllerRef = useRef<AbortController | null>(null);
+  const artifactsRequestSeqRef = useRef(0);
 
   // Query keys
   const factoryRunsKey = QueryKeys.factoryRuns();
@@ -95,7 +129,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       // Set individual run cache
       queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
       latestRunIdRef.current = run.run_id;
-      setCurrentRun(run);
+      setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
     },
     onError: (error: Error) => {
       toast.error(error.message || '启动Factory失败');
@@ -122,8 +156,9 @@ export function useFactory(options: UseFactoryOptions = {}) {
       queryClient.invalidateQueries({ queryKey: factoryRunsKey });
       // Update individual run cache
       queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
-      setCurrentRun(run);
+      setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
       if (isTerminalRun(run)) {
+        void fetchRunArtifacts(run.run_id);
         disconnectStream();
       }
     },
@@ -156,6 +191,78 @@ export function useFactory(options: UseFactoryOptions = {}) {
     setIsStreaming(false);
   }, [clearReconnectTimer]);
 
+  const fetchRunArtifacts = useCallback(async (runId: string) => {
+    const normalizedRunId = String(runId || '').trim();
+    if (!normalizedRunId) {
+      return null;
+    }
+
+    const requestSeq = artifactsRequestSeqRef.current + 1;
+    artifactsRequestSeqRef.current = requestSeq;
+    setIsArtifactsLoading(true);
+    setArtifactsError(null);
+
+    try {
+      const result = await getFactoryRunArtifacts(normalizedRunId);
+      if (artifactsRequestSeqRef.current !== requestSeq) {
+        return null;
+      }
+
+      if (result.ok && result.data) {
+        const snapshot: FactoryRunArtifactsResponse = {
+          ...result.data,
+          artifacts: result.data.artifacts || [],
+        };
+        setArtifactsSnapshot(snapshot);
+        queryClient.setQueryData<FactoryRunArtifactsResponse>(
+          factoryRunArtifactsKey(normalizedRunId),
+          snapshot
+        );
+        setCurrentRun((previous) => {
+          if (!previous || previous.run_id !== snapshot.run_id) {
+            return previous;
+          }
+          return {
+            ...previous,
+            artifacts: snapshot.artifacts,
+            summary_md: snapshot.summary_md ?? undefined,
+            summary_json: snapshot.summary_json ?? null,
+            artifacts_error: null,
+          };
+        });
+        return snapshot;
+      }
+
+      const message = result.error || '获取Factory产物失败';
+      setArtifactsError(message);
+      setCurrentRun((previous) => {
+        if (!previous || previous.run_id !== normalizedRunId) {
+          return previous;
+        }
+        return { ...previous, artifacts_error: message };
+      });
+      return null;
+    } catch (error) {
+      if (artifactsRequestSeqRef.current !== requestSeq) {
+        return null;
+      }
+
+      const message = error instanceof Error ? error.message : '获取Factory产物失败';
+      setArtifactsError(message);
+      setCurrentRun((previous) => {
+        if (!previous || previous.run_id !== normalizedRunId) {
+          return previous;
+        }
+        return { ...previous, artifacts_error: message };
+      });
+      return null;
+    } finally {
+      if (artifactsRequestSeqRef.current === requestSeq) {
+        setIsArtifactsLoading(false);
+      }
+    }
+  }, [queryClient]);
+
   const fetchRunStatus = useCallback(async (runId: string) => {
     // Cancel previous request if exists
     if (abortControllerRef.current) {
@@ -166,10 +273,14 @@ export function useFactory(options: UseFactoryOptions = {}) {
     try {
       const result = await getFactoryRun(runId);
       if (result.ok && result.data) {
-        setCurrentRun(result.data);
+        const run = result.data;
+        setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
         // Update cache
-        queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(runId), result.data);
-        return result.data;
+        queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(runId), run);
+        if (isTerminalRun(run)) {
+          void fetchRunArtifacts(runId);
+        }
+        return run;
       }
       return null;
     } finally {
@@ -178,7 +289,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
         abortControllerRef.current = null;
       }
     }
-  }, [queryClient]);
+  }, [fetchRunArtifacts, queryClient]);
 
   const connectStream = useCallback(async (runId: string): Promise<boolean> => {
     manualDisconnectRef.current = false;
@@ -197,15 +308,18 @@ export function useFactory(options: UseFactoryOptions = {}) {
         },
         onStatus: (run) => {
           latestRunIdRef.current = run.run_id;
-          setCurrentRun(run);
+          setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
           // Update cache
           queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
+          if (isTerminalRun(run)) {
+            void fetchRunArtifacts(run.run_id);
+          }
         },
         onEvent: (event) => {
           setEvents((previous) => [...previous, event].slice(-200));
         },
         onDone: (run) => {
-          setCurrentRun(run);
+          setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
           setIsStreaming(false);
           if (connectionRef.current) {
             connectionRef.current.close();
@@ -215,6 +329,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
           queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
           // Invalidate runs list
           queryClient.invalidateQueries({ queryKey: factoryRunsKey });
+          void fetchRunArtifacts(run.run_id);
 
           const status = String(run.status || '').trim().toLowerCase();
           if (status === 'completed') {
@@ -275,10 +390,12 @@ export function useFactory(options: UseFactoryOptions = {}) {
       setIsStreaming(false);
       return false;
     }
-  }, [clearReconnectTimer, fetchRunStatus, queryClient, factoryRunsKey, factoryRunKey]);
+  }, [clearReconnectTimer, fetchRunArtifacts, fetchRunStatus, queryClient, factoryRunsKey, factoryRunKey]);
 
   const startRun = useCallback(async (opts: FactoryStartOptions): Promise<FactoryRunStatus | null> => {
     setEvents([]);
+    setArtifactsSnapshot(null);
+    setArtifactsError(null);
 
     try {
       const run = await startRunMutation.mutateAsync(opts);
@@ -334,6 +451,8 @@ export function useFactory(options: UseFactoryOptions = {}) {
     const latest = latestRuns[0] || null;
     setCurrentRun(latest);
     setEvents([]);
+    setArtifactsSnapshot(null);
+    setArtifactsError(null);
 
     if (latest) {
       latestRunIdRef.current = latest.run_id;
@@ -365,8 +484,12 @@ export function useFactory(options: UseFactoryOptions = {}) {
     disconnectStream();
     reconnectAttemptsRef.current = 0;
     latestRunIdRef.current = null;
+    artifactsRequestSeqRef.current += 1;
     setCurrentRun(null);
     setEvents([]);
+    setArtifactsSnapshot(null);
+    setArtifactsError(null);
+    setIsArtifactsLoading(false);
     // Note: Don't reset queryClient here to preserve cache
 
     if (!workspace) {
@@ -376,15 +499,35 @@ export function useFactory(options: UseFactoryOptions = {}) {
     void resumeLatestRun();
   }, [workspace, disconnectStream, resumeLatestRun]);
 
+  const currentRunId = currentRun?.run_id || '';
+  useEffect(() => {
+    if (!currentRunId) {
+      setArtifactsSnapshot(null);
+      setArtifactsError(null);
+      return;
+    }
+
+    void fetchRunArtifacts(currentRunId);
+  }, [currentRunId, fetchRunArtifacts]);
+
+  const activeArtifactsSnapshot =
+    artifactsSnapshot?.run_id === currentRunId ? artifactsSnapshot : null;
+
   return {
     currentRun,
     events,
     isLoading: startRunMutation.isPending || stopRunMutation.isPending,
     error: (startRunMutation.error || stopRunMutation.error) as Error | null,
     isStreaming,
+    artifacts: activeArtifactsSnapshot?.artifacts || currentRun?.artifacts || [],
+    summaryMd: activeArtifactsSnapshot?.summary_md ?? currentRun?.summary_md ?? null,
+    summaryJson: activeArtifactsSnapshot?.summary_json ?? currentRun?.summary_json ?? null,
+    artifactsError: artifactsError || currentRun?.artifacts_error || null,
+    isArtifactsLoading,
     startRun,
     stopRun,
     fetchRunStatus,
+    fetchRunArtifacts,
     fetchRuns,
     resumeLatestRun,
     connectEventStream: connectStream,

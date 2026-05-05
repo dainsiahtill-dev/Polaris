@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -57,28 +58,30 @@ class _FakeRepairingJetStream:
         return type("StreamInfo", (), {"config": config})()
 
 
-@pytest.mark.asyncio
-async def test_nats_client_connect_uses_imported_nats_module(
+def test_nats_client_connect_uses_imported_nats_module(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_connection = _FakeNATSConnection()
-    captured_kwargs: dict[str, Any] = {}
+    async def _run() -> None:
+        fake_connection = _FakeNATSConnection()
+        captured_kwargs: dict[str, Any] = {}
 
-    async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeNATSConnection:
-        captured_kwargs["args"] = args
-        captured_kwargs["kwargs"] = kwargs
-        return fake_connection
+        async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeNATSConnection:
+            captured_kwargs["args"] = args
+            captured_kwargs["kwargs"] = kwargs
+            return fake_connection
 
-    monkeypatch.setattr(nats_client_module.nats, "connect", _fake_connect)
+        monkeypatch.setattr(nats_client_module.nats, "connect", _fake_connect)
 
-    client = nats_client_module.NATSClient()
-    await client.connect()
+        client = nats_client_module.NATSClient()
+        await client.connect()
 
-    assert client.is_connected is True
-    assert client.jetstream is fake_connection._jetstream
-    assert captured_kwargs["kwargs"]["name"] == "polaris"
+        assert client.is_connected is True
+        assert client.jetstream is fake_connection._jetstream
+        assert captured_kwargs["kwargs"]["name"] == "polaris"
 
-    await client.disconnect()
+        await client.disconnect()
+
+    asyncio.run(_run())
 
 
 def test_nats_client_default_servers_follow_environment(
@@ -91,24 +94,40 @@ def test_nats_client_default_servers_follow_environment(
     assert client._config.servers == ["nats://127.0.0.1:4555"]
 
 
-@pytest.mark.asyncio
-async def test_nats_client_repairs_runtime_stream_after_publish_failure() -> None:
-    client = nats_client_module.NATSClient()
-    fake_js = _FakeRepairingJetStream()
-    fake_connection = _FakeNATSConnection()
-    fake_connection._jetstream = fake_js
-    client._nc = fake_connection
-    client._js = fake_js
+def test_nats_config_numeric_fields_follow_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_NATS_MAX_RECONNECT", "-1")
+    monkeypatch.setenv("KERNELONE_NATS_RECONNECT_WAIT", "0.25")
+    monkeypatch.setenv("KERNELONE_NATS_CONNECT_TIMEOUT", "0.5")
 
-    published = await client.publish(
-        "hp.runtime.demo.system",
-        {"message": "ok"},
-        timeout=1.0,
-    )
+    config = nats_client_module.NATSConfig()
 
-    assert published is True
-    assert fake_js.deleted_streams == ["HP_RUNTIME"]
-    assert len(fake_js.added_configs) == 1
-    assert fake_js.added_configs[0].name == "HP_RUNTIME"
-    assert fake_js.added_configs[0].subjects == ["hp.runtime.>"]
-    assert len(fake_js.publish_calls) == 2
+    assert config.max_reconnect_attempts == -1
+    assert config.reconnect_time_wait == 0.25
+    assert config.connect_timeout == 0.5
+
+
+def test_nats_client_self_heal_does_not_delete_runtime_stream_after_publish_failure() -> None:
+    async def _run() -> None:
+        client = nats_client_module.NATSClient()
+        fake_js = _FakeRepairingJetStream()
+        fake_connection = _FakeNATSConnection()
+        fake_connection._jetstream = fake_js
+        client._nc = fake_connection
+        client._js = fake_js
+
+        published = await client.publish(
+            "hp.runtime.demo.system",
+            {"message": "ok"},
+            timeout=1.0,
+        )
+
+        assert published is True
+        assert fake_js.deleted_streams == []
+        assert len(fake_js.added_configs) == 1
+        assert fake_js.added_configs[0].name == "HP_RUNTIME"
+        assert fake_js.added_configs[0].subjects == ["hp.runtime.>"]
+        assert len(fake_js.publish_calls) == 2
+
+    asyncio.run(_run())

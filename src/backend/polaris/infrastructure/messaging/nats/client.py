@@ -127,13 +127,13 @@ class NATSConfig:
     name: str = "polaris"
     max_reconnect_attempts: int = field(
         default_factory=lambda: _env_int(
-            os.environ.get("KERNELONE_NATS_MAX_RECONNECT") or "KERNELONE_NATS_MAX_RECONNECT",
+            "KERNELONE_NATS_MAX_RECONNECT",
             10,
         )
     )
     reconnect_time_wait: float = field(
         default_factory=lambda: _env_float(
-            os.environ.get("KERNELONE_NATS_RECONNECT_WAIT") or "KERNELONE_NATS_RECONNECT_WAIT",
+            "KERNELONE_NATS_RECONNECT_WAIT",
             0.5,
         )
     )
@@ -142,7 +142,7 @@ class NATSConfig:
     allow_reconnect: bool = True
     connect_timeout: float = field(
         default_factory=lambda: _env_float(
-            os.environ.get("KERNELONE_NATS_CONNECT_TIMEOUT") or "KERNELONE_NATS_CONNECT_TIMEOUT",
+            "KERNELONE_NATS_CONNECT_TIMEOUT",
             5.0,
         )
     )
@@ -590,8 +590,6 @@ class NATSClient:
         )
 
         try:
-            with suppress(Exception):
-                await self._js.delete_stream(JetStreamConstants.STREAM_NAME)
             await self._js.add_stream(_build_runtime_stream_config())
             return True
         except (RuntimeError, ValueError) as repair_exc:

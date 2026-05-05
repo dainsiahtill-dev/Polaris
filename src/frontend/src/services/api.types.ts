@@ -169,6 +169,22 @@ export interface FactoryRunStatus {
   updated_at?: string;
   completed_at?: string;
   summary_md?: string;
+  summary_json?: Record<string, unknown> | null;
+  artifacts?: FactoryRunArtifact[];
+  artifacts_error?: string | null;
+}
+
+export interface FactoryRunArtifact {
+  name: string;
+  path: string;
+  size?: number;
+}
+
+export interface FactoryRunArtifactsResponse {
+  run_id: string;
+  artifacts: FactoryRunArtifact[];
+  summary_md?: string | null;
+  summary_json?: Record<string, unknown> | null;
 }
 
 export interface FactoryAuditEvent {

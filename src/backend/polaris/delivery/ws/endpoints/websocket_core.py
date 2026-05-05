@@ -191,9 +191,10 @@ async def runtime_websocket(
             if ch in JOURNAL_CHANNELS:
                 continue
             st = channel_states.setdefault(ch, {"pos": 0})
-            sent = sent or await send_channel_snapshot(
+            channel_sent = await send_channel_snapshot(
                 websocket, ch, resolved_workspace, cache_root, st, tail_lines, connection_id, client
             )
+            sent = sent or channel_sent
         return sent
 
     async def send_incrementals() -> bool:
@@ -212,9 +213,10 @@ async def runtime_websocket(
             if ch in JOURNAL_CHANNELS:
                 continue
             st = channel_states.setdefault(ch, {"pos": 0})
-            sent = sent or await send_channel_incremental(
+            channel_sent = await send_channel_incremental(
                 websocket, ch, resolved_workspace, cache_root, st, connection_id, client
             )
+            sent = sent or channel_sent
         return sent
 
     # Run main loop (imported from websocket_loop.py)
@@ -302,12 +304,8 @@ async def runtime_websocket(
                 )
             )
 
-        await _safe_cleanup(
-            RUNTIME_EVENT_FANOUT.unregister_connection(connection_id), "fanout_unregister"
-        )
-        await _safe_cleanup(
-            LOG_REALTIME_FANOUT.unregister_connection(connection_id), "log_unregister"
-        )
+        await _safe_cleanup(RUNTIME_EVENT_FANOUT.unregister_connection(connection_id), "fanout_unregister")
+        await _safe_cleanup(LOG_REALTIME_FANOUT.unregister_connection(connection_id), "log_unregister")
         try:
             REALTIME_SIGNAL_HUB.release_watch(cache_root)
         except Exception as exc:  # noqa: BLE001

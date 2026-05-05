@@ -524,6 +524,120 @@ def _build_summary_markdown(summary_json: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _model_dump_json_dict(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        payload = value.model_dump(mode="json")
+    elif hasattr(value, "dict"):
+        payload = value.dict()
+    else:
+        payload = value
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _artifact_response_path(artifact_path: Path, workspace: str) -> str:
+    try:
+        return str(artifact_path.relative_to(Path(workspace)))
+    except ValueError:
+        return str(artifact_path)
+
+
+def _list_run_artifacts(
+    *,
+    service: FactoryRunService,
+    workspace: str,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    run_dir = service.store.get_run_dir(run_id)
+    artifacts_dir = run_dir / "artifacts"
+    artifacts: list[dict[str, Any]] = []
+
+    if not artifacts_dir.exists():
+        return artifacts
+
+    for artifact_path in sorted(artifacts_dir.iterdir(), key=lambda item: item.name):
+        if not artifact_path.is_file():
+            continue
+        artifacts.append(
+            {
+                "name": artifact_path.name,
+                "path": _artifact_response_path(artifact_path, workspace),
+                "size": artifact_path.stat().st_size,
+            }
+        )
+
+    return artifacts
+
+
+def _build_artifacts_response(
+    *,
+    run: FactoryRun,
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_json = run.metadata.get("summary_json")
+    return {
+        "run_id": run.id,
+        "artifacts": artifacts,
+        "summary_md": str(run.metadata.get("summary_md") or "").strip() or None,
+        "summary_json": summary_json if isinstance(summary_json, dict) else None,
+    }
+
+
+def _safe_events_tail_limit(limit: int) -> int:
+    return max(0, min(int(limit), 1000))
+
+
+def _count_events_by_type(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for event in events:
+        event_type = str(event.get("type") or "unknown").strip() or "unknown"
+        counts[event_type] = counts.get(event_type, 0) + 1
+    return counts
+
+
+def _build_factory_audit_bundle(
+    *,
+    run: FactoryRun,
+    events: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    events_tail_limit: int = 100,
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
+    status_payload = _model_dump_json_dict(_map_service_run_to_contract(run))
+    summary_json = run.metadata.get("summary_json")
+    tail_limit = _safe_events_tail_limit(events_tail_limit)
+    events_tail = events[-tail_limit:] if tail_limit > 0 else []
+    gates = status_payload.get("gates")
+    failure = status_payload.get("failure")
+
+    return {
+        "run_id": status_payload.get("run_id") or run.id,
+        "status": status_payload.get("status"),
+        "phase": status_payload.get("phase"),
+        "progress": status_payload.get("progress"),
+        "current_stage": status_payload.get("current_stage"),
+        "last_successful_stage": status_payload.get("last_successful_stage"),
+        "gates": gates if isinstance(gates, list) else [],
+        "failure": failure if isinstance(failure, dict) else None,
+        "events_tail": events_tail,
+        "artifacts": artifacts,
+        "summary_md": str(run.metadata.get("summary_md") or "").strip() or None,
+        "summary_json": summary_json if isinstance(summary_json, dict) else None,
+        "generated_at": (generated_at or datetime.now(timezone.utc)).isoformat(),
+        "evidence_counts": {
+            "events_total": len(events),
+            "events_tail": len(events_tail),
+            "artifacts": len(artifacts),
+            "gates": len(gates) if isinstance(gates, list) else 0,
+            "failures": 1 if isinstance(failure, dict) else 0,
+            "summary_md": 1 if str(run.metadata.get("summary_md") or "").strip() else 0,
+            "summary_json": 1 if isinstance(summary_json, dict) else 0,
+            "event_types": _count_events_by_type(events),
+        },
+    }
+
+
 async def _persist_run_summary(
     *,
     service: FactoryRunService,
@@ -839,6 +953,29 @@ async def get_factory_run_events(
     return events[-limit:]
 
 
+@router.get("/runs/{run_id}/audit-bundle")
+async def get_factory_run_audit_bundle(
+    run_id: str,
+    limit: int = 100,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Get a machine-readable audit bundle for a factory run."""
+    workspace = _resolve_workspace(state)
+    service = _get_service(workspace)
+    run = await service.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    events = await service.get_run_events(run_id)
+    artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
+    return _build_factory_audit_bundle(
+        run=run,
+        events=events,
+        artifacts=artifacts,
+        events_tail_limit=limit,
+    )
+
+
 @router.get("/runs/{run_id}/stream")
 async def stream_factory_run_events(
     run_id: str,
@@ -955,26 +1092,5 @@ async def get_factory_run_artifacts(
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-    run_dir = service.store.get_run_dir(run_id)
-    artifacts_dir = run_dir / "artifacts"
-    artifacts: list[dict[str, Any]] = []
-
-    if artifacts_dir.exists():
-        for artifact_path in artifacts_dir.iterdir():
-            if artifact_path.is_file():
-                artifacts.append(
-                    {
-                        "name": artifact_path.name,
-                        "path": str(artifact_path.relative_to(Path(workspace))),
-                        "size": artifact_path.stat().st_size,
-                    }
-                )
-
-    return {
-        "run_id": run_id,
-        "artifacts": artifacts,
-        "summary_md": str(run.metadata.get("summary_md") or "").strip() or None,
-        "summary_json": run.metadata.get("summary_json")
-        if isinstance(run.metadata.get("summary_json"), dict)
-        else None,
-    }
+    artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
+    return _build_artifacts_response(run=run, artifacts=artifacts)

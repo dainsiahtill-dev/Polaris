@@ -9,11 +9,17 @@ import { apiGet, apiPost, buildQueryString } from './apiClient';
 import type { ApiResult } from './api.types';
 import type {
   FactoryAuditEvent,
+  FactoryRunArtifactsResponse,
   FactoryRunStatus,
   FactoryStartOptions,
 } from './api.types';
 
-export type { FactoryAuditEvent, FactoryRunStatus, FactoryStartOptions };
+export type {
+  FactoryAuditEvent,
+  FactoryRunArtifactsResponse,
+  FactoryRunStatus,
+  FactoryStartOptions,
+};
 
 export interface FactoryStreamHandlers {
   onOpen?: () => void;
@@ -61,6 +67,18 @@ export async function getFactoryRun(
   return apiGet<FactoryRunStatus>(
     `/v2/factory/runs/${encodeURIComponent(runId)}`,
     '获取Factory状态失败'
+  );
+}
+
+/**
+ * 获取 Factory Run 审计产物与交付摘要
+ */
+export async function getFactoryRunArtifacts(
+  runId: string
+): Promise<ApiResult<FactoryRunArtifactsResponse>> {
+  return apiGet<FactoryRunArtifactsResponse>(
+    `/v2/factory/runs/${encodeURIComponent(runId)}/artifacts`,
+    '获取Factory产物失败'
   );
 }
 

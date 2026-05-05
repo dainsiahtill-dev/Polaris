@@ -3,12 +3,16 @@ import { useMemo } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import {
   AlertCircle,
+  BadgeCheck,
   Brain,
   CheckCircle2,
   FileCode,
+  FileText,
   Hammer,
   Loader2,
+  PackageCheck,
   RotateCcw,
+  ShieldCheck,
   Square,
   Terminal,
   Play,
@@ -20,7 +24,7 @@ import { PMWorkspace } from '@/app/components/pm';
 import { DirectorWorkspace } from '@/app/components/director';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
-import type { FactoryAuditEvent, FactoryRunStatus } from '@/hooks/useFactory';
+import type { FactoryAuditEvent, FactoryRunArtifact, FactoryRunStatus } from '@/hooks/useFactory';
 import type { LogEntry } from '@/types/log';
 import type { PmTask } from '@/types/task';
 
@@ -36,6 +40,11 @@ interface FactoryWorkspaceProps {
   fileEditEvents?: FileEditEvent[];
   currentRun?: FactoryRunStatus | null;
   events?: FactoryAuditEvent[];
+  artifacts?: FactoryRunArtifact[];
+  summaryMd?: string | null;
+  summaryJson?: Record<string, unknown> | null;
+  artifactsError?: string | null;
+  isArtifactsLoading?: boolean;
   onStart?: () => void;
   onCancel?: () => void;
   isLoading?: boolean;
@@ -100,6 +109,52 @@ function toActivityLogs(events: FactoryAuditEvent[]): LogEntry[] {
   });
 }
 
+function formatBytes(size?: number): string {
+  if (typeof size !== 'number' || Number.isNaN(size) || size < 0) {
+    return 'size n/a';
+  }
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatSummaryValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return 'n/a';
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function toSummaryRows(summaryJson?: Record<string, unknown> | null): Array<[string, string]> {
+  if (!summaryJson) {
+    return [];
+  }
+  return Object.entries(summaryJson)
+    .slice(0, 5)
+    .map(([key, value]) => [key, formatSummaryValue(value)]);
+}
+
+function gateTone(gate: FactoryRunStatus['gates'][number]): string {
+  const status = normalizeToken(gate.status);
+  if (gate.passed || status === 'passed' || status === 'success') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+  }
+  if (status === 'failed' || status === 'error') {
+    return 'border-red-500/30 bg-red-500/10 text-red-300';
+  }
+  if (status === 'running' || status === 'pending') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+  }
+  return 'border-slate-500/30 bg-slate-500/10 text-slate-300';
+}
+
 const PHASE_CONFIG: Record<FactoryPhase, { label: string; color: string; icon: React.ReactNode }> = {
   idle: { label: '等待启动', color: 'text-slate-400', icon: <Hammer className="w-4 h-4" /> },
   planning: { label: '规划中', color: 'text-purple-400', icon: <Brain className="w-4 h-4" /> },
@@ -122,6 +177,11 @@ export function FactoryWorkspace({
   fileEditEvents = [],
   currentRun = null,
   events = [],
+  artifacts,
+  summaryMd,
+  summaryJson,
+  artifactsError,
+  isArtifactsLoading = false,
   onStart,
   onCancel,
   isLoading = false,
@@ -143,6 +203,11 @@ export function FactoryWorkspace({
   }).length;
 
   const activityLogs = useMemo(() => toActivityLogs(events), [events]);
+  const gateResults = currentRun?.gates || [];
+  const deliveryArtifacts = artifacts || currentRun?.artifacts || [];
+  const summaryMarkdown = String(summaryMd ?? currentRun?.summary_md ?? '').trim();
+  const summaryRows = toSummaryRows(summaryJson ?? currentRun?.summary_json ?? null);
+  const artifactErrorMessage = String(artifactsError || currentRun?.artifacts_error || '').trim();
 
   return (
     <div className="h-screen flex flex-col bg-slate-950">
@@ -216,7 +281,7 @@ export function FactoryWorkspace({
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-72 border-r border-white/5 bg-slate-950/50 p-4 space-y-6">
+        <aside className="w-72 border-r border-white/5 bg-slate-950/50 p-4 space-y-5 overflow-y-auto">
           <section>
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">流程阶段</h3>
             <div className="space-y-2">
@@ -297,8 +362,119 @@ export function FactoryWorkspace({
             </div>
           </section>
 
+          <section>
+            <div className="mb-3 flex items-center gap-2 text-emerald-300">
+              <ShieldCheck className="w-4 h-4" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider">总监审计 / 交付证据</h3>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-300">
+                  <BadgeCheck className="w-3.5 h-3.5 text-cyan-300" />
+                  <span>Gates</span>
+                </div>
+                <div className="space-y-2">
+                  {gateResults.length > 0 ? (
+                    gateResults.map((gate) => (
+                      <div
+                        key={gate.gate_name}
+                        className={cn('rounded-lg border px-3 py-2 text-xs', gateTone(gate))}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-medium">{gate.gate_name}</span>
+                          <span className="shrink-0 uppercase">{gate.status || 'n/a'}</span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-2 text-[10px] opacity-80">
+                          <span>{gate.passed ? 'passed' : 'blocked'}</span>
+                          {typeof gate.score === 'number' && <span>score {gate.score}</span>}
+                        </div>
+                        {gate.message && (
+                          <p className="mt-1 text-[10px] leading-relaxed opacity-80">{gate.message}</p>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                      <p className="text-xs text-slate-400">暂无质量门结果</p>
+                      <p className="mt-1 text-[10px] text-slate-600">等待可审计门禁记录</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-300">
+                  <PackageCheck className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Artifacts</span>
+                </div>
+                <div className="space-y-2">
+                  {isArtifactsLoading && (
+                    <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-400">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-300" />
+                      <span>同步证据中</span>
+                    </div>
+                  )}
+                  {artifactErrorMessage && (
+                    <div
+                      role="alert"
+                      className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200"
+                    >
+                      产物同步失败: {artifactErrorMessage}
+                    </div>
+                  )}
+                  {deliveryArtifacts.length > 0 ? (
+                    deliveryArtifacts.map((artifact) => (
+                      <div key={`${artifact.path}-${artifact.name}`} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                            <span className="truncate text-xs text-slate-200">{artifact.name}</span>
+                          </div>
+                          <span className="shrink-0 text-[10px] text-slate-500">{formatBytes(artifact.size)}</span>
+                        </div>
+                        <p className="mt-1 break-all text-[10px] leading-relaxed text-slate-500">{artifact.path}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                      <p className="text-xs text-slate-400">暂无交付产物</p>
+                      <p className="mt-1 text-[10px] text-slate-600">等待 Director 证据文件</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-300">
+                  <FileCode className="w-3.5 h-3.5 text-purple-300" />
+                  <span>Summary</span>
+                </div>
+                {summaryMarkdown ? (
+                  <div className="max-h-28 overflow-y-auto rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                    <p className="whitespace-pre-line text-xs leading-relaxed text-slate-300">{summaryMarkdown}</p>
+                  </div>
+                ) : summaryRows.length > 0 ? (
+                  <div className="space-y-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                    {summaryRows.map(([key, value]) => (
+                      <div key={key} className="flex justify-between gap-2">
+                        <span className="text-slate-500">{key}</span>
+                        <span className="min-w-0 truncate text-right text-slate-300">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                    <p className="text-xs text-slate-400">暂无交付摘要</p>
+                    <p className="mt-1 text-[10px] text-slate-600">等待终态摘要</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
           {currentRun?.failure && (
-            <section className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
+            <section role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
               <div className="flex items-center gap-2 text-red-300">
                 <AlertCircle className="w-4 h-4" />
                 <span className="text-sm font-medium">失败信息</span>

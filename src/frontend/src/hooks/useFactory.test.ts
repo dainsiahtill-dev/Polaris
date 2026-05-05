@@ -6,6 +6,7 @@ import React from 'react';
 const startFactoryRunMock = vi.fn();
 const stopFactoryRunMock = vi.fn();
 const getFactoryRunMock = vi.fn();
+const getFactoryRunArtifactsMock = vi.fn();
 const listFactoryRunsMock = vi.fn();
 const connectFactoryStreamMock = vi.fn();
 const toastSuccessMock = vi.fn();
@@ -25,6 +26,7 @@ vi.mock('@/services', () => ({
   startFactoryRun: (...args: unknown[]) => startFactoryRunMock(...args),
   stopFactoryRun: (...args: unknown[]) => stopFactoryRunMock(...args),
   getFactoryRun: (...args: unknown[]) => getFactoryRunMock(...args),
+  getFactoryRunArtifacts: (...args: unknown[]) => getFactoryRunArtifactsMock(...args),
   listFactoryRuns: (...args: unknown[]) => listFactoryRunsMock(...args),
   connectFactoryStream: (...args: unknown[]) => connectFactoryStreamMock(...args),
 }));
@@ -69,6 +71,15 @@ describe('useFactory', () => {
       data: { ...baseRun, status: 'cancelled', phase: 'cancelled', progress: 25 },
     });
     getFactoryRunMock.mockResolvedValue({ ok: true, data: baseRun });
+    getFactoryRunArtifactsMock.mockImplementation(async (runId: string) => ({
+      ok: true,
+      data: {
+        run_id: runId,
+        artifacts: [],
+        summary_md: null,
+        summary_json: null,
+      },
+    }));
     listFactoryRunsMock.mockResolvedValue({ ok: true, data: [baseRun] });
     connectFactoryStreamMock.mockImplementation(async (_runId, handlers) => {
       lastHandlers = handlers as Record<string, ((payload?: unknown) => void) | undefined>;
@@ -91,6 +102,36 @@ describe('useFactory', () => {
     expect(connectFactoryStreamMock).toHaveBeenCalledTimes(1);
     expect(result.current.currentRun?.run_id).toBe('run-1');
     expect(result.current.isStreaming).toBe(true);
+  });
+
+  it('fetches artifacts and summary when a current run is available', async () => {
+    getFactoryRunArtifactsMock.mockImplementation(async (runId: string) => ({
+      ok: true,
+      data: {
+        run_id: runId,
+        artifacts: [{ name: 'director-audit.json', path: '.polaris/runs/run-1/artifacts/director-audit.json', size: 512 }],
+        summary_md: 'Director audit passed.',
+        summary_json: { director_status: 'passed' },
+      },
+    }));
+
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+    });
+
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.currentRun?.artifacts?.[0]?.name).toBe('director-audit.json');
+    });
+
+    expect(result.current.artifacts).toHaveLength(1);
+    expect(result.current.summaryMd).toBe('Director audit passed.');
+    expect(result.current.summaryJson).toEqual({ director_status: 'passed' });
   });
 
   it('replaces currentRun from status events and stops on done', async () => {
@@ -124,6 +165,54 @@ describe('useFactory', () => {
     expect(result.current.currentRun?.status).toBe('completed');
     expect(result.current.isStreaming).toBe(false);
     expect(closeMock).toHaveBeenCalled();
+  });
+
+  it('refreshes artifacts after stream done', async () => {
+    getFactoryRunArtifactsMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          run_id: 'run-1',
+          artifacts: [],
+          summary_md: null,
+          summary_json: null,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          run_id: 'run-1',
+          artifacts: [{ name: 'handover.md', path: '.polaris/runs/run-1/artifacts/handover.md', size: 2048 }],
+          summary_md: 'Final handover is ready.',
+          summary_json: { status: 'completed' },
+        },
+      });
+
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+    });
+
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      lastHandlers?.onDone?.({
+        ...baseRun,
+        phase: 'completed',
+        status: 'completed',
+        progress: 100,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.currentRun?.artifacts?.[0]?.name).toBe('handover.md');
+    });
+
+    expect(getFactoryRunArtifactsMock).toHaveBeenCalledTimes(2);
+    expect(result.current.summaryMd).toBe('Final handover is ready.');
   });
 
   it('uses stop response as the terminal snapshot', async () => {

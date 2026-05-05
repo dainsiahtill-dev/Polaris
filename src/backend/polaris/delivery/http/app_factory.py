@@ -150,6 +150,7 @@ def _register_routers(app: FastAPI) -> None:
         conversations,
         court,
         docs,
+        factory,
         files,
         history,
         interview,
@@ -175,6 +176,7 @@ def _register_routers(app: FastAPI) -> None:
 
     app.include_router(primary_router)
     app.include_router(v2_router)
+    app.include_router(factory.router)
 
     app.include_router(role_chat.router)
     app.include_router(role_session.router)

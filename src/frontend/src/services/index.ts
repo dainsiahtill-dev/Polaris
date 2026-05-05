@@ -27,6 +27,8 @@ export type {
   TranscriptMessage,
   TranscriptSessionResponse,
   // Factory
+  FactoryRunArtifact,
+  FactoryRunArtifactsResponse,
   FactoryRunStatus,
   FactoryStartOptions,
   FactoryAuditEvent,
@@ -127,6 +129,7 @@ export {
   startFactoryRun,
   stopFactoryRun,
   getFactoryRun,
+  getFactoryRunArtifacts,
   listFactoryRuns,
   connectFactoryStream,
 } from './factoryService';

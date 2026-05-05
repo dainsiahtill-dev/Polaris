@@ -86,6 +86,8 @@ async def run_main_loop(
     close_code: int | None = None
     close_reason = ""
 
+    v2_poll_task: asyncio.Task[RuntimeEventEnvelope | None] | None = None
+
     try:
         while active:
             wait_set: set[asyncio.Task[Any]] = {receive_task, signal_task}
@@ -93,7 +95,7 @@ async def run_main_loop(
                 wait_set.add(realtime_task)
 
             # Add v2 consumer task if active
-            v2_poll_task: asyncio.Task[RuntimeEventEnvelope | None] | None = None
+            v2_poll_task = None
             if v2_consumer_manager and v2_consumer_manager.is_connected:
                 v2_poll_task = asyncio.create_task(v2_consumer_manager.next_message(timeout=0.1))
                 wait_set.add(v2_poll_task)
@@ -229,12 +231,15 @@ async def run_main_loop(
 
     finally:
         active = False
-        for task in (receive_task, signal_task, realtime_task):
+        for task in (receive_task, signal_task, realtime_task, v2_poll_task):
             if task is None:
                 continue
             task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
+        if v2_consumer_manager:
+            with suppress(Exception):
+                await v2_consumer_manager.disconnect()
 
     return close_code, close_reason
 
