@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+from polaris.cells.roles.kernel.public.transaction_contracts import TransactionConfig
 from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummaryStrategy,
 )
@@ -148,7 +148,7 @@ class TestSLMSummarizerFallback:
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_raises_on_empty_result(self, mock_gateway_cls, sample_long_text):
         """When SLM returns empty, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
@@ -188,7 +188,7 @@ class TestSLMSummarizerAsync:
         gateway.compress_text = AsyncMock(return_value=compress_result)
         return gateway
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_summarize_with_healthy_slm(self, mock_gateway_cls, sample_long_text):
         """When SLM is healthy, should return compressed text."""
         mock_gateway = self._make_mock_gateway(
@@ -204,7 +204,7 @@ class TestSLMSummarizerAsync:
         mock_gateway.is_slm_healthy.assert_awaited_once()
         mock_gateway.compress_text.assert_awaited_once()
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_summarize_raises_when_unhealthy(self, mock_gateway_cls, sample_long_text):
         """When SLM is unhealthy, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
@@ -222,7 +222,7 @@ class TestSLMSummarizerAsync:
         mock_gateway.is_slm_healthy.assert_awaited_once()
         mock_gateway.compress_text.assert_not_awaited()
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_summarize_raises_on_empty_result(self, mock_gateway_cls, sample_long_text):
         """When SLM returns empty string, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
@@ -237,7 +237,7 @@ class TestSLMSummarizerAsync:
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_summarize_uses_correct_prompt_template(self, mock_gateway_cls, sample_dialogue):
         """Should use dialogue prompt template for dialogue content type."""
         mock_gateway = self._make_mock_gateway(healthy=True, compress_result="Summary of auth discussion.")
@@ -253,7 +253,7 @@ class TestSLMSummarizerAsync:
         prompt = call_args[0][0] if call_args[0] else call_args[1]["prompt"]
         assert "dialogue" in prompt.lower() or "conversation" in prompt.lower()
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_summarize_uses_code_prompt_for_code(self, mock_gateway_cls, sample_code):
         """Should use code prompt template for code content type."""
         mock_gateway = self._make_mock_gateway(healthy=True, compress_result="Auth functions and middleware.")
@@ -268,7 +268,7 @@ class TestSLMSummarizerAsync:
         prompt = call_args[0][0] if call_args[0] else call_args[1]["prompt"]
         assert "code" in prompt.lower() or "artifact" in prompt.lower()
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_summarize_pre_truncates_long_content(self, mock_gateway_cls):
         """Should pre-truncate content longer than max_content_length."""
         mock_gateway = self._make_mock_gateway(healthy=True, compress_result="Short summary.")
@@ -294,7 +294,7 @@ class TestSLMSummarizerAsync:
 class TestSLMSummarizerTimeout:
     """Tests for timeout circuit breaker behavior."""
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_timeout_raises(self, mock_gateway_cls, sample_long_text):
         """When health check times out, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
@@ -317,7 +317,7 @@ class TestSLMSummarizerTimeout:
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
-    @patch("polaris.cells.roles.kernel.internal.transaction.cognitive_gateway.CognitiveGateway")
+    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
     def test_thread_timeout_raises(self, mock_gateway_cls, sample_long_text):
         """When the thread itself times out, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (

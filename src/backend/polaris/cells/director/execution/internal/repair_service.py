@@ -16,7 +16,7 @@ import warnings
 
 # TODO: Cross-cell internal import — repair_service symbols are not
 # yet exposed in director.tasking.public. Add to public contract when stabilised.
-from polaris.cells.director.tasking.internal.repair_service import (
+from polaris.cells.director.tasking.public import (
     RepairContext,
     RepairResult,
     RepairService,

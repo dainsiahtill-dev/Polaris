@@ -12,9 +12,11 @@ from polaris.bootstrap.config import Settings, get_settings
 # Lazy import to avoid cross-cell internal import at module level.
 # ArchiveSink will be imported inside _register_uep_sinks() where it's needed.
 from polaris.cells.audit.evidence.public.service import bind_audit_llm_to_task_service
-from polaris.cells.director.execution.public.service import (
+from polaris.cells.director.execution.service import (
     DirectorConfig,
     DirectorService,
+)
+from polaris.cells.director.tasking.public import (
     TaskQueueConfig,
     TaskService,
     WorkerPoolConfig,

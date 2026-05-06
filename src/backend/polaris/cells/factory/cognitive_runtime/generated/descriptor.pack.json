@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:45.153934Z",
-  "source_hash": "38ee6c5c92343221",
+  "generated_at": "2026-05-06T07:41:52.998114Z",
+  "source_hash": "6d311f0292466d23",
   "cell_id": "factory.cognitive_runtime",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -715,6 +715,78 @@
     {
       "type": "function",
       "name": "get_handoff_pack",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_resolve_context",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_lease_edit_scope",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_validate_change_set",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_record_runtime_receipt",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_get_runtime_receipt",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_export_handoff_pack",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_rehydrate_handoff_pack",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_map_diff_to_cells",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_request_projection_compile",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_promote_or_reject",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_record_rollback_ledger",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_get_handoff_pack",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },

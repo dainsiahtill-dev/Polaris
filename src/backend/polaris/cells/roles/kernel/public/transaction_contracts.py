@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     resolve_delivery_mode,
 )
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.modification_contract import (
     ModificationContract,
     ModificationContractStatus,
@@ -38,6 +39,9 @@ from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
     extract_tool_results_from_batch_receipt,
     has_authoritative_write_receipt,
 )
+from polaris.cells.roles.kernel.internal.transaction.slm_coprocessor import (
+    SLMCoprocessor,
+)
 
 __all__ = [
     "VERIFICATION_TOOLS",
@@ -48,7 +52,9 @@ __all__ = [
     "Phase",
     "PhaseManager",
     "ReadinessVerdict",
+    "SLMCoprocessor",
     "ToolResult",
+    "TransactionConfig",
     "evaluate_modification_readiness",
     "extract_tool_results_from_batch_receipt",
     "get_verification_patterns",

@@ -206,7 +206,9 @@ class TestConversationsRouter:
         response = client.get("/v2/conversations/missing-id")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        detail = response.json()["detail"]
+        assert detail["code"] == "CONVERSATION_NOT_FOUND"
+        assert detail["message"] == "Conversation not found"
 
     def test_delete_conversation_happy_path(self) -> None:
         """DELETE /v2/conversations/{id} returns 200 with ok flag."""

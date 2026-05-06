@@ -1,5 +1,9 @@
 """Public boundary for `chief_engineer.blueprint` cell."""
 
+from polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence import (
+    BlueprintPersistence,
+)
+
 from .service import (
     CEConsumer,
     ChiefEngineerAgent,
@@ -13,6 +17,7 @@ from .service import (
 )
 
 __all__ = [
+    "BlueprintPersistence",
     "CEConsumer",
     "ChiefEngineerAgent",
     "ChiefEngineerBlueprintError",

@@ -34,7 +34,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts imp
     TaskSnapshot,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.ui_state_contract import UIStateConverter
-from polaris.cells.workspace.integrity.internal.diff_tracker import TaskFileChangeTracker
+from polaris.cells.workspace.integrity.public import TaskFileChangeTracker
 
 logger = logging.getLogger(__name__)
 

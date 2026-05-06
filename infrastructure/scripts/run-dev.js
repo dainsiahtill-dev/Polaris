@@ -299,6 +299,7 @@ async function main() {
     KERNELONE_RENDERER_PORT: String(rendererPort),
     KERNELONE_DEV_SERVER_URL: rendererUrl,
     KERNELONE_CORS_ORIGINS: corsOrigins,
+    KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK: process.env.KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK || "1",
   };
   const skipElectron = isTruthyEnv(env.KERNELONE_DEV_SKIP_ELECTRON);
 

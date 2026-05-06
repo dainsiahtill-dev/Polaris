@@ -226,7 +226,7 @@ class TestArchiveSink:
         message_bus: MessageBus,
     ) -> None:
         """Test ArchiveSink buffers events and flushes on complete."""
-        from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+        from polaris.cells.archive.run_archive.public.service import ArchiveSink
 
         sink = ArchiveSink(message_bus)
         await sink.start()
@@ -260,7 +260,7 @@ class TestArchiveSink:
             await message_bus.publish(msg)
 
         # Query the actual resolved history path (uses .polaris per bootstrap config)
-        from polaris.cells.storage.layout.internal.layout_business import resolve_polaris_roots
+        from polaris.cells.storage.layout.public import resolve_polaris_roots
 
         roots = resolve_polaris_roots(temp_workspace)
         archive_dir = Path(roots.history_root) / "runs" / turn_id
@@ -312,7 +312,7 @@ class TestArchiveSink:
         message_bus: MessageBus,
     ) -> None:
         """Test ArchiveSink flushes on error event."""
-        from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+        from polaris.cells.archive.run_archive.public.service import ArchiveSink
 
         sink = ArchiveSink(message_bus)
         await sink.start()
@@ -355,7 +355,7 @@ class TestArchiveSink:
         await asyncio.sleep(0.1)
 
         # Query the actual resolved history path
-        from polaris.cells.storage.layout.internal.layout_business import resolve_polaris_roots
+        from polaris.cells.storage.layout.public import resolve_polaris_roots
 
         roots = resolve_polaris_roots(temp_workspace)
         archive_dir = Path(roots.history_root) / "runs" / turn_id
@@ -370,7 +370,7 @@ class TestArchiveSink:
         message_bus: MessageBus,
     ) -> None:
         """Test ArchiveSink ignores non-stream events."""
-        from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+        from polaris.cells.archive.run_archive.public.service import ArchiveSink
 
         sink = ArchiveSink(message_bus)
         await sink.start()
@@ -394,7 +394,7 @@ class TestArchiveSink:
         await asyncio.sleep(0.1)
 
         # No archive should be created (check actual resolved path)
-        from polaris.cells.storage.layout.internal.layout_business import resolve_polaris_roots
+        from polaris.cells.storage.layout.public import resolve_polaris_roots
 
         roots = resolve_polaris_roots(temp_workspace)
         archive_dir = Path(roots.history_root) / "runs"
@@ -522,7 +522,7 @@ class TestSinkIntegration:
         message_bus: MessageBus,
     ) -> None:
         """Test that all sinks can receive the same published event."""
-        from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+        from polaris.cells.archive.run_archive.public.service import ArchiveSink
         from polaris.infrastructure.audit.sinks.audit_hash_sink import AuditHashSink
         from polaris.infrastructure.log_pipeline.journal_sink import JournalSink
 
@@ -586,7 +586,7 @@ class TestSinkIntegration:
         assert (logs_dir / "journal.norm.jsonl").exists()
 
         # Verify archive was written (resolve_polaris_roots for history path)
-        from polaris.cells.storage.layout.internal.layout_business import resolve_polaris_roots
+        from polaris.cells.storage.layout.public import resolve_polaris_roots
 
         hp_roots = resolve_polaris_roots(temp_workspace)
         archive_dir = Path(hp_roots.history_root) / "runs" / turn_id

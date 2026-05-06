@@ -15,6 +15,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+_HASH_PREFIX_LENGTH = 16
+_TEXT_HASH_ENCODING = "utf-8"
+
+
+def _hash_text(text: str) -> str:
+    return hashlib.sha256(text.encode(_TEXT_HASH_ENCODING)).hexdigest()[:_HASH_PREFIX_LENGTH]
+
 
 class EvidenceType(Enum):
     """Types of evidence that can be collected."""
@@ -176,7 +183,7 @@ class EvidencePackage:
     def compute_hash(self) -> str:
         """Compute a hash of this evidence package for tamper detection."""
         content = json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False)
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
+        return _hash_text(content)
 
     def has_critical_issues(self) -> bool:
         """Check if evidence package indicates critical issues."""
@@ -223,9 +230,9 @@ class EvidenceCollector:
         hash_after = None
 
         if content_before:
-            hash_before = hashlib.sha256(content_before.encode()).hexdigest()[:16]
+            hash_before = _hash_text(content_before)
         if content_after:
-            hash_after = hashlib.sha256(content_after.encode()).hexdigest()[:16]
+            hash_after = _hash_text(content_after)
 
         evidence = FileEvidence(
             path=path,
@@ -297,8 +304,8 @@ class EvidenceCollector:
         duration_ms: int = 0,
     ) -> None:
         """Record LLM interaction evidence."""
-        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
-        output_hash = hashlib.sha256(output.encode()).hexdigest()[:16]
+        prompt_hash = _hash_text(prompt)
+        output_hash = _hash_text(output)
 
         evidence = LLMEvidence(
             role=role,

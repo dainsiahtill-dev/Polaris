@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.runtime.internal.agent_runtime_base import (
+from polaris.cells.roles.runtime.public import (
     AgentMessage,
     MessageType,
     RoleAgent,
@@ -97,9 +97,7 @@ def _validate_provider_cfg(cfg: dict[str, Any]) -> None:
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"max_tokens must be an integer, got {value!r}") from exc
             if not (1 <= max_tokens <= _MAX_TOKENS_LIMIT):
-                raise ValueError(
-                    f"max_tokens must be between 1 and {_MAX_TOKENS_LIMIT}, got {max_tokens}"
-                )
+                raise ValueError(f"max_tokens must be between 1 and {_MAX_TOKENS_LIMIT}, got {max_tokens}")
         if key in _PROVIDER_CFG_VALIDATION and value is not None:
             low, high = _PROVIDER_CFG_VALIDATION[key]
             try:

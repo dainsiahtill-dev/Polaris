@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:45.410411Z",
-  "source_hash": "46a8d8b1c1e9d05e",
+  "generated_at": "2026-05-06T07:41:53.124688Z",
+  "source_hash": "81ae98d93d3b1b44",
   "cell_id": "factory.pipeline",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -1396,6 +1396,48 @@
     {
       "type": "function",
       "name": "_build_summary_markdown",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_model_dump_json_dict",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_response_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_list_run_artifacts",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_artifacts_response",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_events_tail_limit",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_count_events_by_type",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_factory_audit_bundle",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     }

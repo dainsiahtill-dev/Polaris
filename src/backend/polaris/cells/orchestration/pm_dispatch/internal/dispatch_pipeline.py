@@ -1035,9 +1035,7 @@ def run_dispatch_pipeline(
         blueprint_id = f"bp-{run_id}-{task_id}"
         task["blueprint_id"] = blueprint_id
         try:
-            from polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence import (
-                BlueprintPersistence,
-            )
+            from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
 
             bp_persistence = BlueprintPersistence(workspace_full)
             bp_persistence.save(

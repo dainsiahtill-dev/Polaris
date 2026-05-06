@@ -1,0 +1,250 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-05-06T07:41:54.425158Z",
+  "source_hash": "b035e5facde84f88",
+  "cell_id": "adapters.kernelone",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "class",
+      "name": "AlignmentServiceAdapter",
+      "description": "Adapter implementing IAlignmentService using Cells' ValueAlignmentService.",
+      "defined_in": "polaris/cells/adapters/kernelone/alignment_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the adapter with Cells' ValueAlignmentService."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "KernelOneBusPortAdapter",
+      "description": "Adapter that implements IBusPort using Cells' KernelOneMessageBusPort.",
+      "defined_in": "polaris/cells/adapters/kernelone/bus_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize the adapter with optional NATS configuration."
+        },
+        {
+          "name": "publish",
+          "doc": "Deliver `envelope` to the receiver's inbox."
+        },
+        {
+          "name": "poll",
+          "doc": "Poll the next message for `receiver` using blocking sleep."
+        },
+        {
+          "name": "ack",
+          "doc": "Acknowledge successful processing of a message."
+        },
+        {
+          "name": "nack",
+          "doc": "Negative-acknowledge a message."
+        },
+        {
+          "name": "pending_count",
+          "doc": "Return number of pending messages in inbox."
+        },
+        {
+          "name": "requeue_all_inflight",
+          "doc": "Requeue ALL inflight messages for a receiver back to inbox."
+        },
+        {
+          "name": "dead_letters",
+          "doc": "Snapshot of all dead-letter records accumulated so far."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleProviderAdapter",
+      "description": "Adapter that implements IRoleProvider using Cells' role_alias module.",
+      "defined_in": "polaris/cells/adapters/kernelone/role_provider_adapter.py",
+      "methods": [
+        {
+          "name": "normalize_role_alias",
+          "doc": "Resolve a role identifier to its canonical form."
+        },
+        {
+          "name": "get_role_aliases",
+          "doc": "Return the complete role alias mapping table."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleToolIntegrationAdapter",
+      "description": "Adapter that implements IRoleToolIntegration using Cells' role_integrations module.",
+      "defined_in": "polaris/cells/adapters/kernelone/role_tool_integration_adapter.py",
+      "methods": [
+        {
+          "name": "get_role_integration",
+          "doc": "Factory method to get a role-specific tool integration."
+        },
+        {
+          "name": "get_supported_roles",
+          "doc": "Return the tuple of supported role identifiers."
+        },
+        {
+          "name": "enhance_role_prompt",
+          "doc": "Enhance a role prompt with tool-specific instructions."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleProviderAdapterCreation",
+      "description": "Tests for RoleProviderAdapter creation.",
+      "defined_in": "polaris/cells/adapters/kernelone/tests/test_role_provider_adapter.py",
+      "methods": [
+        {
+          "name": "test_can_instantiate",
+          "doc": ""
+        },
+        {
+          "name": "test_implements_interface",
+          "doc": ""
+        },
+        {
+          "name": "test_is_abstract_base_subclass",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeRoleAlias",
+      "description": "Tests for normalize_role_alias method.",
+      "defined_in": "polaris/cells/adapters/kernelone/tests/test_role_provider_adapter.py",
+      "methods": [
+        {
+          "name": "test_normalize_docs_alias",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_auditor_alias",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_canonical_architect",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_canonical_qa",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_uppercase",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_mixed_case",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_with_whitespace",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_unknown_role",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_empty_string",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_none",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_returns_lowercase",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_non_string_input",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetRoleAliases",
+      "description": "Tests for get_role_aliases method.",
+      "defined_in": "polaris/cells/adapters/kernelone/tests/test_role_provider_adapter.py",
+      "methods": [
+        {
+          "name": "test_returns_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_contains_docs_mapping",
+          "doc": ""
+        },
+        {
+          "name": "test_contains_auditor_mapping",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_copy",
+          "doc": ""
+        },
+        {
+          "name": "test_modifying_returned_dict_does_not_affect_adapter",
+          "doc": ""
+        },
+        {
+          "name": "test_length",
+          "doc": ""
+        },
+        {
+          "name": "test_keys_are_lowercase",
+          "doc": ""
+        },
+        {
+          "name": "test_values_are_lowercase",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAdapterConsistency",
+      "description": "Tests for consistency between methods.",
+      "defined_in": "polaris/cells/adapters/kernelone/tests/test_role_provider_adapter.py",
+      "methods": [
+        {
+          "name": "test_aliases_match_normalization",
+          "doc": ""
+        },
+        {
+          "name": "test_consistency_across_instances",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAdapterDocstringExamples",
+      "description": "Tests for docstring examples.",
+      "defined_in": "polaris/cells/adapters/kernelone/tests/test_role_provider_adapter.py",
+      "methods": [
+        {
+          "name": "test_docstring_example_auditor",
+          "doc": ""
+        },
+        {
+          "name": "test_docstring_example_architect_uppercase",
+          "doc": ""
+        },
+        {
+          "name": "test_docstring_example_get_aliases",
+          "doc": ""
+        }
+      ]
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

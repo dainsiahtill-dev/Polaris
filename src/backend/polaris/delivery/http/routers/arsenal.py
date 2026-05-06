@@ -12,6 +12,16 @@ from fastapi.responses import Response
 from polaris.cells.llm.control_plane.public import get_vision_service
 from polaris.cells.runtime.artifact_store.public import get_arrow_service
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.schemas.common import (
+    CodeIndexResponse,
+    CodeMapResponse,
+    CodeSearchResponse,
+    MCPStatusResponse,
+    RoleCapabilitiesResponse,
+    SchedulerStatusResponse,
+    VisionAnalyzeResponse,
+    VisionStatusResponse,
+)
 from polaris.kernelone.constants import MAX_FILE_SIZE_BYTES
 from pydantic import BaseModel, Field
 
@@ -86,7 +96,7 @@ def _build_basic_project_map(file_contents: dict[str, str]) -> list[dict[str, An
     return points
 
 
-@router.get("/vision/status", dependencies=[Depends(require_auth)])
+@router.get("/vision/status", dependencies=[Depends(require_auth)], response_model=VisionStatusResponse)  # DEPRECATED
 def vision_status(request: Request) -> dict[str, Any]:
     """Get vision service status."""
     try:
@@ -97,7 +107,20 @@ def vision_status(request: Request) -> dict[str, Any]:
         return {"pil_available": False, "advanced_available": False, "model_loaded": False}
 
 
-@router.post("/vision/analyze", dependencies=[Depends(require_auth)])
+@router.get("/v2/vision/status", dependencies=[Depends(require_auth)], response_model=VisionStatusResponse)
+def vision_status_v2(request: Request) -> dict[str, Any]:
+    """Get vision service status."""
+    try:
+        service = get_vision_service()
+        return service.get_status()
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("vision_status_v2: service unavailable: %s", exc)
+        return {"pil_available": False, "advanced_available": False, "model_loaded": False}
+
+
+@router.post(
+    "/vision/analyze", dependencies=[Depends(require_auth)], response_model=VisionAnalyzeResponse
+)  # DEPRECATED
 def analyze_ui(request: Request, payload: VisionRequest) -> dict[str, Any]:
     service = get_vision_service()
     # Auto-load for testing if not loaded
@@ -107,32 +130,144 @@ def analyze_ui(request: Request, payload: VisionRequest) -> dict[str, Any]:
     return service.analyze_image(payload.image, payload.task)
 
 
-@router.get("/scheduler/status", dependencies=[Depends(require_auth)])
+@router.post("/v2/vision/analyze", dependencies=[Depends(require_auth)], response_model=VisionAnalyzeResponse)
+def analyze_ui_v2(request: Request, payload: VisionRequest) -> dict[str, Any]:
+    service = get_vision_service()
+    # Auto-load for testing if not loaded
+    if not service.is_loaded:
+        service.load_model()  # This will likely just enable the mock if dependencies missing
+
+    return service.analyze_image(payload.image, payload.task)
+
+
+@router.get(
+    "/scheduler/status", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse
+)  # DEPRECATED
 def get_scheduler_status(request: Request) -> dict[str, Any]:
     return _turbo_disabled_status()
 
 
-@router.post("/scheduler/start", dependencies=[Depends(require_auth)])
+@router.get("/v2/scheduler/status", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse)
+def get_scheduler_status_v2(request: Request) -> dict[str, Any]:
+    return _turbo_disabled_status()
+
+
+@router.post(
+    "/scheduler/start", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse
+)  # DEPRECATED
 async def start_scheduler(request: Request) -> dict[str, Any]:
     payload = _turbo_disabled_status()
     payload["message"] = "turbo feature is disabled"
     return payload
 
 
-@router.post("/scheduler/stop", dependencies=[Depends(require_auth)])
+@router.post("/v2/scheduler/start", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse)
+async def start_scheduler_v2(request: Request) -> dict[str, Any]:
+    payload = _turbo_disabled_status()
+    payload["message"] = "turbo feature is disabled"
+    return payload
+
+
+@router.post(
+    "/scheduler/stop", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse
+)  # DEPRECATED
 async def stop_scheduler(request: Request) -> dict[str, Any]:
     payload = _turbo_disabled_status()
     payload["message"] = "turbo feature is disabled"
     return payload
 
 
-@router.get("/code_map", dependencies=[Depends(require_auth)], response_model=None)
+@router.post("/v2/scheduler/stop", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse)
+async def stop_scheduler_v2(request: Request) -> dict[str, Any]:
+    payload = _turbo_disabled_status()
+    payload["message"] = "turbo feature is disabled"
+    return payload
+
+
+@router.get("/code_map", dependencies=[Depends(require_auth)], response_model=CodeMapResponse)  # DEPRECATED
 def get_code_map(request: Request) -> dict[str, Any] | Response:
     state = get_state(request)
     # 1. Gather all "code" files from workspace
     workspace = state.settings.workspace
     if not workspace or not os.path.isdir(workspace):
-        return {"points": [], "mode": "error", "message": "Invalid workspace"}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_WORKSPACE",
+            message="Invalid workspace",
+            details={"workspace": workspace},
+        )
+
+    file_contents: dict[str, str] = {}
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv"}
+    code_exts = {".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".json"}
+    max_files = 200
+
+    try:
+        count = 0
+        for root, dirs, files in os.walk(workspace):
+            # Prune hidden / dependency directories in-place (modifies the walk).
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+
+            for file in files:
+                if count >= max_files:
+                    break
+                ext = os.path.splitext(file)[1].lower()
+                if ext not in code_exts:
+                    continue
+
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, workspace)
+
+                try:
+                    file_size = os.path.getsize(full_path)
+                    if file_size > MAX_FILE_SIZE_BYTES:
+                        # Large file: stream with byte-accurate truncation.
+                        content = "".join(read_file_chunked(full_path))
+                    else:
+                        with open(full_path, encoding="utf-8", errors="ignore") as f:
+                            content = f.read()
+                    if content.strip():
+                        file_contents[rel_path] = content
+                        count += 1
+                except OSError as e:
+                    logger.debug("Failed to read file %s: %s", rel_path, e)
+
+            if count >= max_files:
+                break
+    except (RuntimeError, ValueError) as e:
+        logger.error("Error scanning files for Code Map: %s", e)
+
+    # 2. Generate Map
+    points = _build_basic_project_map(file_contents)
+
+    # Check for Arrow format request
+    output_format = request.query_params.get("format", "json")
+    if output_format == "arrow":
+        arrow_svc = get_arrow_service()
+        if arrow_svc.available:
+            ipc_bytes = arrow_svc.to_arrow_ipc(points)
+            if ipc_bytes:
+                return Response(content=ipc_bytes, media_type="application/vnd.apache.arrow.stream")
+
+    return {
+        "points": points,
+        "mode": "cpu",
+        "engine_active": False,
+    }
+
+
+@router.get("/v2/code_map", dependencies=[Depends(require_auth)], response_model=CodeMapResponse)
+def get_code_map_v2(request: Request) -> dict[str, Any] | Response:
+    state = get_state(request)
+    # 1. Gather all "code" files from workspace
+    workspace = state.settings.workspace
+    if not workspace or not os.path.isdir(workspace):
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_WORKSPACE",
+            message="Invalid workspace",
+            details={"workspace": workspace},
+        )
 
     file_contents: dict[str, str] = {}
     skip_dirs = {".git", "node_modules", "__pycache__", ".venv"}
@@ -196,7 +331,7 @@ def get_code_map(request: Request) -> dict[str, Any] | Response:
 # --- Code Search endpoints ---
 
 
-@router.post("/code/index", dependencies=[Depends(require_auth)])
+@router.post("/code/index", dependencies=[Depends(require_auth)], response_model=CodeIndexResponse)  # DEPRECATED
 def code_index(request: Request) -> dict[str, Any]:
     """Index workspace code for semantic search."""
     state = get_state(request)
@@ -210,8 +345,36 @@ def code_index(request: Request) -> dict[str, Any]:
         return {"result": [], "ok": False, "error": str(exc)}
 
 
-@router.post("/code/search", dependencies=[Depends(require_auth)])
+@router.post("/v2/code/index", dependencies=[Depends(require_auth)], response_model=CodeIndexResponse)
+def code_index_v2(request: Request) -> dict[str, Any]:
+    """Index workspace code for semantic search."""
+    state = get_state(request)
+    workspace = state.settings.workspace
+    try:
+        from polaris.infrastructure.db.repositories.lancedb_code_search import index_workspace
+
+        result = index_workspace(str(workspace))
+        return {"result": result, "ok": True}
+    except (RuntimeError, ValueError) as exc:
+        return {"result": [], "ok": False, "error": str(exc)}
+
+
+@router.post("/code/search", dependencies=[Depends(require_auth)], response_model=CodeSearchResponse)  # DEPRECATED
 async def code_search(request: Request, body: CodeSearchRequest) -> dict[str, Any]:
+    """Search indexed code."""
+    state = get_state(request)
+    workspace = state.settings.workspace
+    try:
+        from polaris.infrastructure.db.repositories.lancedb_code_search import search_code
+
+        results = search_code(body.query, str(workspace), limit=body.limit)
+        return {"results": results, "ok": True}
+    except (RuntimeError, ValueError) as exc:
+        return {"results": [], "ok": False, "error": str(exc)}
+
+
+@router.post("/v2/code/search", dependencies=[Depends(require_auth)], response_model=CodeSearchResponse)
+async def code_search_v2(request: Request, body: CodeSearchRequest) -> dict[str, Any]:
     """Search indexed code."""
     state = get_state(request)
     workspace = state.settings.workspace
@@ -312,8 +475,48 @@ async def _check_mcp_server_health_async(server_path: str, timeout: float = 5.0)
         return {"healthy": False, "error": str(exc)}
 
 
-@router.get("/mcp/status", dependencies=[Depends(require_auth)])
+@router.get("/mcp/status", dependencies=[Depends(require_auth)], response_model=MCPStatusResponse)  # DEPRECATED
 async def mcp_status(request: Request) -> dict[str, Any]:
+    """Get MCP server availability status with dynamic health check."""
+    mcp_server_path = os.path.normpath(
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "..",
+            "tools",
+            "policy_mcp_server.py",
+        )
+    )
+
+    all_tools = ["health", "policy_check", "finops_check", "invariant_check", "get_policy_config"]
+    file_exists = os.path.isfile(mcp_server_path)
+
+    if not file_exists:
+        return {
+            "available": False,
+            "healthy": False,
+            "server_path": mcp_server_path,
+            "tools": [],
+            "protocol": "JSON-RPC 2.0 / stdio",
+            "error": "Server file not found",
+        }
+
+    # Async health check – does not block the event loop.
+    health = await _check_mcp_server_health_async(mcp_server_path)
+
+    return {
+        "available": True,
+        "healthy": health.get("healthy", False),
+        "server_path": mcp_server_path,
+        "server_version": health.get("server_version"),
+        "tools": health.get("tools_available", all_tools) if health.get("healthy") else all_tools,
+        "protocol": "JSON-RPC 2.0 / stdio",
+        "health_check": health,
+    }
+
+
+@router.get("/v2/mcp/status", dependencies=[Depends(require_auth)], response_model=MCPStatusResponse)
+async def mcp_status_v2(request: Request) -> dict[str, Any]:
     """Get MCP server availability status with dynamic health check."""
     mcp_server_path = os.path.normpath(
         os.path.join(
@@ -355,13 +558,35 @@ async def mcp_status(request: Request) -> dict[str, Any]:
 # --- Director Capabilities endpoint ---
 
 
-@router.get("/director/capabilities", dependencies=[Depends(require_auth)])
+@router.get(
+    "/director/capabilities", dependencies=[Depends(require_auth)], response_model=RoleCapabilitiesResponse
+)  # DEPRECATED
 def director_capabilities(request: Request) -> dict[str, Any]:
     """Get Director capability matrix."""
     try:
         from polaris.domain.entities.capability import get_role_capabilities
 
         return {
+            "role": "director",
+            "capabilities": get_role_capabilities("director"),
+        }
+    except (RuntimeError, ValueError) as exc:
+        raise StructuredHTTPException(
+            status_code=500,
+            code="CAPABILITY_LOAD_FAILED",
+            message=str(exc),
+            details={"capabilities": []},
+        ) from exc
+
+
+@router.get("/v2/director/capabilities", dependencies=[Depends(require_auth)], response_model=RoleCapabilitiesResponse)
+def director_capabilities_v2(request: Request) -> dict[str, Any]:
+    """Get Director capability matrix."""
+    try:
+        from polaris.domain.entities.capability import get_role_capabilities
+
+        return {
+            "ok": True,
             "role": "director",
             "capabilities": get_role_capabilities("director"),
         }

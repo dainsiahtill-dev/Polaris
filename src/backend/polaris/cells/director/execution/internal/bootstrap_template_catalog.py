@@ -16,7 +16,7 @@ import warnings
 
 # TODO: Cross-cell internal import — bootstrap_template_catalog symbols are not
 # yet exposed in director.tasking.public. Add to public contract when stabilised.
-from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
+from polaris.cells.director.tasking import (
     get_generic_bootstrap_files,
     get_intelligent_bootstrap_files,
     get_python_bootstrap_files,

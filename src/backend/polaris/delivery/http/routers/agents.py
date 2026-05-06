@@ -4,7 +4,7 @@ import shutil
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from polaris.cells.runtime.artifact_store.public.service import resolve_safe_path
 from polaris.cells.runtime.projection.public.service import format_mtime
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.post("/agents/apply", dependencies=[Depends(require_auth)], response_model=AgentsApplyResponse)  # DEPRECATED
-def apply_agents(request: Request, payload: Any) -> dict[str, Any]:
+def apply_agents(request: Request, payload: Any = Body(...)) -> dict[str, Any]:
     from polaris.delivery.http.schemas import AgentsApplyPayload
 
     if not isinstance(payload, AgentsApplyPayload):
@@ -46,7 +46,7 @@ def apply_agents(request: Request, payload: Any) -> dict[str, Any]:
 
 
 @router.post("/v2/agents/apply", dependencies=[Depends(require_auth)], response_model=AgentsApplyResponse)
-def v2_apply_agents(request: Request, payload: Any) -> dict[str, Any]:
+def v2_apply_agents(request: Request, payload: Any = Body(...)) -> dict[str, Any]:
     from polaris.delivery.http.schemas import AgentsApplyPayload
 
     if not isinstance(payload, AgentsApplyPayload):
@@ -74,7 +74,7 @@ def v2_apply_agents(request: Request, payload: Any) -> dict[str, Any]:
 @router.post(
     "/agents/feedback", dependencies=[Depends(require_auth)], response_model=AgentsFeedbackResponse
 )  # DEPRECATED
-def save_agents_feedback(request: Request, payload: Any) -> dict[str, Any]:
+def save_agents_feedback(request: Request, payload: Any = Body(...)) -> dict[str, Any]:
     from polaris.delivery.http.schemas import AgentsFeedbackPayload
 
     if not isinstance(payload, AgentsFeedbackPayload):
@@ -106,7 +106,7 @@ def save_agents_feedback(request: Request, payload: Any) -> dict[str, Any]:
 
 
 @router.post("/v2/agents/feedback", dependencies=[Depends(require_auth)], response_model=AgentsFeedbackResponse)
-def v2_save_agents_feedback(request: Request, payload: Any) -> dict[str, Any]:
+def v2_save_agents_feedback(request: Request, payload: Any = Body(...)) -> dict[str, Any]:
     from polaris.delivery.http.schemas import AgentsFeedbackPayload
 
     if not isinstance(payload, AgentsFeedbackPayload):

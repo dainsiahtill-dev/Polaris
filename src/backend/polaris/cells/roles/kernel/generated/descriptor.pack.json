@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:42.426690Z",
-  "source_hash": "4fdd2f7de543816d",
+  "generated_at": "2026-05-06T07:41:51.680720Z",
+  "source_hash": "2ea504db27cd7a8e",
   "cell_id": "roles.kernel",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -2507,6 +2507,30 @@
     },
     {
       "type": "class",
+      "name": "BudgetTracker",
+      "description": "预算追踪器",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/budget_tracker.py",
+      "methods": [
+        {
+          "name": "record_validation_failure",
+          "doc": "记录验证失败"
+        },
+        {
+          "name": "build_execution_stats",
+          "doc": "构建执行统计信息"
+        },
+        {
+          "name": "build_error_result",
+          "doc": "构建错误结果（从 TurnEngine 错误构建 RoleTurnResult）"
+        },
+        {
+          "name": "build_success_result",
+          "doc": "构建成功结果"
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "ValidationReport",
       "description": "Pre-commit validation report.",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/core.py",
@@ -2840,6 +2864,46 @@
     },
     {
       "type": "class",
+      "name": "SessionManager",
+      "description": "会话状态管理器",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/session_manager.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化会话管理器"
+        },
+        {
+          "name": "resolve_stream_run_id",
+          "doc": "Resolve stream run_id from request or workspace runtime metadata."
+        },
+        {
+          "name": "build_stream_log_writer",
+          "doc": "Create a log writer for streaming events."
+        },
+        {
+          "name": "process_deprecated_params",
+          "doc": "处理废弃参数"
+        },
+        {
+          "name": "build_context",
+          "doc": "构建上下文请求"
+        },
+        {
+          "name": "build_system_prompt_for_request",
+          "doc": "Build system prompt with domain-aware fallback compatibility."
+        },
+        {
+          "name": "build_context_request_for_stream",
+          "doc": "Build a minimal ContextRequest for legacy call_stream compatibility."
+        },
+        {
+          "name": "_normalize_user_text",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "ErrorSuggestionProvider",
       "description": "错误建议提供者",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/suggestions.py",
@@ -3076,6 +3140,124 @@
         {
           "name": "log_deferred_write_calls",
           "doc": "记录 deferred write tool calls"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ToolLoop",
+      "description": "工具调用循环管理器",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_loop.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化工具循环管理器"
+        },
+        {
+          "name": "reset_cache",
+          "doc": "重置缓存的工具网关状态（跨回合边界时调用）"
+        },
+        {
+          "name": "resolve_tool_gateway_turn_key",
+          "doc": "Resolve a stable per-turn cache key for gateway counters."
+        },
+        {
+          "name": "reset_tool_gateway_turn_boundary",
+          "doc": "Explicitly reset cached gateway counters when the authoritative turn id changes."
+        },
+        {
+          "name": "create_gateway",
+          "doc": "Create one per-request tool gateway (委托给 KernelToolExecutor)."
+        },
+        {
+          "name": "split_tool_calls_by_write_budget",
+          "doc": "Split tool calls into executable and deferred by write-call budget."
+        },
+        {
+          "name": "emit_tool_execute_events",
+          "doc": "发射工具执行前事件（委托给 KernelToolExecutor）"
+        },
+        {
+          "name": "emit_tool_result_events_and_collect_errors",
+          "doc": "发射工具结果事件并收集错误（委托给 KernelToolExecutor）"
+        },
+        {
+          "name": "append_deferred_notice",
+          "doc": "追加 deferred notice（委托给 KernelToolExecutor）"
+        },
+        {
+          "name": "log_deferred_write_calls",
+          "doc": "记录 deferred write calls（委托给 KernelToolExecutor）"
+        },
+        {
+          "name": "parse_content_and_thinking_tool_calls",
+          "doc": "Parse tool calls from content and thinking, filtering out thinking-only calls."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_LLMProvider",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ToolRuntime",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_engine.py",
+      "methods": [
+        {
+          "name": "reset_turn_boundary",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_LLMProviderStream",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TurnEngineExecutor",
+      "description": "Turn 执行引擎",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/turn_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "初始化 Turn 执行引擎"
+        },
+        {
+          "name": "create_transaction_kernel",
+          "doc": "Create a TransactionKernel with kernel-backed LLM and tool adapters."
+        },
+        {
+          "name": "_normalize_user_text",
+          "doc": ""
+        },
+        {
+          "name": "_build_history_without_current_user",
+          "doc": ""
+        },
+        {
+          "name": "_build_context_override_with_prebuilt_messages",
+          "doc": ""
+        },
+        {
+          "name": "_extract_model_override_from_request_payload",
+          "doc": ""
+        },
+        {
+          "name": "_build_effective_profile",
+          "doc": ""
+        },
+        {
+          "name": "build_context_handoff_pack",
+          "doc": "Map TransactionKernel handoff_workflow result to canonical ContextHandoffPack."
         }
       ]
     },
@@ -5179,6 +5361,154 @@
         },
         {
           "name": "_evaluate_single",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConversationStateCreation",
+      "description": "Tests for ConversationState creation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/policy/tests/test_conversation_state.py",
+      "methods": [
+        {
+          "name": "test_create_with_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_all_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_create_mutable",
+          "doc": ""
+        },
+        {
+          "name": "test_create_empty_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_create_nested_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConversationStateMethods",
+      "description": "Tests for ConversationState methods.",
+      "defined_in": "polaris/cells/roles/kernel/internal/policy/tests/test_conversation_state.py",
+      "methods": [
+        {
+          "name": "test_get_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_get_role_id_default",
+          "doc": ""
+        },
+        {
+          "name": "test_get_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_get_workspace_default",
+          "doc": ""
+        },
+        {
+          "name": "test_methods_return_strings",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConversationStateEdgeCases",
+      "description": "Tests for ConversationState edge cases.",
+      "defined_in": "polaris/cells/roles/kernel/internal/policy/tests/test_conversation_state.py",
+      "methods": [
+        {
+          "name": "test_role_id_with_whitespace",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_none_in_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_special_characters_in_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_unicode_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_metadata_isolated_per_instance",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConversationStateMutation",
+      "description": "Tests for ConversationState mutation behavior.",
+      "defined_in": "polaris/cells/roles/kernel/internal/policy/tests/test_conversation_state.py",
+      "methods": [
+        {
+          "name": "test_modify_role_id_after_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_modify_workspace_after_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_modify_metadata_after_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_replace_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestConversationStateRepr",
+      "description": "Tests for ConversationState representation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/policy/tests/test_conversation_state.py",
+      "methods": [
+        {
+          "name": "test_repr_contains_class_name",
+          "doc": ""
+        },
+        {
+          "name": "test_repr_contains_role_id",
+          "doc": ""
+        },
+        {
+          "name": "test_repr_contains_workspace",
           "doc": ""
         }
       ]
@@ -9362,6 +9692,190 @@
     },
     {
       "type": "class",
+      "name": "TestTestingInfrastructureError",
+      "description": "Tests for TestingInfrastructureError base class.",
+      "defined_in": "polaris/cells/roles/kernel/internal/testing/tests/test_exceptions.py",
+      "methods": [
+        {
+          "name": "test_is_exception_subclass",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_with_message",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_without_message",
+          "doc": ""
+        },
+        {
+          "name": "test_can_catch_as_exception",
+          "doc": ""
+        },
+        {
+          "name": "test_is_base_for_other_errors",
+          "doc": ""
+        },
+        {
+          "name": "test_catch_subclass_as_base",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFakeLLMExhaustedError",
+      "description": "Tests for FakeLLMExhaustedError.",
+      "defined_in": "polaris/cells/roles/kernel/internal/testing/tests/test_exceptions.py",
+      "methods": [
+        {
+          "name": "test_create_with_call_count",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_zero_call_count",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_large_call_count",
+          "doc": ""
+        },
+        {
+          "name": "test_message_contains_call_count",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        },
+        {
+          "name": "test_is_testing_infrastructure_error",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFakeToolNotFoundError",
+      "description": "Tests for FakeToolNotFoundError.",
+      "defined_in": "polaris/cells/roles/kernel/internal/testing/tests/test_exceptions.py",
+      "methods": [
+        {
+          "name": "test_create_with_tool_name",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_empty_tool_name",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_special_tool_name",
+          "doc": ""
+        },
+        {
+          "name": "test_message_contains_tool_name",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        },
+        {
+          "name": "test_is_testing_infrastructure_error",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFakeToolExecutionError",
+      "description": "Tests for FakeToolExecutionError.",
+      "defined_in": "polaris/cells/roles/kernel/internal/testing/tests/test_exceptions.py",
+      "methods": [
+        {
+          "name": "test_create_with_tool_name_and_error",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_different_error_types",
+          "doc": ""
+        },
+        {
+          "name": "test_message_contains_tool_name",
+          "doc": ""
+        },
+        {
+          "name": "test_message_contains_original_error",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        },
+        {
+          "name": "test_is_testing_infrastructure_error",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHarnessConfigurationError",
+      "description": "Tests for HarnessConfigurationError.",
+      "defined_in": "polaris/cells/roles/kernel/internal/testing/tests/test_exceptions.py",
+      "methods": [
+        {
+          "name": "test_is_exception_subclass",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_with_message",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_without_message",
+          "doc": ""
+        },
+        {
+          "name": "test_is_testing_infrastructure_error",
+          "doc": ""
+        },
+        {
+          "name": "test_catch_as_base",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExceptionHierarchy",
+      "description": "Tests for the complete exception hierarchy.",
+      "defined_in": "polaris/cells/roles/kernel/internal/testing/tests/test_exceptions.py",
+      "methods": [
+        {
+          "name": "test_all_inherit_from_testing_infrastructure_error",
+          "doc": ""
+        },
+        {
+          "name": "test_distinct_types",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestModuleExports",
+      "description": "Tests for module __all__ exports.",
+      "defined_in": "polaris/cells/roles/kernel/internal/testing/tests/test_exceptions.py",
+      "methods": [
+        {
+          "name": "test_all_exports_present",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestActionFirstBenchmark",
       "description": "Benchmark 场景验证。",
       "defined_in": "polaris/cells/roles/kernel/internal/tests/test_action_first_integration.py",
@@ -11312,7 +11826,15 @@
         },
         {
           "name": "record_decision",
-          "doc": "记录决策"
+          "doc": "记录决策（追加到决策列表）"
+        },
+        {
+          "name": "replace_decision",
+          "doc": "替换当前决策（用于重试场景，保持单一决策不变量）。"
+        },
+        {
+          "name": "_decision_to_dict",
+          "doc": "将决策转换为字典格式"
         },
         {
           "name": "record_tool_batch_resolved",
@@ -14807,6 +15329,130 @@
       "name": "reset_role_action_registry_for_test",
       "description": "Reset the global RoleActionRegistry for test isolation.",
       "defined_in": "polaris/cells/roles/kernel/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestRoleAliasesConstant",
+      "description": "Tests for the ROLE_ALIASES constant.",
+      "defined_in": "polaris/cells/roles/kernel/public/tests/test_role_alias.py",
+      "methods": [
+        {
+          "name": "test_role_aliases_is_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_role_aliases_has_docs_key",
+          "doc": ""
+        },
+        {
+          "name": "test_role_aliases_has_auditor_key",
+          "doc": ""
+        },
+        {
+          "name": "test_role_aliases_keys_are_lowercase",
+          "doc": ""
+        },
+        {
+          "name": "test_role_aliases_values_are_lowercase",
+          "doc": ""
+        },
+        {
+          "name": "test_role_aliases_length",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalizeRoleAlias",
+      "description": "Tests for normalize_role_alias function.",
+      "defined_in": "polaris/cells/roles/kernel/public/tests/test_role_alias.py",
+      "methods": [
+        {
+          "name": "test_normalize_docs_alias",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_auditor_alias",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_canonical_architect",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_canonical_qa",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_uppercase_docs",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_uppercase_auditor",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_mixed_case",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_with_whitespace",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_unknown_role",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_unknown_uppercase",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_empty_string",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_none",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_whitespace_only",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_non_string_input",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_special_characters",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_returns_lowercase",
+          "doc": ""
+        },
+        {
+          "name": "test_normalize_strips_input",
+          "doc": ""
+        },
+        {
+          "name": "test_role_aliases_is_immutable_reference",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestModuleExports",
+      "description": "Tests for module __all__ exports.",
+      "defined_in": "polaris/cells/roles/kernel/public/tests/test_role_alias.py",
+      "methods": [
+        {
+          "name": "test_all_exports_present",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",

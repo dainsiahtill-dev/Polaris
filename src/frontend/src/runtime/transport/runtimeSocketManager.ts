@@ -67,6 +67,8 @@ interface V2EventMessage {
   event: Record<string, unknown>;
 }
 
+type RuntimeRole = 'pm' | 'director' | 'qa';
+
 // ============================================================================
 // RuntimeSocketManager Singleton
 // ============================================================================
@@ -99,6 +101,8 @@ class RuntimeSocketManager {
   private batchAckTimer: ReturnType<typeof setTimeout> | null = null;
   private protocolActivated = false;
   private subscribedChannels: string[] = [];
+  private subscribedRoles: RuntimeRole[] = [];
+  private hasExplicitRoleFilter = false;
 
   // Channel subscriptions (ref-count based)
   private channels = new Map<string, number>(); // channel -> ref count
@@ -219,8 +223,17 @@ class RuntimeSocketManager {
   /**
    * Subscribe to channels (ref-counted)
    */
-  subscribeChannels(subscriptions: ChannelSubscription[]): void {
+  subscribeChannels(subscriptions: ChannelSubscription[], roles?: RuntimeRole[]): void {
     let needsResubscribe = false;
+    let rolesChanged = false;
+
+    if (roles !== undefined) {
+      const normalizedRoles = Array.from(new Set(roles));
+      rolesChanged =
+        !this.hasExplicitRoleFilter || !this.areRolesEqual(this.subscribedRoles, normalizedRoles);
+      this.subscribedRoles = normalizedRoles;
+      this.hasExplicitRoleFilter = true;
+    }
 
     for (const { channel, tailLines = 0 } of subscriptions) {
       const currentCount = this.channels.get(channel) || 0;
@@ -238,7 +251,7 @@ class RuntimeSocketManager {
       }
     }
 
-    if (needsResubscribe && this.state.connected) {
+    if ((needsResubscribe || rolesChanged) && this.state.connected) {
       this.sendSubscribe();
     }
   }
@@ -247,9 +260,14 @@ class RuntimeSocketManager {
    * Unsubscribe from channels (ref-counted)
    */
   unsubscribeChannels(channels: string[]): void {
+    const removedChannels: string[] = [];
+
     for (const channel of channels) {
       const currentCount = this.channels.get(channel) || 0;
       if (currentCount <= 1) {
+        if (currentCount > 0) {
+          removedChannels.push(channel);
+        }
         this.channels.delete(channel);
         this.channelTailLines.delete(channel);
       } else {
@@ -257,8 +275,9 @@ class RuntimeSocketManager {
       }
     }
 
-    // Note: We don't send unsubscribe to server - we just stop listening
-    // Server can handle client disconnect naturally
+    if (removedChannels.length > 0) {
+      this.sendUnsubscribe(removedChannels);
+    }
   }
 
   /**
@@ -266,6 +285,32 @@ class RuntimeSocketManager {
    */
   send(data: unknown): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      if (typeof data !== 'string' && data && typeof data === 'object' && !Array.isArray(data)) {
+        const payload = data as Record<string, unknown>;
+        const msgType = String(payload.type || '').trim().toUpperCase();
+        const protocol = String(payload.protocol || '').trim().toLowerCase();
+        if (msgType === 'SUBSCRIBE' && protocol === 'runtime.v2') {
+          const channels = Array.isArray(payload.channels)
+            ? payload.channels
+                .map((value) => String(value || '').trim())
+                .filter((value): value is string => value.length > 0)
+            : [];
+          if (channels.length > 0) {
+            this.subscribedChannels = channels;
+          }
+          if (Array.isArray(payload.roles)) {
+            const roles = payload.roles
+              .map((value) => String(value || '').trim())
+              .filter((value): value is string => value.length > 0)
+              .filter(
+                (value): value is RuntimeRole =>
+                  value === 'pm' || value === 'director' || value === 'qa'
+              );
+            this.subscribedRoles = Array.from(new Set(roles));
+            this.hasExplicitRoleFilter = true;
+          }
+        }
+      }
       this.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
       return true;
     }
@@ -488,15 +533,41 @@ class RuntimeSocketManager {
     this.subscribedChannels = channelList;
 
     // Send v2 protocol subscription
+    const payload: Record<string, unknown> = {
+      type: 'SUBSCRIBE',
+      protocol: 'runtime.v2',
+      channels: channelList,
+      tail: maxTailLines,
+      cursor: this.lastCursor,
+    };
+    if (this.hasExplicitRoleFilter) {
+      payload.roles = this.subscribedRoles;
+    }
+    this.ws.send(JSON.stringify(payload));
+  }
+
+  private sendUnsubscribe(channels: string[]): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
     this.ws.send(
       JSON.stringify({
-        type: 'SUBSCRIBE',
+        type: 'UNSUBSCRIBE',
         protocol: 'runtime.v2',
-        channels: channelList,
-        tail: maxTailLines,
-        cursor: this.lastCursor,
+        channels,
       })
     );
+  }
+
+  private areRolesEqual(left: RuntimeRole[], right: RuntimeRole[]): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+    for (const role of left) {
+      if (!right.includes(role)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private scheduleReconnect(): void {
@@ -554,4 +625,4 @@ class RuntimeSocketManager {
 export const runtimeSocketManager = RuntimeSocketManager.getInstance();
 
 // Types re-export for convenience
-export type { RuntimeSocketManager };
+export type { RuntimeRole, RuntimeSocketManager };

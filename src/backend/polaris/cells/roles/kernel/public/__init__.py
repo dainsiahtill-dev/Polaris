@@ -38,6 +38,7 @@ _EXPORT_TO_MODULE: dict[str, str] = {
     "ContextRequest": "polaris.cells.roles.kernel.public.service",
     "ContextResult": "polaris.cells.roles.kernel.public.service",
     "ContextStats": "polaris.cells.roles.kernel.public.service",
+    "DeliveryMode": "polaris.cells.roles.kernel.internal.transaction.delivery_contract",
     "ConversationHistory": "polaris.cells.roles.kernel.public.service",
     "ErrorCategory": "polaris.cells.roles.kernel.public.service",
     "LLMCache": "polaris.cells.roles.kernel.public.service",
@@ -96,6 +97,7 @@ _EXPORT_TO_MODULE: dict[str, str] = {
     "from_assistant_message": "polaris.cells.roles.kernel.public.transcript_ir",
     "from_control_event": "polaris.cells.roles.kernel.public.transcript_ir",
     "from_tool_result": "polaris.cells.roles.kernel.public.transcript_ir",
+    "get_dead_loop_metrics": "polaris.cells.roles.kernel.public.metrics_contracts",
 }
 
 __all__ = list(_EXPORT_TO_MODULE)

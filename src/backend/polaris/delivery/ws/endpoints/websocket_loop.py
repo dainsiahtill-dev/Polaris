@@ -184,15 +184,46 @@ async def run_main_loop(
             if v2_poll_task is not None and v2_poll_task in done:
                 v2_event = v2_poll_task.result()
                 if v2_event and isinstance(v2_event, RuntimeEventEnvelope):
-                    v2_cursor = v2_event.cursor
-                    await send_json_safe(
+                    event_cursor = v2_event.cursor
+                    v2_sent = await send_json_safe(
                         websocket,
-                        {"type": "EVENT", "protocol": "runtime.v2", "cursor": v2_cursor, "event": v2_event.to_dict()},
+                        {
+                            "type": "EVENT",
+                            "protocol": "runtime.v2",
+                            "cursor": event_cursor,
+                            "event": v2_event.to_dict(),
+                        },
                         connection_id=connection_id,
                         client=client,
                         workspace=resolved_workspace,
                     )
-                    sent_any = True
+                    if v2_sent:
+                        v2_cursor = event_cursor
+                        sent_any = True
+                    else:
+                        close_code = 1011
+                        close_reason = "runtime_v2_send_failed"
+                        active = False
+
+            if v2_consumer_manager and v2_consumer_manager.is_connected:
+                consume_dropped = getattr(v2_consumer_manager, "consume_dropped", None)
+                if callable(consume_dropped):
+                    dropped = 0
+                    try:
+                        dropped = int(consume_dropped())
+                    except (RuntimeError, ValueError, TypeError):
+                        logger.debug("Failed to consume JetStream dropped-events signal", exc_info=True)
+                    if dropped > 0:
+                        needs_resync = True
+                        logger.info(
+                            "JetStream events dropped for %s: %s, triggering resync",
+                            connection_id,
+                            dropped,
+                            extra={"client": client, "workspace": resolved_workspace},
+                        )
+
+            if not active:
+                continue
 
             fanout_sent, fanout_resync = await _drain_fanout_events(
                 websocket=websocket,

@@ -73,8 +73,9 @@ class TestPrimaryRouter:
 
         assert response.status_code == 503
         payload: dict[str, Any] = response.json()
-        assert payload["detail"]["ready"] is False
-        assert payload["detail"]["checks"]["nats"] == "required_but_not_connected"
+        details = payload["detail"]["details"]
+        assert details["ready"] is False
+        assert details["checks"]["nats"] == "required_but_not_connected"
 
     def test_readiness_check_nats_optional_not_connected(self) -> None:
         """GET /ready returns 200 when NATS is optional and not connected."""

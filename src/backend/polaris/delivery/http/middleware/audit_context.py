@@ -20,6 +20,7 @@ import os
 import uuid
 from typing import TYPE_CHECKING
 
+from polaris.delivery.http.endpoint_policy import is_observability_exempt
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
@@ -55,11 +56,7 @@ class AuditContextMiddleware(BaseHTTPMiddleware):
     """
 
     # Paths to exclude from audit context
-    EXCLUDED_PATHS = {
-        "/health",
-        "/metrics",
-        "/favicon.ico",
-    }
+    EXCLUDED_PATHS = frozenset({"/health", "/metrics", "/favicon.ico"})
 
     def __init__(
         self,
@@ -81,7 +78,7 @@ class AuditContextMiddleware(BaseHTTPMiddleware):
 
     def _should_setup_context(self, path: str) -> bool:
         """Check if path should have audit context setup."""
-        return not any(path.startswith(excluded) for excluded in self.EXCLUDED_PATHS)
+        return not is_observability_exempt(path)
 
     def _extract_or_generate_ids(
         self,

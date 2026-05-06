@@ -9,13 +9,13 @@ router = APIRouter()
 
 
 @router.get("/ollama/models", dependencies=[Depends(require_auth)], response_model=OllamaModelsResponse)  # DEPRECATED
-def get_ollama_models() -> list[str]:
-    return list_ollama_models()
+def get_ollama_models() -> dict[str, Any]:
+    return {"models": list_ollama_models()}
 
 
 @router.get("/v2/ollama/models", dependencies=[Depends(require_auth)], response_model=OllamaModelsResponse)
-def v2_get_ollama_models() -> list[str]:
-    return list_ollama_models()
+def v2_get_ollama_models() -> dict[str, Any]:
+    return {"models": list_ollama_models()}
 
 
 @router.post("/ollama/stop", dependencies=[Depends(require_auth)], response_model=OllamaStopResponse)  # DEPRECATED

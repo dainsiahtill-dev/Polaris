@@ -1220,7 +1220,7 @@ class ContextOSProjection:
             )
             # Record metrics
             try:
-                from polaris.cells.roles.kernel.internal.metrics import get_dead_loop_metrics
+                from polaris.cells.roles.kernel.public import get_dead_loop_metrics
 
                 get_dead_loop_metrics().record_emergency_compaction(event_count)
             except ImportError:

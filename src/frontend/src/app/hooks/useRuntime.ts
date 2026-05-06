@@ -58,6 +58,7 @@ export type { FileEditEvent, RuntimeWorkerState, SequentialTraceEvent };
 
 export interface WebSocketMessage {
   type: string;
+  action?: string;
   channel?: string;
   pm_status?: BackendStatus | null;
   director_status?: BackendStatus | null;
@@ -72,6 +73,7 @@ export interface WebSocketMessage {
   trigger?: string;
   timestamp?: string;
   event?: Record<string, unknown> | null;
+  events?: unknown[];
   payload?: Record<string, unknown> | null;
 }
 
@@ -200,8 +202,62 @@ function isRuntimeV2Envelope(payload: WebSocketMessage): boolean {
   return schemaVersion === 'runtime.v2' || Boolean(record.channel && record.kind && record.payload);
 }
 
+function normalizeChannelToken(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
+}
+
 function isLlmStreamChannel(channel: string): boolean {
-  return channel === 'llm';
+  const token = normalizeChannelToken(channel);
+  return token === 'llm' || token === 'log.llm' || token === 'llm_stream';
+}
+
+function isLlmPayloadCompatible(parsed: Record<string, unknown>): boolean {
+  const canonicalChannel = normalizeChannelToken(parsed.channel || parsed.category || parsed.stream);
+  if (!canonicalChannel) return true;
+  if (isLlmStreamChannel(canonicalChannel)) return true;
+
+  const domain = normalizeChannelToken(parsed.domain);
+  if (domain === 'llm') return true;
+
+  const kind = normalizeChannelToken(parsed.kind || parsed.event || parsed.name || parsed.type);
+  return kind === 'llm_stream' || kind.startsWith('llm.');
+}
+
+function extractLlmRunScope(parsed: Record<string, unknown>): string {
+  const raw = Parsing.isRecord(parsed.raw) ? parsed.raw : null;
+  const data = Parsing.isRecord(parsed.data) ? parsed.data : null;
+
+  const candidates: unknown[] = [
+    parsed.run_id,
+    parsed.runId,
+    parsed.workflow_run_id,
+    parsed.workflowRunId,
+    raw?.run_id,
+    raw?.runId,
+    raw?.workflow_run_id,
+    raw?.workflowRunId,
+    data?.run_id,
+    data?.runId,
+    data?.workflow_run_id,
+    data?.workflowRunId,
+  ];
+
+  for (const candidate of candidates) {
+    const token = Parsing.toStringValue(candidate);
+    if (token) return token;
+  }
+  return '';
+}
+
+function resolveLlmLogRunScope(log: LogEntry): string {
+  const meta = Parsing.isRecord(log.meta) ? log.meta : null;
+  const runScope = Parsing.toStringValue(meta?.runId || meta?.run_id || meta?.workflowRunId || meta?.workflow_run_id);
+  return runScope;
+}
+
+function buildLlmDedupKey(log: LogEntry, fallbackRunScope: string): string {
+  const scopedRunId = resolveLlmLogRunScope(log) || fallbackRunScope || 'global';
+  return `${scopedRunId}:${log.id}`;
 }
 
 function normalizeStreamEventToken(value: unknown): string {
@@ -278,8 +334,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
   let details = '';
 
   if (parsed) {
-    const canonicalChannel = String(parsed.channel || '').trim();
-    if (channel === 'llm' && canonicalChannel && canonicalChannel !== 'llm') return null;
+    if (isLlmStreamChannel(channel) && !isLlmPayloadCompatible(parsed)) return null;
 
     const ts = String(parsed.ts || parsed.timestamp || '').trim();
     if (ts) timestamp = ts;
@@ -408,11 +463,13 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
 
     const eventLabel = streamEventLabel(normalizedEvent);
     const tags = [normalizedEvent].filter((token) => token.length > 0);
+    const runScope = extractLlmRunScope(parsed);
     const meta: Record<string, unknown> = {
       channel,
       streamEvent: normalizedEvent || undefined,
       role: actor || undefined,
       model: modelName || undefined,
+      runId: runScope || undefined,
     };
 
     const compact = message.replace(/\s+/g, ' ').trim();
@@ -704,6 +761,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
   const seenDialogueIdsRef = useRef<Set<string>>(new Set());
   const seenLlmEventIdsRef = useRef<Set<string>>(new Set());
   const seenV2EventIdsRef = useRef<Set<string>>(new Set());
+  const llmRunScopeRef = useRef<string>('global');
   const directorRunningRef = useRef(false);
 
   // Process message handler
@@ -714,6 +772,15 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         let payload: WebSocketMessage = typeof eventData === 'string' ? JSON.parse(eventData) : (eventData as WebSocketMessage);
         const msgType = String(payload.type || '').trim().toLowerCase();
         let channel = String(payload.channel || '').trim();
+
+        if (msgType === 'event' && payload.action === 'query_result' && Array.isArray(payload.events)) {
+          payload.events.forEach((eventItem) => {
+            if (Parsing.isRecord(eventItem)) {
+              processMessage({ type: 'event', event: eventItem });
+            }
+          });
+          return;
+        }
 
         // Handle v2 protocol EVENT message
         if (msgType === 'event' && payload.event) {
@@ -824,7 +891,8 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         } else if (msgType === 'llm_stream' || msgType === 'process_stream') {
           const eventText = Parsing.isRecord(payload.event) ? JSON.stringify(payload.event) : '';
           const lineText = typeof payload.line === 'string' ? payload.line : '';
-          payload = { type: 'line', channel: channel, text: eventText || lineText };
+          const fallbackChannel = msgType === 'llm_stream' ? 'llm' : 'process';
+          payload = { type: 'line', channel: channel || fallbackChannel, text: eventText || lineText };
         }
 
         if (payload.type === 'status') {
@@ -860,11 +928,21 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           })));
 
           setWorkers(Parsing.extractDirectorWorkers(payload.director_status ?? null) as RuntimeWorkerState[]);
-          setRunId(Parsing.extractRunId({
+          const nextRunId = Parsing.extractRunId({
             snapshot: payload.snapshot,
             engine_status: payload.engine_status,
             director_status: payload.director_status,
-          }));
+          });
+          const nextRunScope = Parsing.toStringValue(nextRunId);
+          if (nextRunScope && nextRunScope !== llmRunScopeRef.current) {
+            llmRunScopeRef.current = nextRunScope;
+            seenLlmEventIdsRef.current.clear();
+          } else if (!nextRunScope && !systemActive && llmRunScopeRef.current !== 'global') {
+            // Run finished and runtime turned idle: reset scope to avoid stale cross-run dedup.
+            llmRunScopeRef.current = 'global';
+            seenLlmEventIdsRef.current.clear();
+          }
+          setRunId(nextRunId);
           return;
         }
 
@@ -908,16 +986,21 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               .map((line) => parseLlmStreamLine(channel, line))
               .filter((entry): entry is LogEntry => Boolean(entry));
             const uniqueLogs = llmLogs.filter((log) => {
-              const eventId = log.id;
-              if (eventId && seenLlmEventIdsRef.current.has(eventId)) {
+              const runScope = resolveLlmLogRunScope(log);
+              const activeRunId = Parsing.toStringValue(runId);
+              if (runScope && runScope !== llmRunScopeRef.current) {
+                if (!activeRunId || runScope === activeRunId || llmRunScopeRef.current === 'global') {
+                  llmRunScopeRef.current = runScope;
+                }
+              }
+              const dedupKey = buildLlmDedupKey(log, llmRunScopeRef.current);
+              if (seenLlmEventIdsRef.current.has(dedupKey)) {
                 return false;
               }
-              if (eventId) {
-                seenLlmEventIdsRef.current.add(eventId);
-                if (seenLlmEventIdsRef.current.size > 5000) {
-                  const entries = Array.from(seenLlmEventIdsRef.current);
-                  seenLlmEventIdsRef.current = new Set(entries.slice(-2500));
-                }
+              seenLlmEventIdsRef.current.add(dedupKey);
+              if (seenLlmEventIdsRef.current.size > 5000) {
+                const entries = Array.from(seenLlmEventIdsRef.current);
+                seenLlmEventIdsRef.current = new Set(entries.slice(-2500));
               }
               return true;
             });
@@ -989,11 +1072,22 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           } else if (isLlmStreamChannel(channel)) {
             const llmLog = parseLlmStreamLine(channel, payload.text);
             if (llmLog) {
-              const eventId = llmLog.id;
-              if (eventId && seenLlmEventIdsRef.current.has(eventId)) {
+              const runScope = resolveLlmLogRunScope(llmLog);
+              const activeRunId = Parsing.toStringValue(runId);
+              if (runScope && runScope !== llmRunScopeRef.current) {
+                if (!activeRunId || runScope === activeRunId || llmRunScopeRef.current === 'global') {
+                  llmRunScopeRef.current = runScope;
+                }
+              }
+              const dedupKey = buildLlmDedupKey(llmLog, llmRunScopeRef.current);
+              if (seenLlmEventIdsRef.current.has(dedupKey)) {
                 // Skip
               } else {
-                if (eventId) seenLlmEventIdsRef.current.add(eventId);
+                seenLlmEventIdsRef.current.add(dedupKey);
+                if (seenLlmEventIdsRef.current.size > 5000) {
+                  const entries = Array.from(seenLlmEventIdsRef.current);
+                  seenLlmEventIdsRef.current = new Set(entries.slice(-2500));
+                }
                 appendLlmStreamEvent(llmLog);
               }
             }
@@ -1028,6 +1122,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
       setLancedbStatus,
       setProcessStreamEvents,
       setQualityGate,
+      runId,
       setRunId,
       setSnapshot,
       setTasks,
@@ -1056,6 +1151,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     seenDialogueIdsRef.current.clear();
     seenLlmEventIdsRef.current.clear();
     seenV2EventIdsRef.current.clear();
+    llmRunScopeRef.current = 'global';
     directorRunningRef.current = false;
 
     resetForWorkspace();

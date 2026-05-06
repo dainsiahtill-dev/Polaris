@@ -84,6 +84,9 @@ class RealtimeSignalHub:
         self._registry: dict[str, WatchEntry] = {}
         # Workspace context for signal filtering
         self._last_signal_workspace: str = ""
+        self._workspace_sequences: dict[str, int] = {}
+        # Sequence for root-less/broadcast signals that should wake all workspace waiters
+        self._broadcast_sequence: int = 0
         # Global lock for registry modifications
         self._lock = threading.Lock()
         self._closed = False
@@ -354,6 +357,10 @@ class RealtimeSignalHub:
             self._sequence += 1
             # Store the workspace context for filtering
             self._last_signal_workspace = normalized_root
+            if normalized_root:
+                self._workspace_sequences[normalized_root] = self._sequence
+            else:
+                self._broadcast_sequence = self._sequence
             self._condition.notify_all()
             return self._sequence
 
@@ -407,23 +414,34 @@ class RealtimeSignalHub:
 
         self._ensure_condition_for_running_loop()
 
+        loop = asyncio.get_running_loop()
+        deadline: float | None = None
+        if timeout_sec is not None:
+            deadline = loop.time() + max(0.0, float(timeout_sec))
+
         async with self._condition:
-            # If we already have a newer signal and it matches our workspace (or no filter), return immediately
-            if self._sequence != last_seen and (
-                not normalized_workspace or self._last_signal_workspace == normalized_workspace
-            ):
-                return self._sequence
-
-            # Wait for a signal (with optional timeout)
-            try:
-                if timeout_sec is None:
-                    await self._condition.wait()
+            while True:
+                if not normalized_workspace:
+                    if self._sequence != last_seen:
+                        return self._sequence
                 else:
-                    await asyncio.wait_for(self._condition.wait(), timeout=timeout_sec)
-            except asyncio.TimeoutError:
-                return self._sequence
+                    workspace_seq = self._workspace_sequences.get(normalized_workspace, 0)
+                    effective_seq = max(workspace_seq, self._broadcast_sequence)
+                    if effective_seq > last_seen:
+                        return effective_seq
 
-            return self._sequence
+                if deadline is None:
+                    await self._condition.wait()
+                    continue
+
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    return last_seen
+
+                try:
+                    await asyncio.wait_for(self._condition.wait(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    return last_seen
 
 
 REALTIME_SIGNAL_HUB = RealtimeSignalHub()

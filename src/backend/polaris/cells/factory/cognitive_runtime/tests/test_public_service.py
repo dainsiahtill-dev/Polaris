@@ -23,15 +23,11 @@ from polaris.cells.factory.cognitive_runtime.public.service import CognitiveRunt
 from polaris.infrastructure.cognitive_runtime import CognitiveRuntimeSqliteStore
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.session.internal.context_memory_service import (
-        RoleSessionContextMemoryService,
-    )
-    from polaris.cells.roles.session.internal.role_session_service import (
-        RoleSessionService,
-    )
-    from polaris.cells.roles.session.public.contracts import (
+    from polaris.cells.roles.session.public import (
         IRoleSessionContextMemoryService,
         IRoleSessionService,
+        RoleSessionContextMemoryService,
+        RoleSessionService,
     )
 
 

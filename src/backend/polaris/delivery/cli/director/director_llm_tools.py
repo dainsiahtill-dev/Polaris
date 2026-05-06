@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Any
 
 # 导入 Context Gateway
-from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+from polaris.cells.roles.kernel.public import RoleContextGateway
 
 # 导入 RoleProfile
-from polaris.cells.roles.profile.internal.schema import RoleProfile
+from polaris.cells.roles.profile.public import RoleProfile
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
 # 导入 Standard Toolkit 工具系统

@@ -16,7 +16,7 @@ import warnings
 
 # TODO: Cross-cell internal import — director_logic_rules symbols are not
 # yet exposed in director.planning.public. Add to public contract when stabilised.
-from polaris.cells.director.planning.internal.director_logic_rules import (
+from polaris.cells.director.planning.public import (
     compact_pm_payload,
     extract_defect_ticket,
     extract_required_evidence,

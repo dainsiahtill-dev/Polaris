@@ -2181,6 +2181,7 @@ cells:
     state_owners: []
     effects_allowed:
       - fs.read:workspace/**
+      - process.spawn:code_intelligence/engine/**
     verification:
       gaps:
         - Cell directory structure pending creation (Phase 2).
@@ -2582,6 +2583,7 @@ cells:
     state_owners: []
     effects_allowed:
       - process.spawn:director/delivery/*
+      - fs.write:director/delivery/*
     verification:
       gaps:
         - 'Migration in progress: implementation resides in director.execution/internal/director_cli.py
@@ -3198,6 +3200,7 @@ cells:
     effects_allowed:
       - fs.read:workspace/**
       - fs.read:runtime/**
+      - fs.write:runtime/**
     verification:
       tests:
         - polaris/kernelone/context/context_os/tests/**

@@ -44,6 +44,7 @@ subgraphs: []
 state_owners: []
 effects_allowed:
 - process.spawn:director/delivery/*
+- fs.write:director/delivery/*
 verification:
   gaps:
   - 'Migration in progress: implementation resides in director.execution/internal/director_cli.py

@@ -1,5 +1,8 @@
 """Public boundary for `workspace.integrity` cell."""
 
+from polaris.cells.workspace.integrity.internal.diff_tracker import (
+    TaskFileChangeTracker,
+)
 from polaris.cells.workspace.integrity.public.contracts import (
     DocsTemplatesResultV1,
     EnsureDocsReadyCommandV1,
@@ -34,6 +37,7 @@ __all__ = [
     "EnsureDocsReadyCommandV1",
     "GenerateDocsTemplatesCommandV1",
     "IWorkspaceIntegrity",
+    "TaskFileChangeTracker",
     "ValidateWorkspaceCommandV1",
     "WorkspaceIntegrityError",
     "WorkspaceIntegrityService",

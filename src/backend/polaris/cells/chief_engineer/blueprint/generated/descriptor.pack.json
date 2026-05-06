@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:47.733469Z",
-  "source_hash": "5ddf3ed049db6f1d",
+  "generated_at": "2026-05-06T07:41:53.941248Z",
+  "source_hash": "27e6315503f63f79",
   "cell_id": "chief_engineer.blueprint",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -558,6 +558,10 @@
         {
           "name": "release",
           "doc": "Release all file ownerships held by a Director."
+        },
+        {
+          "name": "active_snapshot",
+          "doc": "Return a copy of active files for read-only access."
         }
       ]
     },
@@ -889,258 +893,1042 @@
     },
     {
       "type": "class",
-      "name": "CodeIntelligenceService",
-      "description": "代码智能服务 - ChiefEngineer 和 Director 的代码分析基础设施.",
-      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "config",
-          "doc": "懒加载配置."
-        },
-        {
-          "name": "ensure_index",
-          "doc": "确保索引已构建，返回 manifest."
-        },
-        {
-          "name": "get_context_for_task",
-          "doc": "为任务生成代码上下文."
-        },
-        {
-          "name": "verify_changes",
-          "doc": "运行增量验证."
-        },
-        {
-          "name": "get_relevant_files",
-          "doc": "获取与任务最相关的文件列表 (用于 ChiefEngineer 分析范围确定)."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "CacheEntry",
-      "description": "缓存条目.",
-      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
-      "methods": [
-        {
-          "name": "is_expired",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "MultiLevelCache",
-      "description": "多级缓存系统：内存 L1 -> SQLite L2 -> 文件 L3.",
-      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "_init_sqlite",
-          "doc": "初始化 SQLite 缓存表."
-        },
-        {
-          "name": "_connect",
-          "doc": ""
-        },
-        {
-          "name": "_get_key",
-          "doc": "生成缓存键."
-        },
-        {
-          "name": "get",
-          "doc": "获取缓存，按 L1 -> L2 -> L3 顺序查找."
-        },
-        {
-          "name": "set",
-          "doc": "设置缓存（写入 L1 和 L2）."
-        },
-        {
-          "name": "_set_memory",
-          "doc": "设置内存缓存（带 LRU 淘汰）."
-        },
-        {
-          "name": "invalidate",
-          "doc": "使缓存失效."
-        },
-        {
-          "name": "get_stats",
-          "doc": "获取缓存统计."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "AsyncIndexManager",
-      "description": "异步索引管理器 - 支持后台构建和共享索引.",
-      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "config",
-          "doc": "懒加载配置."
-        },
-        {
-          "name": "get_index_status",
-          "doc": "获取索引状态."
-        },
-        {
-          "name": "_build",
-          "doc": ""
-        },
-        {
-          "name": "shutdown",
-          "doc": "关闭索引管理器."
-        },
-        {
-          "name": "reset_for_testing",
-          "doc": "Reset singleton state for test isolation."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "AsyncCodeIntelligenceService",
-      "description": "异步代码智能服务 - 支持后台索引、共享索引和多级缓存.",
-      "defined_in": "polaris/infrastructure/code_intelligence/code_intelligence_async.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "config",
-          "doc": ""
-        },
-        {
-          "name": "_compile",
-          "doc": ""
-        },
-        {
-          "name": "_verify",
-          "doc": ""
-        },
-        {
-          "name": "get_cache_stats",
-          "doc": "获取缓存统计."
-        },
-        {
-          "name": "invalidate_cache",
-          "doc": "使缓存失效."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "FileChangeInfo",
-      "description": "文件变更信息.",
-      "defined_in": "polaris/infrastructure/code_intelligence/incremental_analyzer.py",
+      "name": "GenerateTaskBlueprintCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "IncrementalSemanticAnalyzer",
-      "description": "增量语义分析器.",
-      "defined_in": "polaris/infrastructure/code_intelligence/incremental_analyzer.py",
+      "name": "GetBlueprintStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBlueprintGeneratedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBlueprintResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintErrorV1",
+      "description": "Raised when `chief_engineer.blueprint` contract processing fails.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
       "methods": [
         {
           "name": "__init__",
           "doc": ""
-        },
-        {
-          "name": "_connect",
-          "doc": ""
-        },
-        {
-          "name": "_init_db",
-          "doc": "初始化数据库表."
-        },
-        {
-          "name": "_db_get",
-          "doc": "从数据库获取值."
-        },
-        {
-          "name": "_db_set",
-          "doc": "设置数据库值."
-        },
-        {
-          "name": "config",
-          "doc": ""
-        },
-        {
-          "name": "detect_changes",
-          "doc": "检测文件变更."
-        },
-        {
-          "name": "analyze_incremental",
-          "doc": "增量分析变更文件."
-        },
-        {
-          "name": "_load_known_files",
-          "doc": "加载已知文件校验和."
-        },
-        {
-          "name": "_save_known_files",
-          "doc": "保存当前文件校验和."
-        },
-        {
-          "name": "close",
-          "doc": "释放可回收状态，避免长会话保留不必要缓存."
-        },
-        {
-          "name": "_should_index",
-          "doc": "判断文件是否应该被索引."
-        },
-        {
-          "name": "_compute_checksum",
-          "doc": "计算文件校验和."
-        },
-        {
-          "name": "_update_index_for_files",
-          "doc": "只更新指定文件的索引（增量更新）."
-        },
-        {
-          "name": "_build_partial_graph",
-          "doc": "构建局部语义关系图."
-        },
-        {
-          "name": "_find_semantic_neighbors",
-          "doc": "查找语义邻居文件."
-        },
-        {
-          "name": "_analyze_impact",
-          "doc": "分析变更影响范围."
-        },
-        {
-          "name": "_is_critical_file",
-          "doc": "判断是否为关键文件."
-        },
-        {
-          "name": "_find_affected_upstream",
-          "doc": "查找受影响的上游文件."
-        },
-        {
-          "name": "_find_related_tests",
-          "doc": "查找相关的测试文件."
-        },
-        {
-          "name": "_calculate_risk",
-          "doc": "计算变更风险等级."
-        },
-        {
-          "name": "_generate_recommendations",
-          "doc": "生成建议."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "TestGenerateTaskBlueprintCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_full",
+          "doc": ""
+        },
+        {
+          "name": "test_constraints_are_copied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGenerateTaskBlueprintCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_objective_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetBlueprintStatusQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_with_run_id",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetBlueprintStatusQueryV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskBlueprintGeneratedEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_with_risk_level",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskBlueprintGeneratedEventV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_event_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_blueprint_path_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskBlueprintResultV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_success",
+          "doc": ""
+        },
+        {
+          "name": "test_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_recommendations_normalized_to_tuple",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskBlueprintResultV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_status_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestChiefEngineerBlueprintErrorV1",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_code_and_details",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_code_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateBlueprint",
+      "description": "Tests for blueprint creation.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
+      "methods": [
+        {
+          "name": "test_create_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_create_persists_to_disk",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestProposeADR",
+      "description": "Tests for ADR proposal.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
+      "methods": [
+        {
+          "name": "test_propose_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_propose_sequence_increments",
+          "doc": ""
+        },
+        {
+          "name": "test_propose_missing_blueprint_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCompile",
+      "description": "Tests for ADR compilation.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
+      "methods": [
+        {
+          "name": "test_compile_no_adrs",
+          "doc": ""
+        },
+        {
+          "name": "test_compile_applies_add_step",
+          "doc": ""
+        },
+        {
+          "name": "test_compile_marks_adrs_compiled",
+          "doc": ""
+        },
+        {
+          "name": "test_compile_increments_version",
+          "doc": ""
+        },
+        {
+          "name": "test_compile_skips_reverted",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRevertADR",
+      "description": "Tests for ADR reversion.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
+      "methods": [
+        {
+          "name": "test_revert_existing",
+          "doc": ""
+        },
+        {
+          "name": "test_revert_missing",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHistory",
+      "description": "Tests for blueprint history queries.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
+      "methods": [
+        {
+          "name": "test_history_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_history_returns_summaries",
+          "doc": ""
+        },
+        {
+          "name": "test_history_missing_blueprint",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPersistenceRoundtrip",
+      "description": "Tests that ADRStore survives process restart via disk.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
+      "methods": [
+        {
+          "name": "test_reload_from_disk",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestApplyDelta",
+      "description": "Unit tests for the delta application logic.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py",
+      "methods": [
+        {
+          "name": "test_add_step",
+          "doc": ""
+        },
+        {
+          "name": "test_add_step_default_append",
+          "doc": ""
+        },
+        {
+          "name": "test_modify_step",
+          "doc": ""
+        },
+        {
+          "name": "test_remove_step",
+          "doc": ""
+        },
+        {
+          "name": "test_add_file",
+          "doc": ""
+        },
+        {
+          "name": "test_remove_file",
+          "doc": ""
+        },
+        {
+          "name": "test_change_scope",
+          "doc": ""
+        },
+        {
+          "name": "test_change_risk",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_delta_type_is_noop",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "store",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_store.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSaveAndLoad",
+      "description": "Tests for basic save/load roundtrip.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
+      "methods": [
+        {
+          "name": "test_save_and_load",
+          "doc": ""
+        },
+        {
+          "name": "test_save_and_load_includes_status",
+          "doc": ""
+        },
+        {
+          "name": "test_load_missing_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_save_overwrites_existing",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAtomicWrite",
+      "description": "Tests for atomic write semantics.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
+      "methods": [
+        {
+          "name": "test_no_temp_file_left_behind",
+          "doc": ""
+        },
+        {
+          "name": "test_directory_created_lazily",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDelete",
+      "description": "Tests for deletion.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
+      "methods": [
+        {
+          "name": "test_delete_existing",
+          "doc": ""
+        },
+        {
+          "name": "test_delete_missing",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestListAll",
+      "description": "Tests for listing persisted blueprints.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
+      "methods": [
+        {
+          "name": "test_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_sorted_ids",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLoadAll",
+      "description": "Tests for bulk loading.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py",
+      "methods": [
+        {
+          "name": "test_load_all_skips_invalid_json",
+          "doc": ""
+        },
+        {
+          "name": "test_load_all_order",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "persistence",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py"
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerDirectorPoolIntegration",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": [
+        {
+          "name": "test_ce_consumer_acks_with_director_pool_assignment",
+          "doc": ""
+        },
+        {
+          "name": "test_ce_consumer_handles_director_pool_conflict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBackwardCompatibility",
+      "description": "Tests that ConstructionStore works without persistence.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_construction_store.py",
+      "methods": [
+        {
+          "name": "test_save_and_get_in_memory_only",
+          "doc": ""
+        },
+        {
+          "name": "test_list_all_in_memory",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPersistenceIntegration",
+      "description": "Tests for dual-write and recovery behavior.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_construction_store.py",
+      "methods": [
+        {
+          "name": "test_save_persists_to_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_get_hydrates_from_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_list_all_hydrates_missing_entries",
+          "doc": ""
+        },
+        {
+          "name": "test_list_by_task_hydrates_from_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_memory_cache_preferred_over_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_round_trip_complex_fields",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "persistent_store",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_construction_store.py"
+    },
+    {
+      "type": "class",
+      "name": "TestGenerateTaskBlueprintCommandV1",
+      "description": "Tests for GenerateTaskBlueprintCommandV1 contract.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_command_required_fields",
+          "doc": "Test command with required fields only."
+        },
+        {
+          "name": "test_command_with_run_id",
+          "doc": "Test command with run_id."
+        },
+        {
+          "name": "test_command_with_constraints",
+          "doc": "Test command with constraints."
+        },
+        {
+          "name": "test_command_with_context",
+          "doc": "Test command with context."
+        },
+        {
+          "name": "test_command_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_command_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_command_empty_objective_raises",
+          "doc": "Test that empty objective raises ValueError."
+        },
+        {
+          "name": "test_command_whitespace_normalized",
+          "doc": "Test that whitespace is normalized."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetBlueprintStatusQueryV1",
+      "description": "Tests for GetBlueprintStatusQueryV1 contract.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_query_required_fields",
+          "doc": "Test query with required fields only."
+        },
+        {
+          "name": "test_query_with_run_id",
+          "doc": "Test query with run_id."
+        },
+        {
+          "name": "test_query_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_query_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskBlueprintGeneratedEventV1",
+      "description": "Tests for TaskBlueprintGeneratedEventV1 contract.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_event_required_fields",
+          "doc": "Test event with required fields only."
+        },
+        {
+          "name": "test_event_with_risk_level",
+          "doc": "Test event with risk level."
+        },
+        {
+          "name": "test_event_empty_event_id_raises",
+          "doc": "Test that empty event_id raises ValueError."
+        },
+        {
+          "name": "test_event_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_event_empty_blueprint_path_raises",
+          "doc": "Test that empty blueprint_path raises ValueError."
+        },
+        {
+          "name": "test_event_empty_generated_at_raises",
+          "doc": "Test that empty generated_at raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskBlueprintResultV1",
+      "description": "Tests for TaskBlueprintResultV1 contract.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_success_result",
+          "doc": "Test successful result construction."
+        },
+        {
+          "name": "test_result_with_blueprint_path",
+          "doc": "Test result with blueprint path."
+        },
+        {
+          "name": "test_result_with_summary",
+          "doc": "Test result with summary."
+        },
+        {
+          "name": "test_result_with_recommendations",
+          "doc": "Test result with recommendations."
+        },
+        {
+          "name": "test_result_with_risks",
+          "doc": "Test result with risks."
+        },
+        {
+          "name": "test_result_failed",
+          "doc": "Test failed result construction."
+        },
+        {
+          "name": "test_result_empty_task_id_raises",
+          "doc": "Test that empty task_id raises ValueError."
+        },
+        {
+          "name": "test_result_empty_workspace_raises",
+          "doc": "Test that empty workspace raises ValueError."
+        },
+        {
+          "name": "test_result_empty_status_raises",
+          "doc": "Test that empty status raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestChiefEngineerBlueprintErrorV1",
+      "description": "Tests for ChiefEngineerBlueprintErrorV1 contract.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_error_default_code",
+          "doc": "Test error with default code."
+        },
+        {
+          "name": "test_error_custom_code",
+          "doc": "Test error with custom code."
+        },
+        {
+          "name": "test_error_with_details",
+          "doc": "Test error with details."
+        },
+        {
+          "name": "test_error_empty_message_raises",
+          "doc": "Test that empty message raises ValueError."
+        },
+        {
+          "name": "test_error_empty_code_raises",
+          "doc": "Test that empty code raises ValueError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestChiefEngineerBlueprintErrorAlias",
+      "description": "Tests for backward-compatible alias.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_alias_is_same_class",
+          "doc": "Test that alias is the same class."
+        },
+        {
+          "name": "test_alias_instantiation",
+          "doc": "Test alias instantiation."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBlueprintLifecycle",
+      "description": "Tests for complete blueprint generation lifecycle scenarios.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_successful_blueprint_lifecycle",
+          "doc": "Test complete successful blueprint generation lifecycle."
+        },
+        {
+          "name": "test_failed_blueprint_lifecycle",
+          "doc": "Test complete failed blueprint generation lifecycle."
+        },
+        {
+          "name": "test_error_propagation",
+          "doc": "Test error is properly constructed and raised."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeTask",
+      "description": "Minimal task stub for DirectorPool tests.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeBlueprint",
+      "description": "Minimal blueprint stub.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestEventBus",
+      "description": "Tests for the lightweight EventBus.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": [
+        {
+          "name": "test_publish_delivers_to_subscribers",
+          "doc": ""
+        },
+        {
+          "name": "test_subscriber_failure_isolated",
+          "doc": ""
+        },
+        {
+          "name": "test_unsubscribe",
+          "doc": ""
+        },
+        {
+          "name": "handler",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestScopeConflictDetector",
+      "description": "Tests for the global file conflict detector.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": [
+        {
+          "name": "test_detect_no_conflict",
+          "doc": ""
+        },
+        {
+          "name": "test_detect_conflict",
+          "doc": ""
+        },
+        {
+          "name": "test_release_clears_ownership",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolInitialization",
+      "description": "Tests for pool initialization and degradation.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": [
+        {
+          "name": "test_initializes_requested_directors",
+          "doc": ""
+        },
+        {
+          "name": "test_degrades_to_fallback",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolAssignment",
+      "description": "Tests for task assignment logic.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolStatus",
+      "description": "Tests for status queries.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": [
+        {
+          "name": "test_get_director_for_unknown_task",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolCompletion",
+      "description": "Tests for task completion and release.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolRecovery",
+      "description": "Tests for failure recovery decisions.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": [
+        {
+          "name": "test_handle_failure_unknown_task_aborts",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolProgress",
+      "description": "Tests for progress updates.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": [
+        {
+          "name": "test_update_progress_clamps_out_of_range",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolEvents",
+      "description": "Tests for EventBus integration.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolAssignmentFailure",
+      "description": "Tests for assignment failure recovery.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "pool",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool.py"
+    },
+    {
+      "type": "class",
+      "name": "FakeTask",
+      "description": "Minimal task stub for DirectorPool tests.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeBlueprint",
+      "description": "Minimal blueprint stub.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorPoolChaos",
+      "description": "Chaos and resilience tests for DirectorPool.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "pool",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_director_pool_chaos.py"
+    },
+    {
+      "type": "class",
+      "name": "_CollectingHandler",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "test_concurrent_publish_and_subscribe",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "capture_error",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "wrapper",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "publisher",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "subscriber",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "unsubscriber",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "test_payload_isolation",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "mutator",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "reader",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "test_clear_is_thread_safe",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "test_unsubscribe_idempotent",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "dummy",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
+    },
+    {
+      "type": "function",
+      "name": "test_git_stash_guard_requires_git_repo",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "test_create_rollback_guard_factory",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "test_git_stash_guard_full_cycle",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "test_git_stash_guard_discard_missing",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

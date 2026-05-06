@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:48.753418Z",
-  "source_hash": "d0d09446a7539da7",
+  "generated_at": "2026-05-06T07:41:54.387386Z",
+  "source_hash": "650ab166d7915f7f",
   "cell_id": "archive.task_snapshot_archive",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -201,6 +201,158 @@
       "name": "list_task_snapshots",
       "description": "",
       "defined_in": "polaris/cells/archive/task_snapshot_archive/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestArchiveTaskSnapshotCommandV1",
+      "description": "Tests for ArchiveTaskSnapshotCommandV1 dataclass.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create_with_all_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_is_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_repr",
+          "doc": ""
+        },
+        {
+          "name": "test_equality_same_values",
+          "doc": ""
+        },
+        {
+          "name": "test_inequality_different_values",
+          "doc": ""
+        },
+        {
+          "name": "test_hash_consistency",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_strings",
+          "doc": ""
+        },
+        {
+          "name": "test_special_characters_in_fields",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetTaskSnapshotManifestQueryV1",
+      "description": "Tests for GetTaskSnapshotManifestQueryV1 dataclass.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create",
+          "doc": ""
+        },
+        {
+          "name": "test_is_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_equality",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestArchiveManifestV1",
+      "description": "Tests for ArchiveManifestV1 dataclass.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create",
+          "doc": ""
+        },
+        {
+          "name": "test_is_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_equality",
+          "doc": ""
+        },
+        {
+          "name": "test_various_statuses",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskSnapshotArchivedEventV1",
+      "description": "Tests for TaskSnapshotArchivedEventV1 dataclass.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create",
+          "doc": ""
+        },
+        {
+          "name": "test_is_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_equality",
+          "doc": ""
+        },
+        {
+          "name": "test_different_events_not_equal",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTaskSnapshotArchiveError",
+      "description": "Tests for TaskSnapshotArchiveError exception.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_is_exception_subclass",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        },
+        {
+          "name": "test_message_preserved",
+          "doc": ""
+        },
+        {
+          "name": "test_can_catch_as_exception",
+          "doc": ""
+        },
+        {
+          "name": "test_error_with_empty_message",
+          "doc": ""
+        },
+        {
+          "name": "test_error_with_unicode_message",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestModuleExports",
+      "description": "Tests for module __all__ exports.",
+      "defined_in": "polaris/cells/archive/task_snapshot_archive/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_all_exports_present",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",

@@ -7,7 +7,7 @@
  * - 订阅角色通道
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRuntimeStore } from './useRuntimeStore';
 import { useRuntimeTransport } from '@/runtime/transport';
 import { useSettings } from '@/hooks';
@@ -26,6 +26,22 @@ const RUNTIME_STREAM_CHANNELS = [
   'runtime_events',
 ] as const;
 
+function normalizeRoles(
+  input: ('pm' | 'director' | 'qa')[]
+): ('pm' | 'director' | 'qa')[] {
+  return Array.from(new Set(input)).sort() as ('pm' | 'director' | 'qa')[];
+}
+
+function areRolesEqual(
+  left: ('pm' | 'director' | 'qa')[],
+  right: ('pm' | 'director' | 'qa')[]
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((role, index) => role === right[index]);
+}
+
 /**
  * useRuntimeConnection - 管理运行时连接状态
  *
@@ -41,6 +57,18 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   const isWorkspaceControlled = workspaceProp !== undefined;
   const { settings, load: loadRuntimeSettings } = useSettings({ autoLoad: !isWorkspaceControlled });
   const workspace = workspaceProp ?? settings?.workspace ?? '';
+  const normalizedRoles = useMemo(() => normalizeRoles(roles), [roles]);
+  const normalizedRolesSignature = useMemo(
+    () => normalizedRoles.join('|'),
+    [normalizedRoles]
+  );
+  const [subscriptionRoles, setSubscriptionRoles] = useState<('pm' | 'director' | 'qa')[]>(
+    normalizedRoles
+  );
+  const subscriptionRolesSignature = useMemo(
+    () => subscriptionRoles.join('|'),
+    [subscriptionRoles]
+  );
 
   // Store state
   const live = useRuntimeStore((s) => s.live);
@@ -58,14 +86,16 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     attemptCount: transportAttemptCount,
     subscribeChannels,
     sendCommand,
+    getLastCursor,
     reconnect: transportReconnect,
     registerMessageHandler,
   } = useRuntimeTransport();
 
   // Refs
   const activeRef = useRef(true);
-  const rolesRef = useRef<('pm' | 'director' | 'qa')[]>(roles);
+  const rolesRef = useRef<('pm' | 'director' | 'qa')[]>(subscriptionRoles);
   const workspaceRef = useRef<string>(workspace);
+  const propRolesSignatureRef = useRef<string>(normalizedRolesSignature);
 
   // Sync connection state to store
   useEffect(() => {
@@ -81,7 +111,10 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   // SUBSCRIBE; using a roles:* pseudo-channel would not match v2 log subjects.
   useEffect(() => {
     const channels = [...RUNTIME_STREAM_CHANNELS];
-    const unsubscribe = subscribeChannels(channels.map(channel => ({ channel, tailLines: 100 })));
+    const unsubscribe = subscribeChannels(
+      channels.map(channel => ({ channel, tailLines: 100 })),
+      rolesRef.current
+    );
     return () => {
       unsubscribe();
     };
@@ -111,21 +144,39 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   // Update subscription
   const updateSubscription = useCallback(
     (nextRoles: ('pm' | 'director' | 'qa')[]) => {
-      rolesRef.current = nextRoles;
+      const normalizedNextRoles = normalizeRoles(nextRoles);
+      rolesRef.current = normalizedNextRoles;
+      setSubscriptionRoles((previous) => {
+        if (areRolesEqual(previous, normalizedNextRoles)) {
+          return previous;
+        }
+        return normalizedNextRoles;
+      });
       sendCommand({
         type: 'SUBSCRIBE',
         protocol: 'runtime.v2',
-        roles: nextRoles,
+        roles: normalizedNextRoles,
+        tail: 100,
         channels: [...RUNTIME_STREAM_CHANNELS],
+        cursor: getLastCursor(),
       });
     },
-    [sendCommand]
+    [sendCommand, getLastCursor]
   );
 
-  // Sync refs with props
+  // Keep effective subscription roles in sync with prop changes.
   useEffect(() => {
-    rolesRef.current = roles;
-  }, [roles]);
+    if (normalizedRolesSignature === propRolesSignatureRef.current) {
+      return;
+    }
+    propRolesSignatureRef.current = normalizedRolesSignature;
+    updateSubscription(normalizedRoles);
+  }, [normalizedRolesSignature, normalizedRoles, updateSubscription]);
+
+  // Sync refs with effective roles
+  useEffect(() => {
+    rolesRef.current = subscriptionRoles;
+  }, [subscriptionRolesSignature, subscriptionRoles]);
 
   // Reset state ONLY on workspace change (not on every connection state flip).
   // The previous version depended on transportConnected/transportReconnecting,

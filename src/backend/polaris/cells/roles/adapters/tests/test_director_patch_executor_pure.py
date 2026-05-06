@@ -143,10 +143,7 @@ class TestExtractMarkdownFileBlocks:
         assert result[0]["search"] == ""
 
     def test_multiple_code_blocks(self) -> None:
-        text = (
-            "a.py\n```python\nprint(1)\n```\n\n"
-            "b.js\n```javascript\nconsole.log(1)\n```"
-        )
+        text = "a.py\n```python\nprint(1)\n```\n\nb.js\n```javascript\nconsole.log(1)\n```"
         result = DirectorPatchExecutor._extract_markdown_file_blocks(text)
         assert len(result) == 2
         assert result[0]["file"] == "a.py"
@@ -173,11 +170,7 @@ class TestExtractMarkdownFileBlocks:
 
     def test_skips_protocol_like_content(self, monkeypatch: Any) -> None:
         # When content looks like a protocol patch response, it should be skipped
-        text = (
-            "file.py\n```python\n"
-            "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n"
-            "```"
-        )
+        text = "file.py\n```python\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n```"
         result = DirectorPatchExecutor._extract_markdown_file_blocks(text)
         assert result == []
 

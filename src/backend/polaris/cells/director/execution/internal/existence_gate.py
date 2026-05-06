@@ -16,7 +16,7 @@ import warnings
 
 # TODO: Cross-cell internal import — existence_gate symbols are not
 # yet exposed in director.tasking.public. Add to public contract when stabilised.
-from polaris.cells.director.tasking.internal.existence_gate import (
+from polaris.cells.director.tasking.public import (
     ExecutionMode,
     GateResult,
     check_mode,

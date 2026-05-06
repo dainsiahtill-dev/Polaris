@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:48.449569Z",
-  "source_hash": "a031377fde91f192",
+  "generated_at": "2026-05-06T07:41:54.237593Z",
+  "source_hash": "2af88349be684ccc",
   "cell_id": "audit.evidence",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -1604,6 +1604,12 @@
           "doc": "Replay all session files in a directory."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_ensure_runtime_class",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/llm_bridge.py"
     },
     {
       "type": "class",
@@ -3257,6 +3263,10 @@
       "description": "Base audit event schema with CloudEvents alignment.",
       "defined_in": "polaris/kernelone/audit/omniscient/schemas/base.py",
       "methods": [
+        {
+          "name": "_validate_priority",
+          "doc": ""
+        },
         {
           "name": "_strip_whitespace",
           "doc": "Strip whitespace from ID fields."

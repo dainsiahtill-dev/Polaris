@@ -6,9 +6,16 @@ import { fileURLToPath } from "url";
 const currentFile = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFile);
 const repoRoot = path.resolve(scriptDir, "..", "..");
-const logsDir = path.join(repoRoot, ".polaris", "logs");
+const logsDir = path.resolve(process.env.KERNELONE_REAL_FLOW_AUTOFIX_LOG_DIR || path.join(repoRoot, ".polaris", "logs"));
 const promptContractPath = path.join(repoRoot, "docs", "prompt", "元设计师-自动化测试v5.1.md");
-const realFlowSpecRelativePath = path.join("tests", "electron", "pm-director-real-flow.spec.ts");
+const realFlowSpecRelativePath = path.join(
+  "src",
+  "backend",
+  "polaris",
+  "tests",
+  "electron",
+  "pm-director-real-flow.spec.ts",
+);
 const realFlowSpecPath = path.join(repoRoot, realFlowSpecRelativePath);
 
 function nowIso() {

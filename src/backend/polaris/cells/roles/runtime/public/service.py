@@ -67,6 +67,9 @@ from polaris.cells.roles.runtime.internal.agent_runtime_base import (
     MessageType,
     RoleAgent,
 )
+from polaris.cells.roles.runtime.internal.kernel_one_bus_port import (
+    KernelOneMessageBusPort,
+)
 from polaris.cells.roles.runtime.internal.protocol_fsm import (
     ProtocolBus,
     ProtocolFSM,
@@ -96,6 +99,9 @@ from polaris.cells.roles.runtime.internal.sequential_engine import (
 )
 
 # Re-export RoleSessionOrchestrator for Cell boundary compliance
+from polaris.cells.roles.runtime.internal.session_orchestrator import (
+    RoleSessionOrchestrator as RoleSessionOrchestrator,
+)
 from polaris.cells.roles.runtime.internal.skill_loader import (
     RoleSkillManager,
     SkillLoader,
@@ -1409,6 +1415,7 @@ __all__ = [
     "GetRoleRuntimeStatusQueryV1",
     "HybridEngine",
     "IRoleRuntime",
+    "KernelOneMessageBusPort",
     "MessageType",
     "PathSecurityError",
     "PlanSolveEngine",

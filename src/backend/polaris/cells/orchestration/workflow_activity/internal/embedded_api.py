@@ -497,16 +497,14 @@ def _build_run_args(run_method: Callable[..., Any], payload: dict[str, Any]) -> 
 async def _resolve_runtime_engine(context: WorkflowContext | None) -> Any:
     if context is not None and context.runtime_engine is not None:
         return context.runtime_engine
-    from polaris.cells.orchestration.workflow_runtime.internal.runtime_backend_adapter import (
-        get_adapter,
-    )
+    from polaris.cells.orchestration.workflow_runtime.public import get_adapter
 
     adapter = await get_adapter()
     if not adapter._running:
         await adapter.start()
     if adapter._engine is not None:
         return adapter._engine
-    from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime import get_runtime
+    from polaris.cells.orchestration.workflow_runtime.public import get_runtime
 
     return await get_runtime()
 

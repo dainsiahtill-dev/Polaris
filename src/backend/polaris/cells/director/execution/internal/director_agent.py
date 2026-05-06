@@ -17,12 +17,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.runtime.internal.agent_runtime_base import (
+from polaris.cells.roles.runtime.public import (
     AgentMessage,
     MessageType,
     RoleAgent,
+    WorkerPool,
+    WorkerTask,
 )
-from polaris.cells.roles.runtime.internal.worker_pool import WorkerPool, WorkerTask
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_text_atomic

@@ -22,7 +22,10 @@ import concurrent.futures
 import logging
 from typing import Any, Protocol
 
-from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+from polaris.cells.roles.kernel.public.transaction_contracts import (
+    SLMCoprocessor,
+    TransactionConfig,
+)
 from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummarizationError,
     SummaryStrategy,
@@ -192,7 +195,7 @@ class SLMSummarizer:
         if self._gateway is not None:
             return self._gateway
 
-        from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
+        from polaris.cells.roles.kernel.public.transaction_contracts import (
             CognitiveGateway,
         )
 
@@ -210,9 +213,6 @@ class SLMSummarizer:
             return self._gateway
 
         # Fallback: 本地新建（无预热，首次调用会触发冷启动）
-        from polaris.cells.roles.kernel.internal.transaction.slm_coprocessor import (
-            SLMCoprocessor,
-        )
 
         slm = SLMCoprocessor(config=self.config)
         self._gateway = CognitiveGateway(

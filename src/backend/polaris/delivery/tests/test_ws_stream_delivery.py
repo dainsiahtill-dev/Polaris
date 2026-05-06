@@ -11,6 +11,7 @@ from fastapi import WebSocketDisconnect
 from polaris.delivery.ws.endpoints.client_message import handle_client_message
 from polaris.delivery.ws.endpoints.stream import emit_stream_line
 from polaris.delivery.ws.endpoints.websocket_loop import _drain_realtime_log_events, run_main_loop
+from polaris.infrastructure.messaging.nats.nats_types import RuntimeEventEnvelope
 
 
 class FakeWebSocket:
@@ -285,4 +286,317 @@ def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect(
 
     manager = asyncio.run(_run())
 
+    assert manager.disconnected is True
+
+
+def test_run_main_loop_sends_resync_required_when_v2_events_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class IdleWebSocket:
+        def __init__(self) -> None:
+            self._blocker = asyncio.Event()
+
+        async def receive_text(self) -> str:
+            await self._blocker.wait()
+            return ""
+
+    class DroppedEventsConsumerManager:
+        is_connected = True
+
+        def __init__(self) -> None:
+            self.disconnected = False
+            self._next_calls = 0
+            self._consume_calls = 0
+
+        async def next_message(self, timeout: float) -> RuntimeEventEnvelope | None:
+            del timeout
+            self._next_calls += 1
+            if self._next_calls == 1:
+                return None
+            if self._next_calls == 2:
+                return RuntimeEventEnvelope(
+                    workspace_key="workspace",
+                    channel="director",
+                    kind="task.updated",
+                    cursor=7,
+                    payload={"task_id": "task-1"},
+                )
+            await asyncio.Event().wait()
+            return None
+
+        def consume_dropped(self) -> int:
+            self._consume_calls += 1
+            if self._consume_calls == 1:
+                return 1
+            return 0
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+            self.is_connected = False
+
+    async def _run() -> tuple[int | None, str, list[dict[str, Any]], DroppedEventsConsumerManager]:
+        from polaris.delivery.ws.endpoints import websocket_loop
+
+        manager = DroppedEventsConsumerManager()
+        sent_payloads: list[dict[str, Any]] = []
+
+        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
+            return "status-sig", {}
+
+        async def _send_snapshot() -> bool:
+            return False
+
+        async def _send_incremental() -> bool:
+            return False
+
+        async def _wait_for_update(seq: int, **_kwargs: Any) -> int:
+            return seq
+
+        async def _record_send_json(_websocket: Any, payload: dict[str, Any], **_kwargs: Any) -> bool:
+            sent_payloads.append(payload)
+            return payload.get("type") != "EVENT"
+
+        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
+        monkeypatch.setattr(websocket_loop, "send_json_safe", _record_send_json)
+
+        close_code, close_reason = await run_main_loop(
+            websocket=cast(Any, IdleWebSocket()),
+            state=SimpleNamespace(),
+            resolved_workspace="C:/workspace",
+            cache_root="C:/runtime",
+            roles_filter=set(),
+            connection_id="conn-1",
+            client="test-client",
+            tail_lines=200,
+            legacy_subscriptions=set(),
+            v2_protocol="runtime.v2",
+            v2_consumer_manager=cast(Any, manager),
+            v2_client_id="client-1",
+            v2_channels=["*"],
+            v2_cursor=0,
+            canonical_journal_channels={"llm"},
+            channel_states={},
+            journal_state={},
+            legacy_channel_states={},
+            stream_signatures=set(),
+            stream_signature_order=deque(),
+            realtime_subscription=None,
+            send_status_func=_send_status,
+            send_all_snapshots_func=_send_snapshot,
+            send_incrementals_func=_send_incremental,
+        )
+        return close_code, close_reason, sent_payloads, manager
+
+    close_code, close_reason, sent_payloads, manager = asyncio.run(_run())
+
+    assert close_code == 1011
+    assert close_reason == "runtime_v2_send_failed"
+    assert manager.disconnected is True
+    assert {
+        "type": "RESYNC_REQUIRED",
+        "protocol": "runtime.v2",
+        "cursor": 0,
+        "reason": "events_dropped",
+    } in sent_payloads
+
+
+def test_run_main_loop_sends_resync_before_failed_event_and_keeps_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class IdleWebSocket:
+        async def receive_text(self) -> str:
+            await asyncio.sleep(60)
+            return ""
+
+    class DroppedThenEventConsumerManager:
+        is_connected = True
+
+        def __init__(self) -> None:
+            self.disconnected = False
+            self._next_calls = 0
+            self._consume_calls = 0
+
+        async def next_message(self, timeout: float) -> RuntimeEventEnvelope | None:
+            del timeout
+            self._next_calls += 1
+            if self._next_calls == 1:
+                return None
+            if self._next_calls == 2:
+                return RuntimeEventEnvelope(
+                    workspace_key="workspace",
+                    channel="director",
+                    kind="task.updated",
+                    cursor=42,
+                    payload={"task_id": "task-1"},
+                )
+            await asyncio.sleep(60)
+            return None
+
+        def consume_dropped(self) -> int:
+            self._consume_calls += 1
+            if self._consume_calls == 1:
+                return 1
+            return 0
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+            self.is_connected = False
+
+    async def _run() -> tuple[int | None, str, list[dict[str, Any]], DroppedThenEventConsumerManager]:
+        from polaris.delivery.ws.endpoints import websocket_loop
+
+        manager = DroppedThenEventConsumerManager()
+        sent_payloads: list[dict[str, Any]] = []
+
+        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
+            return "status-sig", {}
+
+        async def _send_snapshot() -> bool:
+            return False
+
+        async def _send_incremental() -> bool:
+            return False
+
+        async def _wait_for_update(seq: int, **_kwargs: Any) -> int:
+            return seq
+
+        async def _record_send_json(_websocket: Any, payload: dict[str, Any], **_kwargs: Any) -> bool:
+            sent_payloads.append(payload)
+            return payload.get("type") != "EVENT"
+
+        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
+        monkeypatch.setattr(websocket_loop, "send_json_safe", _record_send_json)
+
+        close_code, close_reason = await run_main_loop(
+            websocket=cast(Any, IdleWebSocket()),
+            state=SimpleNamespace(),
+            resolved_workspace="C:/workspace",
+            cache_root="C:/runtime",
+            roles_filter=set(),
+            connection_id="conn-1",
+            client="test-client",
+            tail_lines=200,
+            legacy_subscriptions=set(),
+            v2_protocol="runtime.v2",
+            v2_consumer_manager=cast(Any, manager),
+            v2_client_id="client-1",
+            v2_channels=["*"],
+            v2_cursor=0,
+            canonical_journal_channels={"llm"},
+            channel_states={},
+            journal_state={},
+            legacy_channel_states={},
+            stream_signatures=set(),
+            stream_signature_order=deque(),
+            realtime_subscription=None,
+            send_status_func=_send_status,
+            send_all_snapshots_func=_send_snapshot,
+            send_incrementals_func=_send_incremental,
+        )
+        return close_code, close_reason, sent_payloads, manager
+
+    close_code, close_reason, sent_payloads, manager = asyncio.run(_run())
+
+    assert close_code == 1011
+    assert close_reason == "runtime_v2_send_failed"
+    assert manager.disconnected is True
+
+    resync_messages = [payload for payload in sent_payloads if payload.get("type") == "RESYNC_REQUIRED"]
+    event_messages = [payload for payload in sent_payloads if payload.get("type") == "EVENT"]
+    assert resync_messages
+    assert event_messages
+    assert resync_messages[0]["cursor"] == 0
+    assert event_messages[0]["cursor"] == 42
+    assert sent_payloads.index(resync_messages[0]) < sent_payloads.index(event_messages[0])
+
+
+def test_run_main_loop_does_not_advance_v2_cursor_when_send_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class IdleWebSocket:
+        async def receive_text(self) -> str:
+            await asyncio.sleep(60)
+            return ""
+
+    class OneEventConsumerManager:
+        is_connected = True
+
+        def __init__(self) -> None:
+            self.disconnected = False
+            self.sent_event = False
+
+        async def next_message(self, timeout: float) -> RuntimeEventEnvelope | None:
+            del timeout
+            if self.sent_event:
+                await asyncio.sleep(60)
+                return None
+            self.sent_event = True
+            return RuntimeEventEnvelope(
+                workspace_key="workspace",
+                channel="director",
+                kind="task.updated",
+                cursor=42,
+                payload={"task_id": "task-1"},
+            )
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+            self.is_connected = False
+
+    async def _run() -> tuple[int | None, str, OneEventConsumerManager]:
+        from polaris.delivery.ws.endpoints import websocket_loop
+
+        manager = OneEventConsumerManager()
+
+        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
+            return "status-sig", {}
+
+        async def _send_snapshot() -> bool:
+            return False
+
+        async def _send_incremental() -> bool:
+            return False
+
+        async def _wait_for_update(*_args: Any, **_kwargs: Any) -> int:
+            await asyncio.sleep(60)
+            return 0
+
+        async def _send_json_fails(*_args: Any, **_kwargs: Any) -> bool:
+            return False
+
+        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
+        monkeypatch.setattr(websocket_loop, "send_json_safe", _send_json_fails)
+
+        close_code, close_reason = await run_main_loop(
+            websocket=cast(Any, IdleWebSocket()),
+            state=SimpleNamespace(),
+            resolved_workspace="C:/workspace",
+            cache_root="C:/runtime",
+            roles_filter=set(),
+            connection_id="conn-1",
+            client="test-client",
+            tail_lines=200,
+            legacy_subscriptions=set(),
+            v2_protocol="runtime.v2",
+            v2_consumer_manager=cast(Any, manager),
+            v2_client_id="client-1",
+            v2_channels=["*"],
+            v2_cursor=0,
+            canonical_journal_channels={"llm"},
+            channel_states={},
+            journal_state={},
+            legacy_channel_states={},
+            stream_signatures=set(),
+            stream_signature_order=deque(),
+            realtime_subscription=None,
+            send_status_func=_send_status,
+            send_all_snapshots_func=_send_snapshot,
+            send_incrementals_func=_send_incremental,
+        )
+        return close_code, close_reason, manager
+
+    close_code, close_reason, manager = asyncio.run(_run())
+
+    assert close_code == 1011
+    assert close_reason == "runtime_v2_send_failed"
     assert manager.disconnected is True

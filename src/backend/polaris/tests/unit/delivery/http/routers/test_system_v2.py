@@ -356,6 +356,8 @@ async def test_v2_ready_true(client: AsyncClient) -> None:
         assert response.status_code == 200
         data = response.json()
         assert data["ready"] is True
+        assert data["checks"]["api"] == "ok"
+        assert data["checks"]["lancedb"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -369,6 +371,41 @@ async def test_v2_ready_false(client: AsyncClient) -> None:
         assert response.status_code == 200
         data = response.json()
         assert data["ready"] is False
+        assert data["checks"]["lancedb"] == "not_ok"
+
+
+@pytest.mark.asyncio
+async def test_v2_ready_false_when_nats_required_but_disconnected(client: AsyncClient) -> None:
+    """Ready probe should include canonical NATS readiness checks."""
+    settings = MagicMock()
+    settings.nats.enabled = True
+    settings.nats.required = True
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.system.get_lancedb_status",
+            return_value={"ok": True},
+        ),
+        patch(
+            "polaris.delivery.http.routers.primary.get_settings",
+            return_value=settings,
+        ),
+        patch(
+            "polaris.delivery.http.routers.primary._nats_connected",
+            False,
+        ),
+        patch(
+            "polaris.infrastructure.messaging.get_default_client",
+            new_callable=AsyncMock,
+            return_value=MagicMock(is_connected=False),
+        ),
+    ):
+        response = await client.get("/v2/ready")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ready"] is False
+        assert data["checks"]["nats"] == "required_but_not_connected"
+        assert data["checks"]["lancedb"] == "ok"
 
 
 # ---------------------------------------------------------------------------

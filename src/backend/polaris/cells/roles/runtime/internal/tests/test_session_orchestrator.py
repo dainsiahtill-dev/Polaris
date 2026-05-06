@@ -7,9 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
-# TODO: migrate to public contract once DeliveryMode is exported from roles.kernel.public
-from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
+from polaris.cells.roles.kernel.public import DeliveryMode
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     BatchReceipt,

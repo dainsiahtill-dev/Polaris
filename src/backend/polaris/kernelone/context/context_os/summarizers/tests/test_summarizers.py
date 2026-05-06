@@ -693,14 +693,14 @@ class TestSummarizerIntegration:
         summarizer = SLMSummarizer()
         assert summarizer.strategy == SummaryStrategy.SLM
         # When disabled, is_available should be False
-        from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+        from polaris.cells.roles.kernel.public.transaction_contracts import TransactionConfig
 
         disabled = SLMSummarizer(config=TransactionConfig(slm_enabled=False))
         assert disabled.is_available() is False
 
     def test_slm_raises_when_disabled(self):
         """SLMSummarizer should raise SummarizationError when SLM is disabled."""
-        from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+        from polaris.cells.roles.kernel.public.transaction_contracts import TransactionConfig
         from polaris.kernelone.context.context_os.summarizers.contracts import (
             SummarizationError,
         )

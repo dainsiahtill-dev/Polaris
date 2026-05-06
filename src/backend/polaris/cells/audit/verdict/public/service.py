@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = [  # noqa: F822
+__all__ = [
     "ARTIFACT_REGISTRY",
     "LEGACY_KEY_MAPPING",
     "LEGACY_PATH_ALIASES",

@@ -1,0 +1,723 @@
+{
+  "version": "2.1.0",
+  "generated_at": "2026-05-06T07:41:52.940738Z",
+  "source_hash": "c726490f062f25e4",
+  "cell_id": "kernelone.traceability",
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "capabilities": [
+    {
+      "type": "function",
+      "name": "safe_register_node",
+      "description": "Safely register a trace node, suppressing any exception.",
+      "defined_in": "polaris/kernelone/traceability/internal/safety.py"
+    },
+    {
+      "type": "function",
+      "name": "safe_link",
+      "description": "Safely create a trace link, suppressing any exception.",
+      "defined_in": "polaris/kernelone/traceability/internal/safety.py"
+    },
+    {
+      "type": "function",
+      "name": "safe_find_node",
+      "description": "Safely find a trace node, suppressing any exception.",
+      "defined_in": "polaris/kernelone/traceability/internal/safety.py"
+    },
+    {
+      "type": "function",
+      "name": "safe_persist_matrix",
+      "description": "Safely persist a traceability matrix, suppressing any exception.",
+      "defined_in": "polaris/kernelone/traceability/internal/safety.py"
+    },
+    {
+      "type": "function",
+      "name": "safe_reset",
+      "description": "Safely reset the traceability service, suppressing any exception.",
+      "defined_in": "polaris/kernelone/traceability/internal/safety.py"
+    },
+    {
+      "type": "class",
+      "name": "TraceabilityServiceImpl",
+      "description": "Default implementation of ``TraceabilityService``.",
+      "defined_in": "polaris/kernelone/traceability/internal/service_impl.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize a new traceability service bound to a workspace."
+        },
+        {
+          "name": "register_node",
+          "doc": "Register a new trace node."
+        },
+        {
+          "name": "link",
+          "doc": "Create a directed link between two nodes."
+        },
+        {
+          "name": "find_node",
+          "doc": "Find an already-registered node by external_id and kind."
+        },
+        {
+          "name": "list_nodes",
+          "doc": "Return a shallow copy of all registered nodes."
+        },
+        {
+          "name": "list_links",
+          "doc": "Return a shallow copy of all registered links."
+        },
+        {
+          "name": "build_matrix",
+          "doc": "Assemble the current nodes and links into an immutable matrix."
+        },
+        {
+          "name": "persist",
+          "doc": "Atomically persist the matrix to ``path`` as JSON."
+        },
+        {
+          "name": "reset",
+          "doc": "Clear all accumulated nodes and links."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TraceNode",
+      "description": "A single node in the traceability graph.",
+      "defined_in": "polaris/kernelone/traceability/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TraceLink",
+      "description": "A directed edge between two TraceNode instances.",
+      "defined_in": "polaris/kernelone/traceability/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TraceabilityMatrix",
+      "description": "A complete traceability matrix for a single PM iteration.",
+      "defined_in": "polaris/kernelone/traceability/public/contracts.py",
+      "methods": [
+        {
+          "name": "query_by_kind",
+          "doc": "Return all nodes matching the given kind."
+        },
+        {
+          "name": "query_ancestors",
+          "doc": "Return all upstream nodes for the given node_id using BFS."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Serialize the matrix to a plain dictionary."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_now_epoch_ms",
+      "description": "Return the current time in milliseconds since the epoch.",
+      "defined_in": "polaris/kernelone/traceability/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_uuid",
+      "description": "Generate a new UUID4 string.",
+      "defined_in": "polaris/kernelone/traceability/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "TraceabilityService",
+      "description": "Port interface for building, persisting, and querying traceability matrices.",
+      "defined_in": "polaris/kernelone/traceability/public/service.py",
+      "methods": [
+        {
+          "name": "register_node",
+          "doc": "Register a new trace node."
+        },
+        {
+          "name": "link",
+          "doc": "Create a directed link between two nodes."
+        },
+        {
+          "name": "find_node",
+          "doc": "Find an already-registered node by external_id and kind."
+        },
+        {
+          "name": "list_nodes",
+          "doc": "Return a shallow copy of all registered nodes."
+        },
+        {
+          "name": "list_links",
+          "doc": "Return a shallow copy of all registered links."
+        },
+        {
+          "name": "build_matrix",
+          "doc": "Assemble the current nodes and links into an immutable matrix."
+        },
+        {
+          "name": "persist",
+          "doc": "Atomically persist the matrix to ``path`` as JSON."
+        },
+        {
+          "name": "reset",
+          "doc": "Clear all accumulated nodes and links, preparing for a new iteration."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "create_traceability_service",
+      "description": "Factory that returns the concrete traceability service implementation.",
+      "defined_in": "polaris/kernelone/traceability/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "SessionSource",
+      "description": "Origin of a message or artifact within a Polaris session.",
+      "defined_in": "polaris/kernelone/traceability/session_source.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SourceChain",
+      "description": "Immutable chain of session sources.",
+      "defined_in": "polaris/kernelone/traceability/session_source.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "root",
+          "doc": "Create a new chain containing exactly one source."
+        },
+        {
+          "name": "last",
+          "doc": "Return the most recent source in the chain."
+        },
+        {
+          "name": "to_list",
+          "doc": "Return a human-readable list of source names."
+        },
+        {
+          "name": "append",
+          "doc": "Return a new chain with *source* appended to the end."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SourceChainEncoder",
+      "description": "JSON encoder that serialises ``SourceChain`` and ``SessionSource``.",
+      "defined_in": "polaris/kernelone/traceability/session_source.py",
+      "methods": [
+        {
+          "name": "default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSafeRegisterNode",
+      "description": "Tests for safe_register_node.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_safety.py",
+      "methods": [
+        {
+          "name": "test_returns_node_on_success",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_none_when_service_is_none",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_none_on_exception",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSafeLink",
+      "description": "Tests for safe_link.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_safety.py",
+      "methods": [
+        {
+          "name": "test_returns_link_on_success",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_none_when_any_argument_is_none",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_none_on_exception",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSafePersistMatrix",
+      "description": "Tests for safe_persist_matrix.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_safety.py",
+      "methods": [
+        {
+          "name": "test_returns_true_on_success",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_false_when_service_or_matrix_is_none",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_false_on_exception",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSafeReset",
+      "description": "Tests for safe_reset.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_safety.py",
+      "methods": [
+        {
+          "name": "test_returns_true_on_success",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_false_when_service_is_none",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_false_on_exception",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSessionSource",
+      "description": "Tests for the SessionSource enum.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source.py",
+      "methods": [
+        {
+          "name": "test_members_exist",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSourceChain",
+      "description": "Tests for the immutable SourceChain.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source.py",
+      "methods": [
+        {
+          "name": "test_root_creates_single_element_chain",
+          "doc": ""
+        },
+        {
+          "name": "test_append_returns_new_chain",
+          "doc": ""
+        },
+        {
+          "name": "test_append_is_chainable",
+          "doc": ""
+        },
+        {
+          "name": "test_to_list_human_readable",
+          "doc": ""
+        },
+        {
+          "name": "test_iter_yields_sources",
+          "doc": ""
+        },
+        {
+          "name": "test_repr",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_chain_last_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_equality",
+          "doc": ""
+        },
+        {
+          "name": "test_hashable",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Unknown",
+      "description": "",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestSourceChainEncoder",
+      "description": "Tests for JSON serialization of SourceChain objects.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source.py",
+      "methods": [
+        {
+          "name": "test_encodes_source_chain",
+          "doc": ""
+        },
+        {
+          "name": "test_encodes_session_source_directly",
+          "doc": ""
+        },
+        {
+          "name": "test_fallback_for_unknown_types",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UnknownType",
+      "description": "",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestSourceChainSerialization",
+      "description": "Verify SourceChain serializes correctly via SourceChainEncoder.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_serialize_empty_chain",
+          "doc": "Empty SourceChain serializes to empty list."
+        },
+        {
+          "name": "test_serialize_single_element_chain",
+          "doc": "Single-element SourceChain serializes to single-item list."
+        },
+        {
+          "name": "test_serialize_multi_element_chain",
+          "doc": "Multi-element SourceChain serializes to list of values."
+        },
+        {
+          "name": "test_serialize_session_source_directly",
+          "doc": "SessionSource enum serializes to its value."
+        },
+        {
+          "name": "test_mixed_serialization",
+          "doc": "Mixed SourceChain and SessionSource serialize correctly."
+        },
+        {
+          "name": "test_roundtrip_serialization",
+          "doc": "Serialization and deserialization preserves chain content."
+        },
+        {
+          "name": "test_fallback_for_unknown_types",
+          "doc": "Unknown types raise TypeError for fallback."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestChainPropagation",
+      "description": "Verify chain propagation from USER_DIRECT through PM_DELEGATED to DIRECTOR_EXECUTED.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_user_direct_to_pm_delegated",
+          "doc": "Chain propagates from user to PM."
+        },
+        {
+          "name": "test_full_super_mode_pipeline",
+          "doc": "Full SUPER-mode pipeline chain."
+        },
+        {
+          "name": "test_chain_propagation_preserves_history",
+          "doc": "Each append preserves previous sources."
+        },
+        {
+          "name": "test_chain_iteration_order",
+          "doc": "Iteration yields sources in order."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSourceChainRoot",
+      "description": "Verify SourceChain.root() creates singleton chains correctly.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_root_creates_single_element",
+          "doc": "root() creates chain with exactly one element."
+        },
+        {
+          "name": "test_root_every_source_type",
+          "doc": "root() works for all SessionSource variants."
+        },
+        {
+          "name": "test_root_chains_are_equal",
+          "doc": "Two root() calls with same source create equal chains."
+        },
+        {
+          "name": "test_root_chains_are_hashable",
+          "doc": "Root chains can be used as dict keys."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSourceChainImmutability",
+      "description": "Verify SourceChain immutability: append() returns new chain, original unchanged.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_append_returns_new_chain",
+          "doc": "append() must not mutate the original chain."
+        },
+        {
+          "name": "test_original_unchanged_after_multiple_appends",
+          "doc": "Original chain stays unchanged after multiple appends."
+        },
+        {
+          "name": "test_multiple_chains_from_same_root",
+          "doc": "Multiple chains can be derived from same root without interference."
+        },
+        {
+          "name": "test_append_returns_functional_value",
+          "doc": "append() return value can be used immediately."
+        },
+        {
+          "name": "test_immutability_with_frozen_dataclass",
+          "doc": "SourceChain should behave as immutable (though not frozen)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToListRepresentation",
+      "description": "Verify to_list() returns correct string representation.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_empty_chain_to_list",
+          "doc": "Empty chain to_list() returns empty list."
+        },
+        {
+          "name": "test_single_element_to_list",
+          "doc": "Single element chain to_list() returns single-item list."
+        },
+        {
+          "name": "test_multiple_elements_to_list",
+          "doc": "Multiple element chain to_list() returns all values as strings."
+        },
+        {
+          "name": "test_to_list_matches_iteration",
+          "doc": "to_list() returns same order as iteration."
+        },
+        {
+          "name": "test_to_list_usable_in_json",
+          "doc": "to_list() output is directly JSON-serializable."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHashabilityAndEquality",
+      "description": "Verify SourceChain is hashable and comparable.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_equal_chains_are_equal",
+          "doc": "Two chains with same content are equal."
+        },
+        {
+          "name": "test_unequal_chains_are_not_equal",
+          "doc": "Chains with different content are not equal."
+        },
+        {
+          "name": "test_equal_chains_have_equal_hash",
+          "doc": "Equal chains have equal hash values."
+        },
+        {
+          "name": "test_chain_as_dict_key",
+          "doc": "Chains can be used as dictionary keys."
+        },
+        {
+          "name": "test_chain_not_equal_to_non_chain",
+          "doc": "Chain is not equal to non-chain types."
+        },
+        {
+          "name": "test_chain_comparison_with_not_implemented",
+          "doc": "Chain comparison with incompatible type returns NotImplemented."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLastMethod",
+      "description": "Verify last() method behavior.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_last_returns_last_element",
+          "doc": "last() returns the most recent source in the chain."
+        },
+        {
+          "name": "test_last_on_single_element",
+          "doc": "last() on single element chain returns that element."
+        },
+        {
+          "name": "test_last_on_empty_raises",
+          "doc": "last() on empty chain raises IndexError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEncoderEdgeCases",
+      "description": "Test SourceChainEncoder edge cases.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_session_source_integration.py",
+      "methods": [
+        {
+          "name": "test_encoder_handles_nested_dict",
+          "doc": "Encoder can handle nested structures."
+        },
+        {
+          "name": "test_encoder_preserves_non_source_types",
+          "doc": "Encoder preserves non-SourceChain/Source types unchanged."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRegisterNode",
+      "description": "Tests for node registration.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py",
+      "methods": [
+        {
+          "name": "test_register_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_register_with_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_register_empty_content",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLink",
+      "description": "Tests for link creation.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py",
+      "methods": [
+        {
+          "name": "test_link_basic",
+          "doc": ""
+        },
+        {
+          "name": "test_link_default_kind",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBuildMatrix",
+      "description": "Tests for matrix assembly.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py",
+      "methods": [
+        {
+          "name": "test_build_matrix_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_build_matrix_with_content",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMatrixQueries",
+      "description": "Tests for matrix query methods.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py",
+      "methods": [
+        {
+          "name": "test_query_by_kind",
+          "doc": ""
+        },
+        {
+          "name": "test_query_ancestors",
+          "doc": ""
+        },
+        {
+          "name": "test_query_ancestors_empty_for_root",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPersistAndLoad",
+      "description": "Tests for atomic JSON persistence.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py",
+      "methods": [
+        {
+          "name": "test_persist_creates_file",
+          "doc": ""
+        },
+        {
+          "name": "test_persist_is_atomic",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReset",
+      "description": "Tests for reset behaviour.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py",
+      "methods": [
+        {
+          "name": "test_reset_clears_state",
+          "doc": ""
+        },
+        {
+          "name": "test_reset_after_build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToDict",
+      "description": "Tests for dictionary serialization.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py",
+      "methods": [
+        {
+          "name": "test_matrix_to_dict_structure",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "service",
+      "description": "Return a fresh traceability service instance.",
+      "defined_in": "polaris/kernelone/traceability/tests/test_traceability.py"
+    }
+  ],
+  "embedding_runtime_fingerprint": "local-v1"
+}

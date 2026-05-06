@@ -14,9 +14,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnOutcomeEnvelope,
     TurnResult,
 )
-
-# TODO: migrate to public contract once ContinuationPolicy / OrchestratorSessionState are exported from roles.runtime.public
-from polaris.cells.roles.runtime.internal.continuation_policy import (
+from polaris.cells.roles.runtime.public import (
     ContinuationPolicy,
     OrchestratorSessionState,
 )

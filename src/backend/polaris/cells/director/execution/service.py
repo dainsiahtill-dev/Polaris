@@ -238,6 +238,7 @@ class DirectorService(DirectorCodeIntelMixin):
 
                 await self._worker_service.initialize()
                 self._main_loop_task = asyncio.create_task(self._main_loop())
+
                 # Attach a done-callback so that when the loop exits for any reason
                 # (natural convergence, external cancel, or unhandled exception) we
                 # explicitly finalize the Director state.  This is the *only* place

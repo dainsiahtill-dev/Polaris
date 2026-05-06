@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:46.361394Z",
-  "source_hash": "302024ddf3b31b72",
+  "generated_at": "2026-05-06T07:41:53.396701Z",
+  "source_hash": "7c45aeb15b83b236",
   "cell_id": "director.execution",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -468,6 +468,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_on_main_loop_done",
           "doc": ""
         },
         {
@@ -1197,6 +1201,13 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "TestDirectorStateConcurrencyRegression",
+      "description": "Regression tests for M5: unguarded state transitions.",
+      "defined_in": "polaris/cells/director/execution/tests/test_service.py",
+      "methods": []
     },
     {
       "type": "class",

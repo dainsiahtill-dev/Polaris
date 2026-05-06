@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:46.857462Z",
-  "source_hash": "fcf5083ca724f6e8",
+  "generated_at": "2026-05-06T07:41:53.648505Z",
+  "source_hash": "4ff77446b5037c53",
   "cell_id": "delivery.api_gateway",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -214,14 +214,14 @@
     {
       "type": "class",
       "name": "RateLimitEntry",
-      "description": "Rate limit tracking entry for a client.",
+      "description": "Token-bucket rate limit tracking entry for a client.",
       "defined_in": "polaris/delivery/http/middleware/rate_limit.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "RateLimitStore",
-      "description": "Thread-safe store for rate limit tracking.",
+      "description": "Thread-safe token-bucket store for rate limit tracking.",
       "defined_in": "polaris/delivery/http/middleware/rate_limit.py",
       "methods": [
         {
@@ -237,8 +237,12 @@
           "doc": "Remove expired entries to prevent memory growth."
         },
         {
+          "name": "_replenish_tokens",
+          "doc": "Add tokens based on elapsed time since last update."
+        },
+        {
           "name": "check_rate_limit",
-          "doc": "Check if request is within rate limit."
+          "doc": "Token-bucket rate limit check."
         },
         {
           "name": "reset",
@@ -260,9 +264,45 @@
     },
     {
       "type": "function",
+      "name": "_is_truthy_env",
+      "description": "",
+      "defined_in": "polaris/delivery/http/middleware/rate_limit.py"
+    },
+    {
+      "type": "function",
       "name": "get_rate_limit_middleware",
       "description": "Factory function to create rate limit middleware with config from environment.",
       "defined_in": "polaris/delivery/http/middleware/rate_limit.py"
+    },
+    {
+      "type": "class",
+      "name": "RBACMiddleware",
+      "description": "ASGI middleware that injects ``user_role`` into ``request.state``.",
+      "defined_in": "polaris/delivery/http/middleware/rbac.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "extract_role_from_request",
+      "description": "Read the ``X-User-Role`` header and return a validated ``UserRole``.",
+      "defined_in": "polaris/delivery/http/middleware/rbac.py"
+    },
+    {
+      "type": "function",
+      "name": "require_role",
+      "description": "Dependency factory that enforces route-level role membership.",
+      "defined_in": "polaris/delivery/http/middleware/rbac.py"
+    },
+    {
+      "type": "function",
+      "name": "checker",
+      "description": "",
+      "defined_in": "polaris/delivery/http/middleware/rbac.py"
     },
     {
       "type": "class",
@@ -284,12 +324,6 @@
       "type": "function",
       "name": "get_state",
       "description": "",
-      "defined_in": "polaris/delivery/http/routers/_shared.py"
-    },
-    {
-      "type": "function",
-      "name": "require_auth",
-      "description": "Require bearer auth when backend token is configured.",
       "defined_in": "polaris/delivery/http/routers/_shared.py"
     },
     {
@@ -331,6 +365,48 @@
           "doc": "Check if consumer is connected."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_get_replay_secret",
+      "description": "Get or generate replay protection secret.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_subject",
+      "description": "Validate JetStream subject pattern to prevent injection.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_workspace_key",
+      "description": "Validate workspace key format.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_payload_size",
+      "description": "Validate payload size against configured limits.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_event_timestamp",
+      "description": "Validate event timestamp is within acceptable replay window.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_event_signature",
+      "description": "Generate HMAC signature for event integrity verification.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_event_signature",
+      "description": "Verify HMAC signature of event.",
+      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
     },
     {
       "type": "function",

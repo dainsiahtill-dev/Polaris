@@ -82,7 +82,7 @@ class TestDirectorRuntimeStatusObservability:
             # Simulate the outer try block catching an exception
             try:
                 raise TimeoutError("executor timeout")
-            except Exception as exc:
+            except TimeoutError as exc:
                 import logging as _logging
 
                 _logging.getLogger("polaris.cells.runtime.projection.internal.director_runtime_status").warning(
@@ -131,6 +131,30 @@ class TestGetDirectorLocalStatusObservability:
             result = await rps.get_director_local_status()
 
         # Must carry a projection_error key so callers can distinguish degraded from clean
+        assert "projection_error" in result
+        assert result["source"] == "none"
+        assert result["running"] is False
+        assert any("DirectorService unavailable" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_import_error_logs_warning_and_returns_projection_error_key(self, caplog):
+        """ImportError in DirectorService import path must degrade instead of raising."""
+        import sys
+        import types
+
+        from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
+
+        fake_module = types.ModuleType("polaris.cells.director.execution.service")
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"polaris.cells.director.execution.service": fake_module},
+            ),
+            caplog.at_level(logging.WARNING, logger=rps.__name__),
+        ):
+            result = await rps.get_director_local_status()
+
         assert "projection_error" in result
         assert result["source"] == "none"
         assert result["running"] is False
@@ -244,14 +268,14 @@ class TestBuildRuntimeProjectionTaskRowsObservability:
                 "polaris.cells.runtime.projection.internal.runtime_projection_service.build_snapshot_payload_from_projection",
                 return_value={},
             ),
+            caplog.at_level(logging.WARNING, logger=rps.__name__),
         ):
-            with caplog.at_level(logging.WARNING, logger=rps.__name__):
-                projection = await rps.build_runtime_projection(
-                    state,
-                    "/tmp/ws",
-                    "/tmp/cache",
-                    use_cache=False,
-                )
+            projection = await rps.build_runtime_projection(
+                state,
+                "/tmp/ws",
+                "/tmp/cache",
+                use_cache=False,
+            )
 
         assert projection.task_rows == []
         assert any("build_workflow_task_rows failed" in r.message for r in caplog.records)

@@ -6,30 +6,19 @@ from typing import Any
 from fastapi import HTTPException, Request
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
 from polaris.cells.llm.provider_runtime.public.service import is_role_runtime_supported
-from polaris.cells.runtime.state_owner.public.service import AppState, Auth
+from polaris.cells.runtime.state_owner.public.service import AppState
+from polaris.delivery.http.dependencies import require_auth as _canonical_require_auth
+from polaris.delivery.http.middleware.rbac import require_role as _require_role
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 from starlette.responses import JSONResponse
 
+require_auth = _canonical_require_auth
+require_role = _require_role
+
 
 def get_state(request: Request) -> AppState:
     return request.app.state.app_state
-
-
-def require_auth(request: Request) -> None:
-    """Require bearer auth when backend token is configured.
-
-    Security: Token MUST be provided via Authorization header only.
-    Query parameter token is NOT supported to prevent leakage in:
-    - Server access logs
-    - Browser history
-    - Referer headers
-    """
-    auth: Auth = request.app.state.auth
-    auth_header = request.headers.get("authorization", "")
-    if auth.check(auth_header):
-        return
-    raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def _ensure_llm_ready(state: AppState, role: str) -> None:

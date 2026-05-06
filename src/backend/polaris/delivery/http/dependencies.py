@@ -17,6 +17,7 @@ from polaris.bootstrap.config import Settings, get_settings
 from polaris.cells.director.execution.public import rebind_director_service
 from polaris.cells.director.execution.public.service import DirectorService
 from polaris.cells.orchestration.pm_planning.public.service import PMService
+from polaris.delivery.http.auth.roles import UserRole
 from polaris.domain.services.background_task import BackgroundTaskService
 from polaris.infrastructure.di.container import get_container
 from polaris.kernelone.auth_context import SimpleAuthContext
@@ -124,12 +125,16 @@ def require_auth(request: Request) -> None:
     auth_header = request.headers.get("authorization", "")
     if not auth.check(auth_header):
         raise HTTPException(status_code=401, detail="unauthorized")
-    # Token valid — bind an authenticated context.
+    # Token valid - bind an authenticated context. The current desktop token
+    # does not carry trusted role claims, so authenticated requests start with
+    # the least-privileged role. Client role headers are intentionally ignored.
     request.state.auth_context = SimpleAuthContext(
         principal="authenticated",
         auth_token=auth_header,
         scopes=frozenset({"*"}),  # Full access for valid token holders
+        metadata={"roles": [UserRole.VIEWER.value]},
     )
+    request.state.user_role = UserRole.VIEWER
 
 
 def require_permission(permission: str):

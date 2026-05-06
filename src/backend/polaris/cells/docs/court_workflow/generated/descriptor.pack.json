@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:45.949144Z",
-  "source_hash": "db5dc60972e3e324",
+  "generated_at": "2026-05-06T07:41:53.275526Z",
+  "source_hash": "4e4e404e6ab9c243",
   "cell_id": "docs.court_workflow",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -328,6 +328,30 @@
     {
       "type": "function",
       "name": "_join_lines",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_fields",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_history",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_docs_init_apply_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "docs_init_apply_v2",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/docs.py"
     },

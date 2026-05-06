@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:42.944438Z",
-  "source_hash": "d7bb55e4557be15c",
+  "generated_at": "2026-05-06T07:41:52.026989Z",
+  "source_hash": "b42c172f2d5d90ac",
   "cell_id": "roles.runtime",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -1413,19 +1413,23 @@
     {
       "type": "class",
       "name": "Skill",
-      "description": "技能数据模型",
+      "description": "技能数据模型 (兼容层)",
       "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "SkillLoader",
-      "description": "两层技能加载器",
+      "description": "两层技能加载器 (兼容层，委托给 KernelOne 实现)",
       "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py",
       "methods": [
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "_sync_from_kernel",
+          "doc": "Sync skills from KernelOne loader to compatible format."
         },
         {
           "name": "resolve_default_skills_dir",
@@ -1440,12 +1444,16 @@
           "doc": ""
         },
         {
-          "name": "_load_all",
-          "doc": "加载所有技能"
+          "name": "_load_all_legacy",
+          "doc": "Legacy skill loading (fallback)."
         },
         {
           "name": "_load_skill_file",
           "doc": "加载单个技能文件"
+        },
+        {
+          "name": "_load_all",
+          "doc": "加载所有技能"
         },
         {
           "name": "get_manifest",
@@ -1496,13 +1504,13 @@
     {
       "type": "function",
       "name": "create_skill_loader",
-      "description": "创建技能加载器",
+      "description": "创建技能加载器 (兼容层)",
       "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py"
     },
     {
       "type": "function",
       "name": "create_role_skill_manager",
-      "description": "创建角色技能管理器",
+      "description": "创建角色技能管理器 (兼容层)",
       "defined_in": "polaris/cells/roles/runtime/internal/skill_loader.py"
     },
     {
@@ -2670,6 +2678,12 @@
       "name": "create_worker_pool",
       "description": "Create sync Worker pool (backward compatible)",
       "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_role",
+      "description": "Validate that the requested role is supported.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
     },
     {
       "type": "class",

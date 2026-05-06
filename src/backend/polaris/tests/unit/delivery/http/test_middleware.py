@@ -45,7 +45,7 @@ async def client(mock_settings: Settings) -> AsyncIterator[AsyncClient]:
     from polaris.delivery.http.app_factory import create_app
 
     app = create_app(settings=mock_settings)
-    # auth=None bypasses auth entirely (dev/test mode)
+    # Missing auth object is a fail-closed server configuration error.
     app.state.auth = None
 
     with (
@@ -207,8 +207,8 @@ async def test_auth_allows_public_live_endpoint(authed_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_auth_no_token_configured_allows_all(client: AsyncClient) -> None:
-    """When no token is configured, all endpoints should be accessible."""
+async def test_auth_not_initialized_rejects_protected_endpoints(client: AsyncClient) -> None:
+    """When auth is not initialized, protected endpoints fail closed."""
     mock_pm = MagicMock()
     mock_pm.get_status.return_value = {"running": False}
 
@@ -218,7 +218,8 @@ async def test_auth_no_token_configured_allows_all(client: AsyncClient) -> None:
     ) as mock_container:
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.get("/v2/pm/status")
-        assert response.status_code == 200
+        assert response.status_code == 503
+        assert response.json()["detail"] == "auth not initialized"
 
 
 # ---------------------------------------------------------------------------

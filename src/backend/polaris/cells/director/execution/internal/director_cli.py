@@ -18,7 +18,7 @@ import warnings
 # TODO: Cross-cell internal import — DirectorCLI is not yet exposed in
 # director.tasking.public. Add to public contract when stabilised.
 try:
-    from polaris.cells.director.tasking.internal.director_cli import (
+    from polaris.cells.director.tasking import (
         DirectorCLI,
     )
 

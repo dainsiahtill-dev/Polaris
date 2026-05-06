@@ -291,6 +291,7 @@ export const test = base.extend<Fixtures>({
       ...process.env,
       KERNELONE_E2E: "1",
       KERNELONE_E2E_ALLOW_MULTI_INSTANCE: "1",
+      KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK: process.env.KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK || "1",
     };
     delete env.ELECTRON_RUN_AS_NODE;
 

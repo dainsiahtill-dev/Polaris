@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:41.559052Z",
-  "source_hash": "40fb2e303738c555",
+  "generated_at": "2026-05-06T07:41:51.113467Z",
+  "source_hash": "2230af8f99602ecf",
   "cell_id": "roles.host",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -58,6 +58,174 @@
       "name": "get_capability_profile",
       "description": "Get the capability profile for a host kind.",
       "defined_in": "polaris/cells/roles/host/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "TestHostKindAlias",
+      "description": "Tests for HostKind alias.",
+      "defined_in": "polaris/cells/roles/host/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_host_kind_is_role_host_kind",
+          "doc": ""
+        },
+        {
+          "name": "test_host_kind_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReExportedEnums",
+      "description": "Tests for re-exported enums from roles.session.",
+      "defined_in": "polaris/cells/roles/host/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_attachment_mode_values",
+          "doc": ""
+        },
+        {
+          "name": "test_session_type_values",
+          "doc": ""
+        },
+        {
+          "name": "test_session_state_values",
+          "doc": ""
+        },
+        {
+          "name": "test_role_host_kind_values",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHostCapabilityProfile",
+      "description": "Tests for HostCapabilityProfile dataclass.",
+      "defined_in": "polaris/cells/roles/host/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_all_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_is_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_metadata_is_copied",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_with_none_tokens",
+          "doc": ""
+        },
+        {
+          "name": "test_repr",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHostKindProfiles",
+      "description": "Tests for HOST_KIND_PROFILES constant.",
+      "defined_in": "polaris/cells/roles/host/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_contains_all_host_kinds",
+          "doc": ""
+        },
+        {
+          "name": "test_workflow_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_electron_workbench_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_tui_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_cli_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_api_server_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_headless_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_all_profiles_are_host_capability_profile",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetCapabilityProfile",
+      "description": "Tests for get_capability_profile function.",
+      "defined_in": "polaris/cells/roles/host/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_get_workflow_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_get_cli_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_get_unknown_host_kind_returns_default",
+          "doc": ""
+        },
+        {
+          "name": "test_get_unknown_returns_host_capability_profile",
+          "doc": ""
+        },
+        {
+          "name": "test_get_empty_string_returns_default",
+          "doc": ""
+        },
+        {
+          "name": "test_get_with_special_characters",
+          "doc": ""
+        },
+        {
+          "name": "test_get_is_consistent_with_host_kind_profiles",
+          "doc": ""
+        },
+        {
+          "name": "test_get_returns_copy_for_unknown",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestModuleExports",
+      "description": "Tests for module __all__ exports.",
+      "defined_in": "polaris/cells/roles/host/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_all_exports_present",
+          "doc": ""
+        }
+      ]
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

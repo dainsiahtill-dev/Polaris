@@ -18,12 +18,21 @@ from threading import RLock
 from typing import TYPE_CHECKING
 
 from fastapi import Request, Response
+from polaris.delivery.http.endpoint_policy import (
+    is_always_rate_limit_exempt,
+    is_bootstrap_rate_limit_sensitive,
+)
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
+_LOOPBACK_CLIENTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -93,9 +102,7 @@ class RateLimitStore:
 
     def _cleanup_old_entries(self, now: float) -> None:
         """Remove expired entries to prevent memory growth."""
-        expired_keys = [
-            key for key, entry in self._store.items() if entry.blocked_until < now
-        ]
+        expired_keys = [key for key, entry in self._store.items() if entry.blocked_until < now]
         for key in expired_keys[:1000]:  # Limit cleanup batch size
             del self._store[key]
 
@@ -127,7 +134,7 @@ class RateLimitStore:
 
             entry = self._store.get(client_key)
             if entry is None:
-                entry = RateLimitEntry(last_update=now)
+                entry = RateLimitEntry(tokens=float(burst), last_update=now)
                 self._store[client_key] = entry
 
             # Check if currently blocked
@@ -177,12 +184,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._burst = burst_size
         self._store = RateLimitStore()
         self._excluded_paths = set(excluded_paths or [])
-        self._excluded_paths.update(
-            [
-                "/health",  # Health checks should never be rate limited
-                "/metrics",  # Metrics endpoint
-            ]
-        )
 
         # Check if disabled via environment
         self._enabled = os.environ.get("KERNELONE_RATE_LIMIT_ENABLED", "true").lower() not in (
@@ -194,15 +195,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if not self._enabled:
             logger.info("Rate limiting is disabled via environment")
+        self._exempt_loopback = _is_truthy_env(os.environ.get("KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK"))
+        if self._enabled and self._exempt_loopback:
+            logger.info("Rate limiting exempts loopback clients via environment")
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request with rate limiting."""
         if not self._enabled:
             return await call_next(request)
 
-        # Skip rate limiting for excluded paths
         path = request.url.path
-        if any(path.startswith(excluded) for excluded in self._excluded_paths):
+        if is_always_rate_limit_exempt(path) or any(path.startswith(excluded) for excluded in self._excluded_paths):
+            return await call_next(request)
+        if self._exempt_loopback and request.client and request.client.host in _LOOPBACK_CLIENTS:
+            return await call_next(request)
+        if is_bootstrap_rate_limit_sensitive(path) and request.client and request.client.host in _LOOPBACK_CLIENTS:
             return await call_next(request)
 
         # Token-bucket rate limit check (atomic: check + consume under lock)

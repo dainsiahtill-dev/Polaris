@@ -246,6 +246,8 @@ async def test_role_chat_status_exception(client: AsyncClient) -> None:
         assert response.status_code == 200
         data = response.json()
         assert data["ready"] is False
+        assert data["configured"] is False
+        assert data["llm_test_ready"] is False
         assert "config load failed" in data["message"]
 
 
@@ -375,9 +377,9 @@ async def test_role_cache_stats_broken_import(client: AsyncClient) -> None:
     assert response.status_code == 500
 
 
-@pytest.mark.xfail(raises=ModuleNotFoundError, reason="Production bug: polaris.delivery.http.roles does not exist")
 @pytest.mark.asyncio
-async def test_role_cache_clear_broken_import(client: AsyncClient) -> None:
-    """Role cache-clear endpoint has a production bug: missing module."""
-    response = await client.post("/v2/role/cache-clear")
-    assert response.status_code == 500
+async def test_role_cache_clear_rejects_forged_admin_role(client: AsyncClient) -> None:
+    """Cache clear must be denied before role headers can influence RBAC."""
+    response = await client.post("/v2/role/cache-clear", headers={"X-User-Role": "admin"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "role 'viewer' not authorized for this resource"

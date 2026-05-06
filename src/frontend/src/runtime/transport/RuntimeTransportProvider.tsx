@@ -23,6 +23,7 @@ import {
   runtimeSocketManager,
   type ConnectionState,
   type ChannelSubscription,
+  type RuntimeRole,
 } from './runtimeSocketManager';
 
 // ============================================================================
@@ -39,8 +40,9 @@ export interface ConnectionStateContextValue {
 
 /** Transport actions - stable callbacks */
 export interface TransportActionsContextValue {
-  subscribeChannels: (subscriptions: ChannelSubscription[]) => () => void;
+  subscribeChannels: (subscriptions: ChannelSubscription[], roles?: RuntimeRole[]) => () => void;
   sendCommand: (data: unknown) => boolean;
+  getLastCursor: () => number;
   reconnect: () => void;
 }
 
@@ -105,8 +107,8 @@ export function RuntimeTransportProvider({
 
   // Channel subscription helper
   const subscribeChannels = useCallback(
-    (subscriptions: ChannelSubscription[]): (() => void) => {
-      runtimeSocketManager.subscribeChannels(subscriptions);
+    (subscriptions: ChannelSubscription[], roles?: RuntimeRole[]): (() => void) => {
+      runtimeSocketManager.subscribeChannels(subscriptions, roles);
 
       const channels = subscriptions.map((s) => s.channel);
 
@@ -121,6 +123,10 @@ export function RuntimeTransportProvider({
   // Send command helper
   const sendCommand = useCallback((data: unknown): boolean => {
     return runtimeSocketManager.send(data);
+  }, []);
+
+  const getLastCursor = useCallback((): number => {
+    return runtimeSocketManager.getLastCursor();
   }, []);
 
   // Reconnect helper
@@ -159,9 +165,10 @@ export function RuntimeTransportProvider({
     () => ({
       subscribeChannels,
       sendCommand,
+      getLastCursor,
       reconnect,
     }),
-    [subscribeChannels, sendCommand, reconnect]
+    [subscribeChannels, sendCommand, getLastCursor, reconnect]
   );
 
   const messageHandlerValue = useMemo<MessageHandlerContextValue>(

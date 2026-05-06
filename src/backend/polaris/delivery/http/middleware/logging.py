@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
+from polaris.delivery.http.endpoint_policy import is_observability_exempt
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
@@ -30,11 +31,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware for logging HTTP requests and responses."""
 
     # Paths to exclude from detailed logging
-    EXCLUDED_PATHS = {
-        "/health",
-        "/metrics",
-        "/favicon.ico",
-    }
+    EXCLUDED_PATHS = frozenset({"/health", "/metrics", "/favicon.ico"})
 
     # Sensitive headers that should be masked
     SENSITIVE_HEADERS = {
@@ -91,7 +88,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     def _should_log_path(self, path: str) -> bool:
         """Check if path should be logged."""
-        return not any(path.startswith(excluded) for excluded in self.EXCLUDED_PATHS)
+        return not is_observability_exempt(path)
 
     def _mask_sensitive_headers(self, headers: dict[str, str]) -> dict[str, str]:
         """Mask sensitive header values."""

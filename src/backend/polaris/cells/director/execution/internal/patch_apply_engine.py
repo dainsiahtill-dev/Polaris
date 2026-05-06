@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import warnings
 
-# TODO: Cross-cell internal import — patch_apply_engine symbols are not
-# yet exposed in director.tasking.public. Add to public contract when stabilised.
-from polaris.cells.director.tasking.internal.patch_apply_engine import (
+from polaris.cells.director.tasking.public import (
     ApplyIntegrity,
     ApplyResult,
     EditType,

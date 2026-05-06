@@ -7,6 +7,8 @@ import { resolvePanelTaskFromPrompt } from "./resolve-panel-task.mjs";
 const currentFile = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFile);
 const repoRoot = path.resolve(scriptDir, "..", "..");
+const panelTaskSpecRelativePath = path.join("src", "backend", "polaris", "tests", "electron", "panel-task.spec.ts");
+const panelTaskSpecPath = path.join(repoRoot, panelTaskSpecRelativePath);
 
 function parseBool(raw, fallback) {
   if (raw === undefined || raw === null || raw === "") {
@@ -82,6 +84,20 @@ function parseArgs(argv) {
 function isTruthyEnv(name) {
   const raw = String(process.env[name] || "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function toUnixPath(filePath) {
+  return String(filePath || "").split(path.sep).join("/");
+}
+
+function toRelative(filePath) {
+  return toUnixPath(path.relative(repoRoot, filePath));
+}
+
+function assertFileExists(filePath, label) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`${label} not found: ${toRelative(filePath)}`);
+  }
 }
 
 function isLlmSensitiveText(value) {
@@ -188,6 +204,7 @@ function runShell(commandText, options = {}) {
 }
 
 function runPlaywrightTask(task) {
+  assertFileExists(panelTaskSpecPath, "Panel-task Playwright spec");
   const taskBase64 = Buffer.from(JSON.stringify(task), "utf-8").toString("base64");
   const env = {
     ...process.env,
@@ -196,7 +213,7 @@ function runPlaywrightTask(task) {
     E2E_PANEL_STRICT_TERMINAL_ERRORS: process.env.E2E_PANEL_STRICT_TERMINAL_ERRORS || "1",
   };
 
-  const command = "npx playwright test -c playwright.electron.config.ts tests/electron/panel-task.spec.ts";
+  const command = `npx playwright test -c playwright.electron.config.ts ${toUnixPath(panelTaskSpecRelativePath)}`;
   return runShell(command, {
     cwd: repoRoot,
     env,
@@ -299,8 +316,11 @@ async function main() {
     }
 
     if (dryRun) {
+      assertFileExists(panelTaskSpecPath, "Panel-task Playwright spec");
       const preview = {
         task,
+        panel_task_spec: toUnixPath(panelTaskSpecRelativePath),
+        playwright_command: `npx playwright test -c playwright.electron.config.ts ${toUnixPath(panelTaskSpecRelativePath)}`,
         semantic_fallback: {
           enabled: semanticFallback,
           command: semanticCommand || null,

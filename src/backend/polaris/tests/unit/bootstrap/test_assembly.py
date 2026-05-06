@@ -7,6 +7,8 @@ the extractable pure functions and logic.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 class TestAssemblyModuleImport:
     """Test that assembly module can be imported."""
@@ -38,3 +40,8 @@ class TestAssemblyPureLogic:
         from polaris.bootstrap.assembly import rebind_director_service
 
         assert callable(rebind_director_service)
+
+    def test_director_imports_use_non_deprecated_modules(self) -> None:
+        """assembly should not import DirectorService from deprecated public facade."""
+        source = Path("src/backend/polaris/bootstrap/assembly.py").read_text(encoding="utf-8")
+        assert "polaris.cells.director.execution.public.service" not in source

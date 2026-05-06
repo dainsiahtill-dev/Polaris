@@ -21,7 +21,12 @@ async function enterPmWorkspace(window: Page): Promise<void> {
   }
 
   await window.getByRole("button", { name: /更多功能/ }).click();
-  await window.getByRole("menuitem", { name: /PM\s*工作区/i }).click();
+  const menuEntry = window.getByTestId("enter-pm-workspace");
+  if (await menuEntry.isVisible().catch(() => false)) {
+    await menuEntry.click();
+    return;
+  }
+  await window.getByRole("menuitem", { name: /PM\s*(工作区|Workspace)/i }).click();
 }
 
 async function enterDirectorWorkspace(window: Page): Promise<void> {
@@ -32,7 +37,12 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   }
 
   await window.getByRole("button", { name: /更多功能/ }).click();
-  await window.getByRole("menuitem", { name: /Director\s*Workspace/i }).click();
+  const menuEntry = window.getByTestId("enter-director-workspace");
+  if (await menuEntry.isVisible().catch(() => false)) {
+    await menuEntry.click();
+    return;
+  }
+  await window.getByRole("menuitem", { name: /Director\s*(工作区|Workspace)/i }).click();
 }
 
 test("PM + Director show current task/progress visibility", async ({ window }) => {

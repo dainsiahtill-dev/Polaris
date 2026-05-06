@@ -14,6 +14,7 @@ __all__ = [
     "BaseEngine",
     "ContextRequest",
     "ContextResult",
+    "ContinuationPolicy",
     "EngineBudget",
     "EngineContext",
     "EngineRegistry",
@@ -26,7 +27,9 @@ __all__ = [
     "GetRoleRuntimeStatusQueryV1",
     "HybridEngine",
     "IRoleRuntime",
+    "KernelOneMessageBusPort",
     "MessageType",
+    "OrchestratorSessionState",
     "PathSecurityError",
     "PlanSolveEngine",
     "PromptFingerprint",
@@ -110,6 +113,7 @@ __all__ = [
 
 _CONTRACTS_MODULE = "polaris.cells.roles.runtime.public.contracts"
 _SERVICE_MODULE = "polaris.cells.roles.runtime.public.service"
+_INTERNAL_CONTINUATION_MODULE = "polaris.cells.roles.runtime.internal.continuation_policy"
 _CONTRACT_EXPORTS = frozenset(
     {
         "ExecuteRoleSessionCommandV1",
@@ -122,12 +126,18 @@ _CONTRACT_EXPORTS = frozenset(
         "RoleTaskStartedEventV1",
     }
 )
+_CONTINUATION_EXPORTS = frozenset({"ContinuationPolicy", "OrchestratorSessionState"})
 
 
 def __getattr__(name: str) -> object:
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name = _CONTRACTS_MODULE if name in _CONTRACT_EXPORTS else _SERVICE_MODULE
+    if name in _CONTINUATION_EXPORTS:
+        module_name = _INTERNAL_CONTINUATION_MODULE
+    elif name in _CONTRACT_EXPORTS:
+        module_name = _CONTRACTS_MODULE
+    else:
+        module_name = _SERVICE_MODULE
     module = import_module(module_name)
     value = getattr(module, name)
     globals()[name] = value

@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
@@ -58,7 +58,7 @@ function resolveRepoRoot(startDir: string): string {
   while (true) {
     const packageJson = path.join(current, "package.json");
     const electronMainEntry = path.join(current, "src", "electron", "main.cjs");
-    if (fs.existsSync(packageJson) && fs.existsSync(electronMainEntry)) {
+    if (existsSync(packageJson) && existsSync(electronMainEntry)) {
       return current;
     }
 
@@ -532,7 +532,9 @@ async function enterPmWorkspace(window: Page): Promise<void> {
   await moreButton.click();
 
   const pmMenuItem = await resolveVisibleLocator(window, [
+    () => window.getByTestId("enter-pm-workspace"),
     () => window.getByRole("menuitem", { name: /PM\s*工作区/i }),
+    () => window.getByRole("menuitem", { name: /PM\s*Workspace/i }),
     () => window.getByText(/PM\s*工作区/i),
   ], 15_000);
   await pmMenuItem.click();
@@ -553,7 +555,10 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await moreButton.click();
 
   const directorMenuItem = await resolveVisibleLocator(window, [
+    () => window.getByTestId("enter-director-workspace"),
+    () => window.getByRole("menuitem", { name: /Director\s*工作区/i }),
     () => window.getByRole("menuitem", { name: /Director\s*Workspace/i }),
+    () => window.getByText(/Director\s*工作区/i),
     () => window.getByText(/Director\s*Workspace/i),
   ], 15_000);
   await directorMenuItem.click();

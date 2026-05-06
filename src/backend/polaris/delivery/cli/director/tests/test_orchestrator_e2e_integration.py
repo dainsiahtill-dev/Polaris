@@ -24,7 +24,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
 )
-from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
+from polaris.cells.roles.runtime.public import RoleSessionOrchestrator
 from polaris.delivery.cli.director.console_host import RoleConsoleHost
 
 

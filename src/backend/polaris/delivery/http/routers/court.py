@@ -21,10 +21,17 @@ from polaris.cells.runtime.projection.public.service import (
 )
 from polaris.cells.runtime.state_owner.public.service import AppState
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state as get_runtime_state, require_auth
+from polaris.delivery.http.schemas.common import (
+    CourtActorResponse,
+    CourtMappingResponse,
+    CourtSceneResponse,
+    CourtStateResponse,
+    CourtTopologyResponse,
+)
 from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
-router = APIRouter(prefix="/court", tags=["court"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["court"], dependencies=[Depends(require_auth)])
 
 
 def _get_engine_status(app_state: AppState) -> dict[str, Any] | None:
@@ -57,8 +64,8 @@ async def _get_director_status(app_state: AppState) -> dict[str, Any]:
     return await build_director_status(app_state, str(workspace), str(cache_root))
 
 
-@router.get("/topology")
-async def get_topology() -> dict[str, Any]:
+@router.get("/v2/court/topology", response_model=CourtTopologyResponse)
+async def get_topology_v2() -> dict[str, Any]:
     """Get court topology structure.
 
     Returns fixed court topology (User/Top departments/Departments/Officer seats), including role hierarchy and 3D position coordinates.
@@ -84,8 +91,15 @@ async def get_topology() -> dict[str, Any]:
     }
 
 
-@router.get("/state")
-async def get_state(
+@router.get("/court/topology", response_model=CourtTopologyResponse)
+async def get_topology() -> dict[str, Any]:
+    # DEPRECATED
+    """Get court topology structure (deprecated)."""
+    return await get_topology_v2()
+
+
+@router.get("/v2/court/state", response_model=CourtStateResponse)
+async def get_state_v2(
     request: Request,
 ) -> dict[str, Any]:
     """Get current court state.
@@ -116,8 +130,17 @@ async def get_state(
     return court_state
 
 
-@router.get("/actors/{role_id}")
-async def get_actor_detail(
+@router.get("/court/state", response_model=CourtStateResponse)
+async def get_state(
+    request: Request,
+) -> dict[str, Any]:
+    # DEPRECATED
+    """Get current court state (deprecated)."""
+    return await get_state_v2(request)
+
+
+@router.get("/v2/court/actors/{role_id}", response_model=CourtActorResponse)
+async def get_actor_detail_v2(
     role_id: str,
     request: Request,
 ) -> dict[str, Any]:
@@ -159,8 +182,18 @@ async def get_actor_detail(
     return actor
 
 
-@router.get("/scenes/{scene_id}")
-async def get_scene_detail(scene_id: str) -> dict[str, Any]:
+@router.get("/court/actors/{role_id}", response_model=CourtActorResponse)
+async def get_actor_detail(
+    role_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    # DEPRECATED
+    """Get detailed information for a single role (deprecated)."""
+    return await get_actor_detail_v2(role_id, request)
+
+
+@router.get("/v2/court/scenes/{scene_id}", response_model=CourtSceneResponse)
+async def get_scene_detail_v2(scene_id: str) -> dict[str, Any]:
     """Get detailed configuration for a single scene.
 
     Args:
@@ -181,8 +214,15 @@ async def get_scene_detail(scene_id: str) -> dict[str, Any]:
     return scenes[scene_id]
 
 
-@router.get("/mapping")
-async def get_role_mapping() -> dict[str, Any]:
+@router.get("/court/scenes/{scene_id}", response_model=CourtSceneResponse)
+async def get_scene_detail(scene_id: str) -> dict[str, Any]:
+    # DEPRECATED
+    """Get detailed configuration for a single scene (deprecated)."""
+    return await get_scene_detail_v2(scene_id)
+
+
+@router.get("/v2/court/mapping", response_model=CourtMappingResponse)
+async def get_role_mapping_v2() -> dict[str, Any]:
     """Get technical role to court role mapping table.
 
     Returns:
@@ -198,3 +238,10 @@ async def get_role_mapping() -> dict[str, Any]:
         "version": "1.0",
         "description": "Unique mapping table from technical roles to display roles",
     }
+
+
+@router.get("/court/mapping", response_model=CourtMappingResponse)
+async def get_role_mapping() -> dict[str, Any]:
+    # DEPRECATED
+    """Get technical role to court role mapping table (deprecated)."""
+    return await get_role_mapping_v2()

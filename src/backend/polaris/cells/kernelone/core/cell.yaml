@@ -40,6 +40,7 @@ state_owners: []
 effects_allowed:
 - fs.read:workspace/**
 - fs.read:runtime/**
+- fs.write:runtime/**
 verification:
   tests:
   - polaris/kernelone/context/context_os/tests/**

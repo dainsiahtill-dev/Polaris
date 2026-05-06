@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, status
 from polaris.bootstrap.config import get_settings
 from polaris.delivery.http.routers._shared import StructuredHTTPException
+from polaris.delivery.http.schemas.common import PrimaryHealthResponse, PrimaryLiveResponse, PrimaryReadyResponse
 
 primary_router = APIRouter(tags=["primary"])
 
@@ -27,15 +28,8 @@ def is_nats_connected() -> bool:
     return _nats_connected
 
 
-@primary_router.get("/health", status_code=status.HTTP_200_OK)
-async def health_check() -> dict[str, Any]:
-    """Health check endpoint for load balancers and monitoring."""
-    return {"status": "ok", "service": "polaris-backend", "version": "2.0.0"}
-
-
-@primary_router.get("/ready")
-async def readiness_check() -> dict[str, Any]:
-    """Readiness probe for orchestration systems (Kubernetes, etc.)."""
+async def build_readiness_payload() -> dict[str, Any]:
+    """Build canonical readiness checks shared by primary and v2 routes."""
     settings = get_settings()
 
     checks: dict[str, str] = {
@@ -66,25 +60,39 @@ async def readiness_check() -> dict[str, Any]:
                 nats_status = "required_but_not_connected"
         checks["nats"] = nats_status
 
-    if not ready:
+    return {"ready": ready, "checks": checks}
+
+
+@primary_router.get("/health", status_code=status.HTTP_200_OK, response_model=PrimaryHealthResponse)  # DEPRECATED
+async def health_check() -> dict[str, Any]:
+    """Health check endpoint for load balancers and monitoring."""
+    return {"status": "ok", "service": "polaris-backend", "version": "2.0.0"}
+
+
+@primary_router.get("/ready", response_model=PrimaryReadyResponse)  # DEPRECATED
+async def readiness_check() -> dict[str, Any]:
+    """Readiness probe for orchestration systems (Kubernetes, etc.)."""
+    payload = await build_readiness_payload()
+
+    if not payload["ready"]:
         raise StructuredHTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code="NATS_REQUIRED_BUT_NOT_CONNECTED"
-            if nats_status == "required_but_not_connected"
+            if payload["checks"].get("nats") == "required_but_not_connected"
             else "SERVICE_UNAVAILABLE",
             message="NATS required but not connected"
-            if nats_status == "required_but_not_connected"
+            if payload["checks"].get("nats") == "required_but_not_connected"
             else "service_unavailable",
             details={
                 "ready": False,
-                "checks": checks,
+                "checks": payload["checks"],
             },
         )
 
-    return {"ready": True, "checks": checks}
+    return payload
 
 
-@primary_router.get("/live")
+@primary_router.get("/live", response_model=PrimaryLiveResponse)  # DEPRECATED
 async def liveness_check() -> dict[str, Any]:
     """Liveness probe for container orchestration."""
     return {"alive": True, "timestamp": "ok"}

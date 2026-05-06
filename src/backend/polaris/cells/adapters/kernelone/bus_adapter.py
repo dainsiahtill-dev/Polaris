@@ -20,7 +20,7 @@ from polaris.kernelone.ports.bus_port import (
 )
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.runtime.internal.kernel_one_bus_port import (
+    from polaris.cells.roles.runtime.public import (
         KernelOneMessageBusPort as _KernelOneMessageBusPort,
     )
 
@@ -55,7 +55,7 @@ class KernelOneBusPortAdapter(IBusPort):
             nats_enabled: Enable NATS transport (default: from env or True)
             max_queue_size: Maximum inbox size per receiver
         """
-        from polaris.cells.roles.runtime.internal.kernel_one_bus_port import (
+        from polaris.cells.roles.runtime.public import (
             KernelOneMessageBusPort,
         )
 

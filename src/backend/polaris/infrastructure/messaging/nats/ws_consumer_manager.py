@@ -6,9 +6,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from typing import Any
 
+from nats.js.errors import APIError as JSAPIError, NotFoundError as JSConsumerNotFoundError
 from polaris.infrastructure.messaging.nats.client import get_default_client
 from polaris.infrastructure.messaging.nats.nats_types import (
     JetStreamConstants,
@@ -21,6 +23,7 @@ _THROTTLED_LOG_STATE: dict[str, float] = {}
 # Message queue max size to prevent unbounded memory growth
 # Reduced from 1000 to 100 for lower latency and natural backpressure
 _MESSAGE_QUEUE_MAX_SIZE = 100
+_DURABLE_TOKEN_PATTERN = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 def _normalize_channel_filter(channel: str) -> str:
@@ -29,6 +32,12 @@ def _normalize_channel_filter(channel: str) -> str:
     if token.startswith("log."):
         return token.split(".", 1)[1]
     return token
+
+
+def _normalize_durable_token(value: str) -> str:
+    """Return a NATS durable-name-safe token with a deterministic fallback."""
+    normalized = _DURABLE_TOKEN_PATTERN.sub("_", str(value or "").strip()).strip("_-")
+    return (normalized or "connection")[:96]
 
 
 def _log_throttled(level: str, key: str, message: str, *args: Any, cooldown_sec: float = 5.0) -> None:
@@ -52,24 +61,29 @@ class JetStreamConsumerManager:
         channels: list[str],
         initial_cursor: int = 0,
         tail: int = 200,
+        durable_token: str | None = None,
     ) -> None:
         self.workspace_key = workspace_key
         self.client_id = client_id
         self.channels = [_normalize_channel_filter(ch) for ch in channels if str(ch or "").strip()]
         self.current_cursor = initial_cursor
         self.tail = tail
-        self._durable_name = f"{JetStreamConstants.CONSUMER_DELIVERY_PREFIX}{self.client_id}"
+        self._durable_name = (
+            f"{JetStreamConstants.CONSUMER_DELIVERY_PREFIX}{_normalize_durable_token(durable_token or self.client_id)}"
+        )
         self._consumer: Any = None
         self._subscription: Any = None
         self._jetstream: Any = None
         self._message_queue: asyncio.Queue[RuntimeEventEnvelope] = asyncio.Queue(maxsize=_MESSAGE_QUEUE_MAX_SIZE)
         self._pending_acks: dict[int, Any] = {}
+        self._dropped_messages = 0
+        self._connected = False
         self._closed = False
         self._consumer_task: asyncio.Task | None = None
 
     @property
     def is_connected(self) -> bool:
-        return self._jetstream is not None and not self._closed
+        return self._connected and self._jetstream is not None and self._subscription is not None and not self._closed
 
     async def connect(self) -> bool:
         """Connect to JetStream and create consumer.
@@ -77,6 +91,8 @@ class JetStreamConsumerManager:
         Returns:
             True if connection succeeded.
         """
+        self._connected = False
+        self._closed = False
         try:
             from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
 
@@ -86,12 +102,13 @@ class JetStreamConsumerManager:
 
             if not self._jetstream:
                 logger.error("JetStream is required but unavailable for runtime.v2")
+                self._jetstream = None
                 return False
 
             # Ensure runtime stream exists before creating consumers.
             try:
                 await self._jetstream.stream_info(JetStreamConstants.STREAM_NAME)
-            except (RuntimeError, ValueError):
+            except (JSConsumerNotFoundError, RuntimeError, ValueError):
                 await self._jetstream.add_stream(
                     StreamConfig(
                         name=JetStreamConstants.STREAM_NAME,
@@ -103,13 +120,7 @@ class JetStreamConsumerManager:
             subject = f"hp.runtime.{self.workspace_key}.>"
 
             # Ensure stale consumer from previous reconnect/subscription cycle is removed.
-            try:
-                await self._jetstream.delete_consumer(
-                    JetStreamConstants.STREAM_NAME,
-                    self._durable_name,
-                )
-            except (RuntimeError, ValueError) as exc:
-                logger.debug("NATS cleanup (best-effort): %s", exc)
+            await self._delete_consumer_best_effort()
 
             consumer_config = ConsumerConfig(
                 durable_name=self._durable_name,
@@ -128,6 +139,7 @@ class JetStreamConsumerManager:
 
             # Start background consumer task for zero-latency message delivery
             self._consumer_task = asyncio.create_task(self._consume_messages_loop())
+            self._connected = True
 
             logger.info(
                 "JetStream consumer created for %s on %s, starting from cursor %s",
@@ -137,7 +149,7 @@ class JetStreamConsumerManager:
             )
             return True
 
-        except (ImportError, RuntimeError, ValueError) as e:
+        except (ImportError, RuntimeError, ValueError, JSAPIError) as e:
             error_text = str(e or "").strip()
             lowered = error_text.lower()
             if "temporarily unavailable" in lowered or "no servers available" in lowered:
@@ -149,16 +161,48 @@ class JetStreamConsumerManager:
                 )
             else:
                 logger.error("Failed to connect JetStream consumer: %s", e)
+            await self._cleanup_failed_connect()
             return False
+
+    async def _cleanup_failed_connect(self) -> None:
+        """Reset partially initialized connection state after connect failure."""
+        self._connected = False
+        if self._consumer_task:
+            self._consumer_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, RuntimeError, ValueError):
+                await self._consumer_task
+            self._consumer_task = None
+        if self._subscription:
+            try:
+                await self._subscription.unsubscribe()
+            except (RuntimeError, ValueError) as exc:
+                logger.debug("NATS cleanup (best-effort): %s", exc)
+        self._subscription = None
+        self._jetstream = None
+
+    async def _delete_consumer_best_effort(self) -> None:
+        """Delete this connection's durable consumer when it exists."""
+        if not self._jetstream or not self._durable_name:
+            return
+        try:
+            await self._jetstream.delete_consumer(
+                JetStreamConstants.STREAM_NAME,
+                self._durable_name,
+            )
+        except JSConsumerNotFoundError:
+            logger.debug("NATS cleanup skipped missing consumer: %s", self._durable_name)
+        except (RuntimeError, ValueError, JSAPIError) as exc:
+            logger.debug("NATS cleanup (best-effort): %s", exc)
 
     async def disconnect(self) -> None:
         """Disconnect and cleanup consumer."""
         self._closed = True
+        self._connected = False
 
         # Cancel background consumer task
         if self._consumer_task:
             self._consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
+            with contextlib.suppress(asyncio.CancelledError, RuntimeError, ValueError):
                 await self._consumer_task
             self._consumer_task = None
 
@@ -167,14 +211,11 @@ class JetStreamConsumerManager:
                 await self._subscription.unsubscribe()
             except (RuntimeError, ValueError) as exc:
                 logger.debug("NATS cleanup (best-effort): %s", exc)
-        if self._jetstream and self._durable_name:
-            try:
-                await self._jetstream.delete_consumer(JetStreamConstants.STREAM_NAME, self._durable_name)
-            except (RuntimeError, ValueError) as exc:
-                logger.debug("NATS cleanup (best-effort): %s", exc)
+        await self._delete_consumer_best_effort()
         self._subscription = None
         self._jetstream = None
         self._pending_acks.clear()
+        self._dropped_messages = 0
 
     async def _consume_messages_loop(self) -> None:
         """Background task that continuously consumes messages from JetStream into internal queue.
@@ -233,12 +274,14 @@ class JetStreamConsumerManager:
                                 await asyncio.wait_for(self._message_queue.put(envelope), timeout=5.0)
                             except asyncio.TimeoutError:
                                 # Give up after timeout - message is dropped
+                                self._dropped_messages += 1
                                 _log_throttled(
                                     "warning",
                                     "queue_full_timeout",
                                     "JetStream message dropped due to queue full: %s",
                                     self.client_id,
                                 )
+                                self._pending_acks.pop(cursor, None)
                                 await msg.ack()  # Still ACK to avoid redelivery
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse JetStream message: {e}")
@@ -291,15 +334,22 @@ class JetStreamConsumerManager:
 
         ack_targets = [seq for seq in self._pending_acks if seq <= cursor]
         for seq in sorted(ack_targets):
-            msg = self._pending_acks.pop(seq, None)
+            msg = self._pending_acks.get(seq)
             if msg is None:
                 continue
             try:
                 await msg.ack()
             except (RuntimeError, ValueError):
                 logger.debug("Failed to ack JetStream message seq=%s", seq, exc_info=True)
+                continue
+            self._pending_acks.pop(seq, None)
+            self.current_cursor = max(self.current_cursor, seq)
 
-        self.current_cursor = max(self.current_cursor, cursor)
+    def consume_dropped(self) -> int:
+        """Consume and reset queue-overflow drop count for this connection."""
+        dropped = int(self._dropped_messages)
+        self._dropped_messages = 0
+        return dropped
 
     async def fetch_historical(self, limit: int = 200) -> list[RuntimeEventEnvelope]:
         """Keep compatibility with previous helper API."""

@@ -45,6 +45,7 @@ state_owners: []
 
 effects_allowed:
   - fs.read:workspace/**
+  - process.spawn:code_intelligence/engine/**
 
 verification:
   tests: []

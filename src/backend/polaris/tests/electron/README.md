@@ -9,6 +9,13 @@
 ## Commands
 - Run all Electron E2E tests:
   - `npm run test:e2e`
+- Run smoke-level Electron checks:
+  - `npm run test:e2e:smoke`
+- Run runtime visibility/readiness checks:
+  - `npm run test:e2e:runtime`
+- Run real PM/Director acceptance checks:
+  - PowerShell: `$env:KERNELONE_E2E_USE_REAL_SETTINGS='1'; npm run test:e2e:acceptance`
+  - POSIX shell: `KERNELONE_E2E_USE_REAL_SETTINGS=1 npm run test:e2e:acceptance`
 - Run panel regression template only:
   - `npm run test:e2e:panel`
 - Run one-line natural language panel task:
@@ -17,10 +24,6 @@
   - `npm run auto:fix:panel -- "打开设置面板并验证主题切换按钮可见"`
 - Run the real PM/Director flow with unattended Claude repair rounds:
   - `npm run auto:fix:real-flow`
-- Run hybrid stack (Playwright main + Computer Use + Airtest/SikuliX fallback):
-  - `npm run test:e2e:hybrid -- "打开设置面板并验证主题切换按钮可见"`
-- Run hybrid stack in continuous retry mode:
-  - `npm run auto:fix:hybrid -- "打开设置面板并验证主题切换按钮可见"`
 - Dry-run OpenAI Computer Use fallback adapter:
   - `npm run computer:openai -- --dry-run --prompt "打开设置面板并验证某字段可输入"`
 
@@ -56,7 +59,7 @@ Example:
 
 ```bash
 E2E_PANEL_TRIGGER_SELECTOR='[data-testid="open-settings"]' \
-E2E_PANEL_TARGET_SELECTOR='[data-testid="settings-modal"]' \
+E2E_PANEL_TARGET_SELECTOR='[data-settings-modal]' \
 E2E_PANEL_STRICT_ERRORS=1 \
 npm run test:e2e:panel
 ```
@@ -73,7 +76,5 @@ npm run test:e2e:panel
 - Real-flow auto-fix writes UTF-8 prompt/output/audit files to `.polaris/logs/autofix_real_flow_*`.
 - Auto-fix requires local Codex CLI auth (`codex login`) before execution.
 - Real-flow auto-fix requires local Claude CLI auth (`claude`) and real Polaris settings because it forces `KERNELONE_E2E_USE_REAL_SETTINGS=1`.
-- Hybrid runner writes a UTF-8 audit JSON to `.polaris/logs/hybrid_*.audit.json`.
-- Hybrid fallback command wiring guide: `docs/testing/HYBRID_UI_AUTOMATION.md`.
 - 默认会阻断 LLM 相关测试任务；仅当显式设置 `KERNELONE_E2E_ALLOW_LLM_TESTS=1` 才允许执行。
 - OpenAI Base URL 使用环境变量 `OPENAI_BASE_URL`（默认 `https://api.openai.com/v1`）。

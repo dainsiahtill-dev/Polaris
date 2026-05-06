@@ -16,7 +16,7 @@ import warnings
 
 # TODO: Cross-cell internal import — FileApplyService is not yet exposed in
 # director.tasking.public. Add to public contract when stabilised.
-from polaris.cells.director.tasking.internal.file_apply_service import (
+from polaris.cells.director.tasking.public import (
     FileApplyService,
 )
 

@@ -6,6 +6,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 import { settingsService } from '@/services/api';
 import type { BackendSettings } from '@/app/types/appContracts';
 import { QueryKeys } from '@/lib/queryClient';
@@ -31,6 +32,8 @@ export function useSettings(options: UseSettingsOptions = {}) {
   const { autoLoad = true, staleTime } = options;
 
   const queryClient = useQueryClient();
+  const latestUpdateIdRef = useRef(0);
+  const stableSettingsRef = useRef<BackendSettings | null>(null);
 
   // Query for settings
   const {
@@ -62,10 +65,17 @@ export function useSettings(options: UseSettingsOptions = {}) {
       return result.data as BackendSettings;
     },
     onSuccess: (newSettings) => {
+      stableSettingsRef.current = newSettings;
       // Update the settings query cache with new data
       queryClient.setQueryData<BackendSettings>(SETTINGS_QUERY_KEY, newSettings);
     },
   });
+
+  useEffect(() => {
+    if (data && !updateMutation.isPending) {
+      stableSettingsRef.current = data;
+    }
+  }, [data, updateMutation.isPending]);
 
   /**
    * Force reload settings (bypass cache)
@@ -88,6 +98,7 @@ export function useSettings(options: UseSettingsOptions = {}) {
    * for synchronous UI feedback, then syncs with server response
    */
   const update = async (updates: Partial<BackendSettings>) => {
+    const updateId = ++latestUpdateIdRef.current;
     // Optimistically update the cache with merged updates
     const currentData = queryClient.getQueryData<BackendSettings>(SETTINGS_QUERY_KEY);
     const optimisticData = { ...currentData, ...updates } as BackendSettings;
@@ -98,8 +109,14 @@ export function useSettings(options: UseSettingsOptions = {}) {
       const result = await updateMutation.mutateAsync(updates);
       return result;
     } catch (error) {
-      // Revert optimistic update on failure
-      queryClient.setQueryData<BackendSettings>(SETTINGS_QUERY_KEY, currentData ?? undefined);
+      // Only the latest failed request can rollback to avoid stale failures
+      // overwriting newer successful updates.
+      if (updateId === latestUpdateIdRef.current) {
+        queryClient.setQueryData<BackendSettings>(
+          SETTINGS_QUERY_KEY,
+          stableSettingsRef.current ?? currentData ?? undefined
+        );
+      }
       throw error;
     }
   };

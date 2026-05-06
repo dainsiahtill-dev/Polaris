@@ -126,13 +126,81 @@ class FactorySnapshotsResponse(BaseModel):
     total: int
 
 
+class FactoryRunEventsResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    events: list[dict[str, Any]]
+
+
+class FactoryRunArtifactItem(BaseModel):
+    model_config = {"extra": "allow"}
+    name: str
+    path: str
+    size: int
+
+
+class FactoryRunArtifactsResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    run_id: str
+    artifacts: list[FactoryRunArtifactItem]
+    summary_md: str | None = None
+    summary_json: dict[str, Any] | None = None
+
+
+class FactoryRunAuditBundleResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    run_id: str
+    status: str | None = None
+    phase: str | None = None
+    progress: float | None = None
+    current_stage: str | None = None
+    last_successful_stage: str | None = None
+    gates: list[dict[str, Any]] | None = None
+    failure: dict[str, Any] | None = None
+    events_tail: list[dict[str, Any]] | None = None
+    artifacts: list[FactoryRunArtifactItem] | None = None
+    summary_md: str | None = None
+    summary_json: dict[str, Any] | None = None
+    generated_at: str | None = None
+    evidence_counts: dict[str, Any] | None = None
+
+
 class SessionDeleteResponse(BaseModel):
     ok: bool
+
+
+class ConversationResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    id: str | None = None
+    title: str | None = None
+    role: str | None = None
+    workspace: str | None = None
+    context_config: dict[str, Any] | None = None
+    message_count: int | None = None
+    created_at: Any | None = None
+    updated_at: Any | None = None
+    messages: list[dict[str, Any]] | None = None
+
+
+class ConversationListResponse(BaseModel):
+    conversations: list[dict[str, Any]]
+    total: int
 
 
 class ConversationDeleteResponse(BaseModel):
     ok: bool
     deleted_id: str
+
+
+class MessageResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    id: str | None = None
+    conversation_id: str | None = None
+    sequence: int | None = None
+    role: str | None = None
+    content: str | None = None
+    thinking: str | None = None
+    meta: dict[str, Any] | None = None
+    created_at: Any | None = None
 
 
 class MessageBatchResponse(BaseModel):
@@ -484,6 +552,64 @@ class RoleCapabilitiesResponse(BaseModel):
     capabilities: dict[str, Any]
 
 
+class VisionStatusResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    pil_available: bool
+    advanced_available: bool
+    model_loaded: bool
+
+
+class VisionAnalyzeResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+
+class SchedulerStatusResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    available: bool
+    active: bool
+    reason: str
+    message: str | None = None
+
+
+class CodeMapResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    points: list[dict[str, Any]]
+    mode: str
+    message: str | None = None
+
+
+class CodeIndexResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    result: list[dict[str, Any]] | dict[str, Any] | None = None
+    ok: bool
+    error: str | None = None
+
+
+class CodeSearchResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    results: list[dict[str, Any]]
+    ok: bool
+    error: str | None = None
+
+
+class MCPStatusResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    available: bool
+    healthy: bool
+    server_path: str | None = None
+    server_version: str | None = None
+    tools: list[str]
+    protocol: str
+    error: str | None = None
+    health_check: dict[str, Any] | None = None
+
+
+class DirectorCapabilitiesResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    role: str
+    capabilities: list[Any]
+
+
 class LLMConfigResponse(BaseModel):
     model_config = {"extra": "allow"}
 
@@ -561,6 +687,23 @@ class HealthResponse(BaseModel):
     director: dict[str, Any]
 
 
+class PrimaryHealthResponse(BaseModel):
+    status: str
+    service: str
+    version: str
+
+
+class PrimaryReadyResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    ready: bool
+    checks: dict[str, str]
+
+
+class PrimaryLiveResponse(BaseModel):
+    alive: bool
+    timestamp: str
+
+
 class SettingsResponse(BaseModel):
     model_config = {"extra": "allow"}
 
@@ -580,11 +723,25 @@ class ShutdownResponse(BaseModel):
 
 
 class ReadyResponse(BaseModel):
+    model_config = {"extra": "allow"}
     ready: bool
+    checks: dict[str, str] | None = None
 
 
 class LiveResponse(BaseModel):
     live: bool
+
+
+# ---- Test response models ----
+
+
+class LlmTestReportResponse(BaseModel):
+    model_config = {"extra": "allow"}
+
+
+class LlmTestTranscriptResponse(BaseModel):
+    ok: bool
+    content: str
 
 
 # ---- Docs init response models ----
@@ -786,6 +943,7 @@ class MemosListResponse(BaseModel):
 
 class OllamaModelsResponse(BaseModel):
     model_config = {"extra": "allow"}
+    models: list[str] = []
 
 
 class OllamaStopResponse(BaseModel):

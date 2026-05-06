@@ -10,9 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends
 from polaris.cells.roles.session.public import Conversation, ConversationMessage, get_db
-from pydantic import BaseModel, Field
-from sqlalchemy import desc
-
 from polaris.delivery.http.schemas.common import (
     ConversationDeleteResponse,
     ConversationListResponse,
@@ -21,13 +18,15 @@ from polaris.delivery.http.schemas.common import (
     MessageDeleteResponse,
     MessageResponse,
 )
+from pydantic import BaseModel, Field
+from sqlalchemy import desc
 
 from ._shared import StructuredHTTPException, require_auth
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-router = APIRouter(prefix="/v2/conversations", tags=["conversations"])
+router = APIRouter(tags=["conversations"])
 
 
 # 请求/响应模型
@@ -66,8 +65,8 @@ async def get_db_session():
 # API 端点
 
 
-@router.post("", response_model=ConversationResponse, dependencies=[Depends(require_auth)])
-async def create_conversation(
+@router.post("/v2/conversations", response_model=ConversationResponse, dependencies=[Depends(require_auth)])
+async def create_conversation_v2(
     data: ConversationCreate,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -93,7 +92,7 @@ async def create_conversation(
             meta=json.dumps(data.initial_message.meta) if data.initial_message.meta else None,
         )
         db.add(msg)
-        conversation.message_count = 1
+        conversation.message_count = 1  # type: ignore[assignment]
 
     db.commit()
     db.refresh(conversation)
@@ -101,8 +100,18 @@ async def create_conversation(
     return conversation.to_dict(include_messages=True)
 
 
-@router.get("", response_model=ConversationListResponse, dependencies=[Depends(require_auth)])
-async def list_conversations(
+@router.post("/conversations", response_model=ConversationResponse, dependencies=[Depends(require_auth)])
+async def create_conversation(
+    data: ConversationCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """创建新对话会话 (deprecated)"""
+    return await create_conversation_v2(data, db)
+
+
+@router.get("/v2/conversations", response_model=ConversationListResponse, dependencies=[Depends(require_auth)])
+async def list_conversations_v2(
     role: str | None = None,
     workspace: str | None = None,
     limit: int = 50,
@@ -126,8 +135,23 @@ async def list_conversations(
     }
 
 
-@router.get("/{conversation_id}", response_model=ConversationResponse, dependencies=[Depends(require_auth)])
-async def get_conversation(
+@router.get("/conversations", response_model=ConversationListResponse, dependencies=[Depends(require_auth)])
+async def list_conversations(
+    role: str | None = None,
+    workspace: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """列出对话会话 (deprecated)"""
+    return await list_conversations_v2(role, workspace, limit, offset, db)
+
+
+@router.get(
+    "/v2/conversations/{conversation_id}", response_model=ConversationResponse, dependencies=[Depends(require_auth)]
+)
+async def get_conversation_v2(
     conversation_id: str,
     include_messages: bool = True,
     message_limit: int = 1000,
@@ -147,8 +171,24 @@ async def get_conversation(
     )
 
 
-@router.put("/{conversation_id}", response_model=ConversationResponse, dependencies=[Depends(require_auth)])
-async def update_conversation(
+@router.get(
+    "/conversations/{conversation_id}", response_model=ConversationResponse, dependencies=[Depends(require_auth)]
+)
+async def get_conversation(
+    conversation_id: str,
+    include_messages: bool = True,
+    message_limit: int = 1000,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """获取单个对话详情 (deprecated)"""
+    return await get_conversation_v2(conversation_id, include_messages, message_limit, db)
+
+
+@router.put(
+    "/v2/conversations/{conversation_id}", response_model=ConversationResponse, dependencies=[Depends(require_auth)]
+)
+async def update_conversation_v2(
     conversation_id: str,
     data: ConversationUpdate,
     db: Session = Depends(get_db),
@@ -162,9 +202,9 @@ async def update_conversation(
         raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
     if data.title is not None:
-        conversation.title = data.title
+        conversation.title = data.title  # type: ignore[assignment]
     if data.context_config is not None:
-        conversation.context_config = json.dumps(data.context_config)
+        conversation.context_config = json.dumps(data.context_config)  # type: ignore[assignment]
 
     db.commit()
     db.refresh(conversation)
@@ -172,8 +212,25 @@ async def update_conversation(
     return conversation.to_dict(include_messages=False)
 
 
-@router.delete("/{conversation_id}", response_model=ConversationDeleteResponse, dependencies=[Depends(require_auth)])
-async def delete_conversation(
+@router.put(
+    "/conversations/{conversation_id}", response_model=ConversationResponse, dependencies=[Depends(require_auth)]
+)
+async def update_conversation(
+    conversation_id: str,
+    data: ConversationUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """更新对话信息 (deprecated)"""
+    return await update_conversation_v2(conversation_id, data, db)
+
+
+@router.delete(
+    "/v2/conversations/{conversation_id}",
+    response_model=ConversationDeleteResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def delete_conversation_v2(
     conversation_id: str,
     hard: bool = False,
     db: Session = Depends(get_db),
@@ -189,18 +246,33 @@ async def delete_conversation(
     if hard:
         db.delete(conversation)
     else:
-        conversation.is_deleted = 1
+        conversation.is_deleted = 1  # type: ignore[assignment]
 
     db.commit()
 
     return {"ok": True, "deleted_id": conversation_id}
 
 
+@router.delete(
+    "/conversations/{conversation_id}", response_model=ConversationDeleteResponse, dependencies=[Depends(require_auth)]
+)
+async def delete_conversation(
+    conversation_id: str,
+    hard: bool = False,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """删除对话（软删除或硬删除）(deprecated)"""
+    return await delete_conversation_v2(conversation_id, hard, db)
+
+
 # 消息管理
 
 
-@router.post("/{conversation_id}/messages", response_model=MessageResponse, dependencies=[Depends(require_auth)])
-async def add_message(
+@router.post(
+    "/v2/conversations/{conversation_id}/messages", response_model=MessageResponse, dependencies=[Depends(require_auth)]
+)
+async def add_message_v2(
     conversation_id: str,
     data: MessageCreate,
     db: Session = Depends(get_db),
@@ -227,7 +299,7 @@ async def add_message(
     db.add(msg)
 
     # 更新消息计数和时间戳
-    conversation.message_count = max_seq + 1
+    conversation.message_count = max_seq + 1  # type: ignore[assignment]
 
     db.commit()
     db.refresh(msg)
@@ -235,8 +307,25 @@ async def add_message(
     return msg.to_dict()
 
 
-@router.get("/{conversation_id}/messages", response_model=list[MessageResponse], dependencies=[Depends(require_auth)])
-async def list_messages(
+@router.post(
+    "/conversations/{conversation_id}/messages", response_model=MessageResponse, dependencies=[Depends(require_auth)]
+)
+async def add_message(
+    conversation_id: str,
+    data: MessageCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """添加消息到对话 (deprecated)"""
+    return await add_message_v2(conversation_id, data, db)
+
+
+@router.get(
+    "/v2/conversations/{conversation_id}/messages",
+    response_model=list[MessageResponse],
+    dependencies=[Depends(require_auth)],
+)
+async def list_messages_v2(
     conversation_id: str,
     limit: int = 1000,
     offset: int = 0,
@@ -255,12 +344,28 @@ async def list_messages(
     return [m.to_dict() for m in messages]
 
 
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=list[MessageResponse],
+    dependencies=[Depends(require_auth)],
+)
+async def list_messages(
+    conversation_id: str,
+    limit: int = 1000,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    # DEPRECATED
+    """列出对话消息 (deprecated)"""
+    return await list_messages_v2(conversation_id, limit, offset, db)
+
+
 @router.post(
-    "/{conversation_id}/messages/batch",
+    "/v2/conversations/{conversation_id}/messages/batch",
     response_model=MessageBatchResponse,
     dependencies=[Depends(require_auth)],
 )
-async def add_messages_batch(
+async def add_messages_batch_v2(
     conversation_id: str,
     messages: list[MessageCreate],
     db: Session = Depends(get_db),
@@ -287,18 +392,33 @@ async def add_messages_batch(
         )
         db.add(msg)
 
-    conversation.message_count = max_seq + len(messages)
+    conversation.message_count = max_seq + len(messages)  # type: ignore[assignment]
     db.commit()
 
     return {"ok": True, "added_count": len(messages)}
 
 
+@router.post(
+    "/conversations/{conversation_id}/messages/batch",
+    response_model=MessageBatchResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def add_messages_batch(
+    conversation_id: str,
+    messages: list[MessageCreate],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """批量添加消息（用于保存完整对话）(deprecated)"""
+    return await add_messages_batch_v2(conversation_id, messages, db)
+
+
 @router.delete(
-    "/{conversation_id}/messages/{message_id}",
+    "/v2/conversations/{conversation_id}/messages/{message_id}",
     response_model=MessageDeleteResponse,
     dependencies=[Depends(require_auth)],
 )
-async def delete_message(
+async def delete_message_v2(
     conversation_id: str,
     message_id: str,
     db: Session = Depends(get_db),
@@ -326,8 +446,23 @@ async def delete_message(
             db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count()
             - 1  # 因为还没 commit
         )
-        conversation.message_count = count_value
+        conversation.message_count = count_value  # type: ignore[assignment]
 
     db.commit()
 
     return {"ok": True, "deleted_id": message_id}
+
+
+@router.delete(
+    "/conversations/{conversation_id}/messages/{message_id}",
+    response_model=MessageDeleteResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def delete_message(
+    conversation_id: str,
+    message_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # DEPRECATED
+    """删除单条消息 (deprecated)"""
+    return await delete_message_v2(conversation_id, message_id, db)

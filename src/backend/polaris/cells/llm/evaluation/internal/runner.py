@@ -255,7 +255,7 @@ class EvaluationRunner:
             return {}
         try:
             from polaris.bootstrap.config import Settings
-            from polaris.cells.llm.provider_config.internal.provider_context import (
+            from polaris.cells.llm.provider_config.public import (
                 resolve_provider_request_context,
             )
             from polaris.cells.llm.provider_runtime.public.service import resolve_provider_api_key

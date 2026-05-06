@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import warnings
 from typing import Any
@@ -18,9 +19,79 @@ from polaris.cells.runtime.task_market.public.service import get_task_market_ser
 
 logger = logging.getLogger(__name__)
 
+_NO_CHANGE_FLAGS = frozenset(
+    {
+        "allow_no_changes",
+        "no_changes_expected",
+        "allow_empty_changed_files",
+        "director_noop_allowed",
+    }
+)
+_NO_CHANGE_MODES = frozenset(
+    {
+        "noop",
+        "no_op",
+        "no-op",
+        "read_only",
+        "read-only",
+        "inspection",
+        "inspection_only",
+        "analysis_only",
+    }
+)
+
 
 class UnrecoverableExecutionError(RuntimeError):
     """Execution failure that should be dead-lettered and compensated."""
+
+
+def _normalize_string_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, (str, os.PathLike)):
+        raw_values: list[Any] = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        raw_values = list(raw)
+    else:
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_values:
+        if not isinstance(item, (str, os.PathLike)):
+            continue
+        token = str(item).strip()
+        if not token:
+            continue
+        key = token.replace("\\", "/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(token)
+    return normalized
+
+
+def _truthy_payload_flag(payload: dict[str, Any], key: str) -> bool:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def _allows_no_execution_evidence(payload: dict[str, Any]) -> bool:
+    for key in _NO_CHANGE_FLAGS:
+        if _truthy_payload_flag(payload, key):
+            return True
+
+    for key in ("execution_mode", "task_mode", "mode", "change_mode"):
+        mode = str(payload.get(key) or "").strip().lower()
+        if mode in _NO_CHANGE_MODES:
+            return True
+    return False
 
 
 class ScopeConflictDetector:
@@ -151,8 +222,7 @@ class DirectorExecutionConsumer:
         lease_renew_interval_seconds: float | None = None,
     ) -> None:
         warnings.warn(
-            "DirectorExecutionConsumer is deprecated. Use DirectorPool instead. "
-            "Will be removed after 2026-06-30.",
+            "DirectorExecutionConsumer is deprecated. Use DirectorPool instead. Will be removed after 2026-06-30.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -241,6 +311,14 @@ class DirectorExecutionConsumer:
             heartbeat.start()
             # Execute (placeholder — actual execution delegated to DirectorAgent)
             exec_result = self._execute_task(task_id, payload, lease_token)
+            changed_files = _normalize_string_list(exec_result.get("changed_files"))
+            if not changed_files and not _allows_no_execution_evidence(payload):
+                return self._missing_execution_evidence_result(
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    blueprint_id=blueprint_id,
+                    payload=payload,
+                )
             registered_actions = self._register_compensation_actions(
                 task_id=task_id,
                 lease_token=lease_token,
@@ -257,7 +335,11 @@ class DirectorExecutionConsumer:
                     summary=f"Execution complete for {task_id}",
                     metadata={
                         "blueprint_id": blueprint_id,
-                        "changed_files": exec_result.get("changed_files", []),
+                        "changed_files": changed_files,
+                        "director_evidence_status": (
+                            "changed_files_reported" if changed_files else "explicit_no_changes"
+                        ),
+                        "director_files_changed_count": len(changed_files),
                         "exec_duration_seconds": exec_result.get("duration", 0),
                     },
                 )
@@ -354,6 +436,32 @@ class DirectorExecutionConsumer:
                 }
             )
         return tuple(actions)
+
+    def _missing_execution_evidence_result(
+        self,
+        *,
+        task_id: str,
+        lease_token: str,
+        blueprint_id: Any,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._svc.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=self._workspace,
+                task_id=task_id,
+                lease_token=lease_token,
+                error_code="EXEC_NO_EVIDENCE",
+                error_message="Director execution produced no changed_files evidence",
+                requeue_stage="pending_exec",
+                metadata={
+                    "blueprint_id": str(blueprint_id or ""),
+                    "target_files": _normalize_string_list(payload.get("target_files")),
+                    "scope_paths": _normalize_string_list(payload.get("scope_paths")),
+                    "reason": "director_no_changed_files_evidence",
+                },
+            )
+        )
+        return {"task_id": task_id, "ok": False, "reason": "missing_execution_evidence"}
 
     def run(self) -> None:
         """Continuously poll and process PENDING_EXEC tasks until stop() is called."""

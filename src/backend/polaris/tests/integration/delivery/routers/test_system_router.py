@@ -28,8 +28,8 @@ def _build_app() -> FastAPI:
 class TestSystemRouter:
     """Contract tests for the system router."""
 
-    async def test_health_check_returns_200(self) -> None:
-        """GET /health returns 200 with health status."""
+    async def test_v2_health_check_returns_200(self) -> None:
+        """GET /v2/health returns 200 with enhanced health status."""
         app = _build_app()
         with (
             patch(
@@ -53,7 +53,7 @@ class TestSystemRouter:
             mock_get_container.return_value = mock_container
 
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.get("/health")
+                response = await client.get("/v2/health")
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()

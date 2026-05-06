@@ -15,6 +15,22 @@ vi.mock('@/services/api', () => ({
 
 import { useSettings } from './useSettings';
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -132,6 +148,85 @@ describe('useSettings', () => {
     // Settings should reflect the update
     await waitFor(() => {
       expect(result.current.settings?.workspace).toBe('X:/workspace-updated');
+    });
+  });
+
+  it('does not rollback newer successful update when older update fails', async () => {
+    getMock.mockResolvedValueOnce({
+      ok: true,
+      data: { workspace: 'X:/workspace-initial' },
+    });
+
+    const olderUpdate = createDeferred<{ ok: true; data: { workspace: string } }>();
+    const newerUpdate = createDeferred<{ ok: true; data: { workspace: string } }>();
+    updateMock
+      .mockImplementationOnce(() => olderUpdate.promise)
+      .mockImplementationOnce(() => newerUpdate.promise);
+
+    const { result } = renderHook(() => useSettings(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.settings?.workspace).toBe('X:/workspace-initial');
+    });
+
+    let olderPromise!: Promise<unknown>;
+    let newerPromise!: Promise<unknown>;
+    act(() => {
+      olderPromise = result.current.update({ workspace: 'X:/workspace-older' });
+      newerPromise = result.current.update({ workspace: 'X:/workspace-newer' });
+    });
+
+    await act(async () => {
+      newerUpdate.resolve({
+        ok: true,
+        data: { workspace: 'X:/workspace-newer' },
+      });
+      await newerPromise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings?.workspace).toBe('X:/workspace-newer');
+    });
+
+    await act(async () => {
+      olderUpdate.reject(new Error('Older update failed'));
+      await expect(olderPromise).rejects.toThrow('Older update failed');
+    });
+
+    expect(result.current.settings?.workspace).toBe('X:/workspace-newer');
+  });
+
+  it('rolls back to last stable snapshot when latest update fails after delay', async () => {
+    getMock.mockResolvedValueOnce({
+      ok: true,
+      data: { workspace: 'X:/workspace-initial' },
+    });
+
+    const delayedFailure = createDeferred<{ ok: true; data: { workspace: string } }>();
+    updateMock.mockImplementationOnce(() => delayedFailure.promise);
+
+    const { result } = renderHook(() => useSettings(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.settings?.workspace).toBe('X:/workspace-initial');
+    });
+
+    let updatePromise!: Promise<unknown>;
+    act(() => {
+      updatePromise = result.current.update({ workspace: 'X:/workspace-failing' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings?.workspace).toBe('X:/workspace-failing');
+    });
+
+    await act(async () => {
+      delayedFailure.reject(new Error('Delayed failure'));
+      await expect(updatePromise).rejects.toThrow('Delayed failure');
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings?.workspace).toBe('X:/workspace-initial');
     });
   });
 });

@@ -415,13 +415,13 @@ export function ControlPanel({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             {onEnterPMWorkspace && (
-              <DropdownMenuItem onClick={onEnterPMWorkspace}>
+              <DropdownMenuItem data-testid="enter-pm-workspace" onClick={onEnterPMWorkspace}>
                 <Crown className="size-4 mr-2" />
                 PM 工作区
               </DropdownMenuItem>
             )}
             {onEnterDirectorWorkspace && (
-              <DropdownMenuItem onClick={onEnterDirectorWorkspace}>
+              <DropdownMenuItem data-testid="enter-director-workspace" onClick={onEnterDirectorWorkspace}>
                 <Hammer className="size-4 mr-2" />
                 Director 工作区
               </DropdownMenuItem>

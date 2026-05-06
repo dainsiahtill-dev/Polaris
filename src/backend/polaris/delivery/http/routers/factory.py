@@ -43,6 +43,11 @@ from polaris.delivery.http.routers.sse_utils import (
     create_sse_jetstream_consumer,
     sse_jetstream_generator,
 )
+from polaris.delivery.http.schemas import (
+    FactoryRunArtifactsResponse,
+    FactoryRunAuditBundleResponse,
+    FactoryRunEventsResponse,
+)
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.storage import resolve_logical_path
 from polaris.kernelone.trace import create_task_with_context
@@ -54,7 +59,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v2/factory", tags=["factory"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["factory"], dependencies=[Depends(require_auth)])
 
 STAGE_TO_PHASE: dict[str, RunPhase] = {
     "docs_generation": RunPhase.ARCHITECT,
@@ -872,14 +877,15 @@ async def _execute_run_with_service(
             await service.complete_run(run_id, success=False)
 
 
-@router.get("/runs")
-async def list_factory_runs(
-    limit: int = 50,
-    offset: int = 0,
-    workspace: str | None = None,
-    state: AppState = Depends(get_state),
+# ---- Core implementations ----
+
+
+async def _list_factory_runs_core(
+    limit: int,
+    offset: int,
+    workspace: str | None,
+    state: AppState,
 ) -> FactoryRunList:
-    """List factory runs for the current workspace."""
     effective_workspace = _resolve_workspace(state, workspace)
     service = _get_service(effective_workspace)
     runs_data = await service.list_runs()
@@ -899,12 +905,10 @@ async def list_factory_runs(
     )
 
 
-@router.post("/runs")
-async def start_factory_run(
+async def _start_factory_run_core(
     payload: FactoryStartRequest,
-    state: AppState = Depends(get_state),
+    state: AppState,
 ) -> FactoryRunStatusContract:
-    """Create and start an unattended factory run."""
     workspace = _resolve_workspace(state, payload.workspace)
     state.settings.workspace = Path(workspace)
     sync_process_settings_environment(state.settings)
@@ -927,12 +931,10 @@ async def start_factory_run(
     return _map_service_run_to_contract(run)
 
 
-@router.get("/runs/{run_id}")
-async def get_factory_run_status(
+async def _get_factory_run_status_core(
     run_id: str,
-    state: AppState = Depends(get_state),
+    state: AppState,
 ) -> FactoryRunStatusContract:
-    """Query run status."""
     service = _get_service(_resolve_workspace(state))
     run = await service.get_run(run_id)
     if run is None:
@@ -940,29 +942,25 @@ async def get_factory_run_status(
     return _map_service_run_to_contract(run)
 
 
-@router.get("/runs/{run_id}/events")
-async def get_factory_run_events(
+async def _get_factory_run_events_core(
     run_id: str,
-    limit: int = 100,
-    state: AppState = Depends(get_state),
-) -> list[dict[str, Any]]:
-    """Get append-only audit events for a run."""
+    limit: int,
+    state: AppState,
+) -> FactoryRunEventsResponse:
     service = _get_service(_resolve_workspace(state))
     run = await service.get_run(run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     events = await service.get_run_events(run_id)
-    return events[-limit:]
+    return FactoryRunEventsResponse(events=events[-limit:])
 
 
-@router.get("/runs/{run_id}/audit-bundle")
-async def get_factory_run_audit_bundle(
+async def _get_factory_run_audit_bundle_core(
     run_id: str,
-    limit: int = 100,
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    """Get a machine-readable audit bundle for a factory run."""
+    limit: int,
+    state: AppState,
+) -> FactoryRunAuditBundleResponse:
     workspace = _resolve_workspace(state)
     service = _get_service(workspace)
     run = await service.get_run(run_id)
@@ -971,20 +969,19 @@ async def get_factory_run_audit_bundle(
 
     events = await service.get_run_events(run_id)
     artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
-    return _build_factory_audit_bundle(
+    bundle = _build_factory_audit_bundle(
         run=run,
         events=events,
         artifacts=artifacts,
         events_tail_limit=limit,
     )
+    return FactoryRunAuditBundleResponse(**bundle)
 
 
-@router.get("/runs/{run_id}/stream")
-async def stream_factory_run_events(
+async def _stream_factory_run_events_core(
     run_id: str,
-    state: AppState = Depends(get_state),
+    state: AppState,
 ) -> StreamingResponse:
-    """Stream canonical factory status and audit events via SSE."""
     workspace = _resolve_workspace(state)
     workspace_key = Path(workspace).name
 
@@ -1000,7 +997,7 @@ async def stream_factory_run_events(
         )
 
         if consumer.is_connected or await consumer.connect():
-            logger.info(f"Using JetStream consumer for factory stream: {subject}")
+            logger.info("Using JetStream consumer for factory stream: %s", subject)
             return StreamingResponse(
                 sse_jetstream_generator(consumer),
                 media_type="text/event-stream",
@@ -1011,7 +1008,7 @@ async def stream_factory_run_events(
                 },
             )
     except (RuntimeError, ValueError) as e:
-        logger.warning(f"JetStream consumer failed, falling back to direct mode: {e}")
+        logger.warning("JetStream consumer failed, falling back to direct mode: %s", e)
 
     # Fallback to direct polling mode (original implementation)
     service = _get_service(workspace)
@@ -1058,13 +1055,11 @@ async def stream_factory_run_events(
     )
 
 
-@router.post("/runs/{run_id}/control")
-async def control_factory_run(
+async def _control_factory_run_core(
     run_id: str,
     payload: FactoryControlRequest,
-    state: AppState = Depends(get_state),
+    state: AppState,
 ) -> FactoryRunStatusContract:
-    """Control a run. This phase only supports cancel."""
     service = _get_service(_resolve_workspace(state))
     run = await service.get_run(run_id)
     if run is None:
@@ -1081,12 +1076,10 @@ async def control_factory_run(
     )
 
 
-@router.get("/runs/{run_id}/artifacts")
-async def get_factory_run_artifacts(
+async def _get_factory_run_artifacts_core(
     run_id: str,
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    """List artifact files for a run."""
+    state: AppState,
+) -> FactoryRunArtifactsResponse:
     workspace = _resolve_workspace(state)
     service = _get_service(workspace)
     run = await service.get_run(run_id)
@@ -1094,4 +1087,165 @@ async def get_factory_run_artifacts(
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
-    return _build_artifacts_response(run=run, artifacts=artifacts)
+    response_data = _build_artifacts_response(run=run, artifacts=artifacts)
+    return FactoryRunArtifactsResponse(**response_data)
+
+
+# ---- v2 routes (canonical) ----
+
+
+@router.get("/v2/factory/runs", response_model=FactoryRunList)
+async def list_factory_runs_v2(
+    limit: int = 50,
+    offset: int = 0,
+    workspace: str | None = None,
+    state: AppState = Depends(get_state),
+) -> FactoryRunList:
+    """List factory runs for the current workspace."""
+    return await _list_factory_runs_core(limit=limit, offset=offset, workspace=workspace, state=state)
+
+
+@router.post("/v2/factory/runs", response_model=FactoryRunStatusContract)
+async def start_factory_run_v2(
+    payload: FactoryStartRequest,
+    state: AppState = Depends(get_state),
+) -> FactoryRunStatusContract:
+    """Create and start an unattended factory run."""
+    return await _start_factory_run_core(payload=payload, state=state)
+
+
+@router.get("/v2/factory/runs/{run_id}", response_model=FactoryRunStatusContract)
+async def get_factory_run_status_v2(
+    run_id: str,
+    state: AppState = Depends(get_state),
+) -> FactoryRunStatusContract:
+    """Query run status."""
+    return await _get_factory_run_status_core(run_id=run_id, state=state)
+
+
+@router.get("/v2/factory/runs/{run_id}/events", response_model=FactoryRunEventsResponse)
+async def get_factory_run_events_v2(
+    run_id: str,
+    limit: int = 100,
+    state: AppState = Depends(get_state),
+) -> FactoryRunEventsResponse:
+    """Get append-only audit events for a run."""
+    return await _get_factory_run_events_core(run_id=run_id, limit=limit, state=state)
+
+
+@router.get("/v2/factory/runs/{run_id}/audit-bundle", response_model=FactoryRunAuditBundleResponse)
+async def get_factory_run_audit_bundle_v2(
+    run_id: str,
+    limit: int = 100,
+    state: AppState = Depends(get_state),
+) -> FactoryRunAuditBundleResponse:
+    """Get a machine-readable audit bundle for a factory run."""
+    return await _get_factory_run_audit_bundle_core(run_id=run_id, limit=limit, state=state)
+
+
+@router.get("/v2/factory/runs/{run_id}/stream")
+async def stream_factory_run_events_v2(
+    run_id: str,
+    state: AppState = Depends(get_state),
+) -> StreamingResponse:
+    """Stream canonical factory status and audit events via SSE."""
+    return await _stream_factory_run_events_core(run_id=run_id, state=state)
+
+
+@router.post("/v2/factory/runs/{run_id}/control", response_model=FactoryRunStatusContract)
+async def control_factory_run_v2(
+    run_id: str,
+    payload: FactoryControlRequest,
+    state: AppState = Depends(get_state),
+) -> FactoryRunStatusContract:
+    """Control a run. This phase only supports cancel."""
+    return await _control_factory_run_core(run_id=run_id, payload=payload, state=state)
+
+
+@router.get("/v2/factory/runs/{run_id}/artifacts", response_model=FactoryRunArtifactsResponse)
+async def get_factory_run_artifacts_v2(
+    run_id: str,
+    state: AppState = Depends(get_state),
+) -> FactoryRunArtifactsResponse:
+    """List artifact files for a run."""
+    return await _get_factory_run_artifacts_core(run_id=run_id, state=state)
+
+
+# ---- Deprecated non-v2 routes ----
+
+
+@router.get("/factory/runs", response_model=FactoryRunList)
+async def list_factory_runs(
+    limit: int = 50,
+    offset: int = 0,
+    workspace: str | None = None,
+    state: AppState = Depends(get_state),
+) -> FactoryRunList:
+    # DEPRECATED
+    return await _list_factory_runs_core(limit=limit, offset=offset, workspace=workspace, state=state)
+
+
+@router.post("/factory/runs", response_model=FactoryRunStatusContract)
+async def start_factory_run(
+    payload: FactoryStartRequest,
+    state: AppState = Depends(get_state),
+) -> FactoryRunStatusContract:
+    # DEPRECATED
+    return await _start_factory_run_core(payload=payload, state=state)
+
+
+@router.get("/factory/runs/{run_id}", response_model=FactoryRunStatusContract)
+async def get_factory_run_status(
+    run_id: str,
+    state: AppState = Depends(get_state),
+) -> FactoryRunStatusContract:
+    # DEPRECATED
+    return await _get_factory_run_status_core(run_id=run_id, state=state)
+
+
+@router.get("/factory/runs/{run_id}/events", response_model=FactoryRunEventsResponse)
+async def get_factory_run_events(
+    run_id: str,
+    limit: int = 100,
+    state: AppState = Depends(get_state),
+) -> FactoryRunEventsResponse:
+    # DEPRECATED
+    return await _get_factory_run_events_core(run_id=run_id, limit=limit, state=state)
+
+
+@router.get("/factory/runs/{run_id}/audit-bundle", response_model=FactoryRunAuditBundleResponse)
+async def get_factory_run_audit_bundle(
+    run_id: str,
+    limit: int = 100,
+    state: AppState = Depends(get_state),
+) -> FactoryRunAuditBundleResponse:
+    # DEPRECATED
+    return await _get_factory_run_audit_bundle_core(run_id=run_id, limit=limit, state=state)
+
+
+@router.get("/factory/runs/{run_id}/stream")
+async def stream_factory_run_events(
+    run_id: str,
+    state: AppState = Depends(get_state),
+) -> StreamingResponse:
+    # DEPRECATED
+    return await _stream_factory_run_events_core(run_id=run_id, state=state)
+
+
+@router.post("/factory/runs/{run_id}/control", response_model=FactoryRunStatusContract)
+async def control_factory_run(
+    run_id: str,
+    payload: FactoryControlRequest,
+    state: AppState = Depends(get_state),
+) -> FactoryRunStatusContract:
+    # DEPRECATED
+    return await _control_factory_run_core(run_id=run_id, payload=payload, state=state)
+
+
+@router.get("/factory/runs/{run_id}/artifacts", response_model=FactoryRunArtifactsResponse)
+async def get_factory_run_artifacts(
+    run_id: str,
+    state: AppState = Depends(get_state),
+) -> FactoryRunArtifactsResponse:
+    # DEPRECATED
+    return await _get_factory_run_artifacts_core(run_id=run_id, state=state)

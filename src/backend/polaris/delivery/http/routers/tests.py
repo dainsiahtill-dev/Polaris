@@ -18,16 +18,16 @@ from polaris.cells.llm.provider_config.public.contracts import (
 )
 from polaris.cells.llm.provider_config.public.service import resolve_llm_test_execution_context
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.schemas.common import LlmTestReportResponse, LlmTestTranscriptResponse
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
+from .llm_models import LlmTestPayload
 from .sse_utils import create_sse_response, sse_event_generator
 
 if TYPE_CHECKING:
     import asyncio
 
     from polaris.bootstrap.config import Settings
-
-    from .llm_models import LlmTestPayload
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def _map_provider_config_error(exc: LlmProviderConfigError) -> StructuredHTTPExc
     return StructuredHTTPException(status_code=400, code="PROVIDER_CONFIG_ERROR", message="internal error")
 
 
-@router.post("/llm/test", dependencies=[Depends(require_auth)])
+@router.post("/llm/test", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])  # DEPRECATED
 async def llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
@@ -79,7 +79,7 @@ async def llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
     return report
 
 
-@router.post("/llm/test/stream", dependencies=[Depends(require_auth)])
+@router.post("/llm/test/stream", dependencies=[Depends(require_auth)])  # DEPRECATED
 async def llm_test_stream(request: Request, payload: LlmTestPayload):
     """Stream LLM test results using Server-Sent Events (SSE)
 
@@ -151,8 +151,10 @@ async def llm_test_stream(request: Request, payload: LlmTestPayload):
     return create_sse_response(sse_event_generator(_run_tests))
 
 
-@router.get("/llm/test/{test_run_id}", dependencies=[Depends(require_auth)])
-def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
+@router.get(
+    "/llm/test/{test_run_id}", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)]
+)  # DEPRECATED
+async def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -169,8 +171,10 @@ def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     return _normalize_report_payload(data)
 
 
-@router.get("/llm/test/{test_run_id}/transcript", dependencies=[Depends(require_auth)])
-def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
+@router.get(
+    "/llm/test/{test_run_id}/transcript", response_model=LlmTestTranscriptResponse, dependencies=[Depends(require_auth)]
+)  # DEPRECATED
+async def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -185,6 +189,39 @@ def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
             status_code=500, code="TRANSCRIPT_READ_FAILED", message="failed to read transcript"
         ) from e
     return {"ok": True, "content": content}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v2 API Endpoints (canonical)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/v2/llm/test", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])
+async def v2_llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
+    """Run LLM tests (v2 canonical)."""
+    return await llm_test(request, payload)
+
+
+@router.post("/v2/llm/test/stream", dependencies=[Depends(require_auth)])
+async def v2_llm_test_stream(request: Request, payload: LlmTestPayload):
+    """Stream LLM test results using SSE (v2 canonical)."""
+    return await llm_test_stream(request, payload)
+
+
+@router.get("/v2/llm/test/{test_run_id}", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])
+async def v2_llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
+    """Get LLM test report (v2 canonical)."""
+    return await llm_test_report(request, test_run_id)
+
+
+@router.get(
+    "/v2/llm/test/{test_run_id}/transcript",
+    response_model=LlmTestTranscriptResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def v2_llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
+    """Get LLM test transcript (v2 canonical)."""
+    return await llm_test_transcript(request, test_run_id)
 
 
 def _resolve_test_path(settings: Settings, run_id: str, filename: str, workspace: str) -> str:

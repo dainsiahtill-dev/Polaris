@@ -16,7 +16,7 @@ import warnings
 
 # TODO: Cross-cell internal import — worker_executor symbols are not
 # yet exposed in director.tasking.public. Add to public contract when stabilised.
-from polaris.cells.director.tasking.internal.worker_executor import (
+from polaris.cells.director.tasking.public import (
     CodeGenerationResult,
     WorkerExecutor,
 )

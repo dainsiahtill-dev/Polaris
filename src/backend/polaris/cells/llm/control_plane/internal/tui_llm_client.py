@@ -68,7 +68,7 @@ class TUILLMClient:
 
         try:
             # 懒加载以避免循环导入
-            from polaris.cells.llm.provider_config.internal.provider_context import (
+            from polaris.cells.llm.provider_config.public import (
                 resolve_provider_request_context,
             )
 

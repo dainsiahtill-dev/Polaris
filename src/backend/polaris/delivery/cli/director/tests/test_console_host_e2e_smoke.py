@@ -18,7 +18,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
     ContentChunkEvent,
     TurnPhaseEvent,
 )
-from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
+from polaris.cells.roles.runtime.public import RoleSessionOrchestrator
 from polaris.delivery.cli.director.console_host import RoleConsoleHost
 
 

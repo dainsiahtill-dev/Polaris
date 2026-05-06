@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:43.676353Z",
-  "source_hash": "89f9dceedb55b722",
+  "generated_at": "2026-05-06T07:41:52.401506Z",
+  "source_hash": "19c87d39f341f294",
   "cell_id": "llm.control_plane",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -47,6 +47,164 @@
       "name": "get_inference_engine",
       "description": "Backward-compatible lazy singleton (prefer create_inference_engine + DI).",
       "defined_in": "polaris/cells/llm/control_plane/internal/inference_engine.py"
+    },
+    {
+      "type": "class",
+      "name": "LLMConfig",
+      "description": "LLM configuration for a role.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMConfigStore",
+      "description": "Thread-safe config store backed by KernelFileSystem with dict cache.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_is_cache_valid",
+          "doc": "Check if in-memory cache is still valid (not expired)."
+        },
+        {
+          "name": "_load_all_unlocked",
+          "doc": "Load all configs with dict cache optimization."
+        },
+        {
+          "name": "_save_all_unlocked",
+          "doc": ""
+        },
+        {
+          "name": "preload",
+          "doc": "Eagerly load all configs into cache. Call after construction for faster first access."
+        },
+        {
+          "name": "save",
+          "doc": ""
+        },
+        {
+          "name": "get",
+          "doc": ""
+        },
+        {
+          "name": "get_all",
+          "doc": ""
+        },
+        {
+          "name": "delete",
+          "doc": ""
+        },
+        {
+          "name": "invalidate_cache",
+          "doc": "Manually invalidate the cache (e.g., after external modification)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HRAgent",
+      "description": "HR role agent for role/provider config operations.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_provider_kind",
+          "doc": ""
+        },
+        {
+          "name": "setup_toolbox",
+          "doc": ""
+        },
+        {
+          "name": "_tool_set_llm_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_get_llm_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_list_all_configs",
+          "doc": ""
+        },
+        {
+          "name": "_tool_update_llm_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_deactivate_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_activate_config",
+          "doc": ""
+        },
+        {
+          "name": "_tool_delete_config",
+          "doc": ""
+        },
+        {
+          "name": "handle_message",
+          "doc": ""
+        },
+        {
+          "name": "run_cycle",
+          "doc": ""
+        },
+        {
+          "name": "get_config",
+          "doc": ""
+        },
+        {
+          "name": "get_all_configs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_parse_iso_timestamp",
+      "description": "Safely parse an ISO timestamp, falling back to now() on empty/invalid input.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_polaris_home",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
+    },
+    {
+      "type": "function",
+      "name": "_mask_sensitive_values",
+      "description": "Return a deep-copied provider_cfg with sensitive values masked.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_provider_cfg",
+      "description": "Validate provider_cfg values for known generation parameters.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_workspace_from_storage_path",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
     },
     {
       "type": "function",
@@ -305,7 +463,19 @@
     },
     {
       "type": "function",
+      "name": "v2_llm_interview_save",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
       "name": "llm_interview_cancel",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_llm_interview_cancel",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
@@ -360,6 +530,42 @@
     {
       "type": "function",
       "name": "get_role_runtime_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_llm_config_v2",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "save_llm_config_v2",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "migrate_config_v2",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "llm_status_v2",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_runtime_status_v2",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_runtime_status_v2",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
@@ -467,20 +673,50 @@
     },
     {
       "type": "function",
+      "name": "v2_provider_health",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_provider_models",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_list_providers",
+      "description": "List all available providers with their information",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_get_provider_info",
+      "description": "Get detailed information about a specific provider",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_get_provider_default_config",
+      "description": "Get default configuration for a provider",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_validate_provider_config",
+      "description": "Validate provider configuration",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "v2_health_check_all",
+      "description": "Perform health checks on all configured providers",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
       "name": "_map_provider_config_error",
       "description": "Map domain config errors to HTTP status codes.",
-      "defined_in": "polaris/delivery/http/routers/tests.py"
-    },
-    {
-      "type": "function",
-      "name": "llm_test_report",
-      "description": "",
-      "defined_in": "polaris/delivery/http/routers/tests.py"
-    },
-    {
-      "type": "function",
-      "name": "llm_test_transcript",
-      "description": "",
       "defined_in": "polaris/delivery/http/routers/tests.py"
     },
     {

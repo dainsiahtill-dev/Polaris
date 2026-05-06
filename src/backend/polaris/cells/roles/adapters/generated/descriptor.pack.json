@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:41.474517Z",
-  "source_hash": "451cad5b68b793e9",
+  "generated_at": "2026-05-06T07:41:51.049343Z",
+  "source_hash": "9248c141ced02318",
   "cell_id": "roles.adapters",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -1134,6 +1134,162 @@
         {
           "name": "model_post_init",
           "doc": "Validate verdict consistency with findings."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToolCall",
+      "description": "Tests for ToolCall pydantic model.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/tests/test_base.py",
+      "methods": [
+        {
+          "name": "test_create_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_arguments",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_reasoning",
+          "doc": ""
+        },
+        {
+          "name": "test_create_full",
+          "doc": ""
+        },
+        {
+          "name": "test_tool_required",
+          "doc": ""
+        },
+        {
+          "name": "test_arguments_defaults_to_empty_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_reasoning_defaults_to_none",
+          "doc": ""
+        },
+        {
+          "name": "test_arguments_can_be_empty_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_tool_name_with_special_chars",
+          "doc": ""
+        },
+        {
+          "name": "test_serialization",
+          "doc": ""
+        },
+        {
+          "name": "test_deserialization",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBaseToolEnabledOutput",
+      "description": "Tests for BaseToolEnabledOutput pydantic model.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/tests/test_base.py",
+      "methods": [
+        {
+          "name": "test_create_minimal",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_tool_calls",
+          "doc": ""
+        },
+        {
+          "name": "test_is_complete_default_true",
+          "doc": ""
+        },
+        {
+          "name": "test_is_complete_can_be_false",
+          "doc": ""
+        },
+        {
+          "name": "test_next_action_default_respond",
+          "doc": ""
+        },
+        {
+          "name": "test_next_action_can_be_call_tools",
+          "doc": ""
+        },
+        {
+          "name": "test_next_action_invalid_value",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_tool_calls_list",
+          "doc": ""
+        },
+        {
+          "name": "test_multiple_tool_calls",
+          "doc": ""
+        },
+        {
+          "name": "test_get_tools_to_execute_when_respond",
+          "doc": ""
+        },
+        {
+          "name": "test_get_tools_to_execute_when_call_tools",
+          "doc": ""
+        },
+        {
+          "name": "test_get_tools_to_execute_when_call_tools_but_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_get_tools_to_execute_when_respond_even_with_tools",
+          "doc": ""
+        },
+        {
+          "name": "test_serialization",
+          "doc": ""
+        },
+        {
+          "name": "test_deserialization",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBaseToolEnabledOutputEdgeCases",
+      "description": "Tests for BaseToolEnabledOutput edge cases.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/tests/test_base.py",
+      "methods": [
+        {
+          "name": "test_none_tool_calls_not_allowed",
+          "doc": ""
+        },
+        {
+          "name": "test_boolean_is_complete",
+          "doc": ""
+        },
+        {
+          "name": "test_nested_tool_call_arguments",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestToolCallAndOutputIntegration",
+      "description": "Integration tests between ToolCall and BaseToolEnabledOutput.",
+      "defined_in": "polaris/cells/roles/adapters/internal/schemas/tests/test_base.py",
+      "methods": [
+        {
+          "name": "test_full_workflow_respond",
+          "doc": ""
+        },
+        {
+          "name": "test_full_workflow_call_tools",
+          "doc": ""
         }
       ]
     },

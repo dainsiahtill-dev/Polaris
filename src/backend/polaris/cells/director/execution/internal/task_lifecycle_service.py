@@ -16,13 +16,11 @@ import warnings
 
 # TODO: Cross-cell internal import — TaskLifecycleService and TaskServiceDeps are not
 # yet exposed in director.tasking.public. Add to public contract when stabilised.
-from polaris.cells.director.tasking.internal.task_lifecycle_service import (
-    TaskLifecycleService,
-    TaskServiceDeps,
-)
 from polaris.cells.director.tasking.public import (
+    TaskLifecycleService,
     TaskQueueConfig,
     TaskService,
+    TaskServiceDeps,
 )
 
 warnings.warn(

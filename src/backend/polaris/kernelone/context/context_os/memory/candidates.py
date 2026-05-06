@@ -104,7 +104,7 @@ class MemoryCandidateProvider:
 
         try:
             # Try to load from session persistence
-            from polaris.cells.roles.session.internal.session_persistence import (
+            from polaris.cells.roles.session.public import (
                 SessionPersistenceService,
             )
 

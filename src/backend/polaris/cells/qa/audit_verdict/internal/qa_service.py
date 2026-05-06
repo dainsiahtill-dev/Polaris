@@ -173,13 +173,21 @@ class QAService:
             return False
         return bool(self._VALID_FILENAME_PATTERN.match(filename))
 
-    async def audit_task(self, task_id: str, task_subject: str, changed_files: list[str]) -> AuditResult:
+    async def audit_task(
+        self,
+        task_id: str,
+        task_subject: str,
+        changed_files: list[str],
+        *,
+        require_changed_files: bool = False,
+    ) -> AuditResult:
         """Audit a completed task.
 
         Args:
             task_id: The task identifier
             task_subject: The task subject/title
             changed_files: List of changed file paths (relative to workspace)
+            require_changed_files: Whether an empty changed file set is an audit-blocking error.
 
         Returns:
             AuditResult containing the audit verdict and issues found
@@ -211,7 +219,19 @@ class QAService:
             "files_audited": len(valid_files),
             "files_rejected": len(security_violations),
             "issues_found": 0,
+            "evidence_required": require_changed_files,
         }
+
+        if require_changed_files and not valid_files and not security_violations:
+            issues.append(
+                {
+                    "file": "",
+                    "severity": "error",
+                    "message": "Director changed_files evidence is required for code task QA",
+                    "code": "missing_director_changed_files",
+                }
+            )
+            metrics["missing_director_changed_files_evidence"] = True
 
         # Check each validated file
         for filepath, full_path in valid_files:

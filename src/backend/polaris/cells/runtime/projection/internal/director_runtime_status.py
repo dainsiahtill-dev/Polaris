@@ -15,7 +15,7 @@ def _read_director_service_status_sync() -> dict[str, Any] | None:
     """Read DirectorService status in sync context."""
 
     try:
-        from polaris.cells.director.execution.public.service import DirectorService
+        from polaris.cells.director.execution.service import DirectorService
         from polaris.infrastructure.di.container import get_container
     except ImportError:
         # DirectorService subsystem not available in this deployment - not an error.

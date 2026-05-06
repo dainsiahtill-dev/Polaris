@@ -31,6 +31,7 @@ from threading import RLock
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request, Response
+from polaris.delivery.http.endpoint_policy import is_observability_exempt
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
@@ -196,12 +197,7 @@ def reset_metrics_for_testing() -> None:
 class MetricsMiddleware(BaseHTTPMiddleware):
     """Middleware for collecting Prometheus metrics."""
 
-    # Paths to exclude from metrics
-    EXCLUDED_PATHS = {
-        "/metrics",
-        "/health",
-        "/favicon.ico",
-    }
+    EXCLUDED_PATHS = frozenset({"/metrics", "/health", "/favicon.ico"})
 
     def __init__(
         self,
@@ -214,7 +210,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
 
     def _should_collect(self, path: str) -> bool:
         """Check if path should be tracked."""
-        return not any(path.startswith(excluded) for excluded in self.EXCLUDED_PATHS)
+        return not is_observability_exempt(path)
 
     def _normalize_path(self, request: Request) -> str:
         """Normalize path for metric labeling (remove IDs)."""

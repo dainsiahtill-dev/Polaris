@@ -13,17 +13,15 @@ from polaris.cells.llm.dialogue.public.service import (
 )
 from polaris.cells.runtime.projection.public.service import write_text_atomic
 from polaris.cells.runtime.state_owner.public.service import AppState
-from polaris.cells.workspace.integrity.internal.fs_utils import (
-    normalize_rel_path,
-    workspace_has_docs,
-)
-from polaris.cells.workspace.integrity.internal.workspace_service import (
+from polaris.cells.workspace.integrity.public import (
     build_docs_templates,
     clear_workspace_status,
     default_qa_commands,
     detect_project_profile,
     is_safe_docs_path,
+    normalize_rel_path,
     select_docs_target_root,
+    workspace_has_docs,
 )
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas import (

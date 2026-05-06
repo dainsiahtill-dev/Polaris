@@ -7,6 +7,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+
 # Re-export index types so sibling cells in the archive sub-domain can consume
 # them through the public boundary instead of crossing into internal/.
 from polaris.cells.archive.run_archive.internal.history_manifest_repository import (
@@ -158,6 +160,7 @@ def create_archive_sink(bus: Any) -> Any:
 __all__ = [
     "ArchiveManifestV1",
     "ArchiveRunCommandV1",
+    "ArchiveSink",
     "FactoryIndexEntry",
     "GetArchiveManifestQueryV1",
     "HistoryManifestRepository",

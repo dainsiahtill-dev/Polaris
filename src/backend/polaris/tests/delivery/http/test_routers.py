@@ -279,9 +279,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = False
             mock_pm.return_value = mock_pm_instance
@@ -297,9 +295,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.get_status.return_value = {
@@ -336,9 +332,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = False
             mock_pm.return_value = mock_pm_instance
@@ -352,15 +346,11 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.list_tasks.return_value = {
-                "tasks": [
-                    {"id": "task-1", "title": "Test Task", "status": "pending"}
-                ],
+                "tasks": [{"id": "task-1", "title": "Test Task", "status": "pending"}],
                 "pagination": {"total": 1, "limit": 100, "offset": 0},
             }
             mock_pm.return_value = mock_pm_instance
@@ -377,9 +367,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.get_task.return_value = None
@@ -394,9 +382,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_task = MagicMock()
             mock_task.id = "task-1"
             mock_task.title = "Test Task"
@@ -435,9 +421,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.search_tasks.return_value = []
@@ -452,14 +436,10 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
-            mock_pm_instance.search_tasks.return_value = [
-                {"id": "task-1", "title": "Found Task"}
-            ]
+            mock_pm_instance.search_tasks.return_value = [{"id": "task-1", "title": "Found Task"}]
             mock_pm.return_value = mock_pm_instance
 
             response = client.get("/pm/search/tasks", params={"q": "test", "limit": 20})
@@ -474,9 +454,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.get_task_history.return_value = {
@@ -496,9 +474,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = False
             mock_pm_instance.initialize.return_value = {
@@ -521,9 +497,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm.return_value = mock_pm_instance
@@ -540,9 +514,7 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.list_documents.return_value = {
@@ -563,9 +535,7 @@ class TestPMManagementRouter:
         client = TestClient(app)
 
         with (
-            patch(
-                "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-            ) as mock_pm,
+            patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm,
             patch(
                 "polaris.delivery.http.routers.pm_management.resolve_safe_path",
                 return_value="/workspace/docs/nonexistent.md",
@@ -586,15 +556,11 @@ class TestPMManagementRouter:
         app = self._build_pm_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.list_requirements.return_value = {
-                "requirements": [
-                    {"id": "req-1", "title": "Test Requirement", "status": "active"}
-                ],
+                "requirements": [{"id": "req-1", "title": "Test Requirement", "status": "active"}],
                 "pagination": {"total": 1},
             }
             mock_pm.return_value = mock_pm_instance
@@ -644,9 +610,7 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {
@@ -656,9 +620,7 @@ class TestRoleSessionRouter:
                 "state": "active",
             }
             mock_service_instance.create_session.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.post(
@@ -680,16 +642,10 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
-            mock_service_instance.create_session.side_effect = RuntimeError(
-                "Service error"
-            )
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service_instance.create_session.side_effect = RuntimeError("Service error")
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.post(
@@ -707,16 +663,12 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {"id": "session-1", "role": "pm"}
             mock_service_instance.get_sessions.return_value = [mock_session]
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.get("/v2/roles/sessions", params={"role": "pm"})
@@ -731,9 +683,7 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {
@@ -742,9 +692,7 @@ class TestRoleSessionRouter:
                 "title": "Test",
             }
             mock_service_instance.get_session.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.get("/v2/roles/sessions/session-123")
@@ -759,14 +707,10 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_service_instance.get_session.return_value = None
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.get("/v2/roles/sessions/nonexistent")
@@ -780,9 +724,7 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {
@@ -790,9 +732,7 @@ class TestRoleSessionRouter:
                 "title": "Updated Title",
             }
             mock_service_instance.update_session.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.put(
@@ -809,14 +749,10 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_service_instance.delete_session.return_value = True
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.delete(
@@ -833,14 +769,10 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_service_instance.delete_session.return_value = False
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.delete("/v2/roles/sessions/nonexistent")
@@ -854,16 +786,12 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {"id": "session-123"}
             mock_service_instance.add_message.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.post(
@@ -880,9 +808,7 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {"id": "session-123"}
@@ -894,9 +820,7 @@ class TestRoleSessionRouter:
             }
             mock_service_instance.get_session.return_value = mock_session
             mock_service_instance.get_messages.return_value = [mock_message]
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.get(
@@ -914,9 +838,7 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_attachment = MagicMock()
             mock_attachment.to_dict.return_value = {
@@ -928,9 +850,7 @@ class TestRoleSessionRouter:
             mock_session.to_dict.return_value = {"id": "session-123"}
             mock_service_instance.attach_session.return_value = mock_attachment
             mock_service_instance.get_session.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.post(
@@ -948,17 +868,13 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_service_instance.detach_session.return_value = True
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {"id": "session-123"}
             mock_service_instance.get_session.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.post("/v2/roles/sessions/session-123/actions/detach")
@@ -973,20 +889,14 @@ class TestRoleSessionRouter:
         client = TestClient(app)
 
         with (
-            patch(
-                "polaris.delivery.http.routers.role_session.RoleSessionService"
-            ) as mock_service,
-            patch(
-                "polaris.delivery.http.routers.role_session.RoleSessionArtifactService"
-            ) as mock_artifact,
+            patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service,
+            patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact,
         ):
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {"id": "session-123"}
             mock_service_instance.get_session.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             mock_artifact_instance = MagicMock()
@@ -1005,18 +915,14 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_service_instance.export_session.return_value = {
                 "id": "session-123",
                 "title": "Test Session",
                 "messages": [],
             }
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             response = client.post(
@@ -1034,9 +940,7 @@ class TestRoleSessionRouter:
         app = self._build_session_app()
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.get_role_capabilities"
-        ) as mock_caps:
+        with patch("polaris.delivery.http.routers.role_session.get_role_capabilities") as mock_caps:
             mock_caps.return_value = {
                 "tools": ["read", "write", "execute"],
                 "memory": {"max_context": 10000},
@@ -1066,8 +970,8 @@ class TestSystemRouter:
         app.include_router(primary_router.primary_router)
         return app
 
-    def test_health_check_requires_auth(self) -> None:
-        """GET /health should require authentication."""
+    def test_v2_health_check_requires_auth(self) -> None:
+        """GET /v2/health should require authentication."""
         app = _build_minimal_app()
         app.include_router(system_router.router)
         # Override auth so it raises 401
@@ -1076,13 +980,13 @@ class TestSystemRouter:
         )
 
         client = TestClient(app)
-        response = client.get("/health")
+        response = client.get("/v2/health")
 
         # The endpoint may fail with TypeError from DI container before auth check
         assert response.status_code != 200 or "error" in response.text.lower()
 
-    def test_health_check_returns_status(self) -> None:
-        """GET /health should return health status."""
+    def test_v2_health_check_returns_status(self) -> None:
+        """GET /v2/health should return enhanced health status."""
         app = self._build_system_app()
         client = TestClient(app)
 
@@ -1091,9 +995,7 @@ class TestSystemRouter:
                 "polaris.delivery.http.routers.system.get_lancedb_status",
                 return_value={"ok": True, "python": "3.12"},
             ),
-            patch(
-                "polaris.infrastructure.di.container.get_container"
-            ) as mock_container,
+            patch("polaris.infrastructure.di.container.get_container") as mock_container,
         ):
             mock_pm_service = MagicMock()
             mock_pm_service.get_status.return_value = {
@@ -1101,20 +1003,15 @@ class TestSystemRouter:
                 "running": False,
             }
             mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(
-                return_value={"status": "idle", "state": "idle"}
-            )
+            mock_director_service.get_status = AsyncMock(return_value={"status": "idle", "state": "idle"})
             mock_container_instance = MagicMock()
             mock_container_instance.resolve_async = AsyncMock(
-                side_effect=lambda cls: (
-                    mock_pm_service
-                    if "PMService" in str(cls)
-                    else mock_director_service
-                )
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
+            mock_container_instance.resolve = MagicMock(return_value=None)
             mock_container.return_value = mock_container_instance
 
-            response = client.get("/health")
+            response = client.get("/v2/health")
 
             assert response.status_code == 200
             data = response.json()
@@ -1122,8 +1019,8 @@ class TestSystemRouter:
             assert data["version"] == "0.1"
             assert "lancedb_ok" in data
 
-    def test_health_check_lancedb_failure(self) -> None:
-        """GET /health should return ok=false when lancedb fails."""
+    def test_v2_health_check_lancedb_failure(self) -> None:
+        """GET /v2/health should return ok=false when lancedb fails."""
         app = self._build_system_app()
         client = TestClient(app)
 
@@ -1132,9 +1029,7 @@ class TestSystemRouter:
                 "polaris.delivery.http.routers.system.get_lancedb_status",
                 return_value={"ok": False, "error": "Connection failed"},
             ),
-            patch(
-                "polaris.infrastructure.di.container.get_container"
-            ) as mock_container,
+            patch("polaris.infrastructure.di.container.get_container") as mock_container,
         ):
             mock_pm_service = MagicMock()
             mock_pm_service.get_status.return_value = {
@@ -1142,20 +1037,15 @@ class TestSystemRouter:
                 "running": False,
             }
             mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(
-                return_value={"status": "idle", "state": "idle"}
-            )
+            mock_director_service.get_status = AsyncMock(return_value={"status": "idle", "state": "idle"})
             mock_container_instance = MagicMock()
             mock_container_instance.resolve_async = AsyncMock(
-                side_effect=lambda cls: (
-                    mock_pm_service
-                    if "PMService" in str(cls)
-                    else mock_director_service
-                )
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
+            mock_container_instance.resolve = MagicMock(return_value=None)
             mock_container.return_value = mock_container_instance
 
-            response = client.get("/health")
+            response = client.get("/v2/health")
 
             assert response.status_code == 200
             data = response.json()
@@ -1183,43 +1073,27 @@ class TestSystemRouter:
                 "polaris.delivery.http.routers.system.validate_workspace",
                 return_value="/new/workspace",
             ),
-            patch(
-                "polaris.delivery.http.routers.system.sync_process_settings_environment"
-            ),
-            patch(
-                "polaris.delivery.http.routers.system.set_debug_tracing_enabled"
-            ),
-            patch(
-                "polaris.delivery.http.routers.system.save_persisted_settings"
-            ),
+            patch("polaris.delivery.http.routers.system.sync_process_settings_environment"),
+            patch("polaris.delivery.http.routers.system.set_debug_tracing_enabled"),
+            patch("polaris.delivery.http.routers.system.save_persisted_settings"),
+            patch("polaris.delivery.http.routers.system.rebind_director_service", new_callable=AsyncMock),
             patch(
                 "polaris.delivery.http.routers.system.terminate_external_loop_pm_processes",
                 return_value=[],
             ),
-            patch(
-                "polaris.infrastructure.di.container.get_container"
-            ) as mock_container,
-            patch(
-                "polaris.delivery.http.routers.system.write_workspace_status"
-            ),
-            patch(
-                "polaris.delivery.http.routers.system.clear_workspace_status"
-            ),
+            patch("polaris.infrastructure.di.container.get_container") as mock_container,
+            patch("polaris.delivery.http.routers.system.write_workspace_status"),
+            patch("polaris.delivery.http.routers.system.clear_workspace_status"),
         ):
             mock_pm_service = MagicMock()
             mock_pm_service.get_status.return_value = {"running": False}
             mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(
-                return_value={"state": "idle"}
-            )
+            mock_director_service.get_status = AsyncMock(return_value={"state": "idle"})
             mock_container_instance = MagicMock()
             mock_container_instance.resolve_async = AsyncMock(
-                side_effect=lambda cls: (
-                    mock_pm_service
-                    if "PMService" in str(cls)
-                    else mock_director_service
-                )
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
+            mock_container_instance.resolve = MagicMock(return_value=None)
             mock_container.return_value = mock_container_instance
 
             response = client.post(
@@ -1253,9 +1127,7 @@ class TestSystemRouter:
         client = TestClient(app)
 
         with (
-            patch(
-                "polaris.delivery.http.routers.system.resolve_workspace_runtime_context"
-            ) as mock_ctx,
+            patch("polaris.delivery.http.routers.system.resolve_workspace_runtime_context") as mock_ctx,
             patch(
                 "polaris.delivery.http.routers.system.build_snapshot",
                 return_value={"workspace": ".", "timestamp": "2026-01-01"},
@@ -1277,33 +1149,23 @@ class TestSystemRouter:
         client = TestClient(app)
 
         with (
-            patch(
-                "polaris.infrastructure.di.container.get_container"
-            ) as mock_container,
+            patch("polaris.infrastructure.di.container.get_container") as mock_container,
             patch(
                 "polaris.delivery.http.routers.system.terminate_external_loop_pm_processes",
                 return_value=[],
             ),
             patch("polaris.delivery.http.routers.system.clear_stop_flag"),
-            patch(
-                "polaris.delivery.http.routers.system.clear_director_stop_flag"
-            ),
+            patch("polaris.delivery.http.routers.system.clear_director_stop_flag"),
         ):
             mock_pm_service = MagicMock()
             mock_pm_service.get_status.return_value = {"running": False}
             mock_pm_service.stop = AsyncMock()
             mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(
-                return_value={"state": "idle"}
-            )
+            mock_director_service.get_status = AsyncMock(return_value={"state": "idle"})
             mock_director_service.stop = AsyncMock()
             mock_container_instance = MagicMock()
             mock_container_instance.resolve_async = AsyncMock(
-                side_effect=lambda cls: (
-                    mock_pm_service
-                    if "PMService" in str(cls)
-                    else mock_director_service
-                )
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
             mock_container.return_value = mock_container_instance
 
@@ -1320,33 +1182,23 @@ class TestSystemRouter:
         client = TestClient(app)
 
         with (
-            patch(
-                "polaris.infrastructure.di.container.get_container"
-            ) as mock_container,
+            patch("polaris.infrastructure.di.container.get_container") as mock_container,
             patch(
                 "polaris.delivery.http.routers.system.terminate_external_loop_pm_processes",
                 return_value=[],
             ),
             patch("polaris.delivery.http.routers.system.clear_stop_flag"),
-            patch(
-                "polaris.delivery.http.routers.system.clear_director_stop_flag"
-            ),
+            patch("polaris.delivery.http.routers.system.clear_director_stop_flag"),
         ):
             mock_pm_service = MagicMock()
             mock_pm_service.get_status.return_value = {"running": True}
             mock_pm_service.stop = AsyncMock()
             mock_director_service = MagicMock()
-            mock_director_service.get_status = AsyncMock(
-                return_value={"state": "RUNNING"}
-            )
+            mock_director_service.get_status = AsyncMock(return_value={"state": "RUNNING"})
             mock_director_service.stop = AsyncMock()
             mock_container_instance = MagicMock()
             mock_container_instance.resolve_async = AsyncMock(
-                side_effect=lambda cls: (
-                    mock_pm_service
-                    if "PMService" in str(cls)
-                    else mock_director_service
-                )
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
             mock_container.return_value = mock_container_instance
 
@@ -1399,12 +1251,8 @@ class TestPrimaryRouter:
         client = TestClient(app)
 
         with (
-            patch(
-                "polaris.bootstrap.config.get_settings"
-            ) as mock_settings,
-            patch(
-                "polaris.infrastructure.messaging.get_default_client"
-            ) as mock_client,
+            patch("polaris.bootstrap.config.get_settings") as mock_settings,
+            patch("polaris.infrastructure.messaging.get_default_client") as mock_client,
         ):
             mock_settings_instance = MagicMock()
             mock_settings_instance.nats.enabled = False
@@ -1435,9 +1283,7 @@ class TestPrimaryRouter:
                 patch.object(
                     primary_router,
                     "get_settings",
-                    return_value=MagicMock(
-                        nats=MagicMock(enabled=True, required=True)
-                    ),
+                    return_value=MagicMock(nats=MagicMock(enabled=True, required=True)),
                 ),
                 patch(
                     "polaris.infrastructure.messaging.get_default_client",
@@ -1449,7 +1295,8 @@ class TestPrimaryRouter:
 
                 assert response.status_code == 503
                 data = response.json()
-                assert data["detail"]["ready"] is False
+                details = data["detail"]["details"]
+                assert details["ready"] is False
         finally:
             # Restore original state
             primary_router._nats_connected = original_nats_state
@@ -1665,9 +1512,7 @@ class TestEdgeCases:
         client = TestClient(app)
 
         with (
-            patch(
-                "polaris.delivery.http.routers.files.resolve_safe_path"
-            ) as mock_resolve,
+            patch("polaris.delivery.http.routers.files.resolve_safe_path") as mock_resolve,
         ):
             # If path traversal is blocked, resolve_safe_path should handle it
             mock_resolve.return_value = "/workspace/allowed/test.py"
@@ -1688,9 +1533,7 @@ class TestEdgeCases:
         app.include_router(pm_management_router.router)
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.list_tasks.return_value = {"tasks": [], "pagination": {}}
@@ -1709,9 +1552,7 @@ class TestEdgeCases:
         app.include_router(pm_management_router.router)
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter"
-        ) as mock_pm:
+        with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as mock_pm:
             mock_pm_instance = MagicMock()
             mock_pm_instance.is_initialized.return_value = True
             mock_pm_instance.list_tasks.return_value = {"tasks": [], "pagination": {}}
@@ -1763,22 +1604,18 @@ class TestEdgeCases:
         app.include_router(role_session_router.router)
         client = TestClient(app)
 
-        with patch(
-            "polaris.delivery.http.routers.role_session.RoleSessionService"
-        ) as mock_service:
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
             mock_service_instance = MagicMock()
             mock_session = MagicMock()
             mock_session.to_dict.return_value = {"id": "session-123"}
             mock_service_instance.add_message.return_value = mock_session
-            mock_service.return_value.__enter__ = MagicMock(
-                return_value=mock_service_instance
-            )
+            mock_service.return_value.__enter__ = MagicMock(return_value=mock_service_instance)
             mock_service.return_value.__exit__ = MagicMock(return_value=False)
 
             # Send Unicode content
             response = client.post(
                 "/v2/roles/sessions/session-123/messages",
-                json={"role": "user", "content": "Hello \u4e16\u754c \U0001F600"},
+                json={"role": "user", "content": "Hello \u4e16\u754c \U0001f600"},
             )
 
             assert response.status_code == 200

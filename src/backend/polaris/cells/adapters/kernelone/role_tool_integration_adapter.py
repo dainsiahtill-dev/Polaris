@@ -67,7 +67,7 @@ class RoleToolIntegrationAdapter(IRoleToolIntegration):
             raise ValueError(f"Unknown role: {role}. Supported: {list(self._SUPPORTED_ROLES)}")
 
         # Lazy import to avoid circular dependencies
-        from polaris.cells.llm.tool_runtime.internal.role_integrations import (
+        from polaris.cells.llm.tool_runtime.public import (
             ROLE_TOOL_INTEGRATIONS,
         )
 

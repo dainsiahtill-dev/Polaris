@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from polaris.cells.qa.audit_verdict.internal.qa_consumer import QAConsumer, _resolve_qa_route
@@ -111,3 +112,71 @@ class TestQAConsumerPollOnce:
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.requeue_stage == "pending_qa"
         assert fail_call.error_code == "QA_audit_failed"
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_audit_uses_director_changed_files_instead_of_target_files(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "good.py").write_text("x = 1\n", encoding="utf-8")
+        (src_dir / "bad.py").write_text("def broken(\n", encoding="utf-8")
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-evidence")
+        result = consumer._run_qa_audit(
+            "task-qa-evidence",
+            {
+                "title": "Implement code",
+                "blueprint_id": "bp-evidence",
+                "target_files": ["src/bad.py"],
+                "changed_files": ["src/good.py"],
+            },
+        )
+
+        assert result["verdict"] == "PASS"
+        assert result["metrics"]["files_audited"] == 1
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_code_task_without_director_changed_files_routes_to_exec(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "main.py").write_text("x = 1\n", encoding="utf-8")
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-no-evidence"
+        claim_result.lease_token = "lease-qa-no-evidence"
+        claim_result.payload = {
+            "title": "Implement code",
+            "blueprint_id": "bp-no-evidence",
+            "target_files": ["src/main.py"],
+            "changed_files": [],
+        }
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-no-evidence")
+        results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["ok"] is True
+        assert results[0]["status"] == "pending_exec"
+        assert results[0]["verdict"] == "FAIL"
+
+        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
+        assert ack_call.next_stage == "pending_exec"
+        assert ack_call.terminal_status is None
+        assert ack_call.metadata["metrics"]["missing_director_changed_files_evidence"] is True

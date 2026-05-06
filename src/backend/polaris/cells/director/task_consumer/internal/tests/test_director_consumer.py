@@ -96,7 +96,12 @@ class TestDirectorExecutionConsumerPollOnce:
         mock_svc.acknowledge_task_stage.return_value = ack_result
 
         consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
-        results = consumer.poll_once()
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={"changed_files": ["src/main.py"], "duration": 1, "side_effects": []},
+        ):
+            results = consumer.poll_once()
 
         assert len(results) == 1
         assert results[0]["task_id"] == "task-exec-1"
@@ -106,6 +111,43 @@ class TestDirectorExecutionConsumerPollOnce:
         # Verify ack was called with correct next_stage=pending_qa
         ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
         assert ack_call.next_stage == "pending_qa"
+        assert ack_call.metadata["changed_files"] == ["src/main.py"]
+        assert ack_call.metadata["director_evidence_status"] == "changed_files_reported"
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_no_execution_evidence_requeues_pending_exec(self, mock_get_svc: MagicMock) -> None:
+        """Placeholder/no-evidence execution must not advance to QA."""
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-no-evidence"
+        claim_result.lease_token = "lease-no-evidence"
+        claim_result.payload = {
+            "blueprint_id": "bp-no-evidence",
+            "target_files": ["src/main.py"],
+            "scope_paths": ["src"],
+        }
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+        results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["task_id"] == "task-no-evidence"
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "missing_execution_evidence"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "EXEC_NO_EVIDENCE"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert fail_call.metadata["target_files"] == ["src/main.py"]
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_successful_execution_registers_and_commits_compensation_actions(self, mock_get_svc: MagicMock) -> None:
@@ -326,7 +368,7 @@ class TestDirectorExecutionConsumerPollOnce:
 
         def _slow_execute(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
             time.sleep(0.12)
-            return {"changed_files": [], "duration": 0, "side_effects": []}
+            return {"changed_files": ["src/main.py"], "duration": 0, "side_effects": []}
 
         with patch.object(
             consumer,

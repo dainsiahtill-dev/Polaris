@@ -159,8 +159,55 @@ async def test_wait_for_update_with_workspace_filter():
 
             # Wait for dir2 should timeout (no signal)
             next_seq = await hub.wait_for_update(0, timeout_sec=0.1, workspace=dir2)
-            # Should return current sequence even if no matching signal
-            assert next_seq >= 0
+            assert next_seq == 0
+    finally:
+        hub.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_waiter_not_woken_by_other_workspace_signal():
+    """Workspace-filtered waiter should ignore unmatched signals and wait for matching workspace."""
+    hub = RealtimeSignalHub()
+    try:
+        with tempfile.TemporaryDirectory() as dir1, tempfile.TemporaryDirectory() as dir2:
+            waiter = asyncio.create_task(hub.wait_for_update(0, timeout_sec=1.0, workspace=dir1))
+
+            await hub.notify(source="test", path="/test/other", root=dir2)
+            await asyncio.sleep(0.05)
+            assert not waiter.done()
+
+            expected_seq = await hub.notify(source="test", path="/test/match", root=dir1)
+            next_seq = await waiter
+            assert next_seq == expected_seq
+    finally:
+        hub.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_wait_sees_matching_signal_even_after_newer_other_workspace_signal():
+    """Workspace wait should return matching workspace sequence even if global sequence moved again."""
+    hub = RealtimeSignalHub()
+    try:
+        with tempfile.TemporaryDirectory() as dir1, tempfile.TemporaryDirectory() as dir2:
+            expected_seq = await hub.notify(source="test", path="/test/a", root=dir1)
+            await hub.notify(source="test", path="/test/b", root=dir2)
+
+            next_seq = await hub.wait_for_update(0, timeout_sec=0.1, workspace=dir1)
+            assert next_seq == expected_seq
+    finally:
+        hub.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_waiter_observes_rootless_broadcast_signal():
+    """Workspace waiters should also wake on root-less broadcast notifications."""
+    hub = RealtimeSignalHub()
+    try:
+        with tempfile.TemporaryDirectory() as workspace:
+            waiter = asyncio.create_task(hub.wait_for_update(0, timeout_sec=1.0, workspace=workspace))
+            expected_seq = await hub.notify(source="process_exit", path="/tmp/process.log", root="")
+            next_seq = await waiter
+            assert next_seq == expected_seq
     finally:
         hub.close()
 

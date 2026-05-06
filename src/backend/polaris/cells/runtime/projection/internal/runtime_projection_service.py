@@ -234,7 +234,7 @@ async def get_director_local_status() -> dict[str, Any]:
         Dict with keys: running, pid, mode, started_at, log_path, source, status
     """
     try:
-        from polaris.cells.director.execution.public.service import DirectorService
+        from polaris.cells.director.execution.service import DirectorService
         from polaris.infrastructure.di.container import get_container
 
         container = await get_container()
@@ -253,7 +253,7 @@ async def get_director_local_status() -> dict[str, Any]:
             "source": "v2_service",
             "status": v2_status if isinstance(v2_status, dict) else None,
         }
-    except (RuntimeError, ValueError) as exc:
+    except (ImportError, RuntimeError, ValueError) as exc:
         logger.warning(
             "get_director_local_status: DirectorService unavailable during projection: %s",
             exc,

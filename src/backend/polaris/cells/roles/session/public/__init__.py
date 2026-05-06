@@ -31,6 +31,9 @@ from polaris.cells.roles.session.internal.role_session_service import (
 from polaris.cells.roles.session.internal.session_attachment import (
     SessionAttachment,
 )
+from polaris.cells.roles.session.internal.session_persistence import (
+    SessionPersistenceService,
+)
 from polaris.cells.roles.session.public.contracts import (
     AttachmentMode,
     AttachRoleSessionCommandV1,
@@ -90,6 +93,7 @@ __all__ = [
     "RoleSessionService",
     "SearchRoleSessionMemoryQueryV1",
     "SessionAttachment",
+    "SessionPersistenceService",
     "SessionState",
     "SessionType",
     "UpdateRoleSessionCommandV1",

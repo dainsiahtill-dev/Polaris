@@ -196,7 +196,7 @@ def detect_integration_verify_command(workspace_full: str) -> str:
 
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["python"]):
         if has_python_tests or has_root_python_tests:
-            return "python -m pytest --collect-only -q"
+            return "python -m pytest -q"
         compile_targets: list[str] = []
         for candidate in ("app", "src", "storage", "services", "tests"):
             if os.path.isdir(os.path.join(workspace_full, candidate)):

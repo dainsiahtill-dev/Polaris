@@ -1554,9 +1554,7 @@ class TurnTransactionController:
     ) -> list[dict]:
         """Build decision-stage messages with single-batch execution constraints."""
         messages: list[dict] = [
-            dict(message)
-            for message in context
-            if message.get("metadata", {}).get("plane") != "control"
+            dict(message) for message in context if message.get("metadata", {}).get("plane") != "control"
         ]
         if not tool_definitions:
             return messages

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:41.075114Z",
-  "source_hash": "14fa920e215f077f",
+  "generated_at": "2026-05-06T07:41:50.816480Z",
+  "source_hash": "4b4221cf5ca34b27",
   "cell_id": "runtime.projection",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -827,6 +827,30 @@
       "description": "",
       "defined_in": "polaris/delivery/http/routers/runtime.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_runtime_storage_layout_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_clear_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_migration_status_core",
+      "description": "Get migration status for storage layout v2.",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_reset_tasks_core",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

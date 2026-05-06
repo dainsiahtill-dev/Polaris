@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:41.278069Z",
-  "source_hash": "9421a0079c43ec8f",
+  "generated_at": "2026-05-06T07:41:50.955463Z",
+  "source_hash": "a8a9cebb3f2fb09b",
   "cell_id": "runtime.task_runtime",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -544,6 +544,278 @@
       "name": "_to_dict_copy",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "TestRequireNonEmptyHelper",
+      "description": "Tests for the internal _require_non_empty helper (via public API).",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_only_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_none_converted_to_string_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateRuntimeTaskCommandV1",
+      "description": "Tests for CreateRuntimeTaskCommandV1.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create_with_all_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_payload",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_title_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_owner_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_is_frozen",
+          "doc": ""
+        },
+        {
+          "name": "test_payload_defaults_to_empty_dict",
+          "doc": ""
+        },
+        {
+          "name": "test_payload_is_copied",
+          "doc": ""
+        },
+        {
+          "name": "test_equality",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUpdateRuntimeTaskCommandV1",
+      "description": "Tests for UpdateRuntimeTaskCommandV1.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create_with_all_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_status_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_payload_defaults_to_empty_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReopenRuntimeTaskCommandV1",
+      "description": "Tests for ReopenRuntimeTaskCommandV1.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_reason_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestListRuntimeTasksQueryV1",
+      "description": "Tests for ListRuntimeTasksQueryV1.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create_with_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_all_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_limit_zero_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_limit_negative_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_offset_negative_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_statuses_filtered",
+          "doc": ""
+        },
+        {
+          "name": "test_owner_none_allowed",
+          "doc": ""
+        },
+        {
+          "name": "test_owner_empty_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_large_limit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetRuntimeTaskQueryV1",
+      "description": "Tests for GetRuntimeTaskQueryV1.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRuntimeTaskLifecycleEventV1",
+      "description": "Tests for RuntimeTaskLifecycleEventV1.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_event_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_occurred_at_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_payload_defaults_to_empty_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRuntimeTaskResultV1",
+      "description": "Tests for RuntimeTaskResultV1.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_updated_false",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_task_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_negative_version_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_version_zero_allowed",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRuntimeTaskRuntimeError",
+      "description": "Tests for RuntimeTaskRuntimeError exception.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_create_with_message",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_custom_code",
+          "doc": ""
+        },
+        {
+          "name": "test_create_with_details",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_is_runtime_error",
+          "doc": ""
+        },
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        },
+        {
+          "name": "test_details_is_copied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestModuleExports",
+      "description": "Tests for module __all__ exports.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/tests/test_contracts.py",
+      "methods": [
+        {
+          "name": "test_all_exports_present",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "function",

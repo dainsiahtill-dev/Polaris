@@ -15,6 +15,7 @@ from polaris.cells.llm.dialogue.public import (
     get_registered_roles,
 )
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
+from polaris.delivery.http.auth.roles import UserRole
 from polaris.delivery.http.schemas import (
     AllLLMEventsResponse,
     CacheClearResponse,
@@ -33,6 +34,7 @@ from ._shared import (
     ensure_required_roles_ready,
     get_state,
     require_auth,
+    require_role,
 )
 
 router = APIRouter()
@@ -159,6 +161,9 @@ async def role_chat_status(
 
         return {
             "ready": False,
+            "configured": False,
+            "llm_test_ready": False,
+            "role": role,
             "code": getattr(exc, "code", "internal_error"),
             "message": str(exc),
             "details": {
@@ -246,7 +251,11 @@ async def get_llm_cache_stats() -> dict[str, Any]:
     return cache.get_stats()
 
 
-@router.post("/v2/role/cache-clear", dependencies=[Depends(require_auth)], response_model=CacheClearResponse)
+@router.post(
+    "/v2/role/cache-clear",
+    dependencies=[Depends(require_auth), Depends(require_role([UserRole.ADMIN, UserRole.DEVELOPER]))],
+    response_model=CacheClearResponse,
+)
 async def clear_llm_cache() -> dict[str, Any]:
     """清空 LLM 缓存"""
     from ..roles.kernel_components import get_global_llm_cache

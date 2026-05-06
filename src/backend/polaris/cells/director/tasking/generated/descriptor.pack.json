@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:46.709819Z",
-  "source_hash": "a110052659e08521",
+  "generated_at": "2026-05-06T07:41:53.573100Z",
+  "source_hash": "25b5bb712494566b",
   "cell_id": "director.tasking",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -583,6 +583,10 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "_cleanup_worker_task",
+          "doc": "Remove completed worker task from internal tracking."
         }
       ]
     },

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-04-28T08:34:43.030358Z",
-  "source_hash": "da706f3bfe411367",
+  "generated_at": "2026-05-06T07:41:52.074509Z",
+  "source_hash": "9ef0552036ac4689",
   "cell_id": "roles.session",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -672,12 +672,6 @@
       "name": "_compute_fingerprint",
       "description": "",
       "defined_in": "polaris/cells/roles/session/internal/snapshot_service.py"
-    },
-    {
-      "type": "function",
-      "name": "resolve_preferred_logical_prefix",
-      "description": "Resolve a writable logical prefix without direct filesystem paths.",
-      "defined_in": "polaris/cells/roles/session/internal/storage_paths.py"
     },
     {
       "type": "function",

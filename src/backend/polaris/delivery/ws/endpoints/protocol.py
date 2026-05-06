@@ -135,6 +135,20 @@ async def handle_v2_message(
             requested_workspace=requested_workspace,
         )
 
+        previous_consumer_manager = consumer_manager_ref[0]
+        if previous_consumer_manager is not None:
+            try:
+                await previous_consumer_manager.disconnect()
+            except Exception as exc:  # noqa: BLE001 - best-effort cleanup for stale consumers
+                logger.debug(
+                    "runtime.v2 previous consumer cleanup failed for %s: %s",
+                    connection_id,
+                    exc,
+                    exc_info=True,
+                )
+            finally:
+                consumer_manager_ref[0] = None
+
         # Create JetStream consumer manager
         try:
             consumer_manager = JetStreamConsumerManager(
@@ -143,6 +157,7 @@ async def handle_v2_message(
                 channels=channels_ref[0],
                 initial_cursor=cursor_ref[0],
                 tail=tail_lines_ref[0],
+                durable_token=f"{connection_id}-{client_id_ref[0]}",
             )
             connected = await consumer_manager.connect()
 
@@ -192,13 +207,23 @@ async def handle_v2_message(
         channels = message.get("channels", [])
         if isinstance(channels, str):
             channels = [channels]
-        for ch in channels:
-            if ch in channels_ref[0]:
-                channels_ref[0].remove(ch)
+        normalized_channels = [str(ch).strip() for ch in channels if isinstance(ch, str) and str(ch).strip()]
+        normalized_lower = [ch.lower() for ch in normalized_channels]
 
-        if consumer_manager_ref[0]:
-            await consumer_manager_ref[0].disconnect()
-            consumer_manager_ref[0] = None
+        unsubscribe_all = not normalized_channels or any(ch in {"*", "all"} for ch in normalized_lower)
+        if unsubscribe_all:
+            channels_ref[0] = []
+        else:
+            channels_ref[0] = [ch for ch in channels_ref[0] if ch not in normalized_channels]
+
+        consumer_manager = consumer_manager_ref[0]
+        if consumer_manager:
+            if not channels_ref[0]:
+                await consumer_manager.disconnect()
+                consumer_manager_ref[0] = None
+            else:
+                # Keep consumer alive for partial unsubscribe and update in-process filter.
+                consumer_manager.channels = [ch[4:] if ch.startswith("log.") else ch for ch in channels_ref[0]]
 
         await send_json_safe(
             websocket,

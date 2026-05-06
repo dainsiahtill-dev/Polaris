@@ -334,14 +334,20 @@ function getDesktopBackendInfoPayload() {
   };
 }
 
+function writeJsonFileAtomic(targetPath, payload) {
+  const directory = path.dirname(targetPath);
+  const tempPath = path.join(
+    directory,
+    `.${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf-8");
+  fs.renameSync(tempPath, targetPath);
+}
+
 function publishDesktopBackendInfo() {
   try {
-    fs.mkdirSync(path.dirname(desktopBackendInfoPath), { recursive: true });
-    fs.writeFileSync(
-      desktopBackendInfoPath,
-      JSON.stringify(getDesktopBackendInfoPayload(), null, 2),
-      "utf-8",
-    );
+    writeJsonFileAtomic(desktopBackendInfoPath, getDesktopBackendInfoPayload());
   } catch (error) {
     console.warn(`[backend] failed to write desktop backend info: ${String(error?.message || error)}`);
   }
@@ -832,18 +838,9 @@ async function startBackend(options = {}) {
   };
   publishDesktopBackendInfo();
 
-  let resolveReady;
-  let rejectReady;
-  const readyPromise = new Promise((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
-
-  let resolvedByJson = false;
+  let backendStartedEventSeen = false;
   const markReadyFromJson = () => {
-    if (resolvedByJson) return;
-    resolvedByJson = true;
-    resolveReady();
+    backendStartedEventSeen = true;
   };
 
   spawned.stdout.on("data", (data) => {
@@ -890,16 +887,19 @@ async function startBackend(options = {}) {
     publishDesktopBackendInfo();
   });
 
-  // Ready either by explicit backend_started event or by successful health check.
+  // Only HTTP health proves the backend is ready for renderer fetches.  The
+  // backend_started stdout event can arrive before Uvicorn starts listening.
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(() => reject(new Error("backend start timeout")), BACKEND_START_TIMEOUT_MS);
   });
   try {
     await Promise.race([
-      readyPromise,
       waitForBackendHealth(backendInfo.baseUrl, backendInfo.token, BACKEND_START_TIMEOUT_MS),
       timeoutPromise,
     ]);
+    if (backendStartedEventSeen) {
+      console.log("[backend] backend_started event observed before health readiness");
+    }
     backendStatus.state = "running";
     backendStatus.ready = true;
     publishDesktopBackendInfo();

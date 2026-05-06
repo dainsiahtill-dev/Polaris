@@ -50,6 +50,19 @@ class TestQAServiceAuditTask:
         assert result.audit_id.startswith("audit-")
 
     @pytest.mark.asyncio
+    async def test_audit_task_requires_director_changed_files(self, qa_service: QAService) -> None:
+        result = await qa_service.audit_task(
+            task_id="t-001-code",
+            task_subject="Code task",
+            changed_files=[],
+            require_changed_files=True,
+        )
+        assert result.verdict == "FAIL"
+        assert result.metrics["files_audited"] == 0
+        assert result.metrics["missing_director_changed_files_evidence"] is True
+        assert any(issue.get("code") == "missing_director_changed_files" for issue in result.issues)
+
+    @pytest.mark.asyncio
     async def test_audit_task_security_violation_blocked(self, qa_service: QAService) -> None:
         result = await qa_service.audit_task(
             task_id="t-002",

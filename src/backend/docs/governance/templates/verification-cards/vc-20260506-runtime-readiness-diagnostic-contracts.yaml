@@ -1,0 +1,88 @@
+card_id: "vc-20260506-runtime-readiness-diagnostic-contracts"
+bug_summary: >
+  Runtime readiness, diagnostics, and Electron acceptance evidence drifted across
+  probe routes, auth policy, runtime.v2 consumers, and E2E runner paths, allowing
+  smoke or skipped flows to be confused with real acceptance.
+
+classification: structural
+
+bug_path:
+  file: "src/backend/polaris/tests/electron/full-chain-audit.spec.ts"
+  method: "Electron acceptance runner and runtime readiness contracts"
+  symptom: "Acceptance evidence could describe skipped or partially routed flows as pass-level readiness."
+
+assumptions:
+  - id: "A1"
+    statement: "I assume HTTP /health is the readiness signal the Electron main process must wait for before renderer fetches."
+    status: verified_true
+    evidence: >
+      src/electron/main.cjs waitForBackendHealth now treats HTTP /health as the readiness gate instead of relying
+      on backend_started stdout events, which previously arrived before Uvicorn accepted /settings.
+
+  - id: "A2"
+    statement: "I assume the full FastAPI app must not contain duplicate method/path registrations for process probes."
+    status: verified_true
+    evidence: >
+      src/backend/polaris/tests/unit/delivery/http/test_route_contracts.py covers duplicate route ownership after
+      duplicate GET /health registrations were observed between primary and system routers.
+
+  - id: "A3"
+    statement: "I assume client-provided runtime.v2 client_id must not own JetStream durable identity."
+    status: verified_true
+    evidence: >
+      src/backend/polaris/delivery/ws/endpoints/protocol.py accepts client_id in SUBSCRIBE payloads, so
+      src/backend/polaris/infrastructure/messaging/nats/ws_consumer_manager.py must derive durable identity
+      from server-controlled connection context instead.
+
+  - id: "A4"
+    statement: "I assume default Electron E2E pass remains smoke-level unless real PM/Director acceptance specs execute with real settings."
+    status: verified_true
+    evidence: >
+      infrastructure/scripts/run-electron-acceptance-e2e.mjs requires KERNELONE_E2E_USE_REAL_SETTINGS=1 and targets
+      src/backend/polaris/tests/electron/full-chain-audit.spec.ts plus pm-director-real-flow.spec.ts.
+
+  - id: "A5"
+    statement: "I assume endpoint policy must distinguish route classification from low-signal observability suppression."
+    status: verified_true
+    evidence: >
+      src/backend/polaris/delivery/http/endpoint_policy.py and related middleware tests keep GET /ready observable
+      while GET /health and /metrics remain low-signal exclusions.
+
+pre_mortem:
+  failure_point: >
+    If this repair only changes labels or runner output without validating concrete spec paths and schema-compatible
+    evidence fields, the next acceptance report can still pass while running no real Electron acceptance spec.
+  risk_zone:
+    - "src/backend/docs/governance/templates/verification-cards/vc-20260506-runtime-readiness-diagnostic-contracts.yaml"
+    - "infrastructure/scripts/run-panel-task-e2e.mjs"
+    - "infrastructure/scripts/auto-fix-real-flow.mjs"
+    - "src/backend/polaris/tests/electron/*.spec.ts"
+
+verification_plan:
+  unit_tests:
+    - file: "src/backend/polaris/tests/electron/test_e2e_runner_scripts.py"
+      description: "Dry-run Electron runner scripts and assert referenced spec paths exist under the canonical Playwright test directory."
+      expected: "Panel-task and real-flow runners expose src/backend/polaris/tests/electron spec paths and do not reference missing tests/electron paths."
+      status: new
+  integration_tests:
+    - description: "Verification card schema/checker validation"
+      command: "python src/backend/docs/governance/ci/scripts/check_verification_cards.py --vc vc-20260506-runtime-readiness-diagnostic-contracts.yaml --strict"
+      status: existing_fix
+    - description: "Electron runner script syntax validation"
+      command: "node --check infrastructure/scripts/run-panel-task-e2e.mjs && node --check infrastructure/scripts/auto-fix-real-flow.mjs"
+      status: existing_fix
+    - description: "Focused dry-run path existence regression"
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/electron/test_e2e_runner_scripts.py -q"
+      status: new
+  manual_check:
+    - "Confirm no CI pipeline template or broad package script flow was changed."
+    - "Confirm real-flow acceptance still requires KERNELONE_E2E_USE_REAL_SETTINGS=1 before it can be reported as acceptance."
+
+related_adrs:
+  - "ADR-0085"
+
+sign_off:
+  completed_by: "codex-gpt-5-worker-5"
+  completed_at: "2026-05-06"
+  verified_by: "codex-gpt-5-worker-5"
+  verified_at: "2026-05-06"

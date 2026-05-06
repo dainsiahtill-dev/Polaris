@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -47,12 +48,25 @@ from ._shared import StructuredHTTPException, get_state, require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_SETTINGS_UPDATE_LOCKS: dict[int, asyncio.Lock] = {}
 
 
-# DEPRECATED
-@router.get("/health", dependencies=[Depends(require_auth)], response_model=HealthResponse)
-async def health() -> dict[str, Any]:
-    """Get backend health status including PM/Director runtime state."""
+def _get_settings_update_lock() -> asyncio.Lock:
+    """Return a loop-local settings update lock.
+
+    Module-level asyncio locks can deadlock when reused across distinct event loops.
+    """
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    lock = _SETTINGS_UPDATE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SETTINGS_UPDATE_LOCKS[key] = lock
+    return lock
+
+
+async def _build_health_response() -> dict[str, Any]:
+    """Build enhanced backend health including PM/Director runtime state."""
     lancedb_status = get_lancedb_status()
 
     # Get PM status
@@ -119,8 +133,7 @@ def get_settings(request: Request) -> dict[str, Any]:
 
 
 # DEPRECATED
-@router.post("/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
-async def update_settings(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
+async def _update_settings_internal(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
     state = get_state(request)
     previous_workspace = str(state.settings.workspace or DEFAULT_WORKSPACE).strip()
     target_self_upgrade_mode = (
@@ -279,6 +292,13 @@ async def update_settings(request: Request, payload: SettingsUpdate) -> dict[str
 
 
 # DEPRECATED
+@router.post("/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
+async def update_settings(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
+    async with _get_settings_update_lock():
+        return await _update_settings_internal(request, payload)
+
+
+# DEPRECATED
 @router.get("/state/snapshot", dependencies=[Depends(require_auth)], response_model=StateSnapshotResponse)
 def state_snapshot(request: Request) -> dict[str, Any]:
     state = get_state(request)
@@ -360,56 +380,7 @@ async def app_shutdown(request: Request) -> dict[str, Any]:
 @router.get("/v2/health", dependencies=[Depends(require_auth)], response_model=HealthResponse)
 async def v2_health() -> dict[str, Any]:
     """Get backend health status including PM/Director runtime state."""
-    lancedb_status = get_lancedb_status()
-
-    pm_status: dict[str, Any] = {"status": "unknown", "running": False}
-    try:
-        from polaris.cells.orchestration.pm_planning.public.service import PMService
-        from polaris.infrastructure.di.container import get_container
-
-        async def get_pm_status() -> dict[str, Any]:
-            container = await get_container()
-            pm_service = await container.resolve_async(PMService)
-            return pm_service.get_status()
-
-        try:
-            pm_status = await get_pm_status()
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"PM status unavailable: {e}")
-            pm_status = {"status": "unavailable", "running": False}
-    except (RuntimeError, ValueError) as e:
-        logger.debug(f"PM service not available: {e}")
-        pm_status = {"status": "unavailable", "running": False}
-
-    director_status: dict[str, Any] = {"status": "unknown", "state": "idle"}
-    try:
-        from polaris.cells.director.execution.public.service import DirectorService
-        from polaris.infrastructure.di.container import get_container
-
-        async def get_director_status() -> dict[str, Any]:
-            container = await get_container()
-            director_service = await container.resolve_async(DirectorService)
-            return await director_service.get_status()
-
-        try:
-            director_status = await get_director_status()
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"Director status unavailable: {e}")
-            director_status = {"status": "unavailable", "state": "idle"}
-    except (RuntimeError, ValueError) as e:
-        logger.debug(f"Director service not available: {e}")
-        director_status = {"status": "unavailable", "state": "idle"}
-
-    return {
-        "ok": bool(lancedb_status.get("ok")),
-        "version": "0.1",
-        "timestamp": utc_now_str(),
-        "lancedb_ok": bool(lancedb_status.get("ok")),
-        "lancedb_error": lancedb_status.get("error"),
-        "python": lancedb_status.get("python"),
-        "pm": pm_status,
-        "director": director_status,
-    }
+    return await _build_health_response()
 
 
 @router.get("/v2/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
@@ -423,164 +394,23 @@ def v2_get_settings(request: Request) -> dict[str, Any]:
 
 @router.post("/v2/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
 async def v2_update_settings(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
-    state = get_state(request)
-    previous_workspace = str(state.settings.workspace or DEFAULT_WORKSPACE).strip()
-    target_self_upgrade_mode = (
-        bool(payload.self_upgrade_mode)
-        if payload.self_upgrade_mode is not None
-        else bool(getattr(state.settings, "self_upgrade_mode", False))
-    )
-    if payload.workspace:
-        try:
-            payload.workspace = validate_workspace(
-                payload.workspace,
-                self_upgrade_mode=target_self_upgrade_mode,
-            )
-        except DomainValidationError as exc:
-            raise StructuredHTTPException(status_code=400, code="VALIDATION_ERROR", message=exc.message) from exc
-    workspace_root = str(payload.workspace or state.settings.workspace or DEFAULT_WORKSPACE).strip()
-    requested_workspace = str(payload.workspace or "").strip()
-    resolved_requested = ""
-    if requested_workspace:
-        try:
-            resolved_requested = str(Path(requested_workspace).resolve())
-        except (RuntimeError, ValueError):
-            resolved_requested = requested_workspace
-    workspace_changed = False
-    if requested_workspace:
-        try:
-            workspace_changed = Path(requested_workspace).resolve() != Path(previous_workspace).resolve()
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"Path resolve failed, using string comparison: {e}")
-            workspace_changed = requested_workspace != previous_workspace
-
-    if workspace_changed:
-        from polaris.cells.director.execution.public.service import DirectorService
-        from polaris.cells.orchestration.pm_planning.public.service import PMService
-        from polaris.infrastructure.di.container import get_container
-
-        try:
-            container = await get_container()
-            pm_service = await container.resolve_async(PMService)
-            pm_status = pm_service.get_status()
-            if bool(pm_status.get("running")):
-                raise StructuredHTTPException(
-                    status_code=409,
-                    code="PM_RUNNING",
-                    message="cannot switch workspace while PM is running; stop PM first",
-                )
-            director_service = await container.resolve_async(DirectorService)
-            director_status = await director_service.get_status()
-            if str(director_status.get("state", "")).strip().upper() == "RUNNING":
-                raise StructuredHTTPException(
-                    status_code=409,
-                    code="DIRECTOR_RUNNING",
-                    message="cannot switch workspace while Director is running; stop Director first",
-                )
-        except StructuredHTTPException:
-            raise
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"Workspace change check failed, continuing: {e}")
-
-    if payload.ramdisk_root is not None:
-        normalized = normalize_ramdisk_root(payload.ramdisk_root)
-        if normalized:
-            try:
-                ws_abs = os.path.abspath(workspace_root)
-                if os.path.commonpath([ws_abs, normalized]) == ws_abs:
-                    payload.ramdisk_root = ""
-                else:
-                    payload.ramdisk_root = normalized
-            except (RuntimeError, ValueError) as e:
-                logger.debug(f"Ramdisk path check failed: {e}")
-                payload.ramdisk_root = normalized
-    if payload.json_log_path is not None:
-        raw_json_log_path = str(payload.json_log_path or "").strip()
-        payload.json_log_path = normalize_artifact_rel_path(raw_json_log_path) if raw_json_log_path else DEFAULT_PM_LOG
-    try:
-        state.settings.apply_update(payload)
-    except ValueError as exc:
-        logger.error("apply_settings failed: %s", exc)
-        raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message="internal error") from exc
-    if resolved_requested:
-        try:
-            current_workspace = str(Path(str(state.settings.workspace)).resolve())
-        except (RuntimeError, ValueError):
-            current_workspace = str(state.settings.workspace or "").strip()
-        if current_workspace != resolved_requested:
-            state.settings.workspace = Path(resolved_requested)
-    sync_process_settings_environment(state.settings)
-    set_debug_tracing_enabled(bool(state.settings.debug_tracing))
-    if payload.workspace:
-        workspace_str = str(state.settings.workspace or "")
-        if workspace_has_docs(workspace_str):
-            clear_workspace_status(workspace_str)
-        else:
-            write_workspace_status(
-                workspace_str,
-                status="NEEDS_DOCS_INIT",
-                reason="docs/ directory not found",
-                actions=["INIT_DOCS_WIZARD"],
-            )
-    if workspace_changed:
-        from polaris.cells.orchestration.pm_planning.public.service import PMService
-        from polaris.infrastructure.di.container import get_container
-
-        try:
-            container = await get_container()
-            pm_service = await container.resolve_async(PMService)
-            pm_service.refresh_storage_layout()
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"PM service refresh failed: {e}")
-        try:
-            await rebind_director_service(str(state.settings.workspace))
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"Director service rebind failed: {e}")
-    save_persisted_settings(state.settings)
-
-    if workspace_changed:
-        try:
-            from polaris.infrastructure.di.container import get_container
-            from polaris.kernelone.events.message_bus import MessageBus, MessageType
-
-            container = await get_container()
-            message_bus = container.resolve(MessageBus)
-
-            adapter = get_typed_adapter()
-            if adapter:
-                try:
-                    typed_event = TypedSettingsChanged.create(
-                        workspace=str(state.settings.workspace or ""),
-                        previous_workspace=previous_workspace,
-                        changed_fields=list(payload.model_dump(exclude_unset=True).keys()),
-                    )
-                    await adapter.emit_to_both(typed_event)
-                except (RuntimeError, ValueError) as typed_err:
-                    logger.debug(f"Failed to emit typed settings event: {typed_err}")
-
-            if message_bus:
-                await message_bus.broadcast(
-                    MessageType.SETTINGS_CHANGED,
-                    "system",
-                    {
-                        "workspace": str(state.settings.workspace or ""),
-                        "previous_workspace": previous_workspace,
-                        "changed_fields": list(payload.model_dump(exclude_unset=True).keys()),
-                    },
-                )
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"Failed to broadcast settings change: {e}")
-
-    result = state.settings.to_payload()
-    raw_json_log_path = str(result.get("json_log_path") or "").strip()
-    result["json_log_path"] = normalize_artifact_rel_path(raw_json_log_path) if raw_json_log_path else DEFAULT_PM_LOG
-    return result
+    async with _get_settings_update_lock():
+        return await _update_settings_internal(request, payload)
 
 
 @router.get("/v2/ready", dependencies=[Depends(require_auth)], response_model=ReadyResponse)
 async def v2_ready() -> dict[str, Any]:
+    from polaris.delivery.http.routers.primary import build_readiness_payload
+
+    payload = await build_readiness_payload()
+    checks = dict(payload.get("checks") or {})
     lancedb_status = get_lancedb_status()
-    return {"ready": bool(lancedb_status.get("ok"))}
+    lancedb_ok = bool(lancedb_status.get("ok"))
+    checks["lancedb"] = "ok" if lancedb_ok else "not_ok"
+    return {
+        "ready": bool(payload.get("ready")) and lancedb_ok,
+        "checks": checks,
+    }
 
 
 @router.get("/v2/live", dependencies=[Depends(require_auth)], response_model=LiveResponse)

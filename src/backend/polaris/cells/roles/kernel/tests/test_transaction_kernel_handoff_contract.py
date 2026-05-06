@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import polaris
 import pytest
 from polaris.cells.factory.cognitive_runtime.public.contracts import (
     ExportHandoffPackCommandV1,
@@ -21,6 +20,8 @@ from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.public import turn_contracts
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
+
+import polaris
 
 
 @dataclass
