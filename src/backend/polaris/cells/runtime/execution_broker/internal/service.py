@@ -50,6 +50,21 @@ _STATUS_MAP: dict[ExecutionStatus, ExecutionProcessStatusV1] = {
     ExecutionStatus.TIMED_OUT: ExecutionProcessStatusV1.TIMED_OUT,
     ExecutionStatus.CANCELLED: ExecutionProcessStatusV1.CANCELLED,
 }
+_LOG_DRAIN_MAX_SECONDS_ENV = "KERNELONE_EXECUTION_BROKER_LOG_DRAIN_MAX_SECONDS"
+_LOG_DRAIN_TERMINAL_IDLE_SECONDS = 5.0
+
+
+def _resolve_log_drain_max_seconds() -> float | None:
+    raw = str(os.environ.get(_LOG_DRAIN_MAX_SECONDS_ENV, "") or "").strip()
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return None
+    return max(1.0, seconds)
 
 
 def _to_process_status(status: ExecutionStatus) -> ExecutionProcessStatusV1:
@@ -436,15 +451,18 @@ class ExecutionBrokerService:
             self._process_log_tasks.set(execution_id, task)
 
     async def _drain_stream_to_log(self, handle: ExecutionHandle, log_path: str) -> None:
-        """Drain process output to log file with timeout protection.
+        """Drain process output to log file until the process stream closes.
 
         Uses per-chunk timeout (max 1 second between chunks) to prevent permanent blocking.
-        Overall deadline (30s) ensures the task eventually terminates.
+        An optional env-configured wall-clock cap is available for diagnostics tests,
+        but production drains for the subprocess lifetime.
         """
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         log_file = open_text_log_append(log_path)
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + 30.0  # 30s overall timeout
+        max_seconds = _resolve_log_drain_max_seconds()
+        deadline = loop.time() + max_seconds if max_seconds is not None else None
+        terminal_idle_started_at: float | None = None
         execution_id = handle.execution_id
 
         try:
@@ -452,26 +470,43 @@ class ExecutionBrokerService:
             # This ensures we don't block forever on stream()
             stream_iter = handle.stream().__aiter__()
             while True:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    _logger.warning(
-                        "execution_broker.log_drain.timeout",
-                        execution_id=execution_id,
-                    )
-                    break
+                timeout = 1.0
+                if deadline is not None:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        _logger.warning(
+                            "execution_broker.log_drain.timeout",
+                            execution_id=execution_id,
+                        )
+                        break
+                    timeout = min(remaining, 1.0)
 
                 try:
                     chunk = await asyncio.wait_for(
                         stream_iter.__anext__(),
-                        timeout=min(remaining, 1.0),  # Max 1s between chunks
+                        timeout=timeout,
                     )
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
+                    snapshot = handle.snapshot()
+                    if snapshot.status.terminal:
+                        if terminal_idle_started_at is None:
+                            terminal_idle_started_at = loop.time()
+                        elif loop.time() - terminal_idle_started_at >= _LOG_DRAIN_TERMINAL_IDLE_SECONDS:
+                            _logger.warning(
+                                "execution_broker.log_drain.terminal_idle_timeout",
+                                execution_id=execution_id,
+                                status=snapshot.status.value,
+                            )
+                            break
+                    else:
+                        terminal_idle_started_at = None
                     continue
 
                 if not chunk.line:
                     continue
+                terminal_idle_started_at = None
                 log_file.write(chunk.line + "\n")
             log_file.flush()
         except asyncio.CancelledError:

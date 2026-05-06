@@ -40,6 +40,7 @@ def v2_read_file(
     tail_lines: int = 400,
     max_chars: int = 20000,
 ) -> dict[str, Any]:
+    """Read a workspace file with optional tail truncation."""
     state = get_state(request)
     workspace = state.settings.workspace or DEFAULT_WORKSPACE
     cache_root = build_cache_root("", str(workspace))

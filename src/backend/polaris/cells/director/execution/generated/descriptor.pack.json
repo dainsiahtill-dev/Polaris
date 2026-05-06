@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:53.396701Z",
-  "source_hash": "7c45aeb15b83b236",
+  "generated_at": "2026-05-06T15:27:43.375367Z",
+  "source_hash": "f723f1f4cf862938",
   "cell_id": "director.execution",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -1453,6 +1453,24 @@
     {
       "type": "function",
       "name": "_append_debug",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_state_token",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_flatten_director_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_projection_task_rows",
       "description": "",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },

@@ -12,9 +12,11 @@ from pathlib import Path
 
 import pytest
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 KERNELONE_ROOT = BACKEND_ROOT / "polaris" / "kernelone"
-EXCEPTION_BUDGET_PATH = BACKEND_ROOT / "tests" / "architecture" / "allowlists" / "kernelone_exception_budget.json"
+EXCEPTION_BUDGET_PATH = (
+    BACKEND_ROOT / "polaris" / "tests" / "architecture" / "allowlists" / "kernelone_exception_budget.json"
+)
 AGENTS_PATH = BACKEND_ROOT / "AGENTS.md"
 CLAUDE_PATH = BACKEND_ROOT / "CLAUDE.md"
 GEMINI_PATH = BACKEND_ROOT / "GEMINI.md"
@@ -229,9 +231,9 @@ def _extract_snapshot_facts(path: Path) -> SnapshotFacts:
 
 def _kernelone_release_suite_paths() -> list[str]:
     candidates: list[Path] = []
-    candidates.extend(sorted((BACKEND_ROOT / "tests").glob("test_kernelone_*.py")))
-    candidates.extend(sorted((BACKEND_ROOT / "tests" / "architecture").glob("test_kernelone_*.py")))
-    candidates.append(BACKEND_ROOT / "tests" / "architecture" / "test_polaris_kernel_fs_guard.py")
+    candidates.extend(sorted((BACKEND_ROOT / "polaris" / "tests").glob("test_kernelone_*.py")))
+    candidates.extend(sorted((BACKEND_ROOT / "polaris" / "tests" / "architecture").glob("test_kernelone_*.py")))
+    candidates.append(BACKEND_ROOT / "polaris" / "tests" / "architecture" / "test_polaris_kernel_fs_guard.py")
 
     files: list[str] = []
     for path in candidates:

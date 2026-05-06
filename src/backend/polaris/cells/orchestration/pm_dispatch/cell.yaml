@@ -42,6 +42,7 @@ depends_on:
 - audit.evidence
 - policy.permission
 - policy.workspace_guard
+- director.task_consumer
 subgraphs:
 - execution_governance_pipeline
 state_owners:

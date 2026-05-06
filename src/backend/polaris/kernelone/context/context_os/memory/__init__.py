@@ -19,7 +19,7 @@ Usage:
     for candidate in candidates:
         if candidate.freshness == "current" and candidate.conflict_status == "none":
             # Inject into context
-            pass
+            ...
 """
 
 from .candidates import MemoryCandidate, MemoryCandidateProvider

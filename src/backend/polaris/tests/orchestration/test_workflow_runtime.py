@@ -18,17 +18,17 @@ from polaris.cells.orchestration.workflow_runtime.internal.models import (  # no
     DirectorWorkflowInput,
     PMWorkflowInput,
 )
-from polaris.cells.orchestration.workflow_runtime.internal.runtime_backend_adapter import (
+from polaris.cells.orchestration.workflow_runtime.internal.runtime_backend_adapter import (  # noqa: E402
     RuntimeBackendAdapter,
 )
-from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities import (
+from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities import (  # noqa: E402
     validate_task_contract,
 )
-from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities.director_activities import (
+from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities.director_activities import (  # noqa: E402
     execute_task_phase,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import submit_pm_workflow_sync  # noqa: E402
-from polaris.cells.runtime.projection.internal import workflow_status as workflow_status_module
+from polaris.cells.runtime.projection.internal import workflow_status as workflow_status_module  # noqa: E402
 from polaris.delivery.cli.pm import orchestration_engine as engine  # noqa: E402
 
 
@@ -331,12 +331,13 @@ def test_get_workflow_runtime_status_uses_workspace_runtime_db_env(
         lambda workflow_id, query_name, config=None: {"ok": False, "error": "query_failed"},
     )
 
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     original_runtime_db = os.environ.get("KERNELONE_RUNTIME_DB")
     result = workflow_status_module.get_workflow_runtime_status(workspace, cache_root)
 
     assert isinstance(result, dict)
     assert observed["runtime_db"] == runtime_db
-    assert observed["cache_root"] == cache_root
+    assert observed["cache_root"] == ""
     assert observed["context_root"] == workspace
     if original_runtime_db is None:
         assert os.environ.get("KERNELONE_RUNTIME_DB") is None

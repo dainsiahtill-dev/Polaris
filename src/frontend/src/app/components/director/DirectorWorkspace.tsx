@@ -541,7 +541,11 @@ export function DirectorWorkspace({
     const syncTasks = async () => {
       try {
         const source = directorRunning ? 'workflow' : 'auto';
-        const payload = await apiFetchFresh(`/v2/director/tasks?source=${source}`);
+        const response = await apiFetchFresh(`/v2/director/tasks?source=${source}`);
+        if (!response.ok) {
+          return;
+        }
+        const payload = await response.json();
         if (!Array.isArray(payload) || cancelled) {
           return;
         }

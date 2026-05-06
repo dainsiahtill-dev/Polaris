@@ -43,6 +43,8 @@ depends_on:
 - runtime.execution_broker
 - context.engine
 - roles.runtime
+- llm.provider_config
+- storage.layout
 subgraphs: []
 state_owners:
 - config/llm/*

@@ -796,7 +796,12 @@ class DirectorService(DirectorCodeIntelMixin):
         from polaris.domain.entities import TaskResult
 
         if not command:
-            return TaskResult(success=True, output="No command", duration_ms=0)
+            return TaskResult(
+                success=False,
+                output="",
+                error="Director task command is required; refusing to mark no-op work as completed.",
+                duration_ms=0,
+            )
 
         start = datetime.now(timezone.utc)
         cmd_svc = CommandExecutionService(self.config.workspace)

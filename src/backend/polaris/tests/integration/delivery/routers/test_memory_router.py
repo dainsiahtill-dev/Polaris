@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import memory as memory_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(memory_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -73,7 +75,7 @@ class TestMemoryRouter:
             response = client.get("/memory/state")
 
         assert response.status_code == 503
-        assert response.json()["detail"] == "Memory store not initialized"
+        assert response.json()["error"]["message"] == "Memory store not initialized"
 
     def test_delete_memory_happy_path(self) -> None:
         """DELETE /memory/memories/{id} returns 200 on successful deletion."""
@@ -116,7 +118,7 @@ class TestMemoryRouter:
             response = client.delete("/memory/memories/nonexistent")
 
         assert response.status_code == 404
-        assert response.json()["detail"] == "Memory not found"
+        assert response.json()["error"]["message"] == "Memory not found"
 
     def test_delete_memory_store_not_initialized(self) -> None:
         """DELETE /memory/memories/{id} returns 503 when memory store is not initialized."""
@@ -133,4 +135,4 @@ class TestMemoryRouter:
             response = client.delete("/memory/memories/mem-123")
 
         assert response.status_code == 503
-        assert response.json()["detail"] == "Memory store not initialized"
+        assert response.json()["error"]["message"] == "Memory store not initialized"

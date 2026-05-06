@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import providers as providers_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(providers_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -34,6 +36,10 @@ class _FakeProviderInfo:
         self.documentation_url = "https://example.com"
         self.supported_features = ["chat"]
         self.cost_class = "low"
+        self.provider_category = "cloud"
+        self.autonomous_file_access = False
+        self.requires_file_interfaces = False
+        self.model_listing_method = "api"
 
 
 class TestProvidersRouter:
@@ -68,7 +74,7 @@ class TestProvidersRouter:
             response = client.get("/llm/providers")
 
         assert response.status_code == 500
-        assert response.json()["detail"] == "internal error"
+        assert response.json()["error"]["message"] == "internal error"
 
     def test_get_provider_info_happy_path(self) -> None:
         """GET /llm/providers/{type}/info returns 200 with provider info."""
@@ -98,7 +104,7 @@ class TestProvidersRouter:
             response = client.get("/llm/providers/unknown/info")
 
         assert response.status_code == 404
-        assert response.json()["detail"] == "Provider not found"
+        assert response.json()["error"]["message"] == "Provider not found"
 
     def test_get_provider_default_config_happy_path(self) -> None:
         """GET /llm/providers/{type}/config returns 200 with default config."""
@@ -129,7 +135,7 @@ class TestProvidersRouter:
             response = client.get("/llm/providers/unknown/config")
 
         assert response.status_code == 404
-        assert response.json()["detail"] == "Provider not found"
+        assert response.json()["error"]["message"] == "Provider not found"
 
     def test_validate_provider_config_happy_path(self) -> None:
         """POST /llm/providers/{type}/validate returns validation result."""
@@ -160,7 +166,7 @@ class TestProvidersRouter:
         assert payload["normalized_config"] == {"model": "gpt-4"}
 
     def test_validate_provider_config_unknown_type(self) -> None:
-        """POST /llm/providers/{type}/validate returns invalid for unknown type."""
+        """POST /llm/providers/{type}/validate returns 404 for unknown type."""
         client = _build_client()
         mock_manager = MagicMock()
         mock_manager.get_provider_class.return_value = None
@@ -173,10 +179,9 @@ class TestProvidersRouter:
                 json={},
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 404
         payload: dict[str, Any] = response.json()
-        assert payload["valid"] is False
-        assert "unknown" in payload["errors"][0].lower()
+        assert payload["error"]["code"] == "PROVIDER_NOT_FOUND"
 
     def test_health_check_all_happy_path(self) -> None:
         """POST /llm/providers/health-all returns aggregated health results."""

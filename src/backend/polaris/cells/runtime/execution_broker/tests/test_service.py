@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from polaris.cells.runtime.execution_broker.internal import service as broker_service_module
 from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionProcessStatusV1,
     GetExecutionProcessStatusQueryV1,
@@ -13,6 +14,20 @@ from polaris.cells.runtime.execution_broker.public.contracts import (
 )
 from polaris.cells.runtime.execution_broker.public.service import ExecutionBrokerService
 from polaris.kernelone.runtime import AsyncTaskSpec, BlockingIoSpec, ExecutionFacade, ExecutionRuntime
+
+
+def test_log_drain_default_has_no_wall_clock_cutoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default log draining must follow process lifetime instead of a fixed 30s cutoff."""
+    monkeypatch.delenv("KERNELONE_EXECUTION_BROKER_LOG_DRAIN_MAX_SECONDS", raising=False)
+
+    assert broker_service_module._resolve_log_drain_max_seconds() is None
+
+
+def test_log_drain_optional_wall_clock_cutoff_is_env_controlled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Diagnostic log drain cutoff remains available only through explicit env config."""
+    monkeypatch.setenv("KERNELONE_EXECUTION_BROKER_LOG_DRAIN_MAX_SECONDS", "2.5")
+
+    assert broker_service_module._resolve_log_drain_max_seconds() == 2.5
 
 
 @pytest.mark.asyncio

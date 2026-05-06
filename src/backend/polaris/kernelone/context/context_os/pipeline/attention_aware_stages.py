@@ -168,8 +168,6 @@ class AttentionAwareWindowCollector:
 
         # Import decision log types if logging is enabled
         _log_decisions = decision_log is not None
-        if _log_decisions:
-            pass
 
         min_recent_floor = max(1, int(self._policy.min_recent_messages_pinned or 1))
         min_recent_floor = min(self._policy.max_active_window_messages, min_recent_floor)

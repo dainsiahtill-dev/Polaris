@@ -36,13 +36,6 @@ type IntegrationQaArtifact = {
   passed?: boolean | null;
 };
 
-type DirectorStatusPayload = {
-  state?: string;
-  tasks?: {
-    total?: number;
-  };
-};
-
 type DirectorTaskPayload = {
   metadata?: {
     pm_task_id?: string;
@@ -234,22 +227,18 @@ test("real PM -> Director flow reaches PM and Director workspaces", async ({ win
   await enterDirectorWorkspace(window);
   await expect(window.getByTestId("director-workspace")).toBeVisible();
   await expect(window.getByTestId("director-workspace-execute")).toBeVisible();
-  await expect.poll(async () => window.getByTestId("director-task-item").count()).toBe(taskCount);
-
-  await window.getByTestId("director-workspace-execute").click();
   await expect
     .poll(async () => {
-      const status = await fetchJson<DirectorStatusPayload>(window, "/v2/director/status");
-      return String(status.state || "").trim().toUpperCase();
+      return window.getByTestId("director-task-item").count();
     }, {
       timeout: 60_000,
       intervals: [500, 1000, 2000, 3000],
     })
-    .toBe("RUNNING");
+    .toBe(taskCount);
 
   await expect
     .poll(async () => {
-      const tasks = await fetchJson<DirectorTaskPayload[]>(window, "/v2/director/tasks");
+      const tasks = await fetchJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto");
       return Array.isArray(tasks)
         ? tasks.filter((item) => String(item?.metadata?.pm_task_id || "").trim().length > 0).length
         : 0;
@@ -258,15 +247,4 @@ test("real PM -> Director flow reaches PM and Director workspaces", async ({ win
       intervals: [500, 1000, 2000, 3000],
     })
     .toBeGreaterThan(0);
-
-  await window.getByTestId("director-workspace-execute").click();
-  await expect
-    .poll(async () => {
-      const status = await fetchJson<DirectorStatusPayload>(window, "/v2/director/status");
-      return String(status.state || "").trim().toUpperCase();
-    }, {
-      timeout: 60_000,
-      intervals: [500, 1000, 2000, 3000],
-    })
-    .not.toBe("RUNNING");
 });

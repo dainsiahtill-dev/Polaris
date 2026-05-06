@@ -358,6 +358,8 @@ function AppContent() {
     directorTaskSource: progressDirectorTaskSource,
     isDirectorRealtimeConnected: isProgressDirectorRealtimeConnected,
   } = displayTaskQueues;
+  const directorWorkspaceTasks = progressDirectorTasks.length > 0 ? progressDirectorTasks : directorTasks;
+  const directorSeedTasks = progressPmTasks.length > 0 ? progressPmTasks : pmTasks;
 
   const runtimeIssue: RuntimeIssue | null = useMemo(() =>
     snapshot?.runtime_issues?.[0] ?? null,
@@ -725,14 +727,14 @@ function AppContent() {
         <DirectorWorkspace
           workspace={workspace}
           onBackToMain={handleBackToMain}
-          tasks={directorTasks}
+          tasks={directorWorkspaceTasks}
           workers={runtimeWorkers}
           directorRunning={directorRunning}
           isStarting={isStartingDirector}
           onToggleDirector={() => toggleDirector(directorRunning, {
             required: agentsRequired,
             draftReady: agentsDraftReady,
-          }, pmTasks)}
+          }, directorSeedTasks)}
           currentTaskId={engineStatus?.roles?.Director?.task_id ?? null}
           currentTaskTitle={engineStatus?.roles?.Director?.task_title ?? null}
           currentTaskStatus={engineStatus?.roles?.Director?.status ?? null}
@@ -928,7 +930,7 @@ function AppContent() {
           onToggleDirector={() => toggleDirector(directorRunning, {
             required: agentsRequired,
             draftReady: agentsDraftReady,
-          }, pmTasks)}
+          }, directorSeedTasks)}
           onRefresh={handleRefresh}
           onOpenBrain={() => { }}
           agentsNeeded={agentsRequired}

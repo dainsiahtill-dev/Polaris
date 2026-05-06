@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:50.700225Z",
-  "source_hash": "54495f6d5bbbdb83",
+  "generated_at": "2026-05-06T15:27:40.682754Z",
+  "source_hash": "376c01c8a53ce5bd",
   "cell_id": "workspace.integrity",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -407,6 +407,12 @@
       "name": "generate_docs_templates_command",
       "description": "Convenience wrapper: create instance on-demand, avoid module-level singleton.",
       "defined_in": "polaris/cells/workspace/integrity/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_package_imports_lazy_helpers_as_callables_in_fresh_process",
+      "description": "Package-level imports must not bind lazy public helpers to ``None``.",
+      "defined_in": "polaris/cells/workspace/integrity/tests/test_public_lazy_exports.py"
     },
     {
       "type": "class",

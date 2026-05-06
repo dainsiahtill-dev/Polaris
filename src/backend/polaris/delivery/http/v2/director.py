@@ -82,6 +82,72 @@ def _append_debug(event: str, payload: dict[str, Any]) -> None:
         pass
 
 
+def _state_token(payload: dict[str, Any]) -> str:
+    state = str(payload.get("state") or "").strip().upper()
+    if state:
+        return state
+    nested_status = payload.get("status")
+    if isinstance(nested_status, dict):
+        nested_state = str(nested_status.get("state") or "").strip().upper()
+        if nested_state:
+            return nested_state
+    if bool(payload.get("running")):
+        return "RUNNING"
+    return "IDLE"
+
+
+def _flatten_director_status(payload: dict[str, Any] | None) -> dict[str, Any]:
+    local_payload = payload if isinstance(payload, dict) else {}
+    state_token = _state_token(local_payload)
+    running = bool(local_payload.get("running")) or state_token == "RUNNING"
+    flattened = dict(local_payload)
+    flattened["running"] = running
+    flattened["state"] = state_token
+    flattened.setdefault("status", local_payload.get("status") or {"state": state_token})
+    flattened.setdefault("source", str(local_payload.get("source") or "none"))
+    return flattened
+
+
+def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
+    rows = getattr(projection, "task_rows", None)
+    if isinstance(rows, list) and rows:
+        return [item for item in rows if isinstance(item, dict)]
+    selected = select_task_rows_from_projection(projection)
+    if selected:
+        return selected
+    snapshot = getattr(projection, "snapshot", None)
+    snapshot_tasks = snapshot.get("tasks") if isinstance(snapshot, dict) else None
+    if not isinstance(snapshot_tasks, list):
+        return []
+
+    fallback_rows: list[dict[str, Any]] = []
+    for item in snapshot_tasks:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("id") or item.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        raw_metadata = item.get("metadata")
+        metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        metadata.setdefault("pm_task_id", task_id)
+        status_token = str(item.get("status") or "PENDING").strip().upper()
+        if status_token in {"TODO", "TO_DO"}:
+            status_token = "PENDING"
+        fallback_rows.append(
+            {
+                "id": task_id,
+                "subject": str(item.get("subject") or item.get("title") or task_id).strip(),
+                "description": str(item.get("description") or item.get("goal") or "").strip(),
+                "status": status_token,
+                "priority": str(item.get("priority") or "MEDIUM").strip() or "MEDIUM",
+                "claimed_by": item.get("claimed_by"),
+                "result": item.get("result") if isinstance(item.get("result"), dict) else None,
+                "metadata": metadata,
+            }
+        )
+    return fallback_rows
+
+
 def _get_workflow_snapshot_sync(
     workspace: str,
     *,
@@ -210,11 +276,14 @@ async def stop_director(
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
-async def get_status(request: Request) -> dict[str, Any]:
-    """Get director status - returns local role state only, no workflow merge.
+async def get_status(
+    request: Request,
+    source: Literal["local", "auto"] = "local",
+) -> dict[str, Any]:
+    """Get director status.
 
-    This endpoint returns only the local Director service status.
-    For unified runtime projection, use the WebSocket status endpoint.
+    By default this endpoint preserves the legacy local-only contract. Callers
+    that need PM-workflow-aware status can request ``source=auto``.
     """
     # Get service from app state
     state = getattr(request.app.state, "app_state", None) or request.app.state
@@ -224,10 +293,18 @@ async def get_status(request: Request) -> dict[str, Any]:
     workspace = getattr(settings, "workspace_path", None) or getattr(settings, "workspace", "")
     projection = await RuntimeProjectionService.build_async(str(workspace), state=state)
 
+    selected_status = (
+        getattr(projection, "director_merged", None)
+        if source == "auto" and getattr(projection, "director_merged", None)
+        else projection.director_local
+    )
+    local_status = _flatten_director_status(selected_status or {"running": False, "status": {"state": "IDLE"}})
     return {
         "ok": True,
-        "status": projection.director_local or {"running": False, "status": {"state": "IDLE"}},
-        "projection_source": "director_local",
+        **local_status,
+        "projection_source": "director_merged"
+        if source == "auto" and getattr(projection, "director_merged", None)
+        else "director_local",
     }
 
 
@@ -294,10 +371,7 @@ async def list_tasks(
             projection = await RuntimeProjectionService.build_async(str(workspace), state=state)
             used_projection = True
 
-            if source == "workflow":
-                tasks = projection.workflow_archive.get("tasks", []) if projection.workflow_archive else []
-            else:  # auto
-                tasks = select_task_rows_from_projection(projection)
+            tasks = _projection_task_rows(projection)
 
         if task_status is not None and tasks:
             selected = str(task_status.name or "").strip().upper()

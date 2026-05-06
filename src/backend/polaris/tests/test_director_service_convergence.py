@@ -219,6 +219,22 @@ async def test_director_start_rolls_back_state_when_worker_init_fails(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_director_no_command_task_result_is_failure(tmp_path) -> None:
+    service = DirectorService(
+        DirectorConfig(
+            workspace=str(tmp_path),
+            max_workers=1,
+            task_poll_interval=0.05,
+        )
+    )
+
+    result = await service._run_command(None, timeout=1)
+
+    assert result.success is False
+    assert "command is required" in str(result.error)
+
+
+@pytest.mark.asyncio
 async def test_director_status_self_heals_stale_running_without_loop_or_workers(tmp_path) -> None:
     service = DirectorService(
         DirectorConfig(

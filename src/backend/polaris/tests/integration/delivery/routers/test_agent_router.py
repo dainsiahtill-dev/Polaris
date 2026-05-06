@@ -10,10 +10,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.routers import agent as agent_router
 from polaris.delivery.http.routers._shared import require_auth
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(agent_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -87,10 +89,10 @@ class TestAgentRouter:
             response = client.get("/agent/sessions/missing-id")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["error"]["message"].lower()
 
     def test_delete_agent_session_not_found(self) -> None:
-        """DELETE /agent/sessions/{session_id} returns ok=False for missing session."""
+        """DELETE /agent/sessions/{session_id} returns 404 for missing session."""
         client = _build_client()
         service = MagicMock()
         service.get_session.return_value = None
@@ -103,9 +105,9 @@ class TestAgentRouter:
             mock_cls.return_value.__exit__ = lambda self, *args: None
             response = client.delete("/agent/sessions/missing-id")
 
-        assert response.status_code == 200
+        assert response.status_code == 404
         payload: dict[str, Any] = response.json()
-        assert payload["ok"] is False
+        assert payload["error"]["code"] == "SESSION_NOT_FOUND"
 
     def test_agent_turn_happy_path(self) -> None:
         """POST /agent/turn returns 200 with reply."""

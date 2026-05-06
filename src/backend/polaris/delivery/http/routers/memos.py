@@ -19,6 +19,7 @@ def get_memos(request: Request, limit: int = 200) -> dict[str, Any]:
 
 @router.get("/v2/memos/list", dependencies=[Depends(require_auth)], response_model=MemosListResponse)
 def v2_get_memos(request: Request, limit: int = 200) -> dict[str, Any]:
+    """List workspace memos."""
     state = get_state(request)
     workspace = state.settings.workspace or DEFAULT_WORKSPACE
     ramdisk_root = state.settings.ramdisk_root or ""

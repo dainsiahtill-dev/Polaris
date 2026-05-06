@@ -214,7 +214,7 @@ class TestDetectIntegrationVerifyCommand:
     def test_nodejs(self, monkeypatch, tmp_path) -> None:
         (tmp_path / "package.json").write_text("{}", encoding="utf-8")
         result = detect_integration_verify_command(str(tmp_path))
-        assert "npm" in result
+        assert result == "npm run test -- --watch=false"
 
     def test_go_module(self, monkeypatch, tmp_path) -> None:
         (tmp_path / "go.mod").write_text("", encoding="utf-8")

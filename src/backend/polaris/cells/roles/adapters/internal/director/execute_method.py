@@ -371,7 +371,7 @@ async def _execute_standard_llm_flow(
     # 此处实现完整的 LLM 调用和工具执行逻辑
     # 由于代码太长，这里简化实现
     message = adapter._build_director_message(task)
-    result = await adapter._call_role_llm_with_timeout(
+    result = await adapter._invoke_role_dialogue_with_timeout(
         message,
         context=None,
         timeout_seconds=llm_call_timeout,

@@ -15,6 +15,7 @@ Delegates to:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import logging
@@ -123,6 +124,131 @@ _PM_TASK_QUALITY_MODES = {"off", "warn", "strict"}
 _PM_TASK_QUALITY_DEFAULT_MODE = "strict"
 _ORCHESTRATION_RUNTIME_OPTIONS = set(SUPPORTED_ORCHESTRATION_RUNTIMES)
 _ORCHESTRATION_RUNTIME_DEFAULT = "workflow"
+_FALLBACK_WORKSPACE_FILE_EXTENSIONS = {
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".json",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".md",
+}
+_FALLBACK_WORKSPACE_SKIP_DIRS = {
+    ".git",
+    ".polaris",
+    ".venv",
+    "venv",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "__pycache__",
+}
+
+
+def _extract_normalized_tasks(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_tasks = payload.get("tasks")
+    if not isinstance(raw_tasks, list):
+        return []
+    return cast("list[dict[str, Any]]", raw_tasks)
+
+
+def _collect_workspace_file_candidates(workspace_full: str, limit: int = 256) -> list[str]:
+    """Collect bounded workspace file paths for deterministic PM fallback grounding."""
+    root = os.path.abspath(str(workspace_full or "").strip())
+    if not root or not os.path.isdir(root):
+        return []
+    selected: list[str] = []
+    for current_dir, dir_names, file_names in os.walk(root):
+        dir_names[:] = [
+            name for name in sorted(dir_names) if name not in _FALLBACK_WORKSPACE_SKIP_DIRS and not name.startswith(".")
+        ]
+        rel_dir = os.path.relpath(current_dir, root)
+        depth = 0 if rel_dir == "." else len(rel_dir.split(os.sep))
+        if depth >= 6:
+            dir_names[:] = []
+        for file_name in sorted(file_names):
+            if len(selected) >= limit:
+                return selected
+            ext = os.path.splitext(file_name)[1].lower()
+            if ext not in _FALLBACK_WORKSPACE_FILE_EXTENSIONS:
+                continue
+            full_path = os.path.join(current_dir, file_name)
+            rel_path = os.path.relpath(full_path, root).replace(os.sep, "/")
+            selected.append(rel_path)
+    return selected
+
+
+def _apply_requirements_fallback_for_empty_tasks(
+    *,
+    exit_code: int,
+    normalized: dict[str, Any],
+    normalized_tasks: list[dict[str, Any]],
+    requirements: str,
+    iteration: int,
+    timestamp: str,
+    plan_text: str,
+    docs_stage: dict[str, Any],
+    run_id: str,
+    workspace_files: list[str] | None = None,
+) -> tuple[int, dict[str, Any], list[dict[str, Any]], bool]:
+    """Recover an empty PM task contract from requirements when possible."""
+    if not str(requirements or "").strip() or len(normalized_tasks) > 0:
+        return exit_code, normalized, normalized_tasks, False
+
+    original_exit_code = int(exit_code)
+    original_notes = str(normalized.get("notes") or "").strip()
+    raw_original_warnings = normalized.get("schema_warnings")
+    original_warnings: list[str] = (
+        [str(item) for item in raw_original_warnings if str(item).strip()]
+        if isinstance(raw_original_warnings, list)
+        else []
+    )
+
+    fallback_payload = build_requirements_fallback_payload(
+        requirements=requirements,
+        iteration=iteration,
+        timestamp=timestamp,
+        plan_text=plan_text,
+        docs_stage=docs_stage,
+        workspace_files=workspace_files,
+    )
+    if not isinstance(fallback_payload, dict):
+        return exit_code, normalized, normalized_tasks, False
+
+    fallback_payload["run_id"] = run_id
+    fallback_payload["pm_iteration"] = iteration
+    fallback_tasks = _extract_normalized_tasks(fallback_payload)
+
+    if original_notes:
+        fallback_notes = str(fallback_payload.get("notes") or "").strip()
+        fallback_payload["notes"] = "; ".join(
+            part
+            for part in (
+                fallback_notes,
+                f"Original PM failure/context: {original_notes}",
+            )
+            if part
+        )
+
+    if original_exit_code != 0 or original_warnings:
+        fallback_warnings = []
+        raw_fallback_warnings = fallback_payload.get("schema_warnings")
+        if isinstance(raw_fallback_warnings, list):
+            fallback_warnings = [str(item) for item in raw_fallback_warnings if str(item).strip()]
+        fallback_warnings.extend(original_warnings)
+        if original_exit_code != 0:
+            fallback_warnings.append(
+                f"PM planning failed with exit code {original_exit_code}; deterministic requirements fallback used."
+            )
+        fallback_payload["schema_warnings"] = fallback_warnings
+        fallback_payload["schema_warning_count"] = len(fallback_warnings)
+
+    recovered_exit_code = 0 if fallback_tasks else exit_code
+    return recovered_exit_code, fallback_payload, fallback_tasks, bool(fallback_tasks)
 
 
 def _resolve_orchestration_runtime(args: argparse.Namespace) -> str:
@@ -427,26 +553,30 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
     normalized = normalized if isinstance(normalized, dict) else {}
     normalized["run_id"] = run_id
     normalized["pm_iteration"] = iteration
-    _raw_norm_tasks = normalized.get("tasks") if isinstance(normalized, dict) else None
-    normalized_tasks: list[dict[str, Any]] = (
-        [] if not isinstance(_raw_norm_tasks, list) else cast("list[dict[str, Any]]", _raw_norm_tasks)
-    )
+    normalized_tasks = _extract_normalized_tasks(normalized)
     has_requirements = bool(str(requirements or "").strip())
 
-    if exit_code == 0 and has_requirements and len(normalized_tasks) == 0:
-        fallback_payload = build_requirements_fallback_payload(
+    if has_requirements and len(normalized_tasks) == 0:
+        original_exit_code = exit_code
+        (
+            exit_code,
+            normalized,
+            normalized_tasks,
+            fallback_applied,
+        ) = _apply_requirements_fallback_for_empty_tasks(
+            exit_code=exit_code,
+            normalized=normalized,
+            normalized_tasks=normalized_tasks,
             requirements=requirements,
             iteration=iteration,
             timestamp=start_timestamp,
             plan_text=plan_text,
             docs_stage=docs_stage,
+            run_id=run_id,
+            workspace_files=_collect_workspace_file_candidates(workspace_full),
         )
-        if isinstance(fallback_payload, dict):
-            normalized = fallback_payload
-            normalized["run_id"] = run_id
-            normalized["pm_iteration"] = iteration
-            _raw_norm2 = normalized.get("tasks") if isinstance(normalized, dict) else None
-            normalized_tasks = [] if not isinstance(_raw_norm2, list) else cast("list[dict[str, Any]]", _raw_norm2)
+
+        if fallback_applied:
             emit_event(
                 run_events,
                 kind="status",
@@ -457,6 +587,8 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
                 ok=True,
                 output={
                     "requirements_non_empty": True,
+                    "original_exit_code": original_exit_code,
+                    "fallback_from_failure": original_exit_code != 0,
                     "task_count": len(normalized_tasks),
                 },
             )
@@ -1124,7 +1256,26 @@ def _run_dispatch_pipeline_with_workflow(
         if not tasks and total > 0:
             counts["pending"] = total
 
+        workflow_status_token = str((workflow_status or {}).get("workflow_status") or "").strip().lower()
+        if workflow_status_token in {"failed", "terminated", "timed_out", "canceled", "cancelled"}:
+            unresolved_count = max(0, total - counts["completed"])
+            if unresolved_count > 0 and counts["failed"] == 0 and counts["blocked"] == 0:
+                counts["failed"] = unresolved_count
+                counts["pending"] = 0
+                counts["active"] = 0
+                for item in tasks:
+                    if not isinstance(item, dict):
+                        continue
+                    state = canonicalize_workflow_task_state(item.get("status") or item.get("state"))
+                    if state == "completed":
+                        continue
+                    item["status"] = "failed"
+                    item["state"] = "failed"
+                    item["error"] = "Workflow execution failed before Director task completion"
+
         state = str(summary.get("state") or "").strip().lower()
+        if workflow_status_token in {"failed", "terminated", "timed_out", "canceled", "cancelled"}:
+            state = "failed"
         if not state:
             if counts["failed"] > 0 or counts["blocked"] > 0:
                 state = "failed"
@@ -1143,6 +1294,130 @@ def _run_dispatch_pipeline_with_workflow(
             "state": state,
             **counts,
         }
+
+    def _extract_nested_workflow_result(payload: Any) -> dict[str, Any]:
+        current = payload
+        for _ in range(8):
+            if not isinstance(current, dict):
+                return {}
+            if any(
+                key in current
+                for key in (
+                    "director_status",
+                    "qa_status",
+                    "completed_tasks",
+                    "failed_tasks",
+                    "blocked_tasks",
+                )
+            ):
+                return current
+            details = current.get("details")
+            if isinstance(details, dict) and isinstance(details.get("final"), dict):
+                current = details["final"]
+                continue
+            result = current.get("result")
+            if isinstance(result, dict) and result is not current:
+                current = result
+                continue
+            return {}
+        return {}
+
+    def _safe_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (RuntimeError, TypeError, ValueError):
+            return int(default)
+
+    def _workflow_result_director_status(payload: dict[str, Any]) -> str:
+        token = str(payload.get("director_status") or payload.get("status") or "").strip().lower()
+        if token in {"completed", "success", "succeeded", "passed"}:
+            return "success"
+        if token in {"failed", "fail", "error", "director_failed"}:
+            return "failed"
+        if token in {"blocked", "dependency_blocked"}:
+            return "blocked"
+        if token in {"running", "in_progress"}:
+            return "running"
+        if token in {"queued", "pending", "submitted"}:
+            return "queued"
+        failed_count = _safe_int(payload.get("failed_tasks"), 0)
+        blocked_count = _safe_int(payload.get("blocked_tasks"), 0)
+        completed_count = _safe_int(payload.get("completed_tasks"), 0)
+        if failed_count > 0:
+            return "failed"
+        if blocked_count > 0:
+            return "blocked"
+        if completed_count > 0:
+            return "success"
+        return ""
+
+    def _apply_workflow_result_summary(
+        workflow_summary: dict[str, Any],
+        result_payload: dict[str, Any],
+        director_status_token: str,
+        default_total: int,
+    ) -> None:
+        total = max(
+            _safe_int(workflow_summary.get("total"), 0),
+            _safe_int(result_payload.get("completed_tasks"), 0)
+            + _safe_int(result_payload.get("failed_tasks"), 0)
+            + _safe_int(result_payload.get("blocked_tasks"), 0),
+            int(default_total or 0),
+        )
+        if total > 0:
+            workflow_summary["total"] = total
+
+        completed_count = _safe_int(result_payload.get("completed_tasks"), -1)
+        failed_count = _safe_int(result_payload.get("failed_tasks"), -1)
+        blocked_count = _safe_int(result_payload.get("blocked_tasks"), -1)
+
+        if completed_count >= 0:
+            workflow_summary["completed"] = completed_count
+        if failed_count >= 0:
+            workflow_summary["failed"] = failed_count
+        if blocked_count >= 0:
+            workflow_summary["blocked"] = blocked_count
+
+        if director_status_token == "success":
+            workflow_summary["completed"] = max(_safe_int(workflow_summary.get("completed"), 0), total)
+            workflow_summary["failed"] = 0
+            workflow_summary["blocked"] = 0
+            workflow_summary["active"] = 0
+            workflow_summary["pending"] = 0
+            workflow_summary["state"] = "completed"
+            raw_tasks = workflow_summary.get("tasks")
+            if isinstance(raw_tasks, list):
+                for item in raw_tasks:
+                    if isinstance(item, dict):
+                        item["status"] = "completed"
+                        item["state"] = "completed"
+        elif director_status_token in {"failed", "blocked"}:
+            unresolved = max(
+                0,
+                total
+                - _safe_int(workflow_summary.get("completed"), 0)
+                - _safe_int(workflow_summary.get("failed"), 0)
+                - _safe_int(workflow_summary.get("blocked"), 0),
+            )
+            if director_status_token == "failed" and _safe_int(workflow_summary.get("failed"), 0) <= 0:
+                workflow_summary["failed"] = max(1 if total > 0 else 0, unresolved)
+            if director_status_token == "blocked" and _safe_int(workflow_summary.get("blocked"), 0) <= 0:
+                workflow_summary["blocked"] = max(1 if total > 0 else 0, unresolved)
+            workflow_summary["active"] = 0
+            workflow_summary["pending"] = 0
+            workflow_summary["state"] = director_status_token
+            raw_tasks = workflow_summary.get("tasks")
+            if isinstance(raw_tasks, list):
+                for item in raw_tasks:
+                    if not isinstance(item, dict):
+                        continue
+                    state = canonicalize_workflow_task_state(item.get("status") or item.get("state"))
+                    if state == "completed":
+                        continue
+                    item["status"] = director_status_token
+                    item["state"] = director_status_token
+        elif director_status_token in {"running", "queued"}:
+            workflow_summary["state"] = director_status_token
 
     # Resolve dispatch tasks using shangshuling
     _raw_dispatch = normalized.get("tasks") if isinstance(normalized, dict) else None
@@ -1173,7 +1448,7 @@ def _run_dispatch_pipeline_with_workflow(
         logger.debug("DEBUG: orchestration_engine.py:{1117} {exc} (swallowed)")
 
     # Submit workflow
-    from polaris.cells.orchestration.workflow_runtime.public import PMWorkflowInput, WorkflowConfig
+    from polaris.cells.orchestration.workflow_runtime.public.service import PMWorkflowInput, WorkflowConfig
 
     config = WorkflowConfig.from_env(force_enable=True)
     workflow_run_id = f"{run_id}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
@@ -1251,7 +1526,23 @@ def _run_dispatch_pipeline_with_workflow(
         },
     )
 
-    submission = submit_pm_workflow_sync(workflow_input, config)
+    wait_timeout = normalize_timeout_seconds(
+        getattr(args, "director_result_timeout", None),
+        default=60,
+    )
+    wait_seconds = None
+    if wait_timeout is not None:
+        wait_seconds = float(wait_timeout)
+        if wait_seconds <= 0:
+            wait_seconds = None
+
+    submission = submit_pm_workflow_sync(
+        workflow_input,
+        config,
+        wait_until_complete=True,
+        timeout_seconds=wait_seconds,
+        poll_interval_seconds=0.5,
+    )
     if not submission.submitted:
         outcome["error"] = str(submission.error or submission.status or "").strip()
         return outcome
@@ -1352,20 +1643,15 @@ def _run_dispatch_pipeline_with_workflow(
     )
 
     workflow_exit_code = 0
-    wait_timeout = normalize_timeout_seconds(
-        getattr(args, "director_result_timeout", None),
-        default=60,
-    )
-    wait_seconds = None
-    if wait_timeout is not None:
-        wait_seconds = float(wait_timeout)
-        if wait_seconds <= 0:
-            wait_seconds = None
-
-    wait_payload = wait_for_workflow_completion_sync(
-        submission.workflow_id,
-        timeout_seconds=wait_seconds,
-        config=config,
+    final_wait_payload = submission.details.get("final") if isinstance(submission.details, dict) else None
+    wait_payload = (
+        final_wait_payload
+        if isinstance(final_wait_payload, dict)
+        else wait_for_workflow_completion_sync(
+            submission.workflow_id,
+            timeout_seconds=wait_seconds,
+            config=config,
+        )
     )
     wait_error = str(wait_payload.get("error") or "").strip()
 
@@ -1377,9 +1663,33 @@ def _run_dispatch_pipeline_with_workflow(
         _dispatch_tasks_list,
         task_count,
     )
+    workflow_domain_result = _extract_nested_workflow_result(wait_payload)
+    workflow_domain_director_status = _workflow_result_director_status(workflow_domain_result)
+    if workflow_domain_director_status:
+        _apply_workflow_result_summary(
+            workflow_summary,
+            workflow_domain_result,
+            workflow_domain_director_status,
+            task_count,
+        )
 
     director_status = "queued"
-    if workflow_summary.get("failed", 0) > 0:
+    wait_status = str(wait_payload.get("status") or "").strip().lower()
+    workflow_status_token = str((workflow_status or {}).get("workflow_status") or "").strip().lower()
+    if workflow_domain_director_status in {"failed", "blocked", "success", "running", "queued"}:
+        director_status = workflow_domain_director_status
+    elif (
+        wait_status in {"failed", "terminated", "timed_out", "canceled", "cancelled"}
+        or workflow_status_token
+        in {
+            "failed",
+            "terminated",
+            "timed_out",
+            "canceled",
+            "cancelled",
+        }
+        or workflow_summary.get("failed", 0) > 0
+    ):
         director_status = "failed"
     elif workflow_summary.get("blocked", 0) > 0:
         director_status = "blocked"
@@ -1418,7 +1728,12 @@ def _run_dispatch_pipeline_with_workflow(
             "blocked": int(workflow_summary.get("blocked", 0)),
             "total": int(workflow_summary.get("total", task_count)),
             "summary": summary_text,
-            "error": wait_error,
+            "error": wait_error
+            or (
+                str(workflow_domain_result.get("qa_status") or workflow_domain_result.get("reason") or "").strip()
+                if director_status in {"failed", "blocked"}
+                else ""
+            ),
         }
     )
 
@@ -1431,6 +1746,7 @@ def _run_dispatch_pipeline_with_workflow(
                 "blocked": int(workflow_summary.get("blocked", 0)),
                 "deferred_execution": director_status in {"queued", "running"},
                 "workflow_status": str((workflow_status or {}).get("workflow_status") or "").strip(),
+                "workflow_domain_director_status": workflow_domain_director_status,
             }
         )
 
@@ -1505,15 +1821,28 @@ def _run_dispatch_pipeline_with_workflow(
             },
         }
         deferred_qa_result_path = os.path.join(run_dir, "qa", "integration_qa.result.json")
+        runtime_qa_result_path = resolve_artifact_path(
+            workspace_full,
+            cache_root_full,
+            "runtime/results/integration_qa.result.json",
+        )
         integration_qa_result["result_path"] = deferred_qa_result_path
+        integration_qa_result["runtime_result_path"] = runtime_qa_result_path
         try:
             write_json_atomic(deferred_qa_result_path, integration_qa_result)
+            write_json_atomic(runtime_qa_result_path, integration_qa_result)
         except (OSError, TypeError, ValueError) as qa_write_exc:
             _errors = integration_qa_result.get("errors") or []
             integration_qa_result["errors"] = (list(_errors) if isinstance(_errors, list) else []) + [
                 f"qa_result_persist_failed: {qa_write_exc}"
             ]
+            with contextlib.suppress(OSError, TypeError, ValueError):
+                write_json_atomic(deferred_qa_result_path, integration_qa_result)
     else:
+        workflow_tasks = workflow_summary.get("tasks")
+        qa_tasks = (
+            workflow_tasks if isinstance(workflow_tasks, list) and workflow_tasks else dispatch_payload.get("tasks")
+        )
         integration_qa_result = run_post_dispatch_integration_qa(
             args=args,
             workspace_full=workspace_full,
@@ -1521,7 +1850,7 @@ def _run_dispatch_pipeline_with_workflow(
             run_dir=run_dir,
             run_id=run_id,
             iteration=iteration,
-            tasks=dispatch_payload.get("tasks") if isinstance(dispatch_payload, dict) else [],
+            tasks=qa_tasks if isinstance(qa_tasks, list) else [],
             run_events=run_events,
             dialogue_full=dialogue_full,
             docs_stage=docs_stage,

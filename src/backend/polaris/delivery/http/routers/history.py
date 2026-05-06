@@ -610,12 +610,10 @@ def v2_history_runs(
     offset: int = 0,
     source: str = "all",  # "runtime", "archived", "all"
 ) -> dict[str, Any]:
-    """List historical runs from both runtime and archived storage.
+    """List historical runs from runtime and archived storage.
 
-    Args:
-        limit: Maximum number of entries to return
-        offset: Number of entries to skip
-        source: Data source - "runtime" (current runs), "archived" (history), "all" (both)
+    Returns:
+        Paginated list of runs with total count.
     """
     state = get_state(request)
     workspace_raw = state.settings.workspace
@@ -684,7 +682,11 @@ def v2_history_runs(
     response_model=HistoryManifestResponse,
 )
 def v2_history_run_manifest(request: Request, run_id: str) -> dict[str, Any]:
-    """Get manifest for an archived run."""
+    """Get manifest for an archived run.
+
+    Returns:
+        Run manifest metadata.
+    """
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -718,7 +720,11 @@ def v2_history_run_manifest(request: Request, run_id: str) -> dict[str, Any]:
     response_model=HistoryEventsResponse,
 )
 def v2_history_run_events(request: Request, run_id: str) -> dict[str, Any]:
-    """Get events for an archived run (auto-decompresses .zst)."""
+    """Get events for an archived run (auto-decompresses .zst).
+
+    Returns:
+        Run events list with count.
+    """
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -747,7 +753,11 @@ def v2_history_task_snapshots(
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """List archived task snapshots."""
+    """List archived task snapshots.
+
+    Returns:
+        Paginated task snapshots with total count.
+    """
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -778,7 +788,11 @@ def v2_history_factory_snapshots(
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """List archived factory runs."""
+    """List archived factory runs.
+
+    Returns:
+        Paginated factory snapshots with total count.
+    """
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw

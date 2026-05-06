@@ -182,20 +182,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 logger.debug("[FIX] logging.py silent exception", exc)
 
         # Process request
-        try:
-            response = await call_next(request)
-        except (RuntimeError, ValueError) as e:
-            duration_ms = (time.time() - start_time) * 1000
-            logger.error(
-                f"Request failed: {request.method} {request.url.path} - {e}",
-                extra={
-                    "method": request.method,
-                    "path": str(request.url.path),
-                    "duration_ms": duration_ms,
-                    "error": str(e),
-                },
-            )
-            raise
+        response = await call_next(request)
 
         duration_ms = (time.time() - start_time) * 1000
 

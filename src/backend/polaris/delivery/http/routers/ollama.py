@@ -15,6 +15,7 @@ def get_ollama_models() -> dict[str, Any]:
 
 @router.get("/v2/ollama/models", dependencies=[Depends(require_auth)], response_model=OllamaModelsResponse)
 def v2_get_ollama_models() -> dict[str, Any]:
+    """List available Ollama models."""
     return {"models": list_ollama_models()}
 
 
@@ -25,4 +26,5 @@ def stop_ollama_models() -> dict[str, Any]:
 
 @router.post("/v2/ollama/stop", dependencies=[Depends(require_auth)], response_model=OllamaStopResponse)
 def v2_stop_ollama_models() -> dict[str, Any]:
+    """Stop running Ollama models."""
     return ollama_stop()

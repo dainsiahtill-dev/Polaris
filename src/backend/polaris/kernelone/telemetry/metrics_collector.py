@@ -175,7 +175,7 @@ class MetricsCollector:
         # Use decorators
         @collector.timed("operation_duration")
         def my_operation():
-            pass
+            ...
 
         # Or record manually
         collector.increment("http_requests", {"method": "GET", "path": "/api"})

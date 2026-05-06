@@ -162,7 +162,7 @@ async def test_pm_chat_llm_not_ready(client: AsyncClient) -> None:
         assert response.status_code == 500
         data = response.json()
         assert data["error"]["code"] == "ROLE_RESPONSE_ERROR"
-        assert "PM LLM not ready" in data["error"]["message"]
+        assert "Generation failed" in data["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -177,7 +177,7 @@ async def test_pm_chat_generation_error(client: AsyncClient) -> None:
         assert response.status_code == 500
         data = response.json()
         assert data["error"]["code"] == "ROLE_RESPONSE_ERROR"
-        assert "model timeout" in data["error"]["message"]
+        assert "Generation failed" in data["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -351,4 +351,4 @@ async def test_pm_chat_status_provider_not_found(client: AsyncClient) -> None:
         assert response.status_code == 409
         data = response.json()
         assert data["error"]["code"] == "PROVIDER_NOT_FOUND"
-        assert "unknown" in data["error"]["message"]
+        assert "Provider not found" in data["error"]["message"]

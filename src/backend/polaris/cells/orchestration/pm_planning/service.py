@@ -18,6 +18,8 @@ from typing import Any
 
 from polaris.bootstrap.config import Settings, find_workspace_root, get_settings
 from polaris.cells.runtime.execution_broker.public.contracts import (
+    ExecutionProcessStatusV1,
+    GetExecutionProcessStatusQueryV1,
     LaunchExecutionProcessCommandV1,
 )
 from polaris.cells.runtime.execution_broker.public.service import (
@@ -34,6 +36,30 @@ from polaris.kernelone.process.command_executor import CommandExecutionService, 
 from polaris.kernelone.storage import StorageLayout
 
 logger = logging.getLogger(__name__)
+
+_ACTIVE_EXECUTION_STATUSES = {
+    ExecutionProcessStatusV1.QUEUED,
+    ExecutionProcessStatusV1.RUNNING,
+}
+_PM_PLANNING_TIMEOUT_ENV = "KERNELONE_PM_PLANNING_TIMEOUT_SECONDS"
+_DEFAULT_PM_PLANNING_TIMEOUT_SECONDS = 60
+_MIN_PM_PLANNING_TIMEOUT_SECONDS = 5
+_MAX_PM_PLANNING_TIMEOUT_SECONDS = 600
+
+
+def _parse_positive_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _clamp_pm_planning_timeout(seconds: int) -> int:
+    return max(
+        _MIN_PM_PLANNING_TIMEOUT_SECONDS,
+        min(_MAX_PM_PLANNING_TIMEOUT_SECONDS, int(seconds)),
+    )
 
 
 @dataclass
@@ -104,10 +130,15 @@ class PMService:
         """Refresh storage binding after workspace/runtime settings updates."""
         self._refresh_storage_layout(force=True)
 
+    def rebind_settings(self, settings: Settings) -> None:
+        """Bind this long-lived service to the application settings object."""
+        self._settings = settings
+        self._refresh_storage_layout(force=True)
+
     async def run_once(self) -> dict:
         """Run PM once."""
         async with self._lifecycle_lock:
-            if self._handle.is_running:
+            if self._is_execution_active():
                 raise ProcessAlreadyRunningError("pm", pid=self._handle.pid)
 
             if self._handle.process is not None:
@@ -133,7 +164,7 @@ class PMService:
     async def start_loop(self, resume: bool = False) -> dict:
         """Start PM in loop mode."""
         async with self._lifecycle_lock:
-            if self._handle.is_running:
+            if self._is_execution_active():
                 raise ProcessAlreadyRunningError("pm", pid=self._handle.pid)
 
             if self._handle.process is not None:
@@ -177,7 +208,7 @@ class PMService:
                     await self._drain_task
             self._drain_task = None
 
-            if not self._handle.is_running:
+            if not self._is_execution_active():
                 return {"ok": False, "error": "not running"}
 
             pid = self._handle.pid
@@ -281,8 +312,32 @@ class PMService:
                 except (RuntimeError, ValueError) as fallback_exc:
                     logger.debug("Fallback os.kill failed for pid=%s: %s", pid, fallback_exc)
 
+    def _resolve_execution_status(self) -> ExecutionProcessStatusV1 | None:
+        execution_id = self._handle.execution_id
+        if not execution_id:
+            return None
+        try:
+            broker = get_execution_broker_service()
+            return broker.get_process_status(
+                GetExecutionProcessStatusQueryV1(execution_id=execution_id),
+            )
+        except (KeyError, RuntimeError, ValueError) as exc:
+            logger.debug("Failed to resolve PM execution broker status for %s: %s", execution_id, exc)
+            return None
+
+    def _is_execution_active(self) -> bool:
+        execution_status = self._resolve_execution_status()
+        if execution_status is not None:
+            return execution_status in _ACTIVE_EXECUTION_STATUSES
+        return self._handle.is_running
+
     def get_status(self) -> dict:
-        if self._handle.process and not self._handle.is_running:
+        execution_id = self._handle.execution_id
+        execution_status = self._resolve_execution_status()
+        running = (
+            execution_status in _ACTIVE_EXECUTION_STATUSES if execution_status is not None else self._handle.is_running
+        )
+        if self._handle.process and not running:
             self._handle.terminate()
 
         log_path = self._handle.log_path
@@ -290,13 +345,14 @@ class PMService:
             log_path = self._resolve_log_path()
 
         return {
-            "running": self._handle.is_running,
+            "running": running,
             "pid": self._handle.pid,
             "mode": self._handle.mode,
             "started_at": self._handle.started_at,
             "log_path": log_path,
-            "source": "handle",
-            "status": None,
+            "source": "execution_broker" if execution_status is not None else "handle",
+            "status": execution_status.value if execution_status is not None else None,
+            "execution_id": execution_id,
         }
 
     async def _check_backend_available(self) -> str | None:
@@ -384,6 +440,7 @@ class PMService:
         settings = self._settings
         workspace = self._resolve_effective_workspace()
         backend = "auto"
+        planning_timeout_seconds = self._resolve_planning_timeout_seconds()
 
         raw_json_log = str(settings.json_log_path or "runtime/events/pm.events.jsonl").strip()
         if not raw_json_log:
@@ -406,7 +463,7 @@ class PMService:
             "--model",
             settings.pm.model or settings.llm.model,
             "--timeout",
-            str(0),
+            str(planning_timeout_seconds),
             "--json-log",
             json_log_arg,
         ]
@@ -490,12 +547,33 @@ class PMService:
 
         return cmd
 
+    def _resolve_planning_timeout_seconds(self) -> int:
+        env_timeout = _parse_positive_int(os.environ.get(_PM_PLANNING_TIMEOUT_ENV))
+        if env_timeout > 0:
+            return _clamp_pm_planning_timeout(env_timeout)
+
+        settings_timeout = _parse_positive_int(getattr(self._settings, "timeout", 0))
+        if settings_timeout > 0:
+            return _clamp_pm_planning_timeout(settings_timeout)
+
+        llm_config = getattr(self._settings, "llm", None)
+        llm_timeout = _parse_positive_int(getattr(llm_config, "timeout", 0))
+        if llm_timeout > 0:
+            return _clamp_pm_planning_timeout(min(llm_timeout, _DEFAULT_PM_PLANNING_TIMEOUT_SECONDS))
+
+        return _DEFAULT_PM_PLANNING_TIMEOUT_SECONDS
+
     async def _spawn_process(self, cmd: list[str], log_path: str) -> ProcessHandle:
         """Spawn PM process through runtime.execution_broker cell."""
         workspace = self._resolve_effective_workspace()
         env = os.environ.copy()
         env.setdefault("PYTHONIOENCODING", "utf-8")
         env.setdefault("KERNELONE_LOOP_MODULE_DIR", str(self._settings.loop_module_dir))
+        env["KERNELONE_RUNTIME_CACHE_ROOT"] = str(self._settings.runtime_base)
+        if self._settings.runtime.root:
+            env["KERNELONE_RUNTIME_ROOT"] = str(self._settings.runtime.root)
+        else:
+            env.pop("KERNELONE_RUNTIME_ROOT", None)
         env["KERNELONE_WORKSPACE"] = str(workspace)
 
         broker = get_execution_broker_service()

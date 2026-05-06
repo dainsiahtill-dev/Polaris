@@ -557,7 +557,7 @@ class CellPmInvokePort:
                 )
                 resolved_backend = "codex"
             elif backend_kind == "ollama":
-                output = invoke_ollama(  # type: ignore[assignment]
+                response = invoke_ollama(
                     prompt,
                     state_model,
                     state_workspace_full,
@@ -566,6 +566,11 @@ class CellPmInvokePort:
                     usage_ctx=usage_ctx,
                     events_path=state_events_full,
                 )
+                output = str(getattr(response, "output", response) or "")
+                response_metadata = getattr(response, "metadata", None)
+                response_error = str(getattr(response_metadata, "error", "") or "").strip()
+                if response_error:
+                    raise RuntimeError(f"Ollama PM backend failed: {response_error}")
                 resolved_backend = "ollama"
             else:
                 provider_result = invoke_role_runtime_provider(

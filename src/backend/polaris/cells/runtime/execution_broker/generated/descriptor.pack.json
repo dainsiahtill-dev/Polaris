@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:50.778552Z",
-  "source_hash": "6426d8c24067cd90",
+  "generated_at": "2026-05-06T15:27:40.754154Z",
+  "source_hash": "d4f1788041d0809c",
   "cell_id": "runtime.execution_broker",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -48,6 +48,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_resolve_log_drain_max_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
     },
     {
       "type": "function",
@@ -145,6 +151,18 @@
       "name": "_normalize_workspace",
       "description": "",
       "defined_in": "polaris/cells/runtime/execution_broker/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_log_drain_default_has_no_wall_clock_cutoff",
+      "description": "Default log draining must follow process lifetime instead of a fixed 30s cutoff.",
+      "defined_in": "polaris/cells/runtime/execution_broker/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_log_drain_optional_wall_clock_cutoff_is_env_controlled",
+      "description": "Diagnostic log drain cutoff remains available only through explicit env config.",
+      "defined_in": "polaris/cells/runtime/execution_broker/tests/test_service.py"
     },
     {
       "type": "function",

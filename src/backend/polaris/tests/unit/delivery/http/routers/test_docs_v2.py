@@ -6,6 +6,7 @@ External services are mocked to avoid LLM provider and storage dependencies.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -301,6 +302,69 @@ async def test_docs_init_preview_architect_not_configured(client: AsyncClient) -
         assert response.status_code == 409
         data = response.json()
         assert data["error"]["code"] == "ARCHITECT_NOT_CONFIGURED"
+
+
+@pytest.mark.asyncio
+async def test_docs_preview_ai_fields_falls_back_on_stream_error(mock_settings: Settings) -> None:
+    """Docs preview should produce deterministic fields when LLM stream errors."""
+    from polaris.delivery.http.routers import docs
+
+    async def stream_error(
+        _workspace: str,
+        _settings: Settings,
+        _fields: dict[str, str],
+    ) -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "error", "error": "provider unavailable"}
+
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    fields = {"goal": "Build reliable PM workflow"}
+
+    with patch("polaris.delivery.http.routers.docs.generate_docs_fields_stream", stream_error):
+        resolved, used_fallback = await docs._resolve_docs_preview_ai_fields(
+            queue=queue,
+            workspace=".",
+            settings=mock_settings,
+            fields=fields,
+            timeout_seconds=1.0,
+        )
+
+    assert used_fallback is True
+    assert resolved["goal"] == ["Build reliable PM workflow"]
+    stage = await queue.get()
+    assert stage["type"] == "stage"
+    assert stage["data"]["stage"] == "llm_fallback"
+
+
+@pytest.mark.asyncio
+async def test_docs_preview_ai_fields_falls_back_on_stream_timeout(mock_settings: Settings) -> None:
+    """Docs preview should not wait indefinitely for a silent provider stream."""
+    from polaris.delivery.http.routers import docs
+
+    async def hanging_stream(
+        _workspace: str,
+        _settings: Settings,
+        _fields: dict[str, str],
+    ) -> AsyncIterator[dict[str, Any]]:
+        await asyncio.sleep(3600)
+        yield {"type": "result", "fields": {}}
+
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    fields = {"goal": "Build reliable PM workflow"}
+
+    with patch("polaris.delivery.http.routers.docs.generate_docs_fields_stream", hanging_stream):
+        resolved, used_fallback = await docs._resolve_docs_preview_ai_fields(
+            queue=queue,
+            workspace=".",
+            settings=mock_settings,
+            fields=fields,
+            timeout_seconds=0.01,
+        )
+
+    assert used_fallback is True
+    assert resolved["backlog"]
+    stage = await queue.get()
+    assert stage["type"] == "stage"
+    assert stage["data"]["fallback"] is True
 
 
 # ---------------------------------------------------------------------------

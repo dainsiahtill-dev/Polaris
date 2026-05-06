@@ -323,6 +323,9 @@ class TestSettingsPathProperties:
     def test_script_paths(self):
         s = Settings(workspace="/tmp/test_ws")
         assert s.pm_script_path.name == "cli.py"
+        normalized = str(s.pm_script_path).replace("\\", "/")
+        assert normalized.endswith("src/backend/polaris/delivery/cli/pm/cli.py")
+        assert s.pm_script_path.exists()
         assert s.director_script_path.name == "loop-director.py"
         assert s.loop_module_dir.name == "polaris_loop"
 

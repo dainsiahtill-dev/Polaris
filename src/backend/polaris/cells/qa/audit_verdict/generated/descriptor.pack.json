@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:52.132210Z",
-  "source_hash": "8d031b57044fb5ea",
+  "generated_at": "2026-05-06T15:27:42.221603Z",
+  "source_hash": "77510e26e1f0ac86",
   "cell_id": "qa.audit_verdict",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -191,6 +191,60 @@
     },
     {
       "type": "function",
+      "name": "_normalize_path_values",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_truthy_payload_flag",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_allows_no_director_changes",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_payload_paths",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_code_path",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_code_task_payload",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_requires_director_changed_files",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_director_changed_files",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_fallback_audit_files",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_workspace",
       "description": "Resolve workspace from CLI arg or environment.",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer_cli.py"
@@ -324,6 +378,14 @@
         },
         {
           "name": "test_audit_exception_requeues_pending_qa",
+          "doc": ""
+        },
+        {
+          "name": "test_audit_uses_director_changed_files_instead_of_target_files",
+          "doc": ""
+        },
+        {
+          "name": "test_code_task_without_director_changed_files_routes_to_exec",
           "doc": ""
         }
       ]

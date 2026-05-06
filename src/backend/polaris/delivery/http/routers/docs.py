@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from polaris.cells.llm.dialogue.public.service import (
+    build_default_docs_fields,
     generate_dialogue_turn as generate_docs_dialogue_turn,
     generate_dialogue_turn_streaming as generate_docs_dialogue_turn_streaming,
     generate_docs_fields as generate_docs_ai_fields,
@@ -43,6 +44,16 @@ from .sse_utils import create_sse_response, sse_event_generator
 
 router = APIRouter()
 log = logging.getLogger("polaris.routers.docs")
+
+_DOCS_FIELD_KEYS = (
+    "goal",
+    "in_scope",
+    "out_of_scope",
+    "constraints",
+    "definition_of_done",
+    "backlog",
+)
+_DOCS_PREVIEW_LLM_TIMEOUT_SECONDS = 75.0
 
 
 def _sync_plan_to_runtime(workspace: str, cache_root: str) -> None:
@@ -114,7 +125,7 @@ def _bind_docs_wizard_llm_from_architect_role(state: AppState) -> dict[str, Any]
         raise StructuredHTTPException(
             status_code=409,
             code="ARCHITECT_NOT_CONFIGURED",
-            message=f"Architect绑定的提供商不存在: {provider_id}",
+            message="Architect绑定的提供商不存在",
         )
 
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
@@ -122,7 +133,7 @@ def _bind_docs_wizard_llm_from_architect_role(state: AppState) -> dict[str, Any]
         raise StructuredHTTPException(
             status_code=409,
             code="ARCHITECT_NOT_CONFIGURED",
-            message=f"Architect绑定的提供商缺少 type: {provider_id}",
+            message="Architect绑定的提供商缺少 type",
         )
 
     # Keep docs wizard runtime aligned with architect role without restricting provider type.
@@ -180,6 +191,77 @@ def _build_fields(payload: DocsInitDialoguePayload | DocsInitSuggestPayload | Do
         "definition_of_done": payload.definition_of_done or "",
         "backlog": payload.backlog or "",
     }
+
+
+def _merge_ai_fields(fields: dict[str, str], ai_fields: dict[str, list[str]]) -> None:
+    for key in _DOCS_FIELD_KEYS:
+        values = ai_fields.get(key) or []
+        if values:
+            fields[key] = "\n".join(values)
+
+
+async def _resolve_docs_preview_ai_fields(
+    *,
+    queue: asyncio.Queue[dict[str, Any]],
+    workspace: str,
+    settings: Any,
+    fields: dict[str, str],
+    timeout_seconds: float = _DOCS_PREVIEW_LLM_TIMEOUT_SECONDS,
+) -> tuple[dict[str, list[str]], bool]:
+    """Resolve Docs Init AI fields with a bounded fallback path."""
+    ai_fields: dict[str, list[str]] | None = None
+    collected_thinking = ""
+    fallback_reason = "no result"
+
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async for event in generate_docs_fields_stream(workspace, settings, fields):
+                event_type = event.get("type")
+                if event_type == "thinking":
+                    content = str(event.get("content") or "")
+                    if content:
+                        collected_thinking += content
+                        await queue.put(
+                            {
+                                "type": "thinking",
+                                "data": {"content": content, "accumulated": collected_thinking},
+                            }
+                        )
+                elif event_type == "result":
+                    candidate = event.get("fields")
+                    if isinstance(candidate, dict):
+                        ai_fields = {
+                            str(key): [str(item) for item in value]
+                            for key, value in candidate.items()
+                            if isinstance(value, list)
+                        }
+                    break
+                elif event_type == "error":
+                    fallback_reason = str(event.get("error") or "stream error")
+                    break
+    except TimeoutError:
+        fallback_reason = f"timeout after {timeout_seconds:g}s"
+    except Exception as exc:  # noqa: BLE001 - provider failures must fall back instead of hanging preview.
+        fallback_reason = str(exc) or type(exc).__name__
+
+    if ai_fields:
+        return ai_fields, False
+
+    log.warning("[docs] preview LLM fallback activated: %s", fallback_reason)
+    fallback_fields = build_default_docs_fields(fields)
+    await queue.put(
+        {
+            "type": "stage",
+            "data": {
+                "stage": "llm_fallback",
+                "message": "Architect LLM unavailable; using deterministic docs fallback.",
+                "progress": 60,
+                "fields": fallback_fields,
+                "fallback": True,
+            },
+        }
+    )
+    return fallback_fields, True
 
 
 def _build_history(payload: DocsInitDialoguePayload) -> list[dict[str, Any]]:
@@ -242,6 +324,7 @@ async def _docs_init_dialogue_core(request: Request, payload: DocsInitDialoguePa
 
 @router.post("/v2/docs/init/dialogue", dependencies=[Depends(require_auth)], response_model=DocsInitDialogueResponse)
 async def docs_init_dialogue_v2(request: Request, payload: DocsInitDialoguePayload) -> DocsInitDialogueResponse:
+    """Interactive docs wizard dialogue turn (non-streaming)."""
     return await _docs_init_dialogue_core(request, payload)
 
 
@@ -275,6 +358,7 @@ async def _docs_init_dialogue_stream_core(request: Request, payload: DocsInitDia
 
 @router.post("/v2/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
 async def docs_init_dialogue_stream_v2(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
+    """Interactive docs wizard dialogue turn (streaming SSE)."""
     return await _docs_init_dialogue_stream_core(request, payload)
 
 
@@ -312,6 +396,7 @@ async def _docs_init_suggest_core(request: Request, payload: DocsInitSuggestPayl
 
 @router.post("/v2/docs/init/suggest", dependencies=[Depends(require_auth)], response_model=DocsInitSuggestResponse)
 async def docs_init_suggest_v2(request: Request, payload: DocsInitSuggestPayload) -> DocsInitSuggestResponse:
+    """Suggest docs fields using the Architect LLM."""
     return await _docs_init_suggest_core(request, payload)
 
 
@@ -380,6 +465,7 @@ async def _docs_init_preview_core(request: Request, payload: DocsInitPreviewPayl
 
 @router.post("/v2/docs/init/preview", dependencies=[Depends(require_auth)], response_model=DocsInitPreviewResponse)
 async def docs_init_preview_v2(request: Request, payload: DocsInitPreviewPayload) -> DocsInitPreviewResponse:
+    """Preview generated docs artifacts before applying."""
     return await _docs_init_preview_core(request, payload)
 
 
@@ -429,35 +515,24 @@ async def _docs_init_preview_stream_core(request: Request, payload: DocsInitPrev
                 {"type": "stage", "data": {"stage": "llm_start", "message": "Architect正在分析需求...", "progress": 20}}
             )
 
-            ai_fields = None
-            collected_thinking = ""
-            async for event in generate_docs_fields_stream(workspace_str, state.settings, fields):
-                if event["type"] == "thinking":
-                    # 实时发送thinking内容
-                    collected_thinking += event["content"]
-                    await queue.put(
-                        {"type": "thinking", "data": {"content": event["content"], "accumulated": collected_thinking}}
-                    )
-                elif event["type"] == "result":
-                    ai_fields = event["fields"]
-                elif event["type"] == "error":
-                    await queue.put({"type": "error", "data": {"error": event["error"]}})
-                    return
-
-            if not ai_fields:
-                await queue.put(
-                    {
-                        "type": "error",
-                        "data": {"error": "Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。"},
-                    }
-                )
-                return
+            ai_fields, used_fallback = await _resolve_docs_preview_ai_fields(
+                queue=queue,
+                workspace=workspace_str,
+                settings=state.settings,
+                fields=fields,
+            )
 
             # 发送 LLM 生成结果
             await queue.put(
                 {
                     "type": "stage",
-                    "data": {"stage": "llm_done", "message": "需求分析完成", "progress": 60, "fields": ai_fields},
+                    "data": {
+                        "stage": "llm_done",
+                        "message": "需求分析完成（降级模板）" if used_fallback else "需求分析完成",
+                        "progress": 65 if used_fallback else 60,
+                        "fields": ai_fields,
+                        "fallback": used_fallback,
+                    },
                 }
             )
 
@@ -465,18 +540,7 @@ async def _docs_init_preview_stream_core(request: Request, payload: DocsInitPrev
             await queue.put(
                 {"type": "stage", "data": {"stage": "apply_fields", "message": "整理生成结果...", "progress": 70}}
             )
-            if ai_fields.get("goal"):
-                fields["goal"] = "\n".join(ai_fields.get("goal") or [])
-            if ai_fields.get("in_scope"):
-                fields["in_scope"] = "\n".join(ai_fields.get("in_scope") or [])
-            if ai_fields.get("out_of_scope"):
-                fields["out_of_scope"] = "\n".join(ai_fields.get("out_of_scope") or [])
-            if ai_fields.get("constraints"):
-                fields["constraints"] = "\n".join(ai_fields.get("constraints") or [])
-            if ai_fields.get("definition_of_done"):
-                fields["definition_of_done"] = "\n".join(ai_fields.get("definition_of_done") or [])
-            if ai_fields.get("backlog"):
-                fields["backlog"] = "\n".join(ai_fields.get("backlog") or [])
+            _merge_ai_fields(fields, ai_fields)
 
             # 阶段 5: 构建文档模板
             await queue.put(
@@ -526,6 +590,7 @@ async def _docs_init_preview_stream_core(request: Request, payload: DocsInitPrev
 
 @router.post("/v2/docs/init/preview/stream", dependencies=[Depends(require_auth)])
 async def docs_init_preview_stream_v2(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
+    """Stream docs preview generation progress via SSE."""
     return await _docs_init_preview_stream_core(request, payload)
 
 
@@ -561,7 +626,7 @@ def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> Do
             raise StructuredHTTPException(
                 status_code=400,
                 code="INVALID_DOCS_PATH",
-                message=f"invalid docs path: {item.path}",
+                message="invalid docs path",
             )
         try:
             full_path = resolve_artifact_path(workspace_str, cache_root, rel_path)
@@ -569,7 +634,7 @@ def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> Do
             raise StructuredHTTPException(
                 status_code=400,
                 code="INVALID_DOCS_PATH",
-                message=f"invalid docs path: {item.path}",
+                message="invalid docs path",
             ) from e
         write_text_atomic(full_path, item.content or "")
         created.append(rel_path.replace("\\", "/"))
@@ -600,6 +665,7 @@ def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> Do
 
 @router.post("/v2/docs/init/apply", dependencies=[Depends(require_auth)], response_model=DocsInitApplyResponse)
 def docs_init_apply_v2(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:
+    """Apply generated docs artifacts to the workspace."""
     return _docs_init_apply_core(request, payload)
 
 

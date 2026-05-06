@@ -83,7 +83,7 @@ def _run_command(command: str, workspace: str, timeout_seconds: int) -> tuple[bo
 
 def _detect_unit_command(workspace: str) -> str:
     if os.path.isfile(os.path.join(workspace, "package.json")):
-        return "npm run -s test -- --watch=false"
+        return "npm run test -- --watch=false"
     if os.path.isfile(os.path.join(workspace, "go.mod")):
         return "go test ./... -run TestDoesNotExist"
     if os.path.isfile(os.path.join(workspace, "Cargo.toml")):

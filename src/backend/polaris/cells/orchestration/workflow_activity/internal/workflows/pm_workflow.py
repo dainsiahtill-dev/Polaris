@@ -78,7 +78,9 @@ def _qa_outcome(payload: Any) -> tuple[bool, str]:
 
 def _director_execution_mode(value: Any) -> str:
     token = str(value or "").strip().lower()
-    if token in {"serial", "parallel"}:
+    if token in {"serial", "sequential"}:
+        return "serial"
+    if token == "parallel":
         return token
     return "parallel"
 

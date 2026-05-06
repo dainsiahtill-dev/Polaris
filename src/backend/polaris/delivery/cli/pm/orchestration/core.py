@@ -26,6 +26,25 @@ from .helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _append_resolved_artifact_candidate(
+    candidates: list[str],
+    workspace_full: str,
+    cache_root_full: str,
+    rel_path: str,
+) -> None:
+    try:
+        candidates.append(resolve_artifact_path(workspace_full, cache_root_full, rel_path))
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("Failed to resolve artifact candidate %r: %s", rel_path, exc)
+
+
+def _first_existing_file(candidates: list[str]) -> str:
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return candidates[0] if candidates else ""
+
+
 def archive_task_history(
     workspace_full: str,
     cache_root_full: str,
@@ -134,38 +153,45 @@ def load_state_and_context(
         Dictionary containing loaded state and context
     """
     # Resolve paths
-    plan_full = resolve_artifact_path(workspace_full, cache_root_full, args.plan_path)
     gap_full = resolve_artifact_path(workspace_full, cache_root_full, args.gap_report_path)
     qa_full = resolve_artifact_path(workspace_full, cache_root_full, args.qa_path)
+
+    plan_candidates: list[str] = []
+    _append_resolved_artifact_candidate(plan_candidates, workspace_full, cache_root_full, args.plan_path)
+    _append_resolved_artifact_candidate(
+        plan_candidates,
+        workspace_full,
+        cache_root_full,
+        "workspace/docs/product/plan.md",
+    )
+    plan_full = _first_existing_file(plan_candidates)
+
     req_raw = str(getattr(args, "requirements_path", "") or "").strip()
     req_candidates: list[str] = []
     if req_raw:
         if os.path.isabs(req_raw):
             req_candidates.append(req_raw)
         else:
-            try:
-                req_candidates.append(resolve_artifact_path(workspace_full, cache_root_full, req_raw))
-            except (RuntimeError, ValueError) as e:
-                logger.debug(f"Failed to resolve requirement artifact: {e}")
+            _append_resolved_artifact_candidate(req_candidates, workspace_full, cache_root_full, req_raw)
             req_candidates.append(os.path.join(workspace_full, req_raw))
             if req_raw.startswith("docs/"):
-                try:
-                    req_candidates.append(
-                        resolve_artifact_path(
-                            workspace_full,
-                            cache_root_full,
-                            "workspace/" + req_raw,
-                        )
-                    )
-                except (RuntimeError, ValueError) as e:
-                    logger.debug(f"Failed to resolve docs requirement: {e}")
-    req_full = ""
-    for candidate in req_candidates:
-        if candidate and os.path.isfile(candidate):
-            req_full = candidate
-            break
-    if not req_full and req_candidates:
-        req_full = req_candidates[0]
+                _append_resolved_artifact_candidate(
+                    req_candidates,
+                    workspace_full,
+                    cache_root_full,
+                    "workspace/" + req_raw,
+                )
+    for fallback_req_rel in (
+        "workspace/docs/product/requirements.md",
+        "workspace/docs/10_requirements.md",
+    ):
+        _append_resolved_artifact_candidate(
+            req_candidates,
+            workspace_full,
+            cache_root_full,
+            fallback_req_rel,
+        )
+    req_full = _first_existing_file(req_candidates)
     pm_out_full = resolve_artifact_path(workspace_full, cache_root_full, args.pm_out)
     pm_state_full = resolve_artifact_path(workspace_full, cache_root_full, args.state_path)
 

@@ -1,4 +1,4 @@
-﻿"""Polaris KernelOne exception hierarchy.
+"""Polaris KernelOne exception hierarchy.
 
 This module provides the unified exception hierarchy for all KernelOne and Cell errors.
 It serves as the single source of truth for error classification and handling.

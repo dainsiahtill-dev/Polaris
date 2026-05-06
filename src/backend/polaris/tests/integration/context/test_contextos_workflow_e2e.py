@@ -114,7 +114,7 @@ def test_cx02_zero_ref_entries_evicted_first() -> None:
     ref4 = store.intern("content_d")
 
     # ref1 (zero-ref) should be evicted
-    assert store.get(ref1).startswith("<evicted:"), "Zero-ref entry should be evicted"
+    assert store.get(ref1) is None, "Zero-ref entry should be evicted"
 
     # ref4 should be present
     assert store.get(ref4) == "content_d", "New entry should be present"
@@ -134,7 +134,7 @@ def test_cx02b_lru_eviction_same_ref_count() -> None:
     # Touch ref1 (make it newer)
     retrieved = store.get(ref1)
     # Content should be retrievable (or evicted if at capacity)
-    assert retrieved == "oldest" or retrieved.startswith("<evicted:")
+    assert retrieved == "oldest" or retrieved is None
 
 
 def test_cx02c_byte_budget_eviction() -> None:
@@ -315,7 +315,7 @@ def test_cx05_concurrent_intern_release() -> None:
     # All kept refs should still be retrievable
     for ref in acquired_refs:
         content = store.get(ref)
-        assert not content.startswith("<evicted:"), f"Content unexpectedly evicted for {ref.hash}"
+        assert content is not None, f"Content unexpectedly evicted for {ref.hash}"
 
 
 def test_cx05b_concurrent_same_content_dedup() -> None:
@@ -393,7 +393,7 @@ def test_cx05c_concurrent_read_write() -> None:
     assert not errors, f"Thread errors: {errors}"
     # All reads should return valid content
     for content in read_contents:
-        assert not content.startswith("<evicted:"), "Read returned evicted content"
+        assert content is not None, "Read returned evicted content"
 
 
 # ---------------------------------------------------------------------------

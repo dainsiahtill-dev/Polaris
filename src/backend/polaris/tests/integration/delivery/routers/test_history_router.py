@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import history as history_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(history_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -132,7 +134,7 @@ class TestHistoryRouter:
             response = client.get("/history/round/missing-id")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["error"]["message"].lower()
 
     def test_v2_history_runs_happy_path(self) -> None:
         """GET /v2/history/runs returns 200 with paginated runs."""
@@ -173,7 +175,7 @@ class TestHistoryRouter:
             response = client.get("/v2/history/runs/run-1/manifest")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["error"]["message"].lower()
 
     def test_v2_history_run_manifest_happy_path(self) -> None:
         """GET /v2/history/runs/{run_id}/manifest returns 200 with manifest."""

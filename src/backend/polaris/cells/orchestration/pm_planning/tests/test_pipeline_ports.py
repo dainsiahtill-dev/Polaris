@@ -8,6 +8,8 @@ and protocol classes.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from polaris.cells.orchestration.pm_planning.internal.pipeline_ports import (
     CellPmInvokePort,
@@ -455,3 +457,33 @@ class TestNoopPmInvokePort:
 def test_cell_pm_invoke_port_instantiates() -> None:
     port = CellPmInvokePort()
     assert port is not None
+
+
+def test_cell_pm_invoke_port_normalizes_ollama_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.kernelone.process.ollama_utils import OllamaResponse
+
+    def fake_invoke_ollama(*args: object, **kwargs: object) -> OllamaResponse:
+        return OllamaResponse(output='{"tasks": []}')
+
+    monkeypatch.setattr("polaris.kernelone.process.ollama_utils.invoke_ollama", fake_invoke_ollama)
+    port = CellPmInvokePort()
+
+    output = port.invoke(NoopPmStatePort(), "prompt", "ollama", SimpleNamespace(), None)
+
+    assert output == '{"tasks": []}'
+
+
+def test_cell_pm_invoke_port_raises_on_ollama_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.kernelone.process.ollama_utils import OllamaMetadata, OllamaResponse
+
+    def fake_invoke_ollama(*args: object, **kwargs: object) -> OllamaResponse:
+        return OllamaResponse(
+            output="",
+            metadata=OllamaMetadata(error="request timed out", error_type="timeout"),
+        )
+
+    monkeypatch.setattr("polaris.kernelone.process.ollama_utils.invoke_ollama", fake_invoke_ollama)
+    port = CellPmInvokePort()
+
+    with pytest.raises(RuntimeError, match="Ollama PM backend failed: request timed out"):
+        port.invoke(NoopPmStatePort(), "prompt", "ollama", SimpleNamespace(), None)

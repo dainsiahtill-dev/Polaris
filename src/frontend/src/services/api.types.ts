@@ -896,3 +896,822 @@ export interface LLMObservationEntry {
     };
   };
 }
+
+// ============================================================================
+// V2 P1 Management Routes Types
+// ============================================================================
+
+export interface PmTaskItem {
+  id: string;
+  subject: string;
+  status: string;
+  priority?: string;
+  created_at?: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PmTaskListResponse {
+  items: PmTaskItem[];
+  total: number;
+}
+
+export interface PmTaskDetailResponse extends PmTaskItem {
+  description?: string;
+  acceptance?: string[];
+  assignee?: string;
+  due_date?: string | null;
+  tags?: string[];
+  parent_id?: string | null;
+  subtasks?: PmTaskItem[];
+}
+
+export interface PmCreateTaskRequest {
+  subject: string;
+  description?: string;
+  priority?: string;
+  status?: string;
+  acceptance?: string[];
+  assignee?: string;
+  due_date?: string | null;
+  tags?: string[];
+  parent_id?: string | null;
+}
+
+export interface PmRequirementItem {
+  id: string;
+  title: string;
+  status: string;
+  priority?: string;
+  created_at?: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PmRequirementListResponse {
+  items: PmRequirementItem[];
+  total: number;
+}
+
+export interface PmRequirementDetailResponse extends PmRequirementItem {
+  description?: string;
+  acceptance_criteria?: string[];
+  source?: string;
+  tags?: string[];
+  related_task_ids?: string[];
+}
+
+export interface DocsInitDialogueRequest {
+  message: string;
+  context?: Record<string, unknown>;
+}
+
+export interface DocsInitDialogueResponse {
+  ok: boolean;
+  response: string;
+  suggestions?: string[];
+}
+
+export interface DocsInitSuggestRequest {
+  topic?: string;
+  context?: Record<string, unknown>;
+}
+
+export interface DocsInitSuggestResponse {
+  ok: boolean;
+  suggestions: Array<{
+    title: string;
+    description: string;
+    category?: string;
+  }>;
+}
+
+export interface DocsInitPreviewRequest {
+  selections?: string[];
+  context?: Record<string, unknown>;
+}
+
+export interface DocsInitPreviewResponse {
+  ok: boolean;
+  preview: string;
+  files?: Array<{
+    path: string;
+    content: string;
+  }>;
+}
+
+export interface DocsInitApplyRequest {
+  selections?: string[];
+  context?: Record<string, unknown>;
+}
+
+export interface DocsInitApplyResponse {
+  ok: boolean;
+  applied: string[];
+  message?: string;
+}
+
+export interface LLMConfigMigrateRequest {
+  target_version?: number;
+  backup?: boolean;
+}
+
+export interface LLMConfigMigrateResponse {
+  ok: boolean;
+  migrated: boolean;
+  previous_version?: number;
+  current_version?: number;
+  message?: string;
+}
+
+export interface LLMProviderItem {
+  id: string;
+  name: string;
+  type?: string;
+  ready?: boolean;
+  models?: string[];
+  config?: Record<string, unknown>;
+}
+
+export interface LLMProviderListResponse {
+  items: LLMProviderItem[];
+  total: number;
+}
+
+export interface SettingsV2Response {
+  settings: Record<string, unknown>;
+  version?: number;
+  updated_at?: string;
+}
+
+export interface SettingsV2UpdateRequest {
+  settings: Record<string, unknown>;
+}
+
+export interface AgentsApplyRequest {
+  draft_path?: string;
+  auto_generate?: boolean;
+  context?: Record<string, unknown>;
+}
+
+export interface AgentsApplyResponse {
+  ok: boolean;
+  applied: boolean;
+  agents_path?: string;
+  message?: string;
+}
+
+export interface AgentsFeedbackRequest {
+  text: string;
+  category?: string;
+  context?: Record<string, unknown>;
+}
+
+export interface AgentsFeedbackResponse {
+  ok: boolean;
+  mtime?: string;
+  cleared?: boolean;
+  message?: string;
+}
+
+export interface RoleCacheStatsResponse {
+  ok: boolean;
+  hits?: number;
+  misses?: number;
+  size?: number;
+  entries?: number;
+  last_cleared?: string | null;
+  by_role?: Record<string, {
+    hits?: number;
+    misses?: number;
+    entries?: number;
+  }>;
+}
+
+export interface RoleCacheClearResponse {
+  ok: boolean;
+  cleared: boolean;
+  previous_size?: number;
+  message?: string;
+}
+
+export interface RoleChatRolesResponse {
+  ok: boolean;
+  roles: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    enabled?: boolean;
+  }>;
+}
+
+// ============================================================================
+// V2 P0 Missing Routes Types
+// ============================================================================
+
+export type UnifiedRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa' | 'scout';
+
+export interface RoleChatRequest {
+  message: string;
+  context?: Record<string, unknown>;
+}
+
+export interface RoleChatResponse {
+  ok: boolean;
+  response: string;
+  thinking?: string;
+  role: string;
+  model?: string;
+  provider?: string;
+}
+
+export interface RoleChatStatusResponse {
+  ready: boolean;
+  configured?: boolean;
+  error?: string;
+  role?: string;
+  role_config?: {
+    provider_id: string;
+    model: string;
+    profile?: string;
+  };
+  provider_type?: string;
+  llm_test_ready?: boolean;
+  debug?: Record<string, unknown>;
+}
+
+export interface SessionMessageRequest {
+  role: string;
+  content: string;
+  thinking?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface SessionMessageResponse {
+  ok: boolean;
+  session?: Record<string, unknown>;
+}
+
+export interface SessionMemoryItem {
+  id?: string;
+  kind?: string;
+  entity?: string;
+  content?: string;
+  timestamp?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SessionMemoryResponse {
+  ok: boolean;
+  session_id: string;
+  query?: string;
+  kind?: string;
+  entity?: string;
+  total: number;
+  items: SessionMemoryItem[];
+}
+
+export interface StreamChatRequest {
+  role?: string;
+  message: string;
+  provider_id?: string;
+  model?: string;
+  context?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface StreamChatResponse {
+  status: string;
+  message: string;
+}
+
+export interface ConversationV2 {
+  id: string;
+  title?: string;
+  role: string;
+  workspace?: string;
+  context_config?: Record<string, unknown>;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+  messages?: ConversationMessageV2[];
+}
+
+export interface ConversationMessageV2 {
+  id: string;
+  conversation_id: string;
+  sequence: number;
+  role: string;
+  content: string;
+  thinking?: string;
+  meta?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ConversationListResponseV2 {
+  conversations: ConversationV2[];
+  total: number;
+}
+
+export interface CreateConversationRequestV2 {
+  title?: string;
+  role: string;
+  workspace?: string;
+  context_config?: Record<string, unknown>;
+  initial_message?: {
+    role: string;
+    content: string;
+    thinking?: string;
+    meta?: Record<string, unknown>;
+  };
+}
+
+export interface AddConversationMessageRequestV2 {
+  role: string;
+  content: string;
+  thinking?: string;
+  meta?: Record<string, unknown>;
+}
+
+// ============================================================================
+// V2 P2 Diagnostic Routes Types
+// ============================================================================
+
+export interface HealthV2Response {
+  status?: string;
+  timestamp?: string;
+  version?: string;
+}
+
+export interface ReadyV2Response {
+  ready: boolean;
+  checks?: Record<string, boolean>;
+  timestamp?: string;
+}
+
+export interface LiveV2Response {
+  alive: boolean;
+  timestamp?: string;
+}
+
+export interface StateSnapshotV2Response {
+  snapshot: Record<string, unknown>;
+  timestamp?: string;
+}
+
+export interface ShutdownV2Response {
+  ok: boolean;
+  message?: string;
+}
+
+export interface LogsQueryV2Response {
+  logs: Array<{
+    timestamp?: string;
+    level?: string;
+    channel?: string;
+    message?: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  total?: number;
+}
+
+export interface LogUserActionV2Request {
+  action: string;
+  category?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LogUserActionV2Response {
+  ok: boolean;
+  logged?: boolean;
+}
+
+export interface LogChannelsV2Response {
+  channels: string[];
+}
+
+export interface LanceDbStatusV2Response {
+  ok: boolean;
+  error?: string | null;
+  python?: string | null;
+  version?: string | null;
+}
+
+export interface MemoListV2Response {
+  items: Array<{ path: string; name: string; mtime?: string }>;
+  count: number;
+}
+
+export interface OllamaModelsV2Request {
+  host?: string;
+}
+
+export interface OllamaModelsV2Response {
+  models: Array<{ name: string; size?: number; parameter_size?: string; digest?: string }>;
+}
+
+export interface OllamaStopV2Response {
+  stopped?: string[];
+  failed?: Array<{ model: string }>;
+}
+
+export interface MemoryStateV2Response {
+  state: Record<string, unknown>;
+  count?: number;
+  timestamp?: string;
+}
+
+export interface DeleteMemoryV2Response {
+  ok: boolean;
+  deleted?: boolean;
+  memory_id?: string;
+}
+
+export interface RoleLlmEventsV2Response {
+  events: Array<{
+    event_id?: string;
+    role?: string;
+    timestamp?: string;
+    type?: string;
+    model?: string;
+    provider?: string;
+    tokens?: number;
+    duration_ms?: number;
+    metadata?: Record<string, unknown>;
+  }>;
+  total?: number;
+}
+
+export interface AllLlmEventsV2Response {
+  events: Array<{
+    event_id?: string;
+    role?: string;
+    timestamp?: string;
+    type?: string;
+    model?: string;
+    provider?: string;
+    tokens?: number;
+    duration_ms?: number;
+    metadata?: Record<string, unknown>;
+  }>;
+  total?: number;
+}
+
+export interface FactoryRunEventsV2Response {
+  events: Array<{
+    event_id?: string;
+    run_id?: string;
+    timestamp?: string;
+    type?: string;
+    stage?: string;
+    message?: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  total?: number;
+}
+
+export interface FactoryRunAuditBundleV2Response {
+  run_id: string;
+  bundle: Record<string, unknown>;
+  timestamp?: string;
+}
+
+export interface RuntimeMigrationStatusV2Response {
+  status: string;
+  current_version?: number;
+  target_version?: number;
+  pending_migrations?: string[];
+  timestamp?: string;
+}
+
+// ============================================================================
+// V2 P3 Advanced Routes Types
+// ============================================================================
+
+// --- Court ---
+export interface CourtTopologyResponse {
+  nodes: CourtTopologyNode[];
+  count: number;
+  total: number;
+  scenes: Record<string, CourtSceneConfig>;
+}
+
+export interface CourtStateResponse {
+  phase: CourtScenePhase;
+  current_scene: string;
+  actors: Record<string, CourtActorState>;
+  topology?: CourtTopologyNode[];
+  recent_events: CourtActionEvent[];
+  updated_at: number;
+}
+
+export interface CourtActorResponse {
+  actor: CourtActorState;
+}
+
+export interface CourtSceneResponse {
+  scene: CourtSceneConfig;
+}
+
+// --- Vision ---
+export interface VisionStatusResponse {
+  ready: boolean;
+  provider?: string;
+  model?: string;
+  error?: string;
+}
+
+export interface VisionAnalyzeRequest {
+  image_url?: string;
+  image_base64?: string;
+  prompt?: string;
+  context?: Record<string, unknown>;
+}
+
+export interface VisionAnalyzeResponse {
+  ok: boolean;
+  result: string;
+  model?: string;
+  provider?: string;
+}
+
+// --- Scheduler ---
+export interface SchedulerStatusResponse {
+  running: boolean;
+  schedule?: string;
+  next_run?: string;
+  last_run?: string;
+  error?: string;
+}
+
+export interface SchedulerStartRequest {
+  schedule?: string;
+  immediate?: boolean;
+}
+
+export interface SchedulerStartResponse {
+  ok: boolean;
+  running: boolean;
+  message?: string;
+}
+
+export interface SchedulerStopResponse {
+  ok: boolean;
+  running: boolean;
+  message?: string;
+}
+
+// --- Code Map ---
+export interface CodeMapResponse {
+  ok: boolean;
+  map?: Record<string, unknown>;
+  symbols?: Array<{
+    name: string;
+    kind: string;
+    path: string;
+    line?: number;
+  }>;
+  files?: string[];
+}
+
+export interface CodeIndexRequest {
+  paths?: string[];
+  force?: boolean;
+}
+
+export interface CodeIndexResponse {
+  ok: boolean;
+  indexed: number;
+  message?: string;
+}
+
+export interface CodeSearchRequest {
+  query: string;
+  limit?: number;
+  kind?: string;
+}
+
+export interface CodeSearchResult {
+  name: string;
+  kind: string;
+  path: string;
+  line?: number;
+  score?: number;
+  snippet?: string;
+}
+
+export interface CodeSearchResponse {
+  ok: boolean;
+  results: CodeSearchResult[];
+  total: number;
+}
+
+// --- MCP ---
+export interface McpStatusResponse {
+  ready: boolean;
+  servers?: Array<{
+    name: string;
+    status: string;
+    tools?: string[];
+  }>;
+  error?: string;
+}
+
+// --- Director Capabilities ---
+export interface DirectorCapabilitiesResponse {
+  ok: boolean;
+  capabilities: string[];
+  roles: string[];
+  features: Record<string, boolean>;
+}
+
+// --- Interview ---
+export interface InterviewAskRequest {
+  question: string;
+  context?: Record<string, unknown>;
+  role?: string;
+}
+
+export interface InterviewAskResponse {
+  ok: boolean;
+  answer: string;
+  follow_up?: string[];
+  role?: string;
+  model?: string;
+}
+
+export interface InterviewSaveRequest {
+  session_id?: string;
+  answers: Array<{
+    question: string;
+    answer: string;
+  }>;
+}
+
+export interface InterviewSaveResponse {
+  ok: boolean;
+  session_id: string;
+  saved: number;
+}
+
+export interface InterviewCancelRequest {
+  session_id?: string;
+}
+
+export interface InterviewCancelResponse {
+  ok: boolean;
+  cancelled: boolean;
+}
+
+export interface InterviewStreamRequest {
+  question: string;
+  context?: Record<string, unknown>;
+  role?: string;
+}
+
+// --- LLM Test ---
+export interface LLMTestReportResponse {
+  ok: boolean;
+  report?: {
+    passed: number;
+    failed: number;
+    skipped: number;
+    total: number;
+    suites?: string[];
+  };
+  last_run?: string;
+}
+
+export interface LLMTestStartRequest {
+  suites?: string[];
+  roles?: string[];
+}
+
+export interface LLMTestStartResponse {
+  ok: boolean;
+  test_run_id: string;
+  status: string;
+}
+
+export interface LLMTestRunStatusResponse {
+  ok: boolean;
+  test_run_id: string;
+  status: string;
+  progress: number;
+  passed: number;
+  failed: number;
+  total: number;
+}
+
+export interface LLMTestTranscriptResponse {
+  ok: boolean;
+  test_run_id: string;
+  entries: Array<{
+    timestamp: string;
+    role: string;
+    prompt: string;
+    response: string;
+    passed: boolean;
+    error?: string;
+  }>;
+}
+
+// --- Permissions ---
+export interface PermissionCheckRequest {
+  action: string;
+  resource: string;
+  context?: Record<string, unknown>;
+}
+
+export interface PermissionCheckResponse {
+  allowed: boolean;
+  reason?: string;
+  policy_id?: string;
+}
+
+export interface EffectivePermissionsResponse {
+  permissions: string[];
+  roles: string[];
+  context?: Record<string, unknown>;
+}
+
+export interface PermissionRoleItem {
+  id: string;
+  name: string;
+  permissions: string[];
+  inherited?: string[];
+}
+
+export interface PermissionRolesResponse {
+  roles: PermissionRoleItem[];
+  total: number;
+}
+
+export interface PermissionAssignRequest {
+  subject: string;
+  role: string;
+  resource?: string;
+}
+
+export interface PermissionAssignResponse {
+  ok: boolean;
+  assigned: boolean;
+  previous_role?: string;
+}
+
+export interface PermissionPolicyItem {
+  id: string;
+  name: string;
+  actions: string[];
+  resources: string[];
+  effect: 'allow' | 'deny';
+}
+
+export interface PermissionPoliciesResponse {
+  policies: PermissionPolicyItem[];
+  total: number;
+}
+
+// --- Files V2 ---
+export interface FileReadV2Response {
+  ok: boolean;
+  content: string;
+  path: string;
+  mtime?: string;
+  size?: number;
+}
+
+// --- Runtime V2 ---
+export interface RuntimeClearResponse {
+  ok: boolean;
+  cleared: string[];
+}
+
+export interface RuntimeResetTasksResponse {
+  ok: boolean;
+  reset: number;
+}
+
+// --- LLM Runtime Status ---
+export interface LLMRuntimeStatusResponse {
+  ok: boolean;
+  overall: string;
+  roles: Record<string, {
+    status: string;
+    provider?: string;
+    model?: string;
+    ready?: boolean;
+    last_error?: string;
+  }>;
+}
+
+export interface RoleRuntimeStatusResponse {
+  ok: boolean;
+  role_id: string;
+  status: string;
+  provider?: string;
+  model?: string;
+  ready?: boolean;
+  last_error?: string;
+  timestamp?: string;
+}

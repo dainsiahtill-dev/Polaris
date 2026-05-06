@@ -60,7 +60,7 @@ class MemoryManager:
         for proj in projections:
             if proj.injection_allowed:
                 # Inject memory into context
-                pass
+                ...
     """
 
     workspace: str = "."

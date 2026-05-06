@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import tests as tests_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(tests_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -58,14 +60,14 @@ class TestLlmTestReport:
             response = client.get("/llm/test/nonexistent")
 
         assert response.status_code == 404
-        assert response.json()["detail"] == "report not found"
+        assert response.json()["error"]["message"] == "report not found"
 
     def test_llm_test_report_invalid_id(self) -> None:
         """GET /llm/test/{id} returns 400 for invalid test run id."""
         client = _build_client()
         response = client.get("/llm/test/invalid@id#")
         assert response.status_code == 400
-        assert "invalid test run id" in response.json()["detail"]
+        assert "invalid test run id" in response.json()["error"]["message"]
 
 
 class TestLlmTestTranscript:
@@ -91,7 +93,7 @@ class TestLlmTestTranscript:
             response = client.get("/llm/test/test-123/transcript")
 
         assert response.status_code == 404
-        assert response.json()["detail"] == "transcript not found"
+        assert response.json()["error"]["message"] == "transcript not found"
 
 
 class TestNormalizeReportPayload:
@@ -163,14 +165,20 @@ class TestNormalizeReportPayload:
         assert result["suites"]["connectivity"]["details"]["total_cases"] == 5
 
     def test_normalize_invalid_payload(self) -> None:
-        """_normalize_report_payload handles invalid payload gracefully."""
+        """_normalize_report_payload raises StructuredHTTPException for invalid payload."""
+        import pytest
+        from polaris.delivery.http.routers._shared import StructuredHTTPException
         from polaris.delivery.http.routers.tests import _normalize_report_payload
 
-        result = _normalize_report_payload("not a dict")
-        assert result["ok"] is False
+        with pytest.raises(StructuredHTTPException) as exc_info:
+            _normalize_report_payload("not a dict")
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "INVALID_REPORT_PAYLOAD"
 
-        result = _normalize_report_payload(None)
-        assert result["ok"] is False
+        with pytest.raises(StructuredHTTPException) as exc_info:
+            _normalize_report_payload(None)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "INVALID_REPORT_PAYLOAD"
 
 
 class TestResolveTestPath:
@@ -212,7 +220,7 @@ class TestResolveTestPath:
             _resolve_test_path(settings, "invalid@id", "report", "/tmp/workspace")
 
         assert exc_info.value.status_code == 400
-        assert "invalid test run id" in exc_info.value.detail
+        assert "invalid test run id" in exc_info.value.detail["message"]
 
 
 class TestMapProviderConfigError:

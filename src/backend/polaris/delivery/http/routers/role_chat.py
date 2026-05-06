@@ -42,7 +42,7 @@ router = APIRouter()
 
 @router.get("/v2/role/chat/ping", dependencies=[Depends(require_auth)], response_model=RoleChatPingResponse)
 async def role_chat_ping() -> dict[str, Any]:
-    """健康检查端点"""
+    """Health check for the role chat router."""
     return {
         "status": "ok",
         "message": "Role Chat router is working",
@@ -69,10 +69,10 @@ async def role_chat_status(
     request: Request,
     role: str,
 ) -> dict[str, Any]:
-    """获取指定角色LLM配置状态
+    """Get LLM configuration readiness for a specific role.
 
-    Args:
-        role: 角色标识 (pm, architect, director, qa, 等)
+    Returns:
+        Ready state, provider info, and debug details.
     """
     state = get_state(request)
 
@@ -105,7 +105,7 @@ async def role_chat_status(
             return {
                 "ready": False,
                 "configured": False,
-                "error": f"{role.upper()} role not configured",
+                "error": "Role not configured",
                 "debug": {
                     "roles_keys": list(roles.keys()) if roles else None,
                     "supported_roles": get_registered_roles(),
@@ -119,7 +119,7 @@ async def role_chat_status(
             return {
                 "ready": False,
                 "configured": False,
-                "error": f"{role.upper()} role provider or model not set",
+                "error": "Role provider or model not set",
                 "debug": {
                     "role_config": role_config,
                     "provider_id": provider_id if provider_id else "(empty)",
@@ -132,7 +132,7 @@ async def role_chat_status(
             return {
                 "ready": False,
                 "configured": False,
-                "error": f"Provider '{provider_id}' not found",
+                "error": "Provider not found",
                 "debug": {
                     "role_config": role_config,
                     "available_providers": list(providers.keys()),
@@ -165,7 +165,7 @@ async def role_chat_status(
             "llm_test_ready": False,
             "role": role,
             "code": getattr(exc, "code", "internal_error"),
-            "message": str(exc),
+            "message": "Status check failed",
             "details": {
                 "exception": traceback.format_exc(),
             },
@@ -174,7 +174,7 @@ async def role_chat_status(
 
 @router.get("/v2/role/chat/roles", dependencies=[Depends(require_auth)], response_model=RoleListResponse)
 async def list_supported_roles() -> dict[str, Any]:
-    """列出所有支持的角色"""
+    """List all registered LLM roles."""
     return {
         "roles": get_registered_roles(),
         "count": len(get_registered_roles()),
@@ -193,10 +193,10 @@ async def get_role_llm_events(
     task_id: str | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
-    """获取指定角色的 LLM 调用事件历史
+    """Get LLM call events for a specific role.
 
-    Args:
-        role: 角色标识 (pm, architect, director, qa, chief_engineer)
+    Returns:
+        Events list with categorized stats.
     """
     from ..roles.events import get_global_emitter
 
@@ -230,7 +230,7 @@ async def get_all_llm_events(
     role: str | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
-    """获取所有角色的 LLM 调用事件历史"""
+    """Get LLM call events across all roles."""
     from ..roles.events import get_global_emitter
 
     emitter = get_global_emitter()
@@ -244,7 +244,7 @@ async def get_all_llm_events(
 
 @router.get("/v2/role/cache-stats", dependencies=[Depends(require_auth)], response_model=CacheStatsResponse)
 async def get_llm_cache_stats() -> dict[str, Any]:
-    """获取 LLM 缓存统计信息"""
+    """Get LLM cache statistics."""
     from ..roles.kernel_components import get_global_llm_cache
 
     cache = get_global_llm_cache()
@@ -257,7 +257,7 @@ async def get_llm_cache_stats() -> dict[str, Any]:
     response_model=CacheClearResponse,
 )
 async def clear_llm_cache() -> dict[str, Any]:
-    """清空 LLM 缓存"""
+    """Clear the global LLM cache."""
     from ..roles.kernel_components import get_global_llm_cache
 
     cache = get_global_llm_cache()
@@ -281,7 +281,10 @@ def _validate_role(role: str) -> None:
         raise StructuredHTTPException(
             status_code=400,
             code="UNSUPPORTED_ROLE",
-            message=f"Role '{role}' is not supported. Supported roles: {supported}",
+            message=f"Role '{role}' is not supported",
+            details={
+                "supported_roles": supported,
+            },
         )
 
 
@@ -291,23 +294,10 @@ async def role_chat(
     role: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """通过指定角色的 LLM 进行对话（非流式）
+    """Chat with a registered LLM role (non-streaming).
 
-    Request:
-        {
-            "message": "用户消息",
-            "context": {...}  # 可选的上下文信息
-        }
-
-    Response:
-        {
-            "ok": true,
-            "response": "AI回复",
-            "thinking": "思考过程（如果有）",
-            "role": "pm",
-            "model": "使用的模型",
-            "provider": "使用的provider"
-        }
+    Returns:
+        Response, thinking trace, and model metadata.
     """
     state = get_state(request)
 
@@ -329,7 +319,7 @@ async def role_chat(
         raise StructuredHTTPException(
             status_code=409,
             code="LLM_NOT_READY",
-            message=str(exc),
+            message="LLM runtime not ready",
         ) from exc
 
     try:
@@ -345,7 +335,7 @@ async def role_chat(
         raise StructuredHTTPException(
             status_code=500,
             code="GENERATION_FAILED",
-            message=str(exc),
+            message=f"Generation failed: {exc}",
         ) from exc
 
 
@@ -355,20 +345,10 @@ async def role_chat_stream(
     role: str,
     payload: dict[str, Any],
 ) -> Any:
-    """通过指定角色的 LLM 进行对话（流式 SSE）
+    """Chat with a registered LLM role (streaming SSE).
 
-    Request:
-        {
-            "message": "用户消息",
-            "context": {...}  # 可选的上下文信息
-        }
-
-    Response: SSE stream with events:
-        - thinking_chunk: 思考过程片段
-        - content_chunk: 内容片段
-        - complete: 完成事件，包含完整响应
-        - error: 错误事件
-        - complete: 结束标记
+    Yields:
+        thinking_chunk, content_chunk, complete, and error events.
     """
     from polaris.delivery.http.routers.sse_utils import (
         create_sse_response,
@@ -387,8 +367,8 @@ async def role_chat_stream(
         ensure_required_roles_ready(state, default_roles=[role])
     except StructuredHTTPException as exc:
         return create_sse_response(_error_sse_generator(str(exc.structured_message)))
-    except (RuntimeError, ValueError) as exc:
-        return create_sse_response(_error_sse_generator(str(exc)))
+    except (RuntimeError, ValueError):
+        return create_sse_response(_error_sse_generator("LLM runtime error"))
 
     async def _run_role_dialogue(queue: asyncio.Queue) -> None:
         """运行角色对话并输出到队列"""

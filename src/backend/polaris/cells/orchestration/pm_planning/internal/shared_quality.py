@@ -216,7 +216,7 @@ def detect_integration_verify_command(workspace_full: str) -> str:
                 unique_targets.append(item)
         return "python -m compileall -q " + " ".join(unique_targets)
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["node"]):
-        return "npm run -s test -- --watch=false"
+        return "npm run test -- --watch=false"
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["go"]):
         return "go test ./... -run TestDoesNotExist"
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["rust"]):

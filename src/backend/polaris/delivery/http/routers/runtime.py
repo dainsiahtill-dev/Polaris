@@ -171,6 +171,7 @@ async def runtime_storage_layout(request: Request) -> dict[str, Any]:  # DEPRECA
     response_model=RuntimeStorageLayoutResponse,
 )
 async def v2_runtime_storage_layout(request: Request) -> dict[str, Any]:
+    """Get workspace storage layout, roots, and environment."""
     return _runtime_storage_layout_core(request)
 
 
@@ -203,6 +204,7 @@ async def runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[
     response_model=RuntimeClearResponse,
 )
 async def v2_runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:
+    """Clear runtime scope (pm, director, dialogue, or all)."""
     return _runtime_clear_core(request, payload)
 
 
@@ -289,10 +291,11 @@ async def runtime_migration_status(request: Request) -> dict[str, Any]:  # DEPRE
     response_model=RuntimeMigrationStatusResponse,
 )
 async def v2_runtime_migration_status(request: Request) -> dict[str, Any]:
+    """Get storage layout migration status and archive counts."""
     return _runtime_migration_status_core(request)
 
 
-def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
+async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -309,14 +312,14 @@ def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
         from polaris.cells.orchestration.pm_planning.public.service import PMService
         from polaris.infrastructure.di.container import get_container
 
-        container = get_container()
+        container = await get_container()
         pm_service = container.resolve(PMService)
         pm_status = pm_service.get_status()
         if pm_status.get("running"):
             pm_running = True
-            pm_service.stop()
+            await pm_service.stop()
     except (RuntimeError, ValueError) as e:
-        logger.debug(f"PM stop failed: {e}")
+        logger.debug("PM stop failed: %s", e)
 
     # Clean up external PM processes emitted by legacy loop wrappers.
     pm_external_terminated_pids = terminate_external_loop_pm_processes(workspace)
@@ -326,14 +329,14 @@ def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
         from polaris.cells.director.execution.public.service import DirectorService
         from polaris.infrastructure.di.container import get_container
 
-        container = get_container()
+        container = await get_container()
         director_service = container.resolve(DirectorService)
-        director_status = director_service.get_status()
+        director_status = await director_service.get_status()
         if str(director_status.get("state", "")).strip().upper() == "RUNNING":
             director_running = True
-            director_service.stop()
+            await director_service.stop()
     except (RuntimeError, ValueError) as e:
-        logger.debug(f"Director stop failed: {e}")
+        logger.debug("Director stop failed: %s", e)
 
     # Cleanup external director processes
     runtime_status = build_director_runtime_status(state, workspace, cache_root)
@@ -366,7 +369,7 @@ def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     response_model=RuntimeResetTasksResponse,
 )
 async def runtime_reset_tasks(request: Request) -> dict[str, Any]:  # DEPRECATED
-    return _runtime_reset_tasks_core(request)
+    return await _runtime_reset_tasks_core(request)
 
 
 @router.post(
@@ -375,4 +378,5 @@ async def runtime_reset_tasks(request: Request) -> dict[str, Any]:  # DEPRECATED
     response_model=RuntimeResetTasksResponse,
 )
 async def v2_runtime_reset_tasks(request: Request) -> dict[str, Any]:
-    return _runtime_reset_tasks_core(request)
+    """Stop PM/Director and reset runtime task records."""
+    return await _runtime_reset_tasks_core(request)

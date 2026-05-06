@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -296,6 +297,52 @@ class TestBuildSubprocessSpec:
         assert "env" in spec
         assert "LD_PRELOAD" not in spec["env"]
         assert spec["env"]["PYTHONUTF8"] == "1"
+
+    def test_windows_package_manager_executable_resolves_to_path_shim(
+        self,
+        service: CommandExecutionService,
+        tmp_path: Path,
+    ) -> None:
+        """npm should resolve to npm.cmd under shell=False on Windows."""
+        request = service.parse_command("npm run build", cwd=str(service.workspace_root))
+        shim = tmp_path / "npm.cmd"
+        shim.write_text("@echo off\r\n", encoding="utf-8")
+
+        with (
+            patch("polaris.kernelone.process.command_executor.os.name", "nt"),
+            patch(
+                "polaris.kernelone.process.command_executor.shutil.which",
+                return_value=str(shim),
+            ) as mock_which,
+        ):
+            spec = service.build_subprocess_spec(request, env_overrides={"PATH": str(tmp_path)})
+
+        assert spec["argv"][0] == str(shim)
+        assert spec["argv"][1:] == ["run", "build"]
+        mock_which.assert_called_once_with("npm", path=spec["env"]["PATH"])
+
+    def test_timeout_result_preserves_partial_output(
+        self,
+        service: CommandExecutionService,
+    ) -> None:
+        """Timeout diagnostics should keep captured stdout and stderr."""
+        request = service.parse_command("python --version", cwd=str(service.workspace_root))
+
+        def raise_timeout(*_args: object, **_kwargs: object) -> None:
+            raise subprocess.TimeoutExpired(
+                cmd=["python", "--version"],
+                timeout=1,
+                output=b"partial stdout",
+                stderr=b"partial stderr",
+            )
+
+        with patch("polaris.kernelone.process.command_executor.subprocess.run", side_effect=raise_timeout):
+            result = service.run(request)
+
+        assert result["ok"] is False
+        assert result["timed_out"] is True
+        assert result["stdout"] == "partial stdout"
+        assert result["stderr"] == "partial stderr"
 
 
 class TestConstants:

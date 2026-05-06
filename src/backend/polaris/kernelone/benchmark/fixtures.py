@@ -46,7 +46,7 @@ class BenchmarkContext:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        pass
+        ...
 
     def record_latency(self, latency_ms: float) -> None:
         """Record a latency measurement in milliseconds."""
@@ -107,7 +107,7 @@ def benchmark(
         @benchmark(warmup=3, iterations=100)
         async def my_async_function():
             # function to benchmark
-            pass
+            ...
 
         stats = await my_async_function()
         print(f"p50: {stats.p50}ms, p90: {stats.p90}ms, p99: {stats.p99}ms")
@@ -180,7 +180,7 @@ def memory_benchmark(func: F) -> Callable[..., dict[str, Any]]:
         @memory_benchmark
         def memory_intensive_function():
             # function to benchmark
-            pass
+            ...
 
         result = memory_intensive_function()
         print(f"Peak memory: {result['memory_peak_mb']} MB")
@@ -271,7 +271,7 @@ def throughput_benchmark(
         @throughput_benchmark(warmup=2, target_duration_ms=1000)
         async def process_item(item):
             # operation to measure
-            pass
+            ...
     """
 
     def decorator(func: F) -> Callable[..., ThroughputStats]:
@@ -355,4 +355,4 @@ try:
         return MemoryStats
 
 except ImportError:
-    pass
+    ...

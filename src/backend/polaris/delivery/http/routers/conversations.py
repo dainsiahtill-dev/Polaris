@@ -70,7 +70,7 @@ async def create_conversation_v2(
     data: ConversationCreate,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """创建新对话会话"""
+    """Create a new conversation session."""
     # 创建会话
     conversation = Conversation(
         title=data.title or f"新对话 - {data.role}",
@@ -118,7 +118,7 @@ async def list_conversations_v2(
     offset: int = 0,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """列出对话会话"""
+    """List conversation sessions with optional filters."""
     query = db.query(Conversation).filter(Conversation.is_deleted == 0)
 
     if role:
@@ -157,7 +157,7 @@ async def get_conversation_v2(
     message_limit: int = 1000,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """获取单个对话详情"""
+    """Get a single conversation by ID."""
     conversation = (
         db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.is_deleted == 0).first()
     )
@@ -193,7 +193,7 @@ async def update_conversation_v2(
     data: ConversationUpdate,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """更新对话信息"""
+    """Update conversation title or context config."""
     conversation = (
         db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.is_deleted == 0).first()
     )
@@ -235,7 +235,7 @@ async def delete_conversation_v2(
     hard: bool = False,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """删除对话（软删除或硬删除）"""
+    """Delete a conversation (soft or hard)."""
     conversation = (
         db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.is_deleted == 0).first()
     )
@@ -277,7 +277,7 @@ async def add_message_v2(
     data: MessageCreate,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """添加消息到对话"""
+    """Add a message to a conversation."""
     conversation = (
         db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.is_deleted == 0).first()
     )
@@ -331,7 +331,7 @@ async def list_messages_v2(
     offset: int = 0,
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    """列出对话消息"""
+    """List messages in a conversation."""
     messages = (
         db.query(ConversationMessage)
         .filter(ConversationMessage.conversation_id == conversation_id)
@@ -370,7 +370,7 @@ async def add_messages_batch_v2(
     messages: list[MessageCreate],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """批量添加消息（用于保存完整对话）"""
+    """Batch add messages to a conversation."""
     conversation = (
         db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.is_deleted == 0).first()
     )
@@ -423,7 +423,7 @@ async def delete_message_v2(
     message_id: str,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """删除单条消息"""
+    """Delete a single message from a conversation."""
     msg = (
         db.query(ConversationMessage)
         .filter(

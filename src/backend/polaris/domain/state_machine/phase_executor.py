@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import logging
 import os
 import shutil
@@ -446,13 +447,74 @@ class PhaseExecutor:
 
         return {"errors": errors}
 
+    def _read_package_json(self) -> dict[str, Any]:
+        package_path = os.path.join(self.workspace, "package.json")
+        try:
+            with open(package_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, RuntimeError, ValueError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _package_script(package_payload: dict[str, Any], script_name: str) -> str:
+        scripts = package_payload.get("scripts")
+        if not isinstance(scripts, dict):
+            return ""
+        return str(scripts.get(script_name) or "").strip()
+
+    @staticmethod
+    def _package_declares_dependency(package_payload: dict[str, Any], dependency_names: set[str]) -> bool:
+        for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+            section = package_payload.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            if any(name in section for name in dependency_names):
+                return True
+        return False
+
+    def _local_node_bin_exists(self, executable_name: str) -> bool:
+        bin_dir = os.path.join(self.workspace, "node_modules", ".bin")
+        candidates = (
+            os.path.join(bin_dir, executable_name),
+            os.path.join(bin_dir, f"{executable_name}.cmd"),
+            os.path.join(bin_dir, f"{executable_name}.ps1"),
+        )
+        return any(os.path.isfile(path) for path in candidates)
+
+    @staticmethod
+    def _command_failure_excerpt(result: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for key in ("error", "stdout", "stderr"):
+            text = str(result.get(key) or "").strip()
+            if text:
+                parts.append(text)
+        if not parts:
+            parts.append(f"returncode={result.get('returncode', -1)}")
+        return "\n".join(parts)[:1000]
+
     def _run_node_checks(self, context: PhaseContext) -> list[str]:
         """Run Node.js/TypeScript checks via CommandExecutionService (KernelOne contract)."""
         errors = []
         cmd_svc = CommandExecutionService(self.workspace)
+        package_payload = self._read_package_json()
 
-        # TypeScript check
-        if os.path.exists(os.path.join(self.workspace, "tsconfig.json")):
+        if self._package_script(package_payload, "build"):
+            try:
+                req = cmd_svc.parse_command(
+                    "npm run build",
+                    cwd=self.workspace,
+                    timeout_seconds=60,
+                )
+                result = cmd_svc.run(req)
+                if not result["ok"]:
+                    errors.append(f"Node build failed: {self._command_failure_excerpt(result)}")
+            except ValueError:
+                pass  # npm/build not in allowlist / validation failure
+        elif os.path.exists(os.path.join(self.workspace, "tsconfig.json")) and (
+            self._local_node_bin_exists("tsc")
+            or self._package_declares_dependency(package_payload, {"typescript", "tsc"})
+        ):
             try:
                 req = cmd_svc.parse_command(
                     "npx tsc --noEmit",
@@ -461,14 +523,15 @@ class PhaseExecutor:
                 )
                 result = cmd_svc.run(req)
                 if not result["ok"]:
-                    errors.append(f"TypeScript check failed: {result.get('stdout', '')[:500]}")
+                    errors.append(f"TypeScript check failed: {self._command_failure_excerpt(result)}")
             except ValueError:
                 pass  # npx or tsc not in allowlist / validation failure
 
         # ESLint check
-        if os.path.exists(os.path.join(self.workspace, ".eslintrc.js")) or os.path.exists(
-            os.path.join(self.workspace, ".eslintrc.json")
-        ):
+        if (
+            os.path.exists(os.path.join(self.workspace, ".eslintrc.js"))
+            or os.path.exists(os.path.join(self.workspace, ".eslintrc.json"))
+        ) and (self._local_node_bin_exists("eslint") or self._package_declares_dependency(package_payload, {"eslint"})):
             try:
                 req = cmd_svc.parse_command(
                     "npx eslint --quiet .",
@@ -477,7 +540,7 @@ class PhaseExecutor:
                 )
                 result = cmd_svc.run(req)
                 if not result["ok"]:
-                    errors.append(f"ESLint check failed: {result.get('stdout', '')[:500]}")
+                    errors.append(f"ESLint check failed: {self._command_failure_excerpt(result)}")
             except ValueError:
                 pass  # npx or eslint not in allowlist / validation failure
 
@@ -497,7 +560,7 @@ class PhaseExecutor:
             )
             result = cmd_svc.run(req)
             if not result["ok"]:
-                errors.append(f"MyPy check failed: {result.get('stdout', '')[:500]}")
+                errors.append(f"MyPy check failed: {self._command_failure_excerpt(result)}")
         except ValueError:
             pass  # mypy not in allowlist / validation failure
 

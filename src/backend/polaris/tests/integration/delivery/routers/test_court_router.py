@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import court as court_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(court_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -152,7 +154,7 @@ class TestCourtRouter:
             response = client.get("/court/actors/unknown_role")
 
         assert response.status_code == 404
-        assert "unknown_role" in response.json()["detail"]
+        assert "unknown_role" in response.json()["error"]["message"]
 
     def test_get_scene_detail_happy_path(self) -> None:
         """GET /court/scenes/{scene_id} returns 200 for existing scene."""
@@ -178,7 +180,7 @@ class TestCourtRouter:
             response = client.get("/court/scenes/unknown")
 
         assert response.status_code == 404
-        assert "unknown" in response.json()["detail"]
+        assert "unknown" in response.json()["error"]["message"]
 
     def test_get_role_mapping_happy_path(self) -> None:
         """GET /court/mapping returns 200 with role mapping."""

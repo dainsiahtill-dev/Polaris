@@ -239,6 +239,18 @@ class DirectorWorkflowInput:
             metadata=metadata,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workspace": self.workspace,
+            "run_id": self.run_id,
+            "tasks": [task.to_dict() for task in self.tasks],
+            "execution_mode": self.execution_mode,
+            "max_parallel_tasks": self.max_parallel_tasks,
+            "ready_timeout_seconds": self.ready_timeout_seconds,
+            "task_timeout_seconds": self.task_timeout_seconds,
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class DirectorTaskInput:
@@ -270,6 +282,15 @@ class DirectorTaskInput:
             phases=phases,
             metadata=metadata,
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workspace": self.workspace,
+            "run_id": self.run_id,
+            "task": self.task.to_dict(),
+            "phases": list(self.phases),
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -311,6 +332,15 @@ class DirectorTaskResult:
             metadata=metadata,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "status": self.status,
+            "completed_phases": list(self.completed_phases),
+            "errors": list(self.errors),
+            "metadata": dict(self.metadata),
+        }
+
 
 @dataclass(frozen=True)
 class QAWorkflowInput:
@@ -345,6 +375,15 @@ class QAWorkflowInput:
             task_results=task_results,
             metadata=metadata,
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workspace": self.workspace,
+            "run_id": self.run_id,
+            "director_status": self.director_status,
+            "task_results": [result.to_dict() for result in self.task_results],
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)

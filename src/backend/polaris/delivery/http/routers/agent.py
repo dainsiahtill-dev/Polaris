@@ -231,14 +231,14 @@ async def _execute_agent_message(
             raise StructuredHTTPException(
                 status_code=404,
                 code="SESSION_NOT_FOUND",
-                message=f"Session {session_id} not found",
+                message="Session not found",
             )
         session_payload = session.to_dict(include_messages=False)
         if not _is_agent_session_payload(session_payload):
             raise StructuredHTTPException(
                 status_code=404,
                 code="SESSION_NOT_FOUND",
-                message=f"Session {session_id} not found",
+                message="Session not found",
             )
         runtime_role = _safe_text(session_payload.get("role")) or role
         runtime_history, runtime_context = _project_agent_turn(
@@ -301,7 +301,7 @@ async def _stream_agent_response(
     with RoleSessionService() as service:
         session = service.get_session(session_id)
         if session is None:
-            await output_queue.put({"type": "error", "data": {"error": f"Session {session_id} not found"}})
+            await output_queue.put({"type": "error", "data": {"error": "Session not found"}})
             await output_queue.put({"type": "done"})
             return
         session_payload = session.to_dict(include_messages=False)
@@ -488,6 +488,7 @@ async def list_agent_sessions_v2(
     request: Request,
     limit: int = 20,
 ) -> dict[str, Any]:
+    """List active agent sessions."""
     return await list_agent_sessions(request, limit)
 
 
@@ -502,7 +503,7 @@ async def get_agent_session(
         raise StructuredHTTPException(
             status_code=404,
             code="SESSION_NOT_FOUND",
-            message=f"Session {session_id} not found",
+            message="Session not found",
         )
     return session
 
@@ -512,6 +513,7 @@ async def get_agent_session_v2(
     request: Request,
     session_id: str,
 ) -> dict[str, Any]:
+    """Get a single agent session by ID."""
     return await get_agent_session(request, session_id)
 
 
@@ -539,12 +541,12 @@ async def search_agent_session_memory(
             entity=entity,
             limit=limit,
         )
-    except ValueError as exc:
+    except ValueError:
         raise StructuredHTTPException(
             status_code=400,
             code="INVALID_QUERY",
-            message=str(exc),
-        ) from exc
+            message="Invalid query parameters",
+        ) from None
 
     with RoleSessionContextMemoryService() as service:
         result = service.search_memory(query)
@@ -581,6 +583,7 @@ async def search_agent_session_memory_v2(
     entity: str | None = None,
     limit: int = 6,
 ) -> dict[str, Any]:
+    """Search Context OS memory within an agent session."""
     return await search_agent_session_memory(request, session_id, q, kind, entity, limit)
 
 
@@ -606,12 +609,12 @@ async def read_agent_session_memory_artifact(
             start_line=start_line,
             end_line=end_line,
         )
-    except ValueError as exc:
+    except ValueError:
         raise StructuredHTTPException(
             status_code=400,
             code="INVALID_QUERY",
-            message=str(exc),
-        ) from exc
+            message="Invalid query parameters",
+        ) from None
 
     with RoleSessionContextMemoryService() as service:
         result = service.read_artifact(query)
@@ -642,6 +645,7 @@ async def read_agent_session_memory_artifact_v2(
     start_line: int | None = None,
     end_line: int | None = None,
 ) -> dict[str, Any]:
+    """Read a persisted Context OS artifact for an agent session."""
     return await read_agent_session_memory_artifact(request, session_id, artifact_id, start_line, end_line)
 
 
@@ -663,12 +667,12 @@ async def read_agent_session_memory_episode(
             session_id=session_id,
             episode_id=episode_id,
         )
-    except ValueError as exc:
+    except ValueError:
         raise StructuredHTTPException(
             status_code=400,
             code="INVALID_QUERY",
-            message=str(exc),
-        ) from exc
+            message="Invalid query parameters",
+        ) from None
 
     with RoleSessionContextMemoryService() as service:
         result = service.read_episode(query)
@@ -697,6 +701,7 @@ async def read_agent_session_memory_episode_v2(
     session_id: str,
     episode_id: str,
 ) -> dict[str, Any]:
+    """Read a persisted Context OS episode for an agent session."""
     return await read_agent_session_memory_episode(request, session_id, episode_id)
 
 
@@ -718,12 +723,12 @@ async def read_agent_session_memory_state(
             session_id=session_id,
             path=path,
         )
-    except ValueError as exc:
+    except ValueError:
         raise StructuredHTTPException(
             status_code=400,
             code="INVALID_QUERY",
-            message=str(exc),
-        ) from exc
+            message="Invalid query parameters",
+        ) from None
 
     with RoleSessionContextMemoryService() as service:
         result = service.get_state(query)
@@ -753,6 +758,7 @@ async def read_agent_session_memory_state_v2(
     session_id: str,
     path: str,
 ) -> dict[str, Any]:
+    """Read a persisted Context OS state entry for an agent session."""
     return await read_agent_session_memory_state(request, session_id, path)
 
 
@@ -780,6 +786,7 @@ async def send_agent_message_v2(
     session_id: str,
     payload: SessionMessageRequest,
 ) -> dict[str, Any]:
+    """Send a message to an agent session (non-streaming)."""
     return await send_agent_message(request, session_id, payload)
 
 
@@ -795,7 +802,7 @@ async def send_agent_message_stream(
         raise StructuredHTTPException(
             status_code=404,
             code="SESSION_NOT_FOUND",
-            message=f"Session {session_id} not found",
+            message="Session not found",
         )
     message = payload.message.strip()
     role = payload.role
@@ -839,8 +846,8 @@ async def send_agent_message_stream(
                 yield f"data: {json.dumps(data_payload, ensure_ascii=False)}\n\n"
                 # Force flush to ensure immediate delivery (P0: SSE yield blocking fix)
                 await asyncio.sleep(0)
-        except (RuntimeError, ValueError) as exc:
-            yield f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+        except (RuntimeError, ValueError):
+            yield f"event: error\ndata: {json.dumps({'error': 'Stream error'}, ensure_ascii=False)}\n\n"
         finally:
             if not producer_task.done():
                 producer_task.cancel()
@@ -865,6 +872,7 @@ async def send_agent_message_stream_v2(
     session_id: str,
     payload: SessionMessageRequest,
 ) -> StreamingResponse:
+    """Send a message to an agent session (streaming SSE)."""
     return await send_agent_message_stream(request, session_id, payload)
 
 
@@ -897,6 +905,7 @@ async def delete_agent_session_v2(
     request: Request,
     session_id: str,
 ) -> dict[str, Any]:
+    """Delete an agent session."""
     return await delete_agent_session(request, session_id)
 
 
@@ -942,4 +951,5 @@ async def agent_turn_v2(
     request: Request,
     payload: AgentTurnPayload,
 ) -> dict[str, Any]:
+    """Execute a single agent turn, creating a session if needed."""
     return await agent_turn(request, payload)

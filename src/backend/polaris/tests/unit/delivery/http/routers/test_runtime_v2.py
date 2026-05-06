@@ -333,11 +333,11 @@ async def test_v2_runtime_reset_tasks_success(client: AsyncClient) -> None:
     """Reset tasks endpoint should stop services and reset runtime records."""
     pm_service = MagicMock()
     pm_service.get_status.return_value = {"running": True}
-    pm_service.stop = MagicMock()
+    pm_service.stop = AsyncMock()
 
     director_service = MagicMock()
-    director_service.get_status.return_value = {"state": "RUNNING"}
-    director_service.stop = MagicMock()
+    director_service.get_status = AsyncMock(return_value={"state": "RUNNING"})
+    director_service.stop = AsyncMock()
 
     container = MagicMock()
 
@@ -350,7 +350,7 @@ async def test_v2_runtime_reset_tasks_success(client: AsyncClient) -> None:
 
     container.resolve = resolve_side_effect
 
-    def _mock_get_container():
+    async def _mock_get_container():
         return container
 
     with (
@@ -416,7 +416,7 @@ async def test_v2_runtime_reset_tasks_no_services_running(client: AsyncClient) -
     pm_service.get_status.return_value = {"running": False}
 
     director_service = MagicMock()
-    director_service.get_status.return_value = {"state": "IDLE"}
+    director_service.get_status = AsyncMock(return_value={"state": "IDLE"})
 
     container = MagicMock()
 
@@ -429,7 +429,7 @@ async def test_v2_runtime_reset_tasks_no_services_running(client: AsyncClient) -
 
     container.resolve = resolve_side_effect
 
-    def _mock_get_container():
+    async def _mock_get_container():
         return container
 
     with (
@@ -481,7 +481,7 @@ async def test_v2_runtime_reset_tasks_services_not_found(client: AsyncClient) ->
     container = MagicMock()
     container.resolve = MagicMock(side_effect=RuntimeError("Service not found"))
 
-    def _mock_get_container():
+    async def _mock_get_container():
         return container
 
     with (

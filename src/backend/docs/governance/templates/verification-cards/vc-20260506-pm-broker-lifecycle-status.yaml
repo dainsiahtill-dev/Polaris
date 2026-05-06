@@ -1,0 +1,55 @@
+id: vc-20260506-pm-broker-lifecycle-status
+title: PM broker lifecycle status is authoritative
+date: "2026-05-06"
+classification: pattern
+scope:
+  - polaris/bootstrap/assembly.py
+  - polaris/cells/orchestration/pm_planning/service.py
+  - polaris/delivery/http/routers/system.py
+  - polaris/tests/test_pm_service_lifecycle_lock.py
+  - polaris/tests/test_provider_bootstrap.py
+assumption_register:
+  - id: A1
+    statement: PMService starts PM through runtime.execution_broker.
+    status: confirmed
+    evidence:
+      - src/backend/polaris/cells/orchestration/pm_planning/service.py
+  - id: A2
+    statement: PMService has the broker execution id but status ignores it.
+    status: confirmed
+    evidence:
+      - src/backend/polaris/cells/orchestration/pm_planning/service.py
+      - src/backend/polaris/cells/runtime/execution_broker/public/contracts.py
+  - id: A3
+    statement: Electron acceptance can observe PM idle before pm_tasks.contract.json appears.
+    status: confirmed
+    evidence:
+      - .polaris/logs/full_chain_audit_2026-05-06T14-03-41-896Z.json
+      - test-results/electron/full-chain-audit-unattende-eaf39-trong-JSON-evidence-package/round-01.snapshot.json
+  - id: A4
+    statement: PM can write artifacts to a previous workspace after settings change.
+    status: confirmed
+    evidence:
+      - C:/Users/dains/AppData/Local/Polaris/cache/.polaris/projects/polaris-etms-stress-e2e-mou4o9gx-e312e0307329/runtime/contracts/pm_tasks.contract.json
+      - C:/Users/dains/AppData/Local/Polaris/cache/.polaris/projects/polaris-etms-stress-e2e-mou57m6h-de5c49db3aa7/runtime/contracts/pm_tasks.contract.json
+premortem:
+  likely_failure_modes:
+    - The broker status helper could raise and break the status endpoint.
+    - A terminal raw process handle could still clear an active broker execution.
+    - Duplicate-run protection could still use raw process state.
+    - Rebinding Settings in DI could leave StorageLayout or PMService on the old workspace.
+verification_plan:
+  commands:
+    - ruff check src/backend/polaris/bootstrap/assembly.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/delivery/http/routers/system.py src/backend/polaris/tests/test_pm_service_lifecycle_lock.py src/backend/polaris/tests/test_provider_bootstrap.py --fix
+    - ruff format src/backend/polaris/bootstrap/assembly.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/delivery/http/routers/system.py src/backend/polaris/tests/test_pm_service_lifecycle_lock.py src/backend/polaris/tests/test_provider_bootstrap.py
+    - mypy src/backend/polaris/bootstrap/assembly.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/delivery/http/routers/system.py src/backend/polaris/tests/test_pm_service_lifecycle_lock.py src/backend/polaris/tests/test_provider_bootstrap.py
+    - PYTHONPATH=src/backend python -m pytest src/backend/polaris/tests/test_pm_service_lifecycle_lock.py src/backend/polaris/tests/test_provider_bootstrap.py -q
+    - KERNELONE_E2E_USE_REAL_SETTINGS=1 npm run test:e2e:acceptance
+acceptance:
+  - PMService reports running while broker status is queued or running.
+  - Raw process handle state is only a fallback when broker status is unavailable.
+  - DI explicit app settings replace any environment-derived Settings and StorageLayout registrations.
+  - PMService rebinds to the current app settings object after workspace updates.
+  - Electron acceptance no longer starts PM contract validation before PM lifecycle is terminal.
+rollback:
+  strategy: Revert scoped files and rerun focused PMService tests plus Electron acceptance.

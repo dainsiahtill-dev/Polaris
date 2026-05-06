@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:52.426241Z",
-  "source_hash": "6677bb8e5fa077bb",
+  "generated_at": "2026-05-06T15:27:42.522414Z",
+  "source_hash": "af8567bcafee2a3c",
   "cell_id": "llm.dialogue",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -87,6 +87,12 @@
       "type": "function",
       "name": "_build_default_docs_fields",
       "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
+    },
+    {
+      "type": "function",
+      "name": "build_default_docs_fields",
+      "description": "Build deterministic docs fields when LLM enrichment is unavailable.",
       "defined_in": "polaris/cells/llm/dialogue/internal/docs_suggest.py"
     },
     {
@@ -321,6 +327,24 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "_RaisingExecutor",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/tests/test_docs_suggest.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "test_build_default_docs_fields_preserves_goal_and_backlog_defaults",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/tests/test_docs_suggest.py"
     },
     {
       "type": "class",

@@ -109,7 +109,7 @@ def vision_status(request: Request) -> dict[str, Any]:
 
 @router.get("/v2/vision/status", dependencies=[Depends(require_auth)], response_model=VisionStatusResponse)
 def vision_status_v2(request: Request) -> dict[str, Any]:
-    """Get vision service status."""
+    """Get vision service availability status."""
     try:
         service = get_vision_service()
         return service.get_status()
@@ -132,6 +132,7 @@ def analyze_ui(request: Request, payload: VisionRequest) -> dict[str, Any]:
 
 @router.post("/v2/vision/analyze", dependencies=[Depends(require_auth)], response_model=VisionAnalyzeResponse)
 def analyze_ui_v2(request: Request, payload: VisionRequest) -> dict[str, Any]:
+    """Analyze an image using the vision service."""
     service = get_vision_service()
     # Auto-load for testing if not loaded
     if not service.is_loaded:
@@ -149,6 +150,7 @@ def get_scheduler_status(request: Request) -> dict[str, Any]:
 
 @router.get("/v2/scheduler/status", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse)
 def get_scheduler_status_v2(request: Request) -> dict[str, Any]:
+    """Get scheduler status (turbo disabled)."""
     return _turbo_disabled_status()
 
 
@@ -163,6 +165,7 @@ async def start_scheduler(request: Request) -> dict[str, Any]:
 
 @router.post("/v2/scheduler/start", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse)
 async def start_scheduler_v2(request: Request) -> dict[str, Any]:
+    """Start scheduler (turbo disabled)."""
     payload = _turbo_disabled_status()
     payload["message"] = "turbo feature is disabled"
     return payload
@@ -179,6 +182,7 @@ async def stop_scheduler(request: Request) -> dict[str, Any]:
 
 @router.post("/v2/scheduler/stop", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse)
 async def stop_scheduler_v2(request: Request) -> dict[str, Any]:
+    """Stop scheduler (turbo disabled)."""
     payload = _turbo_disabled_status()
     payload["message"] = "turbo feature is disabled"
     return payload
@@ -258,6 +262,7 @@ def get_code_map(request: Request) -> dict[str, Any] | Response:
 
 @router.get("/v2/code_map", dependencies=[Depends(require_auth)], response_model=CodeMapResponse)
 def get_code_map_v2(request: Request) -> dict[str, Any] | Response:
+    """Generate a 3D code map of the workspace."""
     state = get_state(request)
     # 1. Gather all "code" files from workspace
     workspace = state.settings.workspace

@@ -402,6 +402,9 @@ cells:
       - events.fact_stream
       - policy.workspace_guard
       - audit.evidence
+      - chief_engineer.blueprint
+      - director.task_consumer
+      - qa.audit_verdict
     subgraphs:
       - execution_governance_pipeline
       - pm_pipeline
@@ -675,6 +678,7 @@ cells:
       - runtime.projection
       - policy.workspace_guard
       - runtime.artifact_store
+      - storage.layout
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -1027,6 +1031,8 @@ cells:
       - context.engine
       - finops.budget_guard
       - roles.runtime
+      - llm.provider_config
+      - storage.layout
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -1081,6 +1087,9 @@ cells:
       - llm.tool_runtime
       - policy.workspace_guard
       - roles.runtime
+      - llm.provider_config
+      - roles.kernel
+      - roles.session
     subgraphs:
       - execution_governance_pipeline
     state_owners: []
@@ -1137,6 +1146,8 @@ cells:
       - kernelone.llm.embedding
       - kernelone.fs
       - kernelone.benchmark
+      - roles.kernel
+      - roles.runtime
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -1359,6 +1370,9 @@ cells:
       - factory.cognitive_runtime
       - architect.design
       - finops.budget_guard
+      - archive.run_archive
+      - audit.diagnosis
+      - cognitive.knowledge_distiller
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -1602,6 +1616,9 @@ cells:
       - roles.session
       - runtime.execution_broker
       - runtime.task_runtime
+      - factory.cognitive_runtime
+      - roles.runtime
+      - storage.layout
     subgraphs:
       - execution_governance_pipeline
     state_owners: []
@@ -2127,6 +2144,7 @@ cells:
       - archive.task_snapshot_archive
       - chief_engineer.blueprint
       - roles.adapters
+      - director.task_consumer
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -2420,6 +2438,7 @@ cells:
       - llm.provider_runtime
       - roles.runtime
       - workspace.integrity
+      - director.tasking
     subgraphs: []
     state_owners:
       - runtime/state/director/planning/*
@@ -2500,6 +2519,9 @@ cells:
       - llm.control_plane
       - llm.provider_runtime
       - policy.workspace_guard
+      - audit.verdict
+      - director.execution
+      - roles.runtime
     subgraphs: []
     state_owners:
       - runtime/state/director/tasking/*
@@ -3005,6 +3027,8 @@ cells:
       - orchestration.workflow_engine
       - orchestration.workflow_runtime
       - chief_engineer.blueprint
+      - orchestration.pm_planning
+      - resident.autonomy
     subgraphs:
       - execution_governance_pipeline
     state_owners: []
@@ -3282,6 +3306,8 @@ cells:
       errors: []
     depends_on:
       - roles.runtime
+      - llm.tool_runtime
+      - roles.kernel
     subgraphs: []
     state_owners: []
     effects_allowed:

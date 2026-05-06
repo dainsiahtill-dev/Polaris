@@ -20,7 +20,7 @@ from polaris.kernelone.llm.engine import contracts as engine_contracts
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.toolkit import contracts as toolkit_contracts
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

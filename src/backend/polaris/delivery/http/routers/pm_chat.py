@@ -24,28 +24,16 @@ router = APIRouter()
 
 @router.get("/v2/pm/chat/ping", response_model=PMChatPingResponse, dependencies=[Depends(require_auth)])
 def pm_chat_ping() -> dict[str, str]:
-    """简单的ping测试端点"""
+    """Health check for the PM chat router."""
     return {"status": "ok", "message": "PM Chat router is working", "role": "pm"}
 
 
 @router.post("/v2/pm/chat", dependencies=[Depends(require_auth)])
 async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
-    """通过PM角色的LLM进行对话（非流式）
+    """Chat with the PM role LLM (non-streaming).
 
-    Request:
-        {
-            "message": "用户消息",
-            "context": {...}  # 可选的上下文信息
-        }
-
-    Response:
-        {
-            "response": "AI回复",
-            "thinking": "思考过程（如果有）",
-            "role": "pm",
-            "model": "使用的模型",
-            "provider": "使用的provider"
-        }
+    Returns:
+        Response, thinking trace, and model metadata.
     """
     state = get_state(request)
 
@@ -71,28 +59,16 @@ async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
         raise StructuredHTTPException(
             status_code=500,
             code="ROLE_RESPONSE_ERROR",
-            message=str(exc),
+            message="Generation failed",
         ) from exc
 
 
 @router.post("/v2/pm/chat/stream", dependencies=[Depends(require_auth)])
 async def pm_chat_stream(request: Request, payload: dict[str, Any]):
-    """通过PM角色的LLM进行对话（流式SSE）
+    """Chat with the PM role LLM (streaming SSE).
 
-    使用统一的sse_event_generator，与interview和docs保持一致。
-
-    Request:
-        {
-            "message": "用户消息",
-            "context": {...}  # 可选的上下文信息
-        }
-
-    Response: SSE stream with events:
-        - thinking_chunk: 思考过程片段
-        - content_chunk: 内容片段
-        - complete: 完成事件，包含完整响应
-        - error: 错误事件
-        - done: 结束标记
+    Yields:
+        thinking_chunk, content_chunk, complete, and error events.
     """
     state = get_state(request)
 
@@ -122,7 +98,11 @@ async def _error_generator(message: str):
 
 @router.get("/v2/pm/chat/status", response_model=PMChatStatusResponse, dependencies=[Depends(require_auth)])
 def pm_chat_status(request: Request) -> dict[str, Any]:
-    """获取PM角色LLM配置状态"""
+    """Get PM role LLM configuration readiness.
+
+    Returns:
+        Ready state, provider info, and debug details.
+    """
     state = get_state(request)
 
     try:
@@ -172,7 +152,7 @@ def pm_chat_status(request: Request) -> dict[str, Any]:
             raise StructuredHTTPException(
                 status_code=409,
                 code="PROVIDER_NOT_FOUND",
-                message=f"Provider '{provider_id}' not found",
+                message="Provider not found",
                 details={
                     "pm_role": pm_role,
                     "available_providers": list(providers.keys()),
@@ -201,7 +181,7 @@ def pm_chat_status(request: Request) -> dict[str, Any]:
         raise StructuredHTTPException(
             status_code=500,
             code="STATUS_CHECK_ERROR",
-            message=str(exc),
+            message="Status check failed",
             details={
                 "exception": traceback.format_exc(),
             },

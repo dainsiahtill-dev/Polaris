@@ -44,6 +44,9 @@ depends_on:
   - events.fact_stream
   - policy.workspace_guard
   - audit.evidence
+  - chief_engineer.blueprint
+  - director.task_consumer
+  - qa.audit_verdict
 subgraphs:
   - execution_governance_pipeline
 state_owners:

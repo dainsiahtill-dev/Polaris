@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from polaris.bootstrap.config import Settings, SettingsUpdate
+from polaris.bootstrap.config import Settings, SettingsUpdate, default_system_cache_base
 from polaris.cells.policy.workspace_guard.service import (
     SELF_UPGRADE_MODE_ENV,
     get_meta_project_root,
@@ -102,6 +102,49 @@ def test_sync_process_settings_environment_tracks_self_upgrade_mode(tmp_path: Pa
     sync_process_settings_environment(settings)
     assert SELF_UPGRADE_MODE_ENV not in os.environ
     os.environ.pop("KERNELONE_WORKSPACE", None)
+
+
+def test_sync_process_settings_environment_overrides_stale_runtime_env(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    runtime_cache = tmp_path / "runtime-cache"
+    stale_runtime = tmp_path / "stale-runtime"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_cache.mkdir(parents=True, exist_ok=True)
+    stale_runtime.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(stale_runtime))
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(stale_runtime))
+
+    settings = Settings(
+        workspace=str(workspace),
+        runtime={"cache_root": str(runtime_cache), "root": None, "use_ramdisk": False},
+    )
+    sync_process_settings_environment(settings)
+
+    assert "KERNELONE_RUNTIME_ROOT" not in os.environ
+    assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") == str(runtime_cache.resolve())
+    assert os.environ.get("KERNELONE_WORKSPACE") == str(workspace.resolve())
+
+
+def test_sync_process_settings_environment_uses_default_cache_not_stale_runtime_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    stale_runtime_root = tmp_path / "cache" / ".polaris" / "projects" / "stale" / "runtime"
+    workspace.mkdir(parents=True, exist_ok=True)
+    stale_runtime_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(stale_runtime_root))
+
+    settings = Settings(
+        workspace=str(workspace),
+        runtime={"cache_root": None, "root": None, "use_ramdisk": False},
+    )
+    sync_process_settings_environment(settings)
+
+    assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") == str(default_system_cache_base())
+    assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") != str(stale_runtime_root)
 
 
 def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) -> None:

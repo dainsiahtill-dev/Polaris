@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import pm_management as pm_management_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_app() -> FastAPI:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(pm_management_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = MagicMock()
@@ -27,7 +29,14 @@ def _mock_pm_instance() -> MagicMock:
     pm = MagicMock()
     pm.is_initialized.return_value = True
     pm.list_documents.return_value = {"documents": [], "pagination": {"total": 0}}
-    pm.get_document.return_value = {"path": "test.md", "current_version": "1.0"}
+    pm.get_document.return_value = {
+        "path": "test.md",
+        "current_version": "1.0",
+        "version_count": 1,
+        "last_modified": "2026-01-01",
+        "created_at": "2026-01-01",
+        "content": "Test content",
+    }
     pm.get_document_content.return_value = "Test content"
     pm.get_document_versions.return_value = []
     pm.compare_document_versions.return_value = {
@@ -40,37 +49,42 @@ def _mock_pm_instance() -> MagicMock:
         "impact_score": 0.0,
     }
     pm.search_documents.return_value = []
-    pm.list_tasks.return_value = {"tasks": [], "pagination": {"total": 0}}
-    pm.get_task.return_value = MagicMock(
-        id="task-1",
-        title="Test Task",
-        description="Test description",
-        status=MagicMock(value="pending"),
-        priority=MagicMock(value="medium"),
-        assignee=None,
-        assignee_type=None,
-        requirements=[],
-        dependencies=[],
-        estimated_effort=None,
-        actual_effort=None,
-        created_at="2026-01-01",
-        updated_at="2026-01-01",
-        assigned_at=None,
-        started_at=None,
-        completed_at=None,
-        result_summary=None,
-        artifacts=[],
-        metadata={},
-    )
+    pm.list_tasks.return_value = {"ok": True, "tasks": [], "pagination": {"total": 0}}
+    pm.get_task.return_value = {
+        "id": "task-1",
+        "title": "Test Task",
+        "description": "Test description",
+        "status": "pending",
+        "priority": "medium",
+        "assignee": None,
+        "assignee_type": None,
+        "requirements": [],
+        "dependencies": [],
+        "estimated_effort": None,
+        "actual_effort": None,
+        "created_at": "2026-01-01",
+        "updated_at": "2026-01-01",
+        "assigned_at": None,
+        "started_at": None,
+        "completed_at": None,
+        "result_summary": None,
+        "artifacts": [],
+        "metadata": {},
+    }
     pm.get_task_history.return_value = {"tasks": [], "pagination": {"total": 0}}
     pm.get_director_task_history.return_value = {"tasks": [], "pagination": {"total": 0}}
     pm.get_task_assignments.return_value = []
     pm.search_tasks.return_value = []
-    pm.list_requirements.return_value = {"requirements": [], "pagination": {"total": 0}}
+    pm.list_requirements.return_value = {"ok": True, "requirements": [], "pagination": {"total": 0}}
     pm.get_requirement.return_value = {"id": "req-1", "title": "Test Req"}
     pm.get_status.return_value = {"initialized": True, "workspace": "."}
-    pm.analyze_project_health.return_value = {"health": "good"}
-    pm.initialize.return_value = {"initialized": True, "message": "PM system initialized"}
+    pm.analyze_project_health.return_value = {
+        "overall": "good",
+        "components": {},
+        "metrics": {},
+        "recommendations": [],
+    }
+    pm.initialize.return_value = {"initialized": True, "workspace": ".", "message": "PM system initialized"}
     pm.create_or_update_document.return_value = MagicMock(version="1.0", checksum="abc123")
     pm.delete_document.return_value = True
     return pm
@@ -108,7 +122,7 @@ class TestPMManagementRouter:
                 response = await client.get("/pm/documents")
 
         assert response.status_code == 400
-        assert "PM system not initialized" in response.json()["detail"]
+        assert "PM system not initialized" in response.json()["error"]["message"]
 
     async def test_get_document_returns_200(self) -> None:
         """GET /pm/documents/{doc_path} returns 200 with document info."""
@@ -149,7 +163,7 @@ class TestPMManagementRouter:
                 response = await client.get("/pm/documents/missing.md")
 
         assert response.status_code == 404
-        assert "Document not found" in response.json()["detail"]
+        assert "Document not found" in response.json()["error"]["message"]
 
     async def test_create_document_returns_200(self) -> None:
         """POST /pm/documents/{doc_path} returns 200 on success."""
@@ -289,7 +303,7 @@ class TestPMManagementRouter:
                 response = await client.get("/pm/tasks/missing-task")
 
         assert response.status_code == 404
-        assert "Task not found" in response.json()["detail"]
+        assert "Task not found" in response.json()["error"]["message"]
 
     async def test_get_task_history_returns_200(self) -> None:
         """GET /pm/tasks/history returns 200."""
@@ -395,7 +409,7 @@ class TestPMManagementRouter:
                 response = await client.get("/pm/requirements/missing-req")
 
         assert response.status_code == 404
-        assert "Requirement not found" in response.json()["detail"]
+        assert "Requirement not found" in response.json()["error"]["message"]
 
     async def test_get_pm_status_returns_200(self) -> None:
         """GET /pm/status returns 200."""
@@ -439,7 +453,7 @@ class TestPMManagementRouter:
 
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
-        assert "health" in payload
+        assert "overall" in payload
 
     async def test_get_pm_health_returns_400_when_not_initialized(self) -> None:
         """GET /pm/health returns 400 when PM not initialized."""

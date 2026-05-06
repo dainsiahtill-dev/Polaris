@@ -1,0 +1,133 @@
+id: vc-20260506-director-qa-dispatch-closure
+date: "2026-05-06"
+classification: structural
+scope:
+  - pm_fallback_contract
+  - pm_planning_timeout
+  - pm_planning_backend_contract
+  - director_queue_seed
+  - execution_broker_logs
+  - workflow_runtime_quality_gate
+  - embedded_child_workflow_contract
+  - workflow_failure_projection
+  - workflow_error_evidence
+  - workflow_dispatch
+  - integration_qa_artifact
+  - electron_acceptance
+assumption_register:
+  - id: A1
+    statement: "PM fallback tasks must be grounded in actual workspace files when workspace_files is available."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/delivery/cli/pm/tasks_utils.py"
+      - "Electron runtime contract generated Python synthetic paths for a TypeScript/Jest workspace."
+  - id: A2
+    statement: "Electron acceptance waits on runtime/results/integration_qa.result.json, not only per-run QA artifacts."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/tests/electron/full-chain-audit.spec.ts"
+      - "runtime directory contained pm_tasks.contract.json but no runtime/results/integration_qa.result.json"
+  - id: A3
+    statement: "Director no-command tasks cannot be considered completed work."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/cells/director/execution/service.py"
+  - id: A4
+    statement: "Frontend Director start can run before queue seeding completes."
+    status: confirmed
+    evidence:
+      - "src/frontend/src/hooks/useProcessOperations.ts"
+      - "src/frontend/src/app/App.tsx"
+  - id: A5
+    statement: "PM planning must have a bounded role-stage timeout independent from the long-lived PM subprocess timeout."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/cells/orchestration/pm_planning/service.py passed --timeout 0"
+      - "src/backend/polaris/cells/orchestration/pm_planning/pipeline.py propagates args.timeout to state.timeout"
+      - "Electron runtime missed runtime/contracts/pm_tasks.contract.json while PM data directory was initialized."
+  - id: A6
+    statement: "Execution broker process logs must drain for process lifetime by default."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/cells/runtime/execution_broker/internal/service.py used a fixed 30s log drain deadline."
+      - "Electron runtime/logs/pm.process.log was empty after PM planning failed to produce a contract."
+  - id: A7
+    statement: "PM invoke ports must return a string or raise; backend response objects must not leak across the planning boundary."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py explicit ollama branch returned invoke_ollama() directly."
+      - "src/backend/polaris/kernelone/process/ollama_utils.py invoke_ollama returns OllamaResponse with metadata.error on failures."
+  - id: A8
+    statement: "PM fallback quality metadata must match the runtime quality gate, not bypass it."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/delivery/cli/pm/tasks_utils.py"
+      - "src/backend/polaris/cells/orchestration/pm_planning/service.py evaluate_pm_task_quality requires dependency_task_count > 0 for multi-task contracts."
+      - "Reproduction failed at validate_task_contract with all tasks are low-action/generic and not execution-ready."
+  - id: A9
+    statement: "A terminal failed parent workflow must be projected as Director failure even if child task projections are incomplete."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/delivery/cli/pm/orchestration_engine.py"
+      - "Electron runtime DB had workflow_execution.status=failed while Director/QA waited on queued/deferred state."
+  - id: A10
+    statement: "Workflow runtime failures must persist the error reason in result_json and final workflow events."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/kernelone/workflow/engine.py"
+      - "Electron runtime DB showed result_json={\"status\":\"failed\"} without error evidence."
+  - id: A11
+    statement: "Embedded child workflow business payloads with top-level tasks must not be parsed as KernelOne DAG contracts."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+      - "src/backend/polaris/kernelone/workflow/contracts.py"
+      - "Reproduction: WorkflowContract.from_payload(asdict(DirectorWorkflowInput(...tasks...))) raised task_id_missing."
+  - id: A12
+    statement: "Workflow input dataclasses must serialize nested TaskContract objects through external contract keys."
+    status: confirmed
+    evidence:
+      - "src/backend/polaris/cells/orchestration/workflow_runtime/internal/models.py"
+      - "Reproduction: nested TaskContract leaked task_id instead of id through dataclasses.asdict()."
+pre_mortem:
+  likely_failure_modes:
+    - "Changing Director no-command semantics may expose existing tests relying on false success."
+    - "Canonical QA artifact mirroring may write stale data if result payload is mutated after first write."
+    - "Frontend seed fallback may call /state/snapshot too often if not bounded to start flow."
+    - "Too-short PM planning timeout could degrade to deterministic fallback more often on slow local models."
+    - "Unbounded log drain could wait on a broken stream iterator after process exit."
+    - "Explicit Ollama backend errors could stay as empty model output instead of activating fallback."
+    - "Fallback dependency auto-linking could overwrite explicit dependencies if detection is too narrow."
+    - "Parent workflow failure projection could hide useful pending task context if task metadata is dropped."
+    - "Broad workflow exception persistence could swallow cancellation semantics if cancellation is not handled separately."
+    - "Internal legacy marker could accidentally hide an explicit DAG contract if applied outside embedded child workflow submission."
+    - "Custom to_dict serialization could drift from from_mapping if future fields are added without tests."
+verification_plan:
+  ruff:
+    - "ruff check src/backend/polaris/delivery/cli/pm/tasks_utils.py src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py src/backend/polaris/cells/director/execution/service.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py src/backend/polaris/cells/runtime/execution_broker/internal/service.py src/backend/polaris/kernelone/workflow/engine.py src/backend/polaris/kernelone/workflow/contracts.py src/backend/polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py src/backend/polaris/cells/orchestration/workflow_runtime/internal/models.py --fix"
+    - "ruff format src/backend/polaris/delivery/cli/pm/tasks_utils.py src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py src/backend/polaris/cells/director/execution/service.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py src/backend/polaris/cells/runtime/execution_broker/internal/service.py src/backend/polaris/kernelone/workflow/engine.py src/backend/polaris/kernelone/workflow/contracts.py src/backend/polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py src/backend/polaris/cells/orchestration/workflow_runtime/internal/models.py"
+  mypy:
+    - "mypy src/backend/polaris/delivery/cli/pm/tasks_utils.py src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py src/backend/polaris/cells/director/execution/service.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py src/backend/polaris/cells/runtime/execution_broker/internal/service.py src/backend/polaris/kernelone/workflow/engine.py src/backend/polaris/kernelone/workflow/contracts.py src/backend/polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py src/backend/polaris/cells/orchestration/workflow_runtime/internal/models.py"
+  pytest:
+    - "PYTHONPATH=src/backend python -m pytest src/backend/polaris/tests/unit/cells/orchestration/workflow_runtime/internal/test_embedded_api.py src/backend/polaris/cells/orchestration/workflow_runtime/tests/test_workflow_runtime_models.py src/backend/polaris/tests/test_pm_zero_tasks_fallback.py src/backend/polaris/tests/test_orchestration_engine_integration_qa.py src/backend/polaris/tests/test_director_service_convergence.py src/backend/polaris/cells/orchestration/pm_planning/tests/test_pm_service_broker.py src/backend/polaris/cells/orchestration/pm_planning/tests/test_pipeline_ports.py src/backend/polaris/cells/runtime/execution_broker/tests/test_service.py src/backend/polaris/kernelone/workflow/tests/test_kernelone_c_fixes.py src/backend/polaris/tests/unit/infrastructure/messaging/nats/test_ws_consumer_manager.py src/backend/polaris/tests/test_rate_limit_middleware.py -q"
+  frontend:
+    - "npm run test -- src/frontend/src/hooks/useProcessOperations.test.ts --run"
+  electron:
+    - "KERNELONE_E2E_USE_REAL_SETTINGS=1 npm run test:e2e:acceptance"
+rollback:
+  files:
+    - "src/backend/polaris/delivery/cli/pm/tasks_utils.py"
+    - "src/backend/polaris/delivery/cli/pm/orchestration_engine.py"
+    - "src/backend/polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    - "src/backend/polaris/cells/director/execution/service.py"
+    - "src/frontend/src/hooks/useProcessOperations.ts"
+    - "src/frontend/src/app/App.tsx"
+    - "src/frontend/src/app/components/director/DirectorWorkspace.tsx"
+    - "src/backend/polaris/cells/orchestration/pm_planning/service.py"
+    - "src/backend/polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py"
+    - "src/backend/polaris/cells/runtime/execution_broker/internal/service.py"
+    - "src/backend/polaris/kernelone/workflow/engine.py"
+    - "src/backend/polaris/kernelone/workflow/contracts.py"
+    - "src/backend/polaris/cells/orchestration/workflow_runtime/internal/embedded_api.py"
+    - "src/backend/polaris/cells/orchestration/workflow_runtime/internal/models.py"
+  strategy: "Revert the listed files and tests, then rerun the previous failing Electron acceptance to restore baseline evidence."

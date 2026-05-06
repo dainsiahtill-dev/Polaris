@@ -72,10 +72,10 @@ state_boundaries:
     state: runtime/contracts/*
 verify_targets:
   tests:
-    - tests/test_pm_task_quality_gate.py
-    - tests/test_pm_orchestration_api.py
-    - tests/test_dispatch_pipeline_engine_dispatch.py
-    - tests/orchestration/test_workflow_runtime.py
+    - polaris/tests/test_pm_task_quality_gate.py
+    - polaris/tests/test_pm_orchestration_api.py
+    - polaris/tests/test_dispatch_pipeline_engine_dispatch.py
+    - polaris/tests/orchestration/test_workflow_runtime.py
   contracts:
     - GeneratePmTaskContractCommandV1
     - DispatchPmTasksCommandV1

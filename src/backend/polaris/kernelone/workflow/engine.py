@@ -606,19 +606,27 @@ class WorkflowEngine:
                     status, result = await self._run_dag(state)
                 else:
                     status, result = await self._run_sequential(state)
-            except (RuntimeError, ValueError) as exc:
+            except asyncio.CancelledError as exc:
+                state.last_error = str(exc).strip() or "Workflow execution cancelled"
+                logger.info("Workflow %s cancelled", workflow_id)
+                status = WorkflowTaskStatus.CANCELLED.value
+                result = self._build_result(state, status=status, error=state.last_error)
+            except Exception as exc:
                 state.last_error = str(exc)
                 logger.exception("Workflow %s failed", workflow_id)
                 status = WorkflowTaskStatus.FAILED.value
                 result = self._build_result(state, status=status, error=state.last_error)
             finally:
+                finished_payload: dict[str, Any] = {"status": status}
+                if state.last_error:
+                    finished_payload["error"] = state.last_error
                 await self._store.update_execution(
                     workflow_id,
                     status=status,
                     result=result,
                     close_time=self._now(),
                 )
-                await self._store.append_event(workflow_id, "workflow_execution_finished", {"status": status})
+                await self._store.append_event(workflow_id, "workflow_execution_finished", finished_payload)
                 await self._timer_wheel.cancel_workflow_timers(workflow_id)
                 async with self._lock:
                     self._workflow_tasks.pop(workflow_id, None)

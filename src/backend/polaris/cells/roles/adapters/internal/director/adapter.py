@@ -245,7 +245,7 @@ class DirectorAdapter(BaseRoleAdapter):
             run_id,
             context,
             seq_config,
-            self._call_role_llm_with_timeout,
+            self._invoke_role_dialogue_with_timeout,
             self._emit_task_trace_event,
             self._build_director_message,
         )
@@ -276,12 +276,12 @@ class DirectorAdapter(BaseRoleAdapter):
     # Role LLM Invocation
     # -------------------------------------------------------------------------
 
-    async def _call_role_llm(
+    async def _invoke_role_dialogue(
         self,
         message: str,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """调用 Director LLM。"""
+        """调用 Director LLM (via canonical public dialogue API)."""
         settings = get_settings_safe()
         llm_max_retries = self._resolve_kernel_retry_budget(self.role_id)
 
@@ -326,7 +326,7 @@ class DirectorAdapter(BaseRoleAdapter):
             return fallback
         return primary
 
-    async def _call_role_llm_with_timeout(
+    async def _invoke_role_dialogue_with_timeout(
         self,
         message: str,
         *,
@@ -338,7 +338,7 @@ class DirectorAdapter(BaseRoleAdapter):
         timeout = max(0.1, float(timeout_seconds or _DEFAULT_LLM_CALL_TIMEOUT_SECONDS))
         try:
             response = await asyncio.wait_for(
-                self._call_role_llm(message, context=context),
+                self._invoke_role_dialogue(message, context=context),
                 timeout=timeout,
             )
             if isinstance(response, dict):

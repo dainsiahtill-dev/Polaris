@@ -48,6 +48,7 @@ async def get_state(request: Request) -> AnthroState:
 
 @router.get("/v2/state", dependencies=[Depends(require_auth)], response_model=AnthroState)
 async def v2_get_state(request: Request) -> AnthroState:
+    """Get anthropomorphic memory state (reflections and errors)."""
     ramdisk_root = request.app.state.app_state.settings.ramdisk_root or "."
     init_anthropomorphic_modules(ramdisk_root)
 
@@ -98,6 +99,7 @@ async def delete_memory(memory_id: str, request: Request) -> dict[str, str]:
 
 @router.delete("/v2/memories/{memory_id}", dependencies=[Depends(require_auth)], response_model=MemoryDeleteResponse)
 async def v2_delete_memory(memory_id: str, request: Request) -> dict[str, str]:
+    """Delete a memory entry by ID."""
     ramdisk_root = request.app.state.app_state.settings.ramdisk_root or "."
     init_anthropomorphic_modules(ramdisk_root)
 

@@ -134,6 +134,20 @@ def _normalize_abs_path(value: Any) -> str:
     return os.path.abspath(os.path.expanduser(os.path.expandvars(raw)))
 
 
+def _runtime_cache_env_value(settings: "Settings") -> str:
+    runtime_settings = getattr(settings, "runtime", None)
+    explicit_cache_root = _normalize_abs_path(getattr(runtime_settings, "cache_root", ""))
+    if explicit_cache_root:
+        return explicit_cache_root
+    try:
+        from polaris.bootstrap.config import default_system_cache_base
+
+        return _normalize_abs_path(default_system_cache_base())
+    except (ImportError, RuntimeError, ValueError) as exc:
+        logger.debug("Failed to resolve default runtime cache root: %s", exc)
+        return ""
+
+
 def sync_process_settings_environment(settings: "Settings") -> None:
     """Synchronize process environment with the active settings snapshot.
 
@@ -151,6 +165,26 @@ def sync_process_settings_environment(settings: "Settings") -> None:
         os.environ[SELF_UPGRADE_MODE_ENV] = "1"
     else:
         os.environ.pop(SELF_UPGRADE_MODE_ENV, None)
+
+    runtime_settings = getattr(settings, "runtime", None)
+    runtime_root = _normalize_abs_path(getattr(runtime_settings, "root", ""))
+    if runtime_root:
+        os.environ["KERNELONE_RUNTIME_ROOT"] = runtime_root
+    else:
+        os.environ.pop("KERNELONE_RUNTIME_ROOT", None)
+
+    runtime_cache_root = _runtime_cache_env_value(settings)
+    if runtime_cache_root:
+        os.environ["KERNELONE_RUNTIME_CACHE_ROOT"] = runtime_cache_root
+    else:
+        os.environ.pop("KERNELONE_RUNTIME_CACHE_ROOT", None)
+
+    try:
+        from polaris.kernelone.storage.layout import clear_storage_roots_cache
+
+        clear_storage_roots_cache()
+    except (ImportError, RuntimeError, ValueError) as exc:
+        logger.debug("Failed to clear storage roots cache after settings sync: %s", exc)
 
     ramdisk_root = _normalize_abs_path(getattr(settings, "ramdisk_root", ""))
     if ramdisk_root:

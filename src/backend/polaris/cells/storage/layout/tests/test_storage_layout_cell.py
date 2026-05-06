@@ -341,6 +341,18 @@ class TestPolarisStorageLayout:
         assert "config_root=" in repr_str
         assert "hp-home" in repr_str
 
+    def test_runtime_base_with_metadata_dir_does_not_double_nest_projects(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        runtime_base = tmp_path / "cache" / ".polaris" / "runtime"
+        workspace.mkdir(parents=True)
+        runtime_base.mkdir(parents=True)
+
+        layout = PolarisStorageLayout(str(workspace), str(runtime_base))
+
+        runtime_root = str(layout.runtime_root).replace("\\", "/")
+        assert "/.polaris/runtime/projects/" in runtime_root
+        assert "/.polaris/runtime/.polaris/projects/" not in runtime_root
+
 
 # ─── resolve_polaris_roots() ───────────────────────────────────────────────
 
@@ -413,6 +425,24 @@ class TestResolvePolarisRoots:
         ws.mkdir()
         roots = resolve_polaris_roots(str(ws))
         assert roots.storage_layout_mode == "project_local"
+
+    def test_runtime_base_with_metadata_dir_does_not_double_metadata_dir(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        runtime_base = tmp_path / "runtime-cache" / ".polaris" / "runtime"
+        runtime_base.mkdir(parents=True)
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_base))
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        roots = resolve_polaris_roots(str(ws))
+
+        normalized = roots.runtime_root.replace("\\", "/")
+        assert "/.polaris/runtime/projects/" in normalized
+        assert "/.polaris/runtime/.polaris/projects/" not in normalized
 
     def test_extras_runtime_mode_in_result(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # When ramdisk is explicitly passed, runtime_mode reflects it

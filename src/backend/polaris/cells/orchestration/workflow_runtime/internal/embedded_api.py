@@ -61,6 +61,8 @@ _CONTROL_KWARGS = {
     "execution_timeout",
     "run_timeout",
 }
+_WORKFLOW_CONTRACT_MODE_KEY = "_workflow_contract_mode"
+_WORKFLOW_CONTRACT_MODE_LEGACY = "legacy"
 
 
 @dataclass
@@ -138,24 +140,19 @@ def _normalize_mapping(value: Any) -> dict[str, Any]:
 
 
 def _serialize_result(value: Any) -> Any:
-    if is_dataclass(value):
-        return asdict(value)  # type: ignore[arg-type]
-    if isinstance(value, dict):
-        return _normalize_mapping(value)
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         raw = to_dict()
         if isinstance(raw, dict):
             return _normalize_mapping(raw)
+    if is_dataclass(value):
+        return asdict(value)  # type: ignore[arg-type]
+    if isinstance(value, dict):
+        return _normalize_mapping(value)
     return value
 
 
 def _payload_from_value(value: Any) -> dict[str, Any]:
-    if is_dataclass(value):
-        raw = asdict(value)  # type: ignore[arg-type]
-        return _normalize_mapping(raw)
-    if isinstance(value, dict):
-        return _normalize_mapping(value)
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         try:
@@ -164,6 +161,11 @@ def _payload_from_value(value: Any) -> dict[str, Any]:
             raw = {}
         if isinstance(raw, dict):
             return _normalize_mapping(raw)
+    if is_dataclass(value):
+        raw = asdict(value)  # type: ignore[arg-type]
+        return _normalize_mapping(raw)
+    if isinstance(value, dict):
+        return _normalize_mapping(value)
     return {"value": value}
 
 
@@ -711,6 +713,7 @@ class EmbeddedWorkflowAPI:
 
         payload_value = kwargs.get("input", args[0] if args else {})
         payload = _payload_from_value(payload_value)
+        payload.setdefault(_WORKFLOW_CONTRACT_MODE_KEY, _WORKFLOW_CONTRACT_MODE_LEGACY)
         child_id = str(kwargs.get("id") or kwargs.get("workflow_id") or "").strip()
         if not child_id:
             child_id = f"{context.workflow_id}-{workflow_name}-{int(datetime.now(timezone.utc).timestamp() * 1000)}"

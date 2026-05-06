@@ -103,12 +103,12 @@ class MemoryCandidateProvider:
         candidates: list[MemoryCandidate] = []
 
         try:
-            # Try to load from session persistence
-            from polaris.cells.roles.session.public import (
-                SessionPersistenceService,
-            )
+            # Try to load from session persistence (dynamic import to avoid
+            # reverse-layer static import violation; cells is an upper layer).
+            import importlib
 
-            persistence = SessionPersistenceService(workspace=self.workspace)
+            session_public = importlib.import_module("polaris.cells.roles.session.public")
+            persistence = session_public.SessionPersistenceService(workspace=self.workspace)
 
             # Get all session snapshots
             snapshots = self._load_session_snapshots(persistence)

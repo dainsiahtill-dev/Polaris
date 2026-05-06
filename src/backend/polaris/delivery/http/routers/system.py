@@ -240,7 +240,7 @@ async def _update_settings_internal(request: Request, payload: SettingsUpdate) -
         try:
             container = await get_container()
             pm_service = await container.resolve_async(PMService)
-            pm_service.refresh_storage_layout()
+            pm_service.rebind_settings(state.settings)
         except (RuntimeError, ValueError) as e:
             logger.debug(f"PM service refresh failed: {e}")
         try:
@@ -385,6 +385,7 @@ async def v2_health() -> dict[str, Any]:
 
 @router.get("/v2/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
 def v2_get_settings(request: Request) -> dict[str, Any]:
+    """Get current workspace and runtime settings."""
     state = get_state(request)
     payload = state.settings.to_payload()
     raw_json_log_path = str(payload.get("json_log_path") or "").strip()
@@ -394,12 +395,14 @@ def v2_get_settings(request: Request) -> dict[str, Any]:
 
 @router.post("/v2/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)
 async def v2_update_settings(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
+    """Update workspace and runtime settings atomically."""
     async with _get_settings_update_lock():
         return await _update_settings_internal(request, payload)
 
 
 @router.get("/v2/ready", dependencies=[Depends(require_auth)], response_model=ReadyResponse)
 async def v2_ready() -> dict[str, Any]:
+    """Readiness probe including LanceDB and runtime checks."""
     from polaris.delivery.http.routers.primary import build_readiness_payload
 
     payload = await build_readiness_payload()
@@ -415,11 +418,13 @@ async def v2_ready() -> dict[str, Any]:
 
 @router.get("/v2/live", dependencies=[Depends(require_auth)], response_model=LiveResponse)
 async def v2_live() -> dict[str, Any]:
+    """Liveness probe. Returns a simple alive indicator."""
     return {"live": True}
 
 
 @router.get("/v2/state/snapshot", dependencies=[Depends(require_auth)], response_model=StateSnapshotResponse)
 def v2_state_snapshot(request: Request) -> dict[str, Any]:
+    """Get a snapshot of the current application state."""
     state = get_state(request)
     configured_workspace = str(getattr(state.settings, "workspace", "") or "").strip()
     ramdisk_root = str(getattr(state.settings, "ramdisk_root", "") or "").strip()
@@ -437,6 +442,8 @@ def v2_state_snapshot(request: Request) -> dict[str, Any]:
 
 @router.post("/v2/app/shutdown", dependencies=[Depends(require_auth)], response_model=ShutdownResponse)
 async def v2_app_shutdown(request: Request) -> dict[str, Any]:
+    """Gracefully shutdown PM and Director runtimes."""
+    state = get_state(request)
     state = get_state(request)
     workspace = str(state.settings.workspace or DEFAULT_WORKSPACE)
 

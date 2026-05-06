@@ -37,6 +37,9 @@ depends_on:
 - llm.control_plane
 - llm.provider_runtime
 - policy.workspace_guard
+- audit.verdict
+- director.execution
+- roles.runtime
 subgraphs: []
 state_owners:
 - runtime/state/director/tasking/*

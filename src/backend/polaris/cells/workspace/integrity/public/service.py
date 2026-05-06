@@ -7,33 +7,37 @@ All internal imports are lazy-loaded to maintain proper architectural boundaries
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-# Pre-declare lazy-loaded names to satisfy __all__ and static analysis.
-# These are populated via __getattr__ at access time.
-# NOTE: Do NOT pre-declare names that are module-level definitions (e.g., WorkspaceIntegrityService).
-# NOTE: Do NOT pre-declare names that are handled by __getattr__ with fallback classes,
-#       because module-level None prevents __getattr__ from firing on import.
-CodeParser: type | None = None
-# DirectorCodeIntelMixin is NOT pre-declared here; it has a fallback class
-# in __getattr__ and pre-declaring as None prevents __getattr__ from firing.
-FileChange: type | None = None
-FileChangeSnapshot: type | None = None
-FileChangeTracker: type | None = None
-TaskFileChangeTracker: type | None = None
-build_docs_templates: type | None = None
-clear_workspace_status: type | None = None
-detect_project_profile: type | None = None
-ensure_docs_ready_or_raise: type | None = None
-get_abs_path: type | None = None
-get_code_parser: type | None = None
-is_safe_docs_path: type | None = None
-read_workspace_status: type | None = None
-select_docs_target_root: type | None = None
-validate_workspace: type | None = None
-workspace_has_docs: type | None = None
-workspace_status_path: type | None = None
-write_workspace_status: type | None = None
+if TYPE_CHECKING:
+    from polaris.cells.workspace.integrity.internal.code_parser import (
+        CodeParser,
+        get_code_parser,
+    )
+    from polaris.cells.workspace.integrity.internal.diff_tracker import (
+        FileChange,
+        FileChangeSnapshot,
+        FileChangeTracker,
+        TaskFileChangeTracker,
+    )
+    from polaris.cells.workspace.integrity.internal.fs_utils import (
+        get_abs_path,
+        normalize_rel_path,
+        validate_workspace,
+        workspace_has_docs,
+        workspace_status_path,
+    )
+    from polaris.cells.workspace.integrity.internal.workspace_service import (
+        build_docs_templates,
+        clear_workspace_status,
+        default_qa_commands,
+        detect_project_profile,
+        ensure_docs_ready_or_raise,
+        is_safe_docs_path,
+        read_workspace_status,
+        select_docs_target_root,
+        write_workspace_status,
+    )
 
 __all__ = [
     "CodeParser",

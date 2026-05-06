@@ -160,6 +160,9 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
   const kind = String(eventPayload.kind || '').trim().toLowerCase();
   const envelopePayload = Parsing.isRecord(eventPayload.payload) ? eventPayload.payload : null;
   const rawPayload = Parsing.isRecord(envelopePayload?.raw) ? envelopePayload.raw : null;
+  const eventName = String(eventPayload.event_name || eventPayload.event || eventPayload.name || kind || '')
+    .trim()
+    .toLowerCase();
   const mergedPayload = {
     ...(envelopePayload || {}),
     ...eventPayload,
@@ -174,6 +177,9 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
     else if (v2Domain === 'system') targetChannel = 'system';
   }
 
+  if (eventName === 'settings_changed' || eventName.endsWith('.settings_changed')) {
+    return { type: 'settings_changed', payload: envelopePayload || rawPayload || mergedPayload };
+  }
   if (targetChannel === 'dialogue' || kind === 'dialogue' || source === 'dialogue') {
     return { type: 'line', channel: 'dialogue', text: JSON.stringify(rawPayload || mergedPayload) };
   }
@@ -812,7 +818,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         }
 
         // Handle settings changed event
-        if (msgType === 'settings_changed' || msgType === 'SETTINGS_CHANGED') {
+        if (finalMsgType === 'settings_changed') {
           const eventPayload = Parsing.isRecord(payload.payload) ? payload.payload : Parsing.isRecord(payload.event) ? payload.event : null;
           if (eventPayload) {
             const newWorkspace = Parsing.toStringValue(eventPayload.workspace);
@@ -823,7 +829,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           return;
         }
 
-        if (msgType === 'error') {
+        if (finalMsgType === 'error') {
           const errorPayload = Parsing.isRecord(payload.payload) ? payload.payload : null;
           const errorMessage = Parsing.toStringValue(errorPayload?.error) || 'Runtime websocket error';
           useRuntimeStore.getState().setConnectionState({ error: errorMessage });

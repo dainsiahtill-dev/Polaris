@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
+import { apiFetchFresh } from '@/api';
 import {
   startPm,
   stopPm,
@@ -54,21 +55,41 @@ function normalizePmTaskId(task: PmTask): string {
   return String(task.id || '').trim();
 }
 
+function toStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    const token = typeof value === 'string' ? value.trim() : '';
+    return token ? [token] : [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        return String(record.description || record.title || record.id || '').trim();
+      }
+      return '';
+    })
+    .filter((item) => item.length > 0);
+}
+
+function toTaskRecord(task: PmTask): PmTask & Record<string, unknown> {
+  return task as PmTask & Record<string, unknown>;
+}
+
 function buildDirectorTaskPayload(task: PmTask): CreateDirectorTaskPayload {
   const title = String(task.title || task.goal || task.id || '未命名任务').trim();
   const description = String(task.summary || task.goal || '').trim();
-  const acceptance = Array.isArray(task.acceptance)
-    ? task.acceptance
-        .map((item) => {
-          if (!item || typeof item !== 'object') return '';
-          return String(item.description || '').trim();
-        })
-        .filter((item) => item.length > 0)
-    : [];
+  const taskRecord = toTaskRecord(task);
+  const acceptance = toStringList(taskRecord.acceptance).concat(toStringList(taskRecord.acceptance_criteria));
+  const scopePaths = toStringList(taskRecord.scope_paths);
+  const targetFiles = toStringList(taskRecord.target_files);
+  const executionChecklist = toStringList(taskRecord.execution_checklist);
+  const command = String(taskRecord.command || '').trim();
 
   return {
     subject: title,
     description,
+    command: command || null,
     priority: toDirectorPriority(task),
     timeout_seconds: 600,
     metadata: {
@@ -76,8 +97,29 @@ function buildDirectorTaskPayload(task: PmTask): CreateDirectorTaskPayload {
       pm_task_title: title,
       pm_task_status: String(task.status || task.state || '').trim(),
       acceptance,
+      scope_paths: scopePaths,
+      target_files: targetFiles,
+      execution_checklist: executionChecklist,
+      qa_contract: taskRecord.qa_contract && typeof taskRecord.qa_contract === 'object'
+        ? taskRecord.qa_contract
+        : {},
+      source: 'pm_contract',
     },
   };
+}
+
+async function loadFreshPmTasks(): Promise<PmTask[]> {
+  try {
+    const response = await apiFetchFresh('/state/snapshot');
+    if (!response.ok) {
+      return [];
+    }
+    const payload = await response.json() as { tasks?: unknown };
+    const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+    return tasks.filter((item): item is PmTask => Boolean(item && typeof item === 'object'));
+  } catch {
+    return [];
+  }
 }
 
 export function useProcessOperations(options: UseProcessOperationsOptions = {}) {
@@ -244,9 +286,13 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
   }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField]);
 
   const seedDirectorQueueFromPmTasks = useCallback(async (tasks?: PmTask[]) => {
-    const candidates = Array.isArray(tasks)
-      ? tasks.filter((task) => task && typeof task === 'object' && !isPmTaskDone(task))
+    let sourceTasks = Array.isArray(tasks)
+      ? tasks.filter((task) => task && typeof task === 'object')
       : [];
+    if (!sourceTasks.length) {
+      sourceTasks = await loadFreshPmTasks();
+    }
+    const candidates = sourceTasks.filter((task) => task && typeof task === 'object' && !isPmTaskDone(task));
     if (!candidates.length) {
       return true;
     }
@@ -312,6 +358,8 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         return false;
       }
 
+      await seedDirectorQueueFromPmTasks(tasks);
+
       const result = await startDirector();
 
       if (!result.ok) {
@@ -325,8 +373,6 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         toast.error('Failed to start Chief Engineer');
         return false;
       }
-
-      await seedDirectorQueueFromPmTasks(tasks);
 
       toast.dismiss(startToastId);
       toast.success('Chief Engineer started');

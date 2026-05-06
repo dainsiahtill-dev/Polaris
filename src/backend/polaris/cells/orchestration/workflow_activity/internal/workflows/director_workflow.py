@@ -102,7 +102,9 @@ def _positive_int(value: Any, default: int) -> int:
 
 def _execution_mode(value: Any) -> str:
     token = str(value or "").strip().lower()
-    if token in {"serial", "parallel"}:
+    if token in {"serial", "sequential"}:
+        return "serial"
+    if token == "parallel":
         return token
     return "parallel"
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 PROJECT_ROOT = BACKEND_ROOT.parents[1]
 
 HIGH_TRUST_SUBSYSTEMS = [

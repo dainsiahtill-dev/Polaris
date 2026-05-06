@@ -22,7 +22,7 @@ from polaris.kernelone.llm.providers import (
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 KERNELONE_ROOT = BACKEND_ROOT / "polaris" / "kernelone"
 
 

@@ -249,6 +249,9 @@ class TestCoerceExecutionMode:
     def test_sequential_lowercase(self) -> None:
         assert _coerce_execution_mode("sequential") == "sequential"
 
+    def test_serial_lowercase(self) -> None:
+        assert _coerce_execution_mode("serial") == "serial"
+
     def test_parallel_lowercase(self) -> None:
         assert _coerce_execution_mode("parallel") == "parallel"
 
@@ -274,6 +277,9 @@ class TestCoerceExecutionMode:
         # Passing the enum member directly may not coerce correctly in all Python
         # versions because str(enum_member) behaviour varies; coerce via .value.
         assert _coerce_execution_mode(ExecutionMode.SEQUENTIAL.value) == "sequential"
+
+    def test_serial_enum_value(self) -> None:
+        assert _coerce_execution_mode(ExecutionMode.SERIAL.value) == "serial"
 
     def test_string_parallel_with_spaces(self) -> None:
         assert _coerce_execution_mode(" parallel ") == "parallel"

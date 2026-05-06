@@ -169,12 +169,10 @@ def _workflow_runtime_environment(workspace: str, cache_root: str) -> Any:
     workspace_value = str(workspace or "").strip()
     cache_root_value = str(cache_root or "").strip()
     overrides: dict[str, str] = {}
-    if cache_root_value:
-        overrides["KERNELONE_RUNTIME_CACHE_ROOT"] = cache_root_value
     if workspace_value:
         overrides["KERNELONE_CONTEXT_ROOT"] = workspace_value
     runtime_db = _runtime_db_path(cache_root_value)
-    if runtime_db and os.path.isfile(runtime_db):
+    if runtime_db:
         overrides["KERNELONE_RUNTIME_DB"] = runtime_db
     if not overrides:
         yield

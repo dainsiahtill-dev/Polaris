@@ -25,6 +25,7 @@ class ExecutionMode(str, Enum):
     """Workflow execution modes."""
 
     SEQUENTIAL = "sequential"
+    SERIAL = "serial"
     PARALLEL = "parallel"
 
 
@@ -92,9 +93,9 @@ def _coerce_execution_mode(value: Any, default: str = "parallel") -> str:
         default: Default mode if coercion fails.
 
     Returns:
-        Either "sequential" or "parallel".
+        Either "serial", "sequential", or "parallel".
     """
     token = str(value or "").strip().lower()
-    if token in {"sequential", "parallel"}:
+    if token in {"serial", "sequential", "parallel"}:
         return token
     return default

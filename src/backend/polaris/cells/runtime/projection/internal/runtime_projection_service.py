@@ -72,6 +72,7 @@ class RuntimeProjection:
     # Core state sources
     pm_local: dict[str, Any] = field(default_factory=dict)
     director_local: dict[str, Any] = field(default_factory=dict)
+    director_merged: dict[str, Any] = field(default_factory=dict)
     workflow_archive: dict[str, Any] | None = None
     engine_fallback: dict[str, Any] | None = None
 
@@ -314,6 +315,8 @@ def get_workflow_director_status_sync(
             workflow_status.get("director_workflow_id") or workflow_status.get("workflow_id") or ""
         ).strip(),
         "status": status_payload,
+        "tasks": status_payload.get("tasks") if isinstance(status_payload.get("tasks"), dict) else {},
+        "raw_workflow_status": workflow_status,
     }
 
 
@@ -755,10 +758,15 @@ async def build_runtime_projection(
     workflow_tasks: list[dict[str, Any]] = []
     if workflow_director_status:
         try:
+            raw_workflow_status = (
+                workflow_director_status.get("raw_workflow_status")
+                if isinstance(workflow_director_status.get("raw_workflow_status"), dict)
+                else workflow_director_status
+            )
             workflow_tasks = await asyncio.wait_for(
                 asyncio.to_thread(
                     lambda: build_workflow_task_rows(
-                        workflow_director_status,
+                        raw_workflow_status,
                         workspace=workspace,
                         cache_root=cache_root,
                     )
@@ -846,6 +854,7 @@ async def build_runtime_projection(
     projection = RuntimeProjection(
         pm_local=pm_status,
         director_local=director_local_status,
+        director_merged=merged_director_status,
         workflow_archive=workflow_director_status,
         engine_fallback=engine_status,
         court_state=court_state,
@@ -998,6 +1007,17 @@ def build_snapshot_payload_from_projection(
 
     compat = _derive_compat_fields(projection)
     resolved_cache_root = str(cache_root or "").strip()
+    if not resolved_cache_root and workspace:
+        try:
+            settings = getattr(state, "settings", None)
+            ramdisk_root = str(getattr(settings, "ramdisk_root", "") or "")
+            resolved_cache_root = build_cache_root(ramdisk_root, workspace)
+        except (RuntimeError, ValueError) as exc:
+            logger.warning(
+                "build_snapshot_payload_from_projection: cache_root resolution failed for workspace=%r: %s",
+                workspace,
+                exc,
+            )
     pm_contract_payload: dict[str, Any] = {}
     if workspace and resolved_cache_root:
         pm_contract_path = resolve_artifact_path(
@@ -1030,9 +1050,34 @@ def build_snapshot_payload_from_projection(
         loaded_pm_state = read_json(pm_state_path)
         if isinstance(loaded_pm_state, dict):
             pm_state = dict(loaded_pm_state)
-    if "last_director_status" not in pm_state and compat.get("director_status"):
+    director_result: dict[str, Any] = {}
+    if workspace and resolved_cache_root:
+        director_result_path = resolve_artifact_path(
+            workspace,
+            resolved_cache_root,
+            "runtime/results/director.result.json",
+        )
+        loaded_director_result = read_json(director_result_path)
+        if isinstance(loaded_director_result, dict):
+            director_result = loaded_director_result
+    if not str(pm_state.get("last_director_status") or "").strip() and compat.get("director_status"):
         pm_state["last_director_status"] = compat["director_status"]
-    if "completed_task_count" not in pm_state and compat.get("workflow_tasks") is not None:
+    director_result_status = str(director_result.get("status") or "").strip()
+    if director_result_status and str(pm_state.get("last_director_status") or "").strip().lower() in {
+        "",
+        "idle",
+        "pending",
+    }:
+        pm_state["last_director_status"] = director_result_status
+    workflow_completed_tasks = _safe_int(compat.get("workflow_completed_tasks"))
+    director_result_successes = _safe_int(
+        director_result.get("successes") or director_result.get("completed") or director_result.get("completed_tasks")
+    )
+    existing_completed_tasks = _safe_int(pm_state.get("completed_task_count"))
+    projected_completed_tasks = max(workflow_completed_tasks, director_result_successes)
+    if projected_completed_tasks > existing_completed_tasks:
+        pm_state["completed_task_count"] = projected_completed_tasks
+    elif "completed_task_count" not in pm_state and compat.get("workflow_tasks") is not None:
         pm_state["completed_task_count"] = compat.get("workflow_tasks")
 
     # Keep git state in the snapshot payload consumed by the current UI.
@@ -1078,7 +1123,7 @@ def build_snapshot_payload_from_projection(
 
     return {
         "pm": projection.pm_local,
-        "director": projection.director_local,
+        "director": projection.director_merged or projection.director_local,
         "workflow": projection.workflow_archive,
         "engine": projection.engine_fallback,
         "run_id": str(compat.get("run_id") or pm_contract_payload.get("run_id") or "").strip(),
@@ -1099,6 +1144,42 @@ def build_snapshot_payload_from_projection(
 
 def _derive_compat_fields(projection: RuntimeProjection) -> dict[str, Any]:
     """Derive snapshot metadata fields from the current projection."""
+
+    def _director_state(payload: dict[str, Any]) -> str:
+        status_value = payload.get("status")
+        if isinstance(status_value, dict):
+            nested_state = str(status_value.get("state") or "").strip()
+            if nested_state:
+                return nested_state
+        elif status_value:
+            return str(status_value).strip()
+        state_token = str(payload.get("state") or "").strip()
+        if state_token:
+            return state_token
+        return "running" if bool(payload.get("running")) else "idle"
+
+    def _director_tasks(payload: dict[str, Any]) -> dict[str, Any]:
+        direct_tasks = payload.get("tasks")
+        if isinstance(direct_tasks, dict):
+            return direct_tasks
+        status_value = payload.get("status")
+        nested_tasks = status_value.get("tasks") if isinstance(status_value, dict) else None
+        return nested_tasks if isinstance(nested_tasks, dict) else {}
+
+    def _completed_task_count(task_rows: list[dict[str, Any]], tasks_payload: dict[str, Any]) -> int:
+        by_status = tasks_payload.get("by_status")
+        if isinstance(by_status, dict):
+            completed = _safe_int(by_status.get("COMPLETED") or by_status.get("completed"))
+            if completed > 0:
+                return completed
+        return len(
+            [
+                item
+                for item in task_rows
+                if str(item.get("status") or item.get("state") or "").strip().upper() == "COMPLETED"
+            ]
+        )
+
     compat: dict[str, Any] = {}
 
     # PM status from pm_local
@@ -1107,24 +1188,28 @@ def _derive_compat_fields(projection: RuntimeProjection) -> dict[str, Any]:
         compat["pm_status"] = pm_payload.get("status") or ("running" if pm_payload.get("running") else "idle")
         compat["pm_current_task"] = pm_payload.get("current_task_id") or pm_payload.get("task_id")
 
-    # Director status from director_local
-    director_payload = projection.director_local
+    # Director status from merged projection first, local fallback second.
+    director_payload = projection.director_merged or projection.director_local
     if director_payload:
-        compat["director_status"] = (
-            director_payload.get("status")
-            or director_payload.get("state")
-            or ("running" if director_payload.get("running") else "idle")
+        compat["director_status"] = _director_state(director_payload)
+        tasks_payload = _director_tasks(director_payload)
+        by_status_raw = tasks_payload.get("by_status")
+        by_status: dict[str, Any] = by_status_raw if isinstance(by_status_raw, dict) else {}
+        compat["director_active"] = (
+            director_payload.get("active_tasks")
+            or tasks_payload.get("active")
+            or _safe_int(by_status.get("IN_PROGRESS"))
+            + _safe_int(by_status.get("RUNNING"))
+            + _safe_int(by_status.get("CLAIMED"))
         )
-        compat["director_active"] = director_payload.get("active_tasks", 0)
 
     # Workflow archive precedence
     if projection.workflow_archive:
         compat["workflow_loaded"] = True
-        workflow_tasks = projection.workflow_archive.get("tasks", [])
-        if isinstance(workflow_tasks, list):
-            compat["workflow_tasks"] = len(workflow_tasks)
-        else:
-            compat["workflow_tasks"] = len(projection.task_rows)
+        workflow_task_rows = [item for item in projection.task_rows if isinstance(item, dict)]
+        workflow_tasks_payload = _director_tasks(projection.workflow_archive)
+        compat["workflow_tasks"] = len(workflow_task_rows) or _safe_int(workflow_tasks_payload.get("total"))
+        compat["workflow_completed_tasks"] = _completed_task_count(workflow_task_rows, workflow_tasks_payload)
         # Include run_id from workflow if available
         if "run_id" in projection.workflow_archive:
             compat["run_id"] = projection.workflow_archive["run_id"]

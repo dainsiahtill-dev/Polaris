@@ -14,7 +14,7 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
@@ -44,10 +44,6 @@ from .scheduler import _ContextOSSchedulerMixin
 from .state import _ContextOSStateMixin
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    pass
-
 
 class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
     """Canonical state-first session context engine.

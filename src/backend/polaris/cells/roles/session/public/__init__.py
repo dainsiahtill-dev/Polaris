@@ -66,7 +66,7 @@ def get_db() -> Any:
     """Get a database session (for dependency injection)."""
     from polaris.cells.roles.session.internal.conversation import get_db as _get_db
 
-    return _get_db()
+    yield from _get_db()
 
 
 __all__ = [

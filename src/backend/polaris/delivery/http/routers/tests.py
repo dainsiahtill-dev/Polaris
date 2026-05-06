@@ -198,19 +198,19 @@ async def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, A
 
 @router.post("/v2/llm/test", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])
 async def v2_llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
-    """Run LLM tests (v2 canonical)."""
+    """Run LLM readiness tests and return a report."""
     return await llm_test(request, payload)
 
 
 @router.post("/v2/llm/test/stream", dependencies=[Depends(require_auth)])
 async def v2_llm_test_stream(request: Request, payload: LlmTestPayload):
-    """Stream LLM test results using SSE (v2 canonical)."""
+    """Stream LLM test results using Server-Sent Events."""
     return await llm_test_stream(request, payload)
 
 
 @router.get("/v2/llm/test/{test_run_id}", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])
 async def v2_llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
-    """Get LLM test report (v2 canonical)."""
+    """Get a persisted LLM test report by run ID."""
     return await llm_test_report(request, test_run_id)
 
 
@@ -220,7 +220,7 @@ async def v2_llm_test_report(request: Request, test_run_id: str) -> dict[str, An
     dependencies=[Depends(require_auth)],
 )
 async def v2_llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
-    """Get LLM test transcript (v2 canonical)."""
+    """Get a persisted LLM test transcript by run ID."""
     return await llm_test_transcript(request, test_run_id)
 
 

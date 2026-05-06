@@ -16,6 +16,7 @@ SECURITY TESTS:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -37,7 +38,6 @@ from polaris.delivery.http.routers.sse_utils import (
 )
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import AsyncGenerator
 
 
@@ -631,8 +631,7 @@ class TestJetstreamGeneratorExceptionPreservation:
         )
         # Disconnect error must NOT be the primary exception
         assert "disconnect_error_secondary" not in str(exc_info.value), (
-            "BUG M4: disconnect_error_secondary should not be the raised exception; "
-            "it masks the original stream error."
+            "BUG M4: disconnect_error_secondary should not be the raised exception; it masks the original stream error."
         )
 
     @pytest.mark.asyncio
@@ -674,6 +673,53 @@ class TestJetstreamGeneratorExceptionPreservation:
 
         assert disconnect_called, "disconnect() should still be called even on normal exit"
         assert len(collected) == 1, "Should have collected exactly one event"
+
+
+class TestSseEventGeneratorTerminalErrors:
+    """Regression tests for non-terminal task failures in direct SSE streams."""
+
+    @pytest.mark.asyncio
+    async def test_unexpected_task_exception_emits_terminal_error(self) -> None:
+        async def failing_task(_queue: asyncio.Queue[dict[str, Any]]) -> None:
+            raise OSError("provider stream failed")
+
+        events: list[str] = []
+        async for event in sse_event_generator(failing_task, timeout=0.01):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0].startswith("event: error")
+        assert "provider stream failed" in events[0]
+
+    @pytest.mark.asyncio
+    async def test_task_completion_without_terminal_event_emits_error(self) -> None:
+        async def no_terminal_event(_queue: asyncio.Queue[dict[str, Any]]) -> None:
+            return None
+
+        events: list[str] = []
+        async for event in sse_event_generator(no_terminal_event, timeout=0.01):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0].startswith("event: error")
+        assert "without a terminal event" in events[0]
+
+    @pytest.mark.asyncio
+    async def test_task_completion_without_terminal_event_does_not_wait_for_ping_timeout(self) -> None:
+        async def no_terminal_event(_queue: asyncio.Queue[dict[str, Any]]) -> None:
+            return None
+
+        async def collect_events() -> list[str]:
+            events: list[str] = []
+            async for event in sse_event_generator(no_terminal_event, timeout=30.0):
+                events.append(event)
+            return events
+
+        events = await asyncio.wait_for(collect_events(), timeout=0.5)
+
+        assert len(events) == 1
+        assert events[0].startswith("event: error")
+        assert "without a terminal event" in events[0]
 
 
 # -----------------------------------------------------------------------------

@@ -41,6 +41,17 @@ const runtimeConnectionMock = vi.hoisted(() => {
   };
 });
 
+const settingsHookMock = vi.hoisted(() => {
+  const load = vi.fn();
+
+  return {
+    load,
+    reset: () => {
+      load.mockClear();
+    },
+  };
+});
+
 vi.mock('../useRuntimeConnection', () => ({
   useRuntimeConnection: vi.fn(() => ({
     live: false,
@@ -69,7 +80,7 @@ vi.mock('../useRuntimeConnection', () => ({
 vi.mock('@/hooks', () => ({
   useSettings: vi.fn(() => ({
     settings: { workspace: '/test/workspace' },
-    load: vi.fn(),
+    load: settingsHookMock.load,
   })),
 }));
 
@@ -86,6 +97,7 @@ function emitRuntimeMessage(message: unknown): void {
 describe('useRuntime llm filtering and dedup', () => {
   beforeEach(() => {
     runtimeConnectionMock.reset();
+    settingsHookMock.reset();
     act(() => {
       useRuntimeStore.getState().resetAll();
     });
@@ -288,5 +300,45 @@ describe('useRuntime llm filtering and dedup', () => {
     emitRuntimeMessage(sharedLine);
     expect(result.current.llmStreamEvents).toHaveLength(3);
     expect(result.current.llmStreamEvents[2]?.message).toBe('shared-cross-run-line');
+  });
+
+  it('reloads runtime settings when a v2 settings_changed event updates the workspace', () => {
+    renderHook(() => useRuntime({ autoConnect: false }));
+
+    emitRuntimeMessage({
+      type: 'event',
+      event: {
+        event_id: 'settings-evt-1',
+        event_name: 'settings_changed',
+        category: 'system',
+        payload: {
+          workspace: '/new/workspace',
+          previous_workspace: '/test/workspace',
+          changed_fields: ['workspace'],
+        },
+      },
+    });
+
+    expect(settingsHookMock.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload runtime settings for controlled workspace props', () => {
+    renderHook(() => useRuntime({ autoConnect: false, workspace: '/test/workspace' }));
+
+    emitRuntimeMessage({
+      type: 'event',
+      event: {
+        event_id: 'settings-evt-2',
+        event_name: 'settings_changed',
+        category: 'system',
+        payload: {
+          workspace: '/new/workspace',
+          previous_workspace: '/test/workspace',
+          changed_fields: ['workspace'],
+        },
+      },
+    });
+
+    expect(settingsHookMock.load).not.toHaveBeenCalled();
   });
 });

@@ -10,10 +10,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.routers import docs as docs_router
 from polaris.delivery.http.routers._shared import require_auth
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(docs_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -294,7 +296,7 @@ class TestDocsRouter:
             )
 
         assert response.status_code == 400
-        assert "target_root" in response.json()["detail"].lower()
+        assert "target_root" in response.json()["error"]["message"].lower()
 
     def test_docs_init_apply_no_files(self) -> None:
         """POST /docs/init/apply returns 400 when no files provided."""
@@ -304,4 +306,4 @@ class TestDocsRouter:
             json={"target_root": "workspace/docs", "files": []},
         )
         assert response.status_code == 400
-        assert "no files" in response.json()["detail"].lower()
+        assert "no files" in response.json()["error"]["message"].lower()

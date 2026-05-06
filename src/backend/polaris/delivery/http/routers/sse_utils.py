@@ -25,6 +25,7 @@ import logging
 import re
 import secrets
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from fastapi.responses import StreamingResponse
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 # SSE queue max size to prevent unbounded memory growth
 # Reduced from 1000 to 50 to enable natural backpressure and reduce latency
 _SSE_QUEUE_MAX_SIZE = 50
+_SSE_TASK_DONE_EVENT = "__task_done__"
 
 # =============================================================================
 # Security Constants
@@ -49,7 +51,7 @@ MAX_PAYLOAD_SIZE = 262_144
 MAX_REPLAY_WINDOW_SECONDS = 3600
 
 # Subject pattern validation: only allow alphanumeric, dash, underscore, dot
-SUBJECT_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,200}$")
+SUBJECT_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$")
 
 # Workspace key validation: alphanumeric and dash only
 WORKSPACE_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9-]{1,64}$")
@@ -132,13 +134,14 @@ def validate_event_timestamp(ts: str | None) -> bool:
         return True  # Allow events without timestamp (backward compat)
 
     try:
-        # Parse ISO 8601 timestamp (handle various formats)
-        # Format: 2026-05-01T12:00:00Z or 2026-05-01T12:00:00+00:00
-        ts_clean = ts.replace("+00:00", "Z")
-        if not ts_clean.endswith("Z"):
+        # Parse ISO 8601 UTC timestamps. Non-UTC values are allowed for
+        # backward compatibility with older runtime events.
+        normalized = ts.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
             return True  # Allow non-UTC timestamps for compatibility
 
-        event_time = float(time.mktime(time.strptime(ts_clean, "%Y-%m-%dT%H:%M:%SZ")))
+        event_time = parsed.timestamp()
         current_time = time.time()
         age = current_time - event_time
 
@@ -218,8 +221,21 @@ async def sse_event_generator(
     async def _wrapper() -> None:
         try:
             await task_fn(queue)
+        except asyncio.CancelledError:
+            raise
         except (RuntimeError, ValueError) as exc:
             await queue.put({"type": "error", "data": {"error": str(exc)}})
+            return
+        except Exception as exc:
+            logger.exception("[sse] task failed without terminal event")
+            await queue.put(
+                {
+                    "type": "error",
+                    "data": {"error": str(exc) or type(exc).__name__},
+                }
+            )
+            return
+        await queue.put({"type": _SSE_TASK_DONE_EVENT, "data": {}})
 
     task = asyncio.create_task(asyncio.wait_for(_wrapper(), timeout=max(timeout * 3, 600.0)))
 
@@ -231,7 +247,10 @@ async def sse_event_generator(
                 event_type = event.get("type", "message")
                 event_data = event.get("data", {})
 
-                if event_type == "complete":
+                if event_type == _SSE_TASK_DONE_EVENT:
+                    yield ('event: error\ndata: {"error": "SSE task completed without a terminal event"}\n\n')
+                    break
+                elif event_type == "complete":
                     yield f"event: complete\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
                     break
                 elif event_type == "error":
@@ -243,6 +262,17 @@ async def sse_event_generator(
                     await asyncio.sleep(0)
 
             except asyncio.TimeoutError:
+                if task.done():
+                    try:
+                        task_exception = task.exception()
+                    except asyncio.CancelledError:
+                        task_exception = None
+                    if task_exception is not None:
+                        error_text = str(task_exception) or type(task_exception).__name__
+                        yield f"event: error\ndata: {json.dumps({'error': error_text}, ensure_ascii=False)}\n\n"
+                    else:
+                        yield ('event: error\ndata: {"error": "SSE task completed without a terminal event"}\n\n')
+                    break
                 yield "event: ping\ndata: {}\n\n"
                 # Force flush to ensure immediate delivery
                 await asyncio.sleep(0)

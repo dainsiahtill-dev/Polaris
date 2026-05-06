@@ -47,6 +47,7 @@ def apply_agents(request: Request, payload: Any = Body(...)) -> dict[str, Any]:
 
 @router.post("/v2/agents/apply", dependencies=[Depends(require_auth)], response_model=AgentsApplyResponse)
 def v2_apply_agents(request: Request, payload: Any = Body(...)) -> dict[str, Any]:
+    """Apply an AGENTS.md draft to the workspace root."""
     from polaris.delivery.http.schemas import AgentsApplyPayload
 
     if not isinstance(payload, AgentsApplyPayload):
@@ -107,6 +108,7 @@ def save_agents_feedback(request: Request, payload: Any = Body(...)) -> dict[str
 
 @router.post("/v2/agents/feedback", dependencies=[Depends(require_auth)], response_model=AgentsFeedbackResponse)
 def v2_save_agents_feedback(request: Request, payload: Any = Body(...)) -> dict[str, Any]:
+    """Save or clear user feedback for agents."""
     from polaris.delivery.http.schemas import AgentsFeedbackPayload
 
     if not isinstance(payload, AgentsFeedbackPayload):

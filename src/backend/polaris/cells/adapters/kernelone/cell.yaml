@@ -25,6 +25,8 @@ public_contracts:
   errors: []
 depends_on:
 - roles.runtime
+- llm.tool_runtime
+- roles.kernel
 subgraphs: []
 state_owners: []
 effects_allowed:

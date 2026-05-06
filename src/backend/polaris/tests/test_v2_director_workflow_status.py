@@ -157,7 +157,7 @@ def _build_fake_request() -> SimpleNamespace:
 
 
 def test_list_tasks_defaults_to_workflow_source(monkeypatch) -> None:
-    workflow_tasks = [
+    workflow_tasks: list[dict[str, object]] = [
         {
             "id": "pm-1",
             "subject": "Workflow Task",
@@ -177,7 +177,7 @@ def test_list_tasks_defaults_to_workflow_source(monkeypatch) -> None:
     # Mock RuntimeProjectionService.build_async for new implementation
     from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
 
-    async def _fake_build_async(*, workspace, cache_root=None, state=None):
+    async def _fake_build_async(workspace, cache_root=None, state=None):
         return RuntimeProjection(
             pm_local={},
             director_local={},
@@ -198,8 +198,94 @@ def test_list_tasks_defaults_to_workflow_source(monkeypatch) -> None:
     assert service.list_calls == 0
 
 
+def test_list_tasks_workflow_uses_projection_task_rows(monkeypatch) -> None:
+    workflow_tasks: list[dict[str, object]] = [
+        {
+            "id": "pm-projected-1",
+            "subject": "Projected workflow task",
+            "description": "from projection.task_rows",
+            "status": "RUNNING",
+            "priority": "MEDIUM",
+            "claimed_by": None,
+            "result": None,
+            "metadata": {"pm_task_id": "PM-1"},
+        }
+    ]
+    service = _FakeDirectorService(
+        status={"workspace": "X:\\workspace", "state": "RUNNING"},
+        local_tasks=[],
+    )
+
+    from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
+
+    async def _fake_build_async(workspace, cache_root=None, state=None):
+        return RuntimeProjection(
+            pm_local={},
+            director_local={},
+            workflow_archive={"status": {"tasks": {"task_rows": workflow_tasks}}},
+            engine_fallback=None,
+            task_rows=workflow_tasks,
+        )
+
+    monkeypatch.setattr(v2_director.RuntimeProjectionService, "build_async", _fake_build_async)
+
+    payload = asyncio.run(
+        v2_director.list_tasks(
+            request=_build_fake_request(),
+            source="workflow",
+            service=service,
+        )
+    )
+
+    assert [item.id for item in payload] == ["pm-projected-1"]
+    assert payload[0].metadata["pm_task_id"] == "PM-1"
+    assert service.list_calls == 0
+
+
+def test_list_tasks_auto_falls_back_to_snapshot_pm_contract_rows(monkeypatch) -> None:
+    service = _FakeDirectorService(
+        status={"workspace": "X:\\workspace", "state": "IDLE"},
+        local_tasks=[],
+    )
+
+    from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
+
+    async def _fake_build_async(workspace, cache_root=None, state=None):
+        projection = RuntimeProjection(
+            pm_local={},
+            director_local={"running": False, "state": "IDLE"},
+            workflow_archive=None,
+            task_rows=[],
+        )
+        projection.snapshot = {
+            "tasks": [
+                {
+                    "id": "PM-1",
+                    "title": "Contract task",
+                    "goal": "Verify contract fallback",
+                    "status": "todo",
+                }
+            ]
+        }
+        return projection
+
+    monkeypatch.setattr(v2_director.RuntimeProjectionService, "build_async", _fake_build_async)
+
+    payload = asyncio.run(
+        v2_director.list_tasks(
+            request=_build_fake_request(),
+            source="auto",
+            service=service,
+        )
+    )
+
+    assert [item.id for item in payload] == ["PM-1"]
+    assert payload[0].status == "PENDING"
+    assert payload[0].metadata["pm_task_id"] == "PM-1"
+
+
 def test_list_tasks_auto_falls_back_to_local_when_workflow_empty(monkeypatch) -> None:
-    local_tasks = [
+    local_tasks: list[dict[str, object]] = [
         {
             "id": "local-1",
             "subject": "Local Task",
@@ -219,7 +305,7 @@ def test_list_tasks_auto_falls_back_to_local_when_workflow_empty(monkeypatch) ->
     # Mock RuntimeProjectionService.build_async for new implementation
     from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
 
-    async def _fake_build_async(*, workspace, cache_root=None, state=None):
+    async def _fake_build_async(workspace, cache_root=None, state=None):
         # Return empty workflow to trigger local fallback
         return RuntimeProjection(
             pm_local={},
@@ -248,7 +334,7 @@ def test_list_tasks_auto_falls_back_to_local_when_workflow_empty(monkeypatch) ->
 
 
 def test_list_tasks_auto_prefers_workflow_rows(monkeypatch) -> None:
-    workflow_tasks = [
+    workflow_tasks: list[dict[str, object]] = [
         {
             "id": "wf-1",
             "subject": "Workflow Task",
@@ -260,7 +346,7 @@ def test_list_tasks_auto_prefers_workflow_rows(monkeypatch) -> None:
             "metadata": {},
         }
     ]
-    local_tasks = [
+    local_tasks: list[dict[str, object]] = [
         {
             "id": "local-1",
             "subject": "Local Task",
@@ -280,7 +366,7 @@ def test_list_tasks_auto_prefers_workflow_rows(monkeypatch) -> None:
     # Mock RuntimeProjectionService.build_async for new implementation
     from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
 
-    async def _fake_build_async(*, workspace, cache_root=None, state=None):
+    async def _fake_build_async(workspace, cache_root=None, state=None):
         # Return workflow tasks to test workflow preference
         return RuntimeProjection(
             pm_local={},
@@ -314,7 +400,7 @@ def test_list_tasks_auto_keeps_local_terminal_rows(monkeypatch) -> None:
 
     from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
 
-    async def _fake_build_async(*, workspace, cache_root=None, state=None):
+    async def _fake_build_async(workspace, cache_root=None, state=None):
         return RuntimeProjection(
             pm_local={},
             director_local={
@@ -357,7 +443,7 @@ def test_list_tasks_auto_keeps_local_terminal_rows(monkeypatch) -> None:
 
 
 def test_list_tasks_local_source_skips_projection(monkeypatch) -> None:
-    local_tasks = [
+    local_tasks: list[dict[str, object]] = [
         {
             "id": "local-1",
             "subject": "Local Task",

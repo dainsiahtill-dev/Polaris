@@ -39,6 +39,7 @@ depends_on:
 - llm.provider_runtime
 - roles.runtime
 - workspace.integrity
+- director.tasking
 subgraphs: []
 state_owners:
 - runtime/state/director/planning/*

@@ -167,6 +167,9 @@ class FitnessRuleChecker:
         }
         known_unconstrained = {
             "polaris/kernelone/akashic/semantic_memory.py",
+            "polaris/kernelone/akashic/hybrid_memory.py",
+            "polaris/kernelone/akashic/memory_manager.py",
+            "polaris/kernelone/memory/memory_store.py",
             "polaris/infrastructure/db/repositories/lancedb_code_search.py",
         }
         patterns = [

@@ -141,7 +141,33 @@ async def test_director_status(client: AsyncClient) -> None:
         data = response.json()
         assert data["ok"] is True
         assert data["projection_source"] == "director_local"
-        assert data["status"]["running"] is True
+        assert data["running"] is True
+        assert data["state"] == "ACTIVE"
+        assert data["status"]["state"] == "ACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_director_status_auto_uses_merged_projection(client: AsyncClient) -> None:
+    """Director status can expose workflow-aware merged state when requested."""
+    with patch(
+        "polaris.cells.runtime.projection.public.service.RuntimeProjectionService.build_async",
+        new_callable=AsyncMock,
+    ) as mock_build:
+        mock_projection = MagicMock()
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "COMPLETED"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/status?source=auto")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["projection_source"] == "director_merged"
+        assert data["state"] == "COMPLETED"
 
 
 # ---------------------------------------------------------------------------

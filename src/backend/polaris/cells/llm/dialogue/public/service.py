@@ -13,6 +13,7 @@ from polaris.cells.llm.dialogue.internal.docs_dialogue import (
     generate_dialogue_turn_streaming,
 )
 from polaris.cells.llm.dialogue.internal.docs_suggest import (
+    build_default_docs_fields,
     build_docs_prompt,
     generate_docs_fields,
     generate_docs_fields_stream,
@@ -129,6 +130,7 @@ __all__ = [
     "RoleOutputParser",
     "RoleOutputQualityChecker",
     "ValidateRoleOutputQueryV1",
+    "build_default_docs_fields",
     "build_dialogue_prompt",
     "build_dialogue_state",
     "build_docs_prompt",

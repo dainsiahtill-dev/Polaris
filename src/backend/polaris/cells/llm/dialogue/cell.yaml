@@ -36,6 +36,9 @@ depends_on:
 - llm.tool_runtime
 - policy.workspace_guard
 - roles.runtime
+- llm.provider_config
+- roles.kernel
+- roles.session
 subgraphs:
 - execution_governance_pipeline
 state_owners: []

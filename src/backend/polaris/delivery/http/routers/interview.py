@@ -108,6 +108,7 @@ async def llm_interview_ask(request: Request, payload: InterviewAskPayload) -> d
 
 @router.post("/v2/llm/interview/ask", dependencies=[Depends(require_auth)], response_model=InterviewAskResponse)
 async def v2_llm_interview_ask(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
+    """Generate an interview answer for a given role and question."""
     state = get_state(request)
     return await run_interactive_interview_question(
         state.settings,
@@ -143,6 +144,7 @@ def llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[
 
 @router.post("/v2/llm/interview/save", dependencies=[Depends(require_auth)], response_model=InterviewSaveResponse)
 def v2_llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[str, Any]:
+    """Save an interview report."""
     state = get_state(request)
     return save_interactive_interview_report(
         state.settings,
@@ -164,6 +166,7 @@ def llm_interview_cancel(payload: InterviewCancelPayload) -> dict[str, Any]:
 
 @router.post("/v2/llm/interview/cancel", dependencies=[Depends(require_auth)], response_model=InterviewCancelResponse)
 def v2_llm_interview_cancel(payload: InterviewCancelPayload) -> dict[str, Any]:
+    """Best-effort cancellation of an interview stream."""
     # Best-effort cancellation (primarily for Codex CLI streaming subprocess).
     return cancel_interactive_interview_stream(payload.session_id)
 
@@ -203,7 +206,7 @@ async def llm_interview_stream(request: Request, payload: InterviewAskPayload):
 
 @router.post("/v2/llm/interview/stream", dependencies=[Depends(require_auth)])
 async def v2_llm_interview_stream(request: Request, payload: InterviewAskPayload):
-    """Stream interview responses using Server-Sent Events (SSE)
+    """Stream interview responses using Server-Sent Events (SSE).
 
     This endpoint provides real-time output from the LLM as it executes,
     allowing the client to see progress before the final result is ready.

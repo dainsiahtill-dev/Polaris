@@ -56,6 +56,7 @@ export function useSSEStream(options: UseSSEStreamOptions = {}) {
         let buffer = '';
         let currentEvent: string | null = null;
         let currentData = '';
+        let sawTerminalEvent = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -78,8 +79,10 @@ export function useSSEStream(options: UseSSEStreamOptions = {}) {
                 onRawEvent?.(evt);
 
                 if (currentEvent === 'complete') {
+                  sawTerminalEvent = true;
                   onComplete?.(data);
                 } else if (currentEvent === 'error') {
+                  sawTerminalEvent = true;
                   onError?.((data.error as string) || 'Unknown error');
                 }
               } catch (err) {
@@ -90,6 +93,10 @@ export function useSSEStream(options: UseSSEStreamOptions = {}) {
               currentData = '';
             }
           }
+        }
+
+        if (!sawTerminalEvent && !abortControllerRef.current?.signal.aborted) {
+          onError?.('SSE stream ended without a terminal event');
         }
       } catch (error) {
         if (error instanceof Error && error.name !== 'AbortError') {

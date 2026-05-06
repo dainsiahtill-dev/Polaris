@@ -31,8 +31,8 @@ class TestOllamaRouter:
             response = client.get("/ollama/models")
 
         assert response.status_code == 200
-        payload: list[str] = response.json()
-        assert payload == ["llama2", "codellama"]
+        payload: dict[str, Any] = response.json()
+        assert payload["models"] == ["llama2", "codellama"]
         mock_list.assert_called_once()
 
     def test_get_ollama_models_empty(self) -> None:
@@ -45,8 +45,8 @@ class TestOllamaRouter:
             response = client.get("/ollama/models")
 
         assert response.status_code == 200
-        payload: list[str] = response.json()
-        assert payload == []
+        payload: dict[str, Any] = response.json()
+        assert payload["models"] == []
 
     def test_stop_ollama_models_happy_path(self) -> None:
         """POST /ollama/stop returns 200 with stop result."""

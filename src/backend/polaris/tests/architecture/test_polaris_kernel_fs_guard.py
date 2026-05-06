@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 KERNELONE_ROOT = BACKEND_ROOT / "polaris"
 BASELINE_PATH = BACKEND_ROOT / "tests" / "architecture" / "allowlists" / "kfs_direct_write_baseline.txt"
 LLM_FILE_IO_SURFACES = (

@@ -168,26 +168,31 @@ def get_role_runtime_status(request: Request, role_id: str) -> dict[str, Any]:
 
 @router.get("/v2/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def get_llm_config_v2(request: Request) -> dict[str, Any]:
+    """Get the current LLM configuration (redacted)."""
     return get_llm_config(request)
 
 
 @router.post("/v2/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def save_llm_config_v2(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    """Save and reconcile LLM configuration."""
     return save_llm_config(request, payload)
 
 
 @router.post("/v2/llm/config/migrate", dependencies=[Depends(require_auth)], response_model=LLMMigrateConfigResponse)
 def migrate_config_v2(payload: dict[str, Any]) -> dict[str, Any]:
+    """Migrate legacy LLM configuration to the current schema."""
     return migrate_config(payload)
 
 
 @router.get("/v2/llm/status", dependencies=[Depends(require_auth)], response_model=LLMStatusResponse)
 def llm_status_v2(request: Request) -> dict[str, Any]:
+    """Get overall LLM system status."""
     return llm_status(request)
 
 
 @router.get("/v2/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)
 def get_runtime_status_v2(request: Request) -> dict[str, Any]:
+    """Get runtime status for all LLM roles."""
     return get_runtime_status(request)
 
 
@@ -197,6 +202,7 @@ def get_runtime_status_v2(request: Request) -> dict[str, Any]:
     response_model=LLMRoleRuntimeStatusResponse,
 )
 def get_role_runtime_status_v2(request: Request, role_id: str) -> dict[str, Any]:
+    """Get runtime status for a single LLM role."""
     return get_role_runtime_status(request, role_id)
 
 

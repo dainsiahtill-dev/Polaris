@@ -270,6 +270,20 @@ class TestDirectorWorkflowInput:
         inp = DirectorWorkflowInput.from_mapping(raw)
         assert inp.execution_mode == "parallel"
 
+    def test_to_dict_serializes_tasks_with_external_contract_keys(self) -> None:
+        """DirectorWorkflowInput.to_dict preserves TaskContract ids for handoff payloads."""
+        inp = DirectorWorkflowInput(
+            workspace="/ws",
+            run_id="run-1",
+            tasks=[TaskContract(task_id="t1", title="Task 1", goal="Do work")],
+        )
+
+        result = inp.to_dict()
+
+        assert result["tasks"][0]["id"] == "t1"
+        assert result["tasks"][0]["title"] == "Task 1"
+        assert "task_id" not in result["tasks"][0]
+
 
 class TestDirectorTaskInput:
     """Tests for DirectorTaskInput dataclass."""
@@ -291,6 +305,19 @@ class TestDirectorTaskInput:
         }
         inp = DirectorTaskInput.from_mapping(raw)
         assert inp.phases == ["plan", "implement", "verify"]
+
+    def test_to_dict_serializes_nested_task_contract(self) -> None:
+        """DirectorTaskInput.to_dict must not leak TaskContract internal field names."""
+        inp = DirectorTaskInput(
+            workspace="/ws",
+            run_id="run-1",
+            task=TaskContract(task_id="t1", title="Task 1"),
+        )
+
+        result = inp.to_dict()
+
+        assert result["task"]["id"] == "t1"
+        assert "task_id" not in result["task"]
 
 
 class TestDirectorTaskResult:
@@ -323,6 +350,13 @@ class TestDirectorTaskResult:
         result = DirectorTaskResult.from_mapping(raw)
         assert result.completed_phases == ["plan", "implement"]
 
+    def test_to_dict_returns_stable_result_contract(self) -> None:
+        """DirectorTaskResult.to_dict returns the workflow result payload contract."""
+        result = DirectorTaskResult(task_id="t1", status="completed", completed_phases=["plan"])
+
+        assert result.to_dict()["task_id"] == "t1"
+        assert result.to_dict()["completed_phases"] == ["plan"]
+
 
 class TestQAWorkflowInput:
     """Tests for QAWorkflowInput dataclass."""
@@ -350,6 +384,20 @@ class TestQAWorkflowInput:
         }
         inp = QAWorkflowInput.from_mapping(raw)
         assert len(inp.task_results) == 2
+
+    def test_to_dict_serializes_task_results(self) -> None:
+        """QAWorkflowInput.to_dict preserves nested DirectorTaskResult payloads."""
+        inp = QAWorkflowInput(
+            workspace="/ws",
+            run_id="run-1",
+            director_status="completed",
+            task_results=[DirectorTaskResult(task_id="t1", status="completed")],
+        )
+
+        result = inp.to_dict()
+
+        assert result["task_results"][0]["task_id"] == "t1"
+        assert result["task_results"][0]["status"] == "completed"
 
 
 class TestQAWorkflowResult:

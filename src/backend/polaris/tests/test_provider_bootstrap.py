@@ -146,6 +146,33 @@ def test_assemble_core_services_registers_business_storage_resolver(
     assert registered == [assembly_module.resolve_polaris_roots]
 
 
+def test_assemble_core_services_rebinds_explicit_settings_and_storage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    assembly_module = _import_assembly_module()
+    _, _, di_container = _import_backend_bootstrapper()
+
+    monkeypatch.setattr(assembly_module, "inject_kernelone_provider_runtime", lambda: None)
+    monkeypatch.setattr(assembly_module, "_inject_embedding_port", lambda settings: None)
+
+    old_workspace = tmp_path / "old-workspace"
+    new_workspace = tmp_path / "new-workspace"
+    old_workspace.mkdir()
+    new_workspace.mkdir()
+
+    container = di_container()
+    old_settings = Settings(workspace=str(old_workspace))
+    new_settings = Settings(workspace=str(new_workspace))
+
+    assembly_module.assemble_core_services(container, settings=old_settings)
+    assembly_module.assemble_core_services(container, settings=new_settings)
+
+    assert container.resolve(Settings) is new_settings
+    storage = container.resolve(assembly_module.StorageLayout)
+    assert Path(str(storage.workspace)).resolve() == new_workspace.resolve()
+
+
 def test_assemble_core_services_initializes_typed_event_bridge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -174,7 +201,7 @@ async def test_backend_bootstrap_create_application_injects_provider_runtime(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    backend_bootstrapper, config_snapshot, _ = _import_backend_bootstrapper()
+    backend_bootstrapper_cls, config_snapshot_cls, _ = _import_backend_bootstrapper()
     injected: list[str] = []
 
     def _record_injection() -> None:
@@ -192,7 +219,7 @@ async def test_backend_bootstrap_create_application_injects_provider_runtime(
         lambda settings: SimpleNamespace(state=SimpleNamespace(settings=settings)),
     )
 
-    snapshot = ConfigSnapshot.merge_sources(
+    snapshot = config_snapshot_cls.merge_sources(
         default={
             "workspace": str(tmp_path),
             "server.host": "127.0.0.1",
@@ -204,7 +231,7 @@ async def test_backend_bootstrap_create_application_injects_provider_runtime(
         }
     )
 
-    bootstrapper = BackendBootstrapper()
+    bootstrapper = backend_bootstrapper_cls()
     app = await bootstrapper._create_application(snapshot)
 
     assert injected == ["called"]

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:53.275526Z",
-  "source_hash": "4e4e404e6ab9c243",
+  "generated_at": "2026-05-06T15:27:43.277578Z",
+  "source_hash": "1fe06df51f120114",
   "cell_id": "docs.court_workflow",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -334,6 +334,12 @@
     {
       "type": "function",
       "name": "_build_fields",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_ai_fields",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/docs.py"
     },

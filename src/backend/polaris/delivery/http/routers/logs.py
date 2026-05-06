@@ -97,7 +97,11 @@ async def v2_query_logs(
     high_signal_only: bool = Query(False, description="Filter out noise"),
     workspace: str | None = Query(None, description="Workspace path"),
 ) -> dict:
-    """Query log events with filtering and pagination."""
+    """Query canonical log events with filtering and pagination.
+
+    Returns:
+        Events list, next cursor, total count, and has-more flag.
+    """
     workspace_path = workspace or resolve_env_str("workspace") or "."
 
     valid_channels = ("system", "process", "llm")
@@ -180,7 +184,7 @@ async def v2_log_user_action(
     metadata: dict = Body({}, description="Additional metadata"),
     workspace: str | None = Query(None, description="Workspace path"),
 ) -> dict:
-    """Log a user action to the system channel."""
+    """Log a user action to the system channel for audit."""
     workspace_path = workspace or resolve_env_str("workspace") or "."
 
     try:
@@ -234,7 +238,11 @@ async def get_channels(
 async def v2_get_channels(
     workspace: str | None = Query(None, description="Workspace path"),
 ) -> dict:
-    """Get available log channels."""
+    """Get available log channels.
+
+    Returns:
+        List of channel names and descriptions.
+    """
     return {
         "channels": [
             {"name": "system", "description": "System events and status"},

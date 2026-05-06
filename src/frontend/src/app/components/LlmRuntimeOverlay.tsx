@@ -284,7 +284,7 @@ export function LlmRuntimeOverlay({
   const socketBadgeColor = websocketLive ? 'success' : websocketReconnecting ? 'warning' : 'error';
 
   return (
-    <div className="pointer-events-none fixed bottom-16 right-3 z-[75] w-[min(94vw,420px)] sm:bottom-6 sm:right-4 sm:w-[400px]">
+    <div data-testid="llm-runtime-overlay" className="pointer-events-none fixed bottom-16 right-3 z-40 w-[min(94vw,420px)] sm:bottom-6 sm:right-4 sm:w-[400px]">
       {/* Cyberpunk + Han/Tang fusion container */}
       <div className="pointer-events-auto rounded-2xl border border-amber-400/20 bg-gradient-to-br from-[#0a0f1a] via-[#0d1525] to-[#0a0f1a] shadow-[0_18px_40px_rgba(0,0,0,0.5),0_0_30px_rgba(200,160,60,0.05)] backdrop-blur-xl">
         {/* Glow accent line */}

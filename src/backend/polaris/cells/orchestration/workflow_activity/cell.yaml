@@ -43,6 +43,8 @@ public_contracts:
 depends_on:
 - orchestration.workflow_engine
 - orchestration.workflow_runtime
+- orchestration.pm_planning
+- resident.autonomy
 subgraphs:
 - execution_governance_pipeline
 state_owners: []

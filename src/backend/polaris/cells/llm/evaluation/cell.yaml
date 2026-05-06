@@ -44,6 +44,8 @@ depends_on:
 - kernelone.llm.embedding
 - kernelone.fs
 - kernelone.benchmark
+- roles.kernel
+- roles.runtime
 subgraphs:
 - execution_governance_pipeline
 state_owners:

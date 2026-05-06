@@ -56,6 +56,9 @@ depends_on:
 - roles.profile
 - roles.session
 - runtime.task_runtime
+- factory.cognitive_runtime
+- roles.runtime
+- storage.layout
 subgraphs:
 - execution_governance_pipeline
 state_owners: []

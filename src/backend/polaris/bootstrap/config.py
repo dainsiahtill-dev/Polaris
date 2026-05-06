@@ -29,7 +29,7 @@ def find_workspace_root(start: str | Path) -> Path:
 
 def get_backend_root() -> Path:
     """Get backend root directory (`src/backend`)."""
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parents[2]
 
 
 def get_project_root() -> Path:
@@ -870,12 +870,12 @@ class Settings(BaseModel):
     @property
     def pm_script_path(self) -> Path:
         """Path to PM CLI script."""
-        return self.backend_root / "scripts" / "pm" / "cli.py"
+        return self.backend_root / "polaris" / "delivery" / "cli" / "pm" / "cli.py"
 
     @property
     def director_script_path(self) -> Path:
         """Path to Director CLI script."""
-        return self.backend_root / "scripts" / "loop-director.py"
+        return self.backend_root / "polaris" / "delivery" / "cli" / "loop-director.py"
 
     @property
     def loop_module_dir(self) -> Path:

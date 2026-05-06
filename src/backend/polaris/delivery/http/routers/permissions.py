@@ -341,7 +341,7 @@ async def v2_check_permission(
     req: PermissionCheckRequest,
     permission_service: PermissionService = Depends(_get_permission_service),
 ) -> PermissionCheckResponse:
-    """检查权限 (v2 canonical)"""
+    """Check whether a subject is allowed to perform an action on a resource."""
     return await check_permission(req, permission_service)
 
 
@@ -351,7 +351,7 @@ async def v2_get_effective_permissions(
     subject_id: str = "pm",
     permission_service: PermissionService = Depends(_get_permission_service),
 ) -> EffectivePermissionsResponse:
-    """获取主体的有效权限列表 (v2 canonical)"""
+    """Get effective permissions for a subject, including inherited roles."""
     return await get_effective_permissions(subject_type, subject_id, permission_service)
 
 
@@ -359,7 +359,7 @@ async def v2_get_effective_permissions(
 async def v2_list_roles(
     permission_service: PermissionService = Depends(_get_permission_service),
 ) -> RoleListResponse:
-    """列出所有角色及其权限统计 (v2 canonical)"""
+    """List all roles with permission statistics."""
     return await list_roles(permission_service)
 
 
@@ -368,7 +368,7 @@ async def v2_assign_role(
     req: RoleAssignRequest,
     permission_service: PermissionService = Depends(_get_permission_service),
 ) -> RoleAssignResponse:
-    """分配角色给主体 (v2 canonical)"""
+    """Assign a role to a subject."""
     return await assign_role(req, permission_service)
 
 
@@ -376,5 +376,5 @@ async def v2_assign_role(
 async def v2_list_policies(
     permission_service: PermissionService = Depends(_get_permission_service),
 ) -> PolicyListResponse:
-    """列出所有权限策略 (v2 canonical)"""
+    """List all permission policies."""
     return await list_policies(permission_service)

@@ -90,6 +90,16 @@ def default_polaris_cache_base() -> str:
     return os.path.abspath(os.path.expanduser("~/.cache/polaris"))
 
 
+def _runtime_projects_root(runtime_base: str, metadata_dir_name: str) -> str:
+    """Return the projects root without double-nesting the metadata directory."""
+    normalized_parts = os.path.normpath(runtime_base).replace("\\", "/").split("/")
+    if metadata_dir_name in normalized_parts:
+        if normalized_parts[-1:] == ["projects"]:
+            return runtime_base
+        return os.path.join(runtime_base, "projects")
+    return os.path.join(runtime_base, metadata_dir_name, "projects")
+
+
 # ─── Polaris-config-root-aware StorageRoots ────────────────────────────────────────
 
 
@@ -124,7 +134,7 @@ def resolve_polaris_roots(workspace: str, ramdisk_root: str | None = None) -> Po
     # to guarantee it stays on the same drive as the workspace and does not
     # suffer from Windows cross-drive os.path.join silently discarding the
     # workspace path when runtime_base is on a different drive.
-    runtime_projects = os.path.join(runtime_base, metadata_dir_name, "projects")
+    runtime_projects = _runtime_projects_root(runtime_base, metadata_dir_name)
     history_root = os.path.join(workspace_abs, metadata_dir_name, "history")
 
     return PolarisStorageRoots(
@@ -251,7 +261,8 @@ class PolarisStorageLayout(_BaseStorageLayout):
         self._runtime_base = Path(runtime_base).resolve()
         self._key = self._compute_workspace_key(str(self._workspace))
         metadata_dir_name = _polaris_metadata_dir_name()
-        self._runtime_root = self._runtime_base / metadata_dir_name / "projects" / self._key / "runtime"
+        runtime_projects = Path(_runtime_projects_root(str(self._runtime_base), metadata_dir_name))
+        self._runtime_root = runtime_projects / self._key / "runtime"
         self._workspace_root = self._workspace / metadata_dir_name
         # Polaris-specific: config root uses polaris_home(), not kernelone_home()
         self._config_root = Path(polaris_home()) / "config"

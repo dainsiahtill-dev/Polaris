@@ -8,12 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import pm_chat as pm_chat_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_app() -> FastAPI:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(pm_chat_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = MagicMock()
@@ -66,7 +68,7 @@ class TestPMChatRouter:
         assert payload["role"] == "pm"
 
     async def test_chat_returns_error_without_message(self) -> None:
-        """POST /v2/pm/chat returns error when message is missing."""
+        """POST /v2/pm/chat returns 422 when message is missing."""
         app = _build_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -74,13 +76,12 @@ class TestPMChatRouter:
                 json={},
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 422
         payload: dict[str, Any] = response.json()
-        assert payload["ok"] is False
-        assert payload["error"] == "message is required"
+        assert payload["error"]["message"] == "message is required"
 
     async def test_chat_returns_error_with_empty_message(self) -> None:
-        """POST /v2/pm/chat returns error when message is empty string."""
+        """POST /v2/pm/chat returns 422 when message is empty string."""
         app = _build_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -88,13 +89,12 @@ class TestPMChatRouter:
                 json={"message": "   "},
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 422
         payload: dict[str, Any] = response.json()
-        assert payload["ok"] is False
-        assert payload["error"] == "message is required"
+        assert payload["error"]["message"] == "message is required"
 
     async def test_chat_handles_runtime_error(self) -> None:
-        """POST /v2/pm/chat handles RuntimeError gracefully."""
+        """POST /v2/pm/chat handles RuntimeError with 500."""
         app = _build_app()
         with patch(
             "polaris.delivery.http.routers.pm_chat.generate_role_response",
@@ -108,10 +108,9 @@ class TestPMChatRouter:
                     json={"message": "Hello PM"},
                 )
 
-        assert response.status_code == 200
+        assert response.status_code == 500
         payload: dict[str, Any] = response.json()
-        assert payload["ok"] is False
-        assert "LLM service unavailable" in payload["error"]
+        assert payload["error"]["message"] == "Generation failed"
 
     async def test_chat_stream_returns_sse_response(self) -> None:
         """POST /v2/pm/chat/stream returns SSE response."""
@@ -157,7 +156,7 @@ class TestPMChatRouter:
         assert payload["role_config"]["model"] == "gpt-4"
 
     async def test_status_returns_not_configured_when_pm_missing(self) -> None:
-        """GET /v2/pm/chat/status returns not configured when PM role is missing."""
+        """GET /v2/pm/chat/status returns 409 when PM role is missing."""
         app = _build_app()
         with (
             patch(
@@ -176,11 +175,9 @@ class TestPMChatRouter:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/pm/chat/status")
 
-        assert response.status_code == 200
+        assert response.status_code == 409
         payload: dict[str, Any] = response.json()
-        assert payload["ready"] is False
-        assert payload["configured"] is False
-        assert "PM role not configured" in payload["error"]
+        assert payload["error"]["message"] == "PM role not configured"
 
     async def test_nonexistent_endpoint_returns_404(self) -> None:
         """GET /v2/pm/chat/nonexistent returns 404."""

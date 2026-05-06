@@ -1495,7 +1495,7 @@ def run_integration_qa(
         "schema_version": 1,
         "enabled": enabled,
         "ran": False,
-        "passed": [],
+        "passed": None,
         "reason": "",
         "summary": "",
         "errors": [],
@@ -1614,7 +1614,7 @@ def _build_post_dispatch_integration_qa_result(
         "schema_version": 1,
         "enabled": enabled,
         "ran": False,
-        "passed": [],
+        "passed": None,
         "reason": "",
         "summary": "",
         "errors": [],
@@ -1697,15 +1697,34 @@ def _execute_post_dispatch_integration_qa(
 def _persist_post_dispatch_integration_qa_result(
     *,
     run_dir: str,
+    workspace_full: str,
+    cache_root_full: str,
     result: dict[str, Any],
 ) -> None:
     """Persist the integration QA result payload."""
     from polaris.kernelone.fs.text_ops import write_json_atomic
+    from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
     result_path = os.path.join(run_dir, "qa", "integration_qa.result.json")
     result["result_path"] = result_path
+    runtime_result_path = ""
+    if workspace_full:
+        runtime_result_path = resolve_artifact_path(
+            workspace_full,
+            cache_root_full,
+            "runtime/results/integration_qa.result.json",
+        )
+        result["runtime_result_path"] = runtime_result_path
     os.makedirs(os.path.dirname(result_path), exist_ok=True)
     write_json_atomic(result_path, result)
+    if runtime_result_path:
+        try:
+            write_json_atomic(runtime_result_path, result)
+        except (OSError, TypeError, ValueError) as exc:
+            raw_errors = result.get("errors")
+            errors = list(raw_errors) if isinstance(raw_errors, list) else []
+            result["errors"] = [*errors, f"qa_runtime_result_persist_failed: {exc}"]
+            write_json_atomic(result_path, result)
 
 
 def _emit_post_dispatch_integration_qa_result(
@@ -1831,7 +1850,12 @@ def run_post_dispatch_integration_qa(
             result["summary"] = f"Integration QA runtime error: {exc}"
             result["errors"] = [str(exc)]
 
-    _persist_post_dispatch_integration_qa_result(run_dir=run_dir, result=result)
+    _persist_post_dispatch_integration_qa_result(
+        run_dir=run_dir,
+        workspace_full=workspace_full,
+        cache_root_full=cache_root_full,
+        result=result,
+    )
     _emit_post_dispatch_integration_qa_result(
         run_events=run_events,
         dialogue_full=dialogue_full,

@@ -16,11 +16,9 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.delivery.cli.pm.cli import create_parser as pm_loop_create_parser, main as pm_loop_main
 from polaris.delivery.cli.pm.cli_thin import create_parser as pm_thin_create_parser, main as pm_thin_main
 from polaris.delivery.cli.pm.pm_cli import main as pm_cli_main
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -323,6 +321,64 @@ class TestPmLoopCli:
         assert args.iterations == 1
         assert args.agent == "pm"
 
+    def test_loop_pm_parser_accepts_pm_service_contract(self, pm_loop_parser: argparse.ArgumentParser) -> None:
+        """loop-pm parser must accept the command emitted by PMService."""
+        args = pm_loop_parser.parse_args(
+            [
+                "--workspace",
+                "/tmp/ws",
+                "--pm-backend",
+                "auto",
+                "--model",
+                "gpt-test",
+                "--timeout",
+                "0",
+                "--json-log",
+                "runtime/events/pm.events.jsonl",
+                "--agents-approval-mode",
+                "auto_accept",
+                "--agents-approval-timeout",
+                "90",
+                "--orchestration-runtime",
+                "workflow",
+                "--max-failures",
+                "5",
+                "--max-blocked",
+                "5",
+                "--max-same-task",
+                "3",
+                "--blocked-strategy",
+                "skip",
+                "--blocked-degrade-max-retries",
+                "2",
+                "--run-director",
+                "--director-result-timeout",
+                "60",
+                "--director-iterations",
+                "1",
+                "--director-workflow-execution-mode",
+                "parallel",
+                "--director-max-parallel-tasks",
+                "3",
+                "--director-ready-timeout-seconds",
+                "30",
+                "--director-claim-timeout-seconds",
+                "30",
+                "--director-phase-timeout-seconds",
+                "900",
+                "--director-complete-timeout-seconds",
+                "30",
+                "--director-task-timeout-seconds",
+                "86400",
+            ]
+        )
+
+        assert args.workspace == "/tmp/ws"
+        assert args.pm_backend == "auto"
+        assert args.model == "gpt-test"
+        assert args.run_director is True
+        assert args.director_workflow_execution_mode == "parallel"
+
     def test_loop_pm_main_help_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """loop-pm main(['--help']) must raise SystemExit(0)."""
         monkeypatch.setattr(sys, "argv", ["loop-pm", "--help"])
@@ -334,8 +390,9 @@ class TestPmLoopCli:
         """loop-pm with --iterations 0 must not call run_once."""
         run_once_calls: list[Any] = []
 
-        def fake_run_once(_workspace: str) -> None:
-            run_once_calls.append(_workspace)
+        def fake_run_once(_args: argparse.Namespace, iteration: int = 1) -> int:
+            run_once_calls.append((_args, iteration))
+            return 0
 
         def fake_bootstrap():
             return (
@@ -372,6 +429,55 @@ class TestPmLoopCli:
         code = pm_loop_main()
         assert code == 0
         assert len(run_once_calls) == 0
+
+    def test_loop_pm_main_passes_namespace_to_run_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """loop-pm must pass the parsed Namespace to orchestration_engine.run_once."""
+        run_once_calls: list[tuple[argparse.Namespace, int]] = []
+
+        def fake_run_once(_args: argparse.Namespace, iteration: int = 1) -> int:
+            run_once_calls.append((_args, iteration))
+            return 0
+
+        def fake_bootstrap():
+            return (
+                None,  # SUPPORTED_ORCHESTRATION_RUNTIMES
+                None,  # AGENTS_APPROVAL_MODES
+                None,  # CANONICAL_PM_TASKS_REL
+                None,  # DEFAULT_AGENTS_APPROVAL_MODE
+                None,  # DEFAULT_AGENTS_APPROVAL_TIMEOUT
+                None,  # DEFAULT_DIRECTOR_SUBPROCESS_LOG
+                None,  # PROMPT_PROFILE_ENV
+                lambda: None,  # enforce_utf8
+                None,  # load_cli_directive
+                None,  # run_architect_docs_stage
+                None,  # ensure_docs_ready
+                fake_run_once,  # run_once
+                None,  # read_json_file
+                None,  # build_cache_root
+                None,  # flush_jsonl_buffers
+                None,  # pause_flag_path
+                lambda _workspace: False,  # pause_requested
+                None,  # resolve_artifact_path
+                None,  # resolve_ramdisk_root
+                None,  # resolve_workspace_path
+                None,  # scan_last_seq
+                None,  # set_dialogue_seq
+                None,  # state_to_ramdisk_enabled
+            )
+
+        monkeypatch.setattr(
+            "polaris.delivery.cli.pm.cli._bootstrap_backend_import_path",
+            fake_bootstrap,
+        )
+        monkeypatch.setattr(sys, "argv", ["loop-pm", "--workspace", "/tmp/ws"])
+        code = pm_loop_main()
+
+        assert code == 0
+        assert len(run_once_calls) == 1
+        args, iteration = run_once_calls[0]
+        assert isinstance(args, argparse.Namespace)
+        assert args.workspace == "/tmp/ws"
+        assert iteration == 1
 
 
 # ---------------------------------------------------------------------------
@@ -575,12 +681,14 @@ class TestPmIntegration:
         pm._execution_tracker.get_execution_summary.return_value = {}
 
         # Mock get_status to return a JSON-serializable dict
-        pm.get_status = MagicMock(return_value={
-            "initialized": True,
-            "project": "Proj",
-            "version": "1.0",
-            "stats": {"tasks": {}, "requirements": {}},
-        })
+        pm.get_status = MagicMock(
+            return_value={
+                "initialized": True,
+                "project": "Proj",
+                "version": "1.0",
+                "stats": {"tasks": {}, "requirements": {}},
+            }
+        )
 
         path = pm.generate_comprehensive_report(str(tmp_path))
         assert isinstance(path, str)

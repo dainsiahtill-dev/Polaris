@@ -43,6 +43,12 @@ export interface PmTask {
     completed?: boolean;
     priority: number;
     acceptance: AcceptanceCriteria[];
+    acceptance_criteria?: string[];
+    command?: string;
+    execution_checklist?: string[];
+    qa_contract?: Record<string, unknown>;
+    scope_paths?: string[];
+    target_files?: string[];
     // 可选扩展字段
     metadata?: Record<string, unknown>;
     budget?: TaskBudget;

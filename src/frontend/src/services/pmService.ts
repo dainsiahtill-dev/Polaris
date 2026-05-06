@@ -144,6 +144,7 @@ export interface DirectorTask {
 export interface CreateDirectorTaskPayload {
   subject: string;
   description: string;
+  command?: string | null;
   priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   timeout_seconds: number;
   metadata: {
@@ -151,6 +152,7 @@ export interface CreateDirectorTaskPayload {
     pm_task_title: string;
     pm_task_status: string;
     acceptance: string[];
+    [key: string]: unknown;
   };
 }
 

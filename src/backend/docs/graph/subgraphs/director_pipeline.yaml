@@ -77,10 +77,10 @@ state_boundaries:
     state: runtime/evidence/*
 verify_targets:
   tests:
-    - tests/test_director_service_convergence.py
-    - tests/test_v2_director_workflow_status.py
-    - tests/test_worker_service_responsiveness.py
-    - tests/test_websocket_director_status.py
+    - polaris/tests/test_director_service_convergence.py
+    - polaris/tests/test_v2_director_workflow_status.py
+    - polaris/tests/test_worker_service_responsiveness.py
+    - polaris/tests/test_websocket_director_status.py
   contracts:
     - ExecuteDirectorTaskCommandV1
     - UpdateRuntimeTaskCommandV1

@@ -46,8 +46,18 @@ def _templates_dir() -> str:
         os.path.abspath(os.path.join(module_dir, "..", "..", "..", "..", "prompts")),
     ]
     for candidate in candidates:
-        if os.path.isdir(candidate):
+        if os.path.isfile(os.path.join(candidate, f"{DEFAULT_PROFILE}.json")):
             return candidate
+
+    current = os.path.abspath(module_dir)
+    while True:
+        candidate = os.path.join(current, "prompts")
+        if os.path.isfile(os.path.join(candidate, f"{DEFAULT_PROFILE}.json")):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
     return candidates[0]
 
 

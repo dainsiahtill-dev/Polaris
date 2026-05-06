@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -89,8 +90,59 @@ def get_activity_api() -> Any:
     return _get_local_activity_api()
 
 
+async def _wait_for_adapter_workflow_completion(
+    adapter: Any,
+    workflow_id: str,
+    *,
+    timeout_seconds: float | None,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    deadline = None
+    if timeout_seconds is not None:
+        try:
+            timeout_value = float(timeout_seconds)
+        except (RuntimeError, ValueError):
+            timeout_value = 0.0
+        if timeout_value > 0:
+            deadline = time.monotonic() + timeout_value
+
+    interval = max(0.2, float(poll_interval_seconds or 1.0))
+    terminal = {"completed", "failed", "cancelled", "canceled", "terminated", "timed_out"}
+    normalized_id = str(workflow_id or "").strip()
+
+    while True:
+        snapshot = await adapter.describe_workflow(normalized_id)
+        payload = snapshot if isinstance(snapshot, dict) else {}
+        status = str(payload.get("status") or "").strip().lower()
+        if status in terminal:
+            return {
+                "ok": status == "completed",
+                "workflow_id": str(payload.get("workflow_id") or normalized_id).strip(),
+                "status": status,
+                "result": payload.get("result") if isinstance(payload.get("result"), dict) else {},
+                "error": str((payload.get("result") or {}).get("error") or payload.get("error") or "").strip()
+                if isinstance(payload.get("result"), dict)
+                else str(payload.get("error") or "").strip(),
+                "details": payload,
+            }
+        if deadline is not None and time.monotonic() >= deadline:
+            with contextlib.suppress(RuntimeError, ValueError):
+                await adapter.cancel_workflow(normalized_id, reason="workflow_wait_timeout")
+            return {
+                "ok": False,
+                "workflow_id": normalized_id,
+                "status": "timed_out",
+                "error": "workflow_wait_timeout",
+            }
+        await asyncio.sleep(interval)
+
+
 async def _submit_pm_workflow_async(
     workflow_input: PMWorkflowInput,
+    *,
+    wait_until_complete: bool = False,
+    timeout_seconds: float | None = None,
+    poll_interval_seconds: float = 1.0,
 ) -> WorkflowSubmissionResult:
     adapter = await get_adapter()
     if not adapter._running:
@@ -108,19 +160,41 @@ async def _submit_pm_workflow_async(
         workflow_id=workflow_input.workflow_id,
         payload=payload,
     )
+    status = result.status
+    error = str(result.error or "").strip()
+    details = result.result if isinstance(result.result, dict) else {}
+    if wait_until_complete and str(status or "").strip().lower() in {"started", "running"} and not error:
+        wait_payload = await _wait_for_adapter_workflow_completion(
+            adapter,
+            result.workflow_id,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        status = str(wait_payload.get("status") or status or "").strip()
+        error = str(wait_payload.get("error") or "").strip()
+        final_result = wait_payload.get("result") if isinstance(wait_payload.get("result"), dict) else {}
+        details = {
+            "submission": details,
+            "final": wait_payload,
+            "result": final_result,
+        }
     return WorkflowSubmissionResult(
         submitted=result.status in {"started", "running", "completed"},
-        status=result.status,
+        status=status,
         workflow_id=result.workflow_id,
         workflow_run_id=result.run_id,
-        error=str(result.error or "").strip(),
-        details=result.result if isinstance(result.result, dict) else {},
+        error=error,
+        details=details,
     )
 
 
 def submit_pm_workflow_sync(
     workflow_input: PMWorkflowInput | dict[str, Any],
     config: WorkflowConfig | None = None,
+    *,
+    wait_until_complete: bool = False,
+    timeout_seconds: float | None = None,
+    poll_interval_seconds: float = 1.0,
 ) -> WorkflowSubmissionResult:
     """Submit PM workflow through self-hosted runtime with Workflow-compatible result."""
     runtime_config = config or WorkflowConfig.from_env()
@@ -145,7 +219,14 @@ def submit_pm_workflow_sync(
             error="workspace and run_id are required",
         )
     try:
-        return _run_sync(_submit_pm_workflow_async(normalized))
+        return _run_sync(
+            _submit_pm_workflow_async(
+                normalized,
+                wait_until_complete=wait_until_complete,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+        )
     except (RuntimeError, ValueError) as exc:
         return WorkflowSubmissionResult(
             submitted=False,

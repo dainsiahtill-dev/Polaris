@@ -8,6 +8,11 @@ from pathlib import Path
 import pytest
 from polaris.bootstrap.config import Settings
 from polaris.cells.orchestration.pm_planning.public.service import PMService, ProcessHandle
+from polaris.cells.runtime.execution_broker.public.contracts import (
+    ExecutionProcessHandleV1,
+    ExecutionProcessLaunchResultV1,
+    ExecutionProcessStatusV1,
+)
 from polaris.domain.exceptions import ProcessAlreadyRunningError
 from polaris.kernelone.storage import StorageLayout
 
@@ -28,6 +33,25 @@ class _FakeRunningProcess:
 
     def kill(self) -> None:
         return None
+
+
+class _FakeFinishedProcess:
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.terminated = False
+
+    def poll(self) -> int:
+        return 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        del timeout
+        return 0
+
+    def kill(self) -> None:
+        self.terminated = True
 
 
 @pytest.mark.asyncio
@@ -79,6 +103,109 @@ async def test_pm_run_once_is_single_flight_under_concurrency(tmp_path) -> None:
     assert spawn_count == 1
 
 
+@pytest.mark.parametrize(
+    "broker_status",
+    [ExecutionProcessStatusV1.QUEUED, ExecutionProcessStatusV1.RUNNING],
+)
+def test_pm_status_uses_broker_active_state_when_process_handle_is_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    broker_status: ExecutionProcessStatusV1,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=str(workspace))
+    service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
+    process = _FakeFinishedProcess(pid=4321)
+    service._handle = ProcessHandle(
+        process=process,
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time(),
+        mode="run_once",
+        execution_id="exec-active",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-active"
+            return broker_status
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+
+    status = service.get_status()
+
+    assert status["running"] is True
+    assert status["status"] == broker_status.value
+    assert status["source"] == "execution_broker"
+    assert status["execution_id"] == "exec-active"
+    assert service.handle.execution_id == "exec-active"
+    assert process.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_pm_run_once_rejects_duplicate_when_broker_is_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=str(workspace))
+    service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
+    service._handle = ProcessHandle(
+        process=_FakeFinishedProcess(pid=4321),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time(),
+        mode="run_once",
+        execution_id="exec-running",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-running"
+            return ExecutionProcessStatusV1.RUNNING
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+
+    with pytest.raises(ProcessAlreadyRunningError):
+        await service.run_once()
+
+
+def test_pm_status_falls_back_to_process_handle_when_broker_lookup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=str(workspace))
+    service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
+    service._handle = ProcessHandle(
+        process=_FakeRunningProcess(pid=4321),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time(),
+        mode="run_once",
+        execution_id="exec-missing",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-missing"
+            raise RuntimeError("execution not found")
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+
+    status = service.get_status()
+
+    assert status["running"] is True
+    assert status["status"] is None
+    assert status["source"] == "handle"
+
+
 def test_pm_build_command_includes_director_workflow_controls(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -108,6 +235,20 @@ def test_pm_build_command_includes_director_workflow_controls(tmp_path) -> None:
     assert "--director-task-timeout-seconds 900" in joined
 
 
+def test_pm_build_command_uses_existing_migrated_cli(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=str(workspace))
+    service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
+
+    cmd = service._build_command(loop_mode=False)
+    script_path = Path(cmd[1])
+
+    assert script_path.exists()
+    assert script_path.as_posix().endswith("src/backend/polaris/delivery/cli/pm/cli.py")
+
+
 def test_pm_service_refreshes_storage_layout_when_workspace_changes(tmp_path) -> None:
     workspace_a = tmp_path / "workspace-a"
     workspace_b = tmp_path / "workspace-b"
@@ -133,6 +274,28 @@ def test_pm_service_refreshes_storage_layout_when_workspace_changes(tmp_path) ->
     assert resolved_b == expected_b
 
 
+def test_pm_service_rebinds_to_application_settings_object(tmp_path: Path) -> None:
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir(parents=True, exist_ok=True)
+    workspace_b.mkdir(parents=True, exist_ok=True)
+
+    original_settings = Settings(workspace=str(workspace_a))
+    service = PMService(original_settings, StorageLayout(original_settings.workspace, original_settings.runtime_base))
+
+    updated_settings = Settings(workspace=str(workspace_b))
+    service.rebind_settings(updated_settings)
+
+    resolved_log_path = Path(service._resolve_log_path()).resolve()
+    expected_log_path = (
+        StorageLayout(Path(str(workspace_b)), updated_settings.runtime_base)
+        .get_path("logs", "pm.process.log")
+        .resolve()
+    )
+    assert resolved_log_path == expected_log_path
+    assert Path(str(service._settings.workspace)).resolve() == workspace_b.resolve()
+
+
 def test_pm_service_build_command_uses_runtime_json_log_rel_path(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -144,6 +307,43 @@ def test_pm_service_build_command_uses_runtime_json_log_rel_path(tmp_path) -> No
     assert "--json-log" in cmd
     json_log_value = cmd[cmd.index("--json-log") + 1]
     assert json_log_value == "runtime/events/pm.events.jsonl"
+
+
+@pytest.mark.asyncio
+async def test_pm_spawn_process_propagates_runtime_cache_root(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=str(workspace))
+    service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
+
+    launched_env: dict[str, str] = {}
+
+    class FakeBroker:
+        async def launch_process(self, command):
+            launched_env.update(dict(command.env))
+            handle = ExecutionProcessHandleV1(
+                execution_id="exec-1",
+                pid=1234,
+                name="pm-service",
+                workspace=str(workspace),
+                log_path=command.log_path,
+            )
+            return ExecutionProcessLaunchResultV1(success=True, handle=handle)
+
+        def resolve_runtime_process(self, _handle):
+            return _FakeRunningProcess(pid=1234)
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+
+    await service._spawn_process(["python", "-V"], str(tmp_path / "pm.process.log"))
+
+    assert launched_env["KERNELONE_RUNTIME_CACHE_ROOT"] == str(settings.runtime_base)
+    assert launched_env["KERNELONE_WORKSPACE"] == str(workspace.resolve())
 
 
 def test_pm_service_prefers_persisted_workspace_when_configured_workspace_is_default(

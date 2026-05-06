@@ -220,3 +220,47 @@ async def test_message_bus_timeout_no_task_leak() -> None:
     # All tasks spawned by the slow handler should be cancelled/done
     leaked = [t for t in task_refs if not t.done()]
     assert not leaked, f"Leaked {len(leaked)} asyncio task(s) after timeout"
+
+
+@pytest.mark.asyncio
+async def test_workflow_engine_persists_unexpected_handler_exception(tmp_path) -> None:
+    """Unexpected workflow exceptions must be visible in persisted result and events."""
+    from polaris.infrastructure.db.repositories.workflow_runtime_store import SqliteRuntimeStore
+    from polaris.kernelone.workflow.activity_runner import ActivityRunner
+    from polaris.kernelone.workflow.engine import WorkflowEngine
+    from polaris.kernelone.workflow.task_queue import TaskQueueManager
+    from polaris.kernelone.workflow.timer_wheel import TimerWheel
+
+    store = SqliteRuntimeStore(str(tmp_path / "workflow.runtime.db"))
+    engine = WorkflowEngine(
+        store=store,
+        timer_wheel=TimerWheel(),
+        task_queue_manager=TaskQueueManager(),
+        activity_runner=ActivityRunner(max_concurrent=1),
+    )
+
+    def broken_handler(payload: dict[str, object]) -> dict[str, object]:
+        raise TypeError("broken workflow payload")
+
+    engine.register_workflow("broken_workflow", broken_handler)
+    await engine.start()
+    try:
+        submission = await engine.start_workflow("broken_workflow", "wf-broken", {})
+        assert submission.submitted is True
+        task = engine._workflow_tasks.get("wf-broken")
+        if task is not None:
+            await task
+
+        execution = await store.get_execution("wf-broken")
+        assert execution is not None
+        assert execution.status == "failed"
+        assert isinstance(execution.result, dict)
+        assert execution.result["error"] == "broken workflow payload"
+
+        events = await store.get_events("wf-broken", limit=20)
+        finished = [event for event in events if event.event_type == "workflow_execution_finished"]
+        assert finished
+        assert finished[-1].payload["status"] == "failed"
+        assert finished[-1].payload["error"] == "broken workflow payload"
+    finally:
+        await engine.stop()

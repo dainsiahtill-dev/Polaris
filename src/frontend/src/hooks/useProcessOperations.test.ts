@@ -25,6 +25,7 @@ const mockReadLogTail = vi.fn();
 const mockExtractErrorDetail = vi.fn();
 const mockGetPmStatus = vi.fn();
 const mockGetDirectorStatus = vi.fn();
+const mockApiFetchFresh = vi.fn();
 
 vi.mock('@/services', () => ({
   startPm: (...args: unknown[]) => mockStartPm(...args),
@@ -38,6 +39,10 @@ vi.mock('@/services', () => ({
   extractErrorDetail: (...args: unknown[]) => mockExtractErrorDetail(...args),
   getPmStatus: (...args: unknown[]) => mockGetPmStatus(...args),
   getDirectorStatus: (...args: unknown[]) => mockGetDirectorStatus(...args),
+}));
+
+vi.mock('@/api', () => ({
+  apiFetchFresh: (...args: unknown[]) => mockApiFetchFresh(...args),
 }));
 
 // Import toast for spy
@@ -56,6 +61,10 @@ describe('useProcessOperations', () => {
     mockReadLogTail.mockResolvedValue('');
     mockGetPmStatus.mockResolvedValue({ ok: true, data: { log_path: 'test.log' } });
     mockGetDirectorStatus.mockResolvedValue({ ok: true, data: { log_path: 'test.log' } });
+    mockApiFetchFresh.mockResolvedValue({
+      ok: true,
+      json: async () => ({ tasks: [] }),
+    });
   });
 
   afterEach(() => {
@@ -252,7 +261,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(mockRunPmOnce).toHaveBeenCalledWith();
-      expect(toast.success).toHaveBeenCalledWith('Run Once started');
+      expect(toast.success).toHaveBeenCalledWith('PM run once started');
     });
 
     it('returns false when lancedbBlocked', async () => {
@@ -338,6 +347,8 @@ describe('useProcessOperations', () => {
           title: 'Task 1',
           status: 'pending',
           priority: 1,
+          target_files: ['src/task.ts'],
+          acceptance_criteria: ['task passes'],
         },
       ];
       const { result } = renderHook(() => useProcessOperations());
@@ -348,6 +359,39 @@ describe('useProcessOperations', () => {
 
       expect(mockListDirectorTasks).toHaveBeenCalledWith('local');
       expect(mockCreateDirectorTask).toHaveBeenCalled();
+      const payload = mockCreateDirectorTask.mock.calls[0][0];
+      expect(payload.metadata.target_files).toEqual(['src/task.ts']);
+      expect(payload.metadata.acceptance).toContain('task passes');
+      expect(mockCreateDirectorTask.mock.invocationCallOrder[0]).toBeLessThan(
+        mockStartDirector.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('loads fresh snapshot tasks when caller passes no PM tasks', async () => {
+      mockApiFetchFresh.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          tasks: [
+            {
+              id: 'fresh-task-1',
+              title: 'Fresh Task',
+              status: 'pending',
+              priority: 1,
+              done: false,
+              acceptance: [{ description: 'fresh acceptance' }],
+            },
+          ],
+        }),
+      });
+      const { result } = renderHook(() => useProcessOperations());
+
+      await act(async () => {
+        await result.current.startDirector();
+      });
+
+      expect(mockApiFetchFresh).toHaveBeenCalledWith('/state/snapshot');
+      expect(mockCreateDirectorTask).toHaveBeenCalled();
+      expect(mockCreateDirectorTask.mock.calls[0][0].metadata.pm_task_id).toBe('fresh-task-1');
     });
 
     it('does not seed duplicate tasks', async () => {
@@ -524,6 +568,9 @@ describe('useProcessOperations', () => {
       });
 
       expect(result.current.isStartingDirector).toBe(true);
+      await waitFor(() => {
+        expect(resolveStartDirector).toBeTypeOf('function');
+      });
 
       await act(async () => {
         resolveStartDirector!({ ok: true });

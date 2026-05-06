@@ -10,10 +10,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.routers import factory as factory_router
 from polaris.delivery.http.routers._shared import require_auth
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(factory_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -49,17 +51,16 @@ def _make_mock_service() -> MagicMock:
     service.get_run_events = AsyncMock(return_value=[])
     service.cancel_run = AsyncMock(return_value=_mock_run("run-1"))
     service.store = MagicMock()
+    mock_artifact = MagicMock()
+    mock_artifact.is_file = lambda: True
+    mock_artifact.name = "artifact.txt"
+    mock_artifact.relative_to = lambda p: "artifact.txt"
+    mock_artifact.stat = lambda: MagicMock(st_size=100)
+
     service.store.get_run_dir.return_value = MagicMock(
         __truediv__=lambda self, other: MagicMock(
             exists=lambda: True,
-            iterdir=lambda: [
-                MagicMock(
-                    is_file=lambda: True,
-                    name="artifact.txt",
-                    relative_to=lambda p: "artifact.txt",
-                    stat=lambda: MagicMock(st_size=100),
-                ),
-            ],
+            iterdir=lambda: [mock_artifact],
         ),
     )
     return service
@@ -168,7 +169,7 @@ class TestFactoryRouter:
             response = client.get("/v2/factory/runs/missing-id")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["error"]["message"].lower()
 
     def test_get_factory_run_events_happy_path(self) -> None:
         """GET /v2/factory/runs/{run_id}/events returns 200 with events."""
@@ -257,7 +258,7 @@ class TestFactoryRouter:
             )
 
         assert response.status_code == 501
-        assert "not implemented" in response.json()["detail"]["message"].lower()
+        assert "not implemented" in response.json()["error"]["message"].lower()
 
     def test_get_factory_run_artifacts_happy_path(self) -> None:
         """GET /v2/factory/runs/{run_id}/artifacts returns 200 with artifacts."""

@@ -184,9 +184,23 @@ class WorkflowContract:
         default_max_concurrency: int = 8,
     ) -> WorkflowContract:
         normalized_payload = payload if isinstance(payload, dict) else {}
+        requested_mode = str(normalized_payload.get("_workflow_contract_mode") or "").strip().lower()
         orchestration = (
             normalized_payload.get("orchestration") if isinstance(normalized_payload.get("orchestration"), dict) else {}
         )
+        if requested_mode == "legacy":
+            return cls(
+                mode="legacy",
+                task_specs=(),
+                max_concurrency=max(1, int(default_max_concurrency)),
+                continue_on_error=False,
+                workflow_timeout_seconds=_coerce_float(
+                    orchestration.get("workflow_timeout_seconds") if isinstance(orchestration, dict) else None,
+                    default=MAX_WORKFLOW_TIMEOUT_SECONDS,
+                    minimum=1.0,
+                    maximum=MAX_WORKFLOW_TIMEOUT_SECONDS,
+                ),
+            )
         raw_tasks = orchestration.get("tasks") if isinstance(orchestration, dict) else None
         if not isinstance(raw_tasks, list):
             raw_tasks = normalized_payload.get("tasks") if isinstance(normalized_payload, dict) else None

@@ -32,6 +32,7 @@ depends_on:
 - audit.evidence
 - runtime.projection
 - policy.workspace_guard
+- storage.layout
 subgraphs:
 - execution_governance_pipeline
 state_owners: []

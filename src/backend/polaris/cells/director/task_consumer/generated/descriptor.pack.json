@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:53.609779Z",
-  "source_hash": "c74062bdd6a4dff3",
+  "generated_at": "2026-05-06T15:27:43.731148Z",
+  "source_hash": "2929fc197b2477b1",
   "cell_id": "director.task_consumer",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -83,6 +83,10 @@
           "doc": ""
         },
         {
+          "name": "_missing_execution_evidence_result",
+          "doc": ""
+        },
+        {
           "name": "run",
           "doc": "Continuously poll and process PENDING_EXEC tasks until stop() is called."
         },
@@ -95,6 +99,24 @@
           "doc": "Execute task — delegates to DirectorAgent or placeholder."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_truthy_payload_flag",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_allows_no_execution_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
     {
       "type": "class",
@@ -129,6 +151,10 @@
         {
           "name": "test_successful_execution_acks_pending_qa",
           "doc": "Verify director claims, executes, and advances to PENDING_QA."
+        },
+        {
+          "name": "test_no_execution_evidence_requeues_pending_exec",
+          "doc": "Placeholder/no-evidence execution must not advance to QA."
         },
         {
           "name": "test_successful_execution_registers_and_commits_compensation_actions",

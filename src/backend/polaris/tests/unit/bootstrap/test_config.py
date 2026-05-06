@@ -342,6 +342,9 @@ class TestSettings:
         """Should point to PM CLI script."""
         settings = Settings()
         assert settings.pm_script_path.name == "cli.py"
+        normalized = str(settings.pm_script_path).replace("\\", "/")
+        assert normalized.endswith("src/backend/polaris/delivery/cli/pm/cli.py")
+        assert settings.pm_script_path.exists()
 
     def test_director_script_path(self) -> None:
         """Should point to Director script."""

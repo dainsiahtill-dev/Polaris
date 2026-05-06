@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import role_chat as role_chat_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_app() -> FastAPI:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(role_chat_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = MagicMock()
@@ -102,7 +104,7 @@ class TestRoleChatRouter:
         payload: dict[str, Any] = response.json()
         assert payload["ready"] is False
         assert payload["configured"] is False
-        assert "ARCHITECT role not configured" in payload["error"]
+        assert "Role not configured" in payload["error"]
 
     async def test_role_status_returns_provider_not_set(self) -> None:
         """GET /v2/role/{role}/chat/status returns error when provider not set."""
@@ -166,7 +168,7 @@ class TestRoleChatRouter:
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["ready"] is False
-        assert "Provider 'missing' not found" in payload["error"]
+        assert "Provider not found" in payload["error"]
 
     async def test_list_supported_roles_returns_200(self) -> None:
         """GET /v2/role/chat/roles returns 200 with role list."""

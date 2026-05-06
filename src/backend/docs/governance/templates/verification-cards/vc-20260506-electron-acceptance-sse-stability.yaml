@@ -1,0 +1,49 @@
+id: vc-20260506-electron-acceptance-sse-stability
+title: Electron acceptance SSE terminal-event stability
+date: "2026-05-06"
+classification: pattern
+scope:
+  - polaris/delivery/http/routers/sse_utils.py
+  - polaris/delivery/http/routers/docs.py
+  - polaris/cells/llm/dialogue/internal/docs_suggest.py
+  - polaris/cells/llm/dialogue/public/service.py
+  - src/frontend/src/app/components/LlmRuntimeOverlay.tsx
+assumption_register:
+  - id: A1
+    statement: Docs Init preview waits for a complete SSE event before showing the Apply action.
+    status: confirmed
+    evidence:
+      - src/frontend/src/app/components/DocsInitDialog.tsx
+      - test-results/electron/full-chain-audit-unattende-eaf39-trong-JSON-evidence-package/trace.zip
+  - id: A2
+    statement: SSE task failures outside RuntimeError/ValueError can leave the stream without a terminal event.
+    status: confirmed
+    evidence:
+      - src/backend/polaris/delivery/http/routers/sse_utils.py
+      - src/backend/polaris/cells/llm/dialogue/internal/docs_suggest.py
+  - id: A3
+    statement: A deterministic docs fallback can produce usable bootstrap docs when LLM enrichment fails.
+    status: confirmed
+    evidence:
+      - src/backend/polaris/cells/llm/dialogue/internal/docs_suggest.py
+      - src/backend/polaris/cells/workspace/integrity/internal/workspace_service.py
+premortem:
+  likely_failure_modes:
+    - A broad exception catch could accidentally swallow cancellation and slow shutdown.
+    - A fallback path could produce placeholder-only docs and still leave PM with zero tasks.
+    - A UI-only fix could hide the real backend non-terminal SSE issue.
+verification_plan:
+  commands:
+    - npm run test -- src/frontend/src/app/components/LlmRuntimeOverlay.test.tsx
+    - npm run typecheck
+    - python -m pytest src/backend/polaris/delivery/http/routers/test_sse_utils.py src/backend/polaris/cells/llm/dialogue/tests/test_docs_suggest.py src/backend/polaris/tests/unit/delivery/http/routers/test_docs_v2.py -q
+    - ruff check src/backend/polaris/delivery/http/routers/sse_utils.py src/backend/polaris/delivery/http/routers/docs.py src/backend/polaris/cells/llm/dialogue/internal/docs_suggest.py src/backend/polaris/cells/llm/dialogue/public/service.py --fix
+    - ruff format src/backend/polaris/delivery/http/routers/sse_utils.py src/backend/polaris/delivery/http/routers/docs.py src/backend/polaris/cells/llm/dialogue/internal/docs_suggest.py src/backend/polaris/cells/llm/dialogue/public/service.py
+    - mypy src/backend/polaris/delivery/http/routers/sse_utils.py src/backend/polaris/delivery/http/routers/docs.py src/backend/polaris/cells/llm/dialogue/internal/docs_suggest.py src/backend/polaris/cells/llm/dialogue/public/service.py
+    - KERNELONE_E2E_USE_REAL_SETTINGS=1 npm run test:e2e:acceptance
+acceptance:
+  - Every SSE task exception emits complete or error, never an infinite ping-only stream.
+  - Docs Init preview completes with fallback docs on LLM timeout/error/no-result.
+  - Electron full-chain acceptance proceeds beyond Docs Init apply.
+rollback:
+  strategy: Revert the scoped files and rerun focused frontend/backend tests plus Electron acceptance.

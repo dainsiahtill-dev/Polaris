@@ -162,6 +162,11 @@ def _build_default_docs_fields(fields: dict[str, str]) -> dict[str, list[str]]:
     return normalized
 
 
+def build_default_docs_fields(fields: dict[str, str]) -> dict[str, list[str]]:
+    """Build deterministic docs fields when LLM enrichment is unavailable."""
+    return _build_default_docs_fields(fields)
+
+
 def _coerce_docs_fields(payload: Any, fields: dict[str, str]) -> dict[str, list[str]] | None:
     if not isinstance(payload, dict):
         return None
@@ -320,3 +325,6 @@ async def generate_docs_fields_stream(
         yield {"type": "result", "fields": _build_default_docs_fields(fields), "fallback": True}
     except (RuntimeError, ValueError) as exc:
         yield {"type": "error", "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - provider adapters can raise transport-specific exceptions.
+        logger.warning("[docs-suggest] streaming provider failed: %s", exc)
+        yield {"type": "error", "error": str(exc) or type(exc).__name__}

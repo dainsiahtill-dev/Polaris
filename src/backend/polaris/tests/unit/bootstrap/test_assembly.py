@@ -43,5 +43,5 @@ class TestAssemblyPureLogic:
 
     def test_director_imports_use_non_deprecated_modules(self) -> None:
         """assembly should not import DirectorService from deprecated public facade."""
-        source = Path("src/backend/polaris/bootstrap/assembly.py").read_text(encoding="utf-8")
+        source = Path("polaris/bootstrap/assembly.py").read_text(encoding="utf-8")
         assert "polaris.cells.director.execution.public.service" not in source

@@ -38,8 +38,10 @@ class TestPMServiceExecutionBroker:
         settings.runtime_base = str(tmp_path / "runtime")
         settings.json_log_path = None
         settings.pm_script_path = str(tmp_path / "pm_script.py")
+        settings.timeout = 0
         settings.pm.model = "test-model"
         settings.llm.model = "test-model"
+        settings.llm.timeout = 300
         settings.pm.agents_approval_mode = "manual"
         settings.pm.agents_approval_timeout = 30
         settings.pm.max_failures = 3
@@ -264,6 +266,44 @@ class TestPMServiceExecutionBroker:
 
             # Verify timeout is set to 7200 seconds
             assert command.timeout_seconds == 7200.0
+
+    def test_build_command_uses_bounded_pm_planning_timeout(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """PM planning should not disable the LLM timeout when settings.timeout is unset."""
+        service = PMService(settings=mock_settings)
+
+        cmd = service._build_command(loop_mode=False)
+        timeout_index = cmd.index("--timeout") + 1
+
+        assert cmd[timeout_index] == "60"
+
+    def test_build_command_respects_explicit_pm_planning_timeout_env(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """An explicit PM planning timeout env var should override global defaults."""
+        with patch.dict("os.environ", {"KERNELONE_PM_PLANNING_TIMEOUT_SECONDS": "17"}):
+            service = PMService(settings=mock_settings)
+
+            cmd = service._build_command(loop_mode=False)
+
+        timeout_index = cmd.index("--timeout") + 1
+        assert cmd[timeout_index] == "17"
+
+    def test_build_command_respects_settings_timeout(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """A positive global settings timeout remains the primary configured PM SLA."""
+        mock_settings.timeout = 120
+        service = PMService(settings=mock_settings)
+
+        cmd = service._build_command(loop_mode=False)
+        timeout_index = cmd.index("--timeout") + 1
+
+        assert cmd[timeout_index] == "120"
 
 
 class TestPMServiceNoDirectSubprocess:

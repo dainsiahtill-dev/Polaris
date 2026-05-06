@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -240,6 +241,14 @@ def _build_utf8_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def _coerce_subprocess_output(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 def _filter_dangerous_env_vars(env: dict[str, str]) -> None:
     """Remove dangerous environment variables from dict in-place.
 
@@ -388,12 +397,12 @@ class CommandExecutionService:
                 timeout=timeout_seconds,
                 env=env,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             return {
                 "ok": False,
                 "returncode": -1,
-                "stdout": "",
-                "stderr": "",
+                "stdout": self._truncate_text(_coerce_subprocess_output(exc.stdout)),
+                "stderr": self._truncate_text(_coerce_subprocess_output(exc.stderr)),
                 "timed_out": True,
                 "error": f"Command timed out after {timeout_seconds}s",
                 "command": dict(spec["command"]) if spec else {},
@@ -447,13 +456,32 @@ class CommandExecutionService:
         validated = self._validate_request(request, cwd=cwd)
         env = self._build_env(validated.env_policy, env_overrides)
         timeout_seconds = min(max(1, int(validated.timeout_seconds)), self.max_timeout_seconds)
+        executable = self._resolve_executable_for_subprocess(validated.executable, env)
         return {
-            "argv": [validated.executable, *validated.args],
+            "argv": [executable, *validated.args],
             "cwd": str(cwd),
             "env": env,
             "timeout_seconds": timeout_seconds,
             "command": self._serialize_request(validated, cwd),
         }
+
+    def _resolve_executable_for_subprocess(self, executable: str, env: dict[str, str]) -> str:
+        """Resolve allowlisted unqualified executables for shell=False portability.
+
+        Windows does not reliably resolve batch shims such as npm.cmd when the
+        argv executable is just ``npm``.  Validation still happens against the
+        original token; this step only converts it to the concrete PATH entry
+        that CreateProcess can execute without using a shell.
+        """
+        raw = str(executable or "").strip()
+        if os.name != "nt" or not raw:
+            return raw
+        if any(marker in raw for marker in ("/", "\\")) or Path(raw).is_absolute():
+            return raw
+        if Path(raw).name.lower() not in self.allowed_executables:
+            return raw
+        resolved = shutil.which(raw, path=env.get("PATH"))
+        return resolved or raw
 
     def _build_env(
         self,

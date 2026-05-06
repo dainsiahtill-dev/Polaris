@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
@@ -23,6 +23,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
     _serialize_result,
     _to_snake_case,
     _unwrap_workflow_result,
+    clear_workflow_context,
     get_workflow_context,
     set_workflow_context,
 )
@@ -231,6 +232,50 @@ class TestEmbeddedWorkflowAPI:
         coro = EmbeddedWorkflowAPI.sleep(0.01)
         assert asyncio.iscoroutine(coro)
         await coro
+
+    @pytest.mark.asyncio
+    async def test_child_workflow_input_tasks_are_legacy_payload_not_dag_contract(self) -> None:
+        from polaris.cells.orchestration.workflow_runtime.internal.models import (
+            DirectorWorkflowInput,
+            TaskContract,
+        )
+        from polaris.kernelone.workflow.contracts import WorkflowContract
+
+        api = EmbeddedWorkflowAPI()
+        engine = MagicMock()
+        engine.start_workflow = AsyncMock(return_value=MagicMock(submitted=True, error=""))
+        engine.describe_workflow = AsyncMock(
+            return_value=MagicMock(
+                status="completed",
+                result={"status": "completed", "result": {"status": "completed"}},
+            )
+        )
+        ctx = WorkflowContext(
+            workflow_id="parent",
+            payload={},
+            workflow_name="pm_workflow",
+            runtime_engine=engine,
+        )
+        token = set_workflow_context(ctx)
+
+        try:
+            await api.execute_child_workflow(
+                "director_workflow",
+                DirectorWorkflowInput(
+                    workspace="/workspace",
+                    run_id="run-1",
+                    tasks=[TaskContract(task_id="task-1", title="Task 1")],
+                ),
+                id="director-child",
+            )
+        finally:
+            clear_workflow_context(token)
+
+        payload = engine.start_workflow.await_args.kwargs["payload"]
+        assert payload["_workflow_contract_mode"] == "legacy"
+        assert payload["tasks"][0]["id"] == "task-1"
+        assert "task_id" not in payload["tasks"][0]
+        assert WorkflowContract.from_payload(payload).mode == "legacy"
 
 
 class TestEmbeddedActivityAPI:

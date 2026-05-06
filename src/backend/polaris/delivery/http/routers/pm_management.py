@@ -135,9 +135,7 @@ def get_document(
 
     doc_info = pm.get_document(full_path)
     if doc_info is None:
-        raise StructuredHTTPException(
-            status_code=404, code="DOCUMENT_NOT_FOUND", message=f"Document not found: {doc_path}"
-        )
+        raise StructuredHTTPException(status_code=404, code="DOCUMENT_NOT_FOUND", message="Document not found")
 
     # Add content if requested
     content = pm.get_document_content(full_path, version)
@@ -414,7 +412,7 @@ def get_task(
 
     task = pm.get_task(task_id)
     if task is None:
-        raise StructuredHTTPException(status_code=404, code="TASK_NOT_FOUND", message=f"Task not found: {task_id}")
+        raise StructuredHTTPException(status_code=404, code="TASK_NOT_FOUND", message="Task not found")
 
     # Convert task to dict
     if hasattr(task, "__dict__"):
@@ -535,9 +533,7 @@ def get_requirement(
 
     req = pm.get_requirement(req_id)
     if req is None:
-        raise StructuredHTTPException(
-            status_code=404, code="REQUIREMENT_NOT_FOUND", message=f"Requirement not found: {req_id}"
-        )
+        raise StructuredHTTPException(status_code=404, code="REQUIREMENT_NOT_FOUND", message="Requirement not found")
 
     return req
 
@@ -606,6 +602,7 @@ def v2_list_documents(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    """List tracked documents in the workspace."""
     return list_documents(request, doc_type, pattern, limit, offset)
 
 
@@ -618,6 +615,7 @@ def v2_get_document_versions(
     request: Request,
     doc_path: str,
 ) -> dict[str, Any]:
+    """Get all versions of a document."""
     return get_document_versions(request, doc_path)
 
 
@@ -632,6 +630,7 @@ def v2_compare_document_versions(
     old_version: str = Query(..., description="Old version number"),
     new_version: str = Query(..., description="New version number"),
 ) -> dict[str, Any]:
+    """Compare two versions of a document."""
     return compare_document_versions(request, doc_path, old_version, new_version)
 
 
@@ -643,6 +642,7 @@ def v2_get_document(
     doc_path: str,
     version: str | None = Query(None, description="Specific version (default: current)"),
 ) -> dict[str, Any]:
+    """Get a single document with optional version."""
     return get_document(request, doc_path, version)
 
 
@@ -654,6 +654,7 @@ def v2_create_or_update_document(
     doc_path: str,
     body: DocumentUpdateRequest,
 ) -> dict[str, Any]:
+    """Create or update a document."""
     return create_or_update_document(request, doc_path, body)
 
 
@@ -665,6 +666,7 @@ def v2_delete_document(
     doc_path: str,
     delete_file: bool = Query(True, description="Whether to delete the actual file"),
 ) -> dict[str, Any]:
+    """Delete a document and optionally its backing file."""
     return delete_document(request, doc_path, delete_file)
 
 
@@ -674,6 +676,7 @@ def v2_search_documents(
     q: str = Query(..., description="Search query"),
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
+    """Search documents by content or path."""
     return search_documents(request, q, limit)
 
 
@@ -685,6 +688,7 @@ def v2_list_tasks(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    """List tasks with optional filtering."""
     result = list_tasks(request, status, assignee, limit, offset)
     return {"ok": True, **result}
 
@@ -700,6 +704,7 @@ def v2_get_task_history(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    """Get task history with filtering and pagination."""
     return get_task_history(request, task_id, assignee, status, start_date, end_date, limit, offset)
 
 
@@ -710,6 +715,7 @@ def v2_get_director_task_history(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    """Get tasks dispatched to Director by iteration."""
     return get_director_task_history(request, iteration, limit, offset)
 
 
@@ -721,6 +727,7 @@ def v2_get_task_assignments(
     task_id: str,
     limit: int = Query(100, ge=1, le=500),
 ) -> dict[str, Any]:
+    """Get assignment history for a task."""
     return get_task_assignments(request, task_id, limit)
 
 
@@ -729,6 +736,7 @@ def v2_get_task(
     request: Request,
     task_id: str,
 ) -> dict[str, Any]:
+    """Get a specific task by ID."""
     return get_task(request, task_id)
 
 
@@ -738,6 +746,7 @@ def v2_search_tasks(
     q: str = Query(..., description="Search query"),
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
+    """Search tasks by title or description."""
     return search_tasks(request, q, limit)
 
 
@@ -749,6 +758,7 @@ def v2_list_requirements(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    """List requirements with optional filtering."""
     result = list_requirements(request, status, priority, limit, offset)
     return {"ok": True, **result}
 
@@ -760,16 +770,19 @@ def v2_get_requirement(
     request: Request,
     req_id: str,
 ) -> dict[str, Any]:
+    """Get a specific requirement by ID."""
     return get_requirement(request, req_id)
 
 
 @router.get("/v2/pm/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
 def v2_get_pm_status(request: Request) -> dict[str, Any]:
+    """Get PM system status for the workspace."""
     return get_pm_status(request)
 
 
 @router.get("/v2/pm/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
 def v2_get_pm_health(request: Request) -> dict[str, Any]:
+    """Get project health analysis."""
     return get_pm_health(request)
 
 
@@ -779,4 +792,5 @@ def v2_init_pm(
     project_name: str = Query("", description="Project name"),
     description: str = Query("", description="Project description"),
 ) -> dict[str, Any]:
+    """Initialize PM system for the workspace."""
     return init_pm(request, project_name, description)

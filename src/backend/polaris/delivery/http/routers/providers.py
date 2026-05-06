@@ -250,6 +250,8 @@ def health_check_all(request: Request, payload: dict[str, Any]) -> dict[str, Any
     response_model=ProviderHealthResponse,
 )
 def v2_provider_health(request: Request, provider_id: str, payload: ProviderActionPayload) -> dict[str, Any]:
+    """Run a health check against a specific LLM provider."""
+    state = get_state(request)
     state = get_state(request)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
     try:
@@ -283,6 +285,7 @@ def v2_provider_health(request: Request, provider_id: str, payload: ProviderActi
     response_model=ProviderModelsResponse,
 )
 def v2_provider_models(request: Request, provider_id: str, payload: ProviderActionPayload) -> dict[str, Any]:
+    """List available models for a specific LLM provider."""
     state = get_state(request)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
     try:
@@ -312,7 +315,7 @@ def v2_provider_models(request: Request, provider_id: str, payload: ProviderActi
 
 @router.get("/v2/llm/providers", dependencies=[Depends(require_auth)], response_model=ProviderListResponse)
 def v2_list_providers(request: Request) -> dict[str, Any]:
-    """List all available providers with their information"""
+    """List all available LLM providers with metadata."""
     try:
         providers_info = _provider_manager.list_provider_info()
         return {
@@ -347,7 +350,7 @@ def v2_list_providers(request: Request) -> dict[str, Any]:
     response_model=ProviderDetailResponse,
 )
 def v2_get_provider_info(request: Request, provider_type: str) -> dict[str, Any]:
-    """Get detailed information about a specific provider"""
+    """Get detailed information about a specific LLM provider."""
     try:
         info = _provider_manager.get_provider_info(provider_type)
         if not info:
@@ -376,7 +379,7 @@ def v2_get_provider_info(request: Request, provider_type: str) -> dict[str, Any]
     response_model=ProviderConfigResponse,
 )
 def v2_get_provider_default_config(request: Request, provider_type: str) -> dict[str, Any]:
-    """Get default configuration for a provider"""
+    """Get default configuration schema for a provider."""
     try:
         config = _provider_manager.get_provider_default_config(provider_type)
         if config is None:
@@ -395,7 +398,7 @@ def v2_get_provider_default_config(request: Request, provider_type: str) -> dict
     response_model=ProviderValidationResponse,
 )
 def v2_validate_provider_config(request: Request, provider_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate provider configuration"""
+    """Validate a provider configuration payload."""
     try:
         provider_class = _provider_manager.get_provider_class(provider_type)
         if provider_class is None:
@@ -423,7 +426,7 @@ def v2_validate_provider_config(request: Request, provider_type: str, payload: d
     "/v2/llm/providers/health-all", dependencies=[Depends(require_auth)], response_model=ProviderHealthAllResponse
 )
 def v2_health_check_all(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
-    """Perform health checks on all configured providers"""
+    """Run health checks on all configured LLM providers."""
     try:
         configs = payload.get("providers", {})
         results = _provider_manager.health_check_all(configs)

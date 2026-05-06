@@ -209,6 +209,9 @@ class TestRuntimeRouter:
             mock_director_service.stop = AsyncMock()
 
             mock_container = MagicMock()
+            mock_container.resolve = MagicMock(
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
+            )
             mock_container.resolve_async = AsyncMock(
                 side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )
@@ -258,6 +261,9 @@ class TestRuntimeRouter:
             mock_director_service.stop = AsyncMock()
 
             mock_container = MagicMock()
+            mock_container.resolve = MagicMock(
+                side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
+            )
             mock_container.resolve_async = AsyncMock(
                 side_effect=lambda cls: mock_pm_service if "PMService" in str(cls) else mock_director_service
             )

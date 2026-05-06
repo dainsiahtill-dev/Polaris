@@ -282,6 +282,7 @@ def v2_resolve_context(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Resolve runtime context for a role and query."""
     return resolve_context(payload, service)
 
 
@@ -294,6 +295,7 @@ def v2_lease_edit_scope(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Lease an edit scope for safe file modifications."""
     return lease_edit_scope(payload, service)
 
 
@@ -306,6 +308,7 @@ def v2_validate_change_set(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Validate a change set against allowed scope and evidence."""
     return validate_change_set(payload, service)
 
 
@@ -318,6 +321,7 @@ def v2_record_runtime_receipt(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Record a runtime receipt for audit."""
     return record_runtime_receipt(payload, service)
 
 
@@ -331,6 +335,7 @@ def v2_get_runtime_receipt(
     workspace: str,
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Retrieve a runtime receipt by ID."""
     return get_runtime_receipt(receipt_id, workspace, service)
 
 
@@ -343,6 +348,7 @@ def v2_export_handoff_pack(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Export a handoff pack for cross-session continuity."""
     return export_handoff_pack(payload, service)
 
 
@@ -355,6 +361,7 @@ def v2_rehydrate_handoff_pack(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Rehydrate a handoff pack into a target session."""
     return rehydrate_handoff_pack(payload, service)
 
 
@@ -367,6 +374,7 @@ def v2_map_diff_to_cells(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Map a file diff to affected cells in the graph catalog."""
     return map_diff_to_cells(payload, service)
 
 
@@ -379,6 +387,7 @@ def v2_request_projection_compile(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Request a projection compile for changed files and cells."""
     return request_projection_compile(payload, service)
 
 
@@ -391,6 +400,7 @@ def v2_promote_or_reject(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Promote or reject a change set based on gates and receipts."""
     return promote_or_reject(payload, service)
 
 
@@ -403,6 +413,7 @@ def v2_record_rollback_ledger(
     payload: dict[str, Any],
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Record a rollback ledger entry for audit."""
     return record_rollback_ledger(payload, service)
 
 
@@ -416,6 +427,7 @@ def v2_get_handoff_pack(
     workspace: str,
     service: CognitiveRuntimePublicService = Depends(_service_dependency),
 ) -> dict[str, Any]:
+    """Retrieve a handoff pack by ID."""
     return get_handoff_pack(handoff_id, workspace, service)
 
 

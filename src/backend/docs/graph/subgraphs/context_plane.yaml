@@ -112,7 +112,7 @@ verify_targets:
   tests:
     - polaris/cells/context/catalog/tests/test_service.py
     - polaris/cells/context/catalog/tests/test_descriptor_validation.py
-    - tests/architecture/test_graph_reality.py
+    - polaris/tests/architecture/test_graph_reality.py
     # Phase 5 E2E
     - polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py
     - polaris/kernelone/context/tests/test_context_subsystem.py

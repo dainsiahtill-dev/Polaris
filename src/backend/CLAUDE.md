@@ -117,44 +117,44 @@
 
 ---
 
-## 6. 当前架构现实快照（2026-04-24）
+## 6. 当前架构现实快照（2026-05-06）
 
 > 本节是 `AGENTS.md §15` 的镜像摘要。如有冲突，以 `AGENTS.md` 为准。
 
 ### 6.1 Graph 图谱现状
 
 - `docs/graph/catalog/cells.yaml` — `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
-- cells.yaml 声明的 Cell：**63 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-04-24）
-- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**60 / 63**
+- cells.yaml 声明的 Cell：**63 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-05-06）
+- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**64 / 63**
 - `docs/graph/subgraphs/` 当前仅有：
   - `execution_governance_pipeline.yaml`
   - `storage_archive_pipeline.yaml`
 
-### 6.2 polaris/ 结构现状（`*.py` 快照，2026-04-24）
+### 6.2 polaris/ 结构现状（`*.py` 快照，2026-05-06）
 
 统计命令：`find polaris -name "*.py" | awk -F/ '{print $2}' | sort | uniq -c`
 
 - `polaris/bootstrap/`: 16
-- `polaris/delivery/`: 242
-- `polaris/application/`: 4
+- `polaris/delivery/`: 279
+- `polaris/application/`: 16
 - `polaris/domain/`: 44
-- `polaris/kernelone/`: 1068
+- `polaris/kernelone/`: 1143
 - `polaris/infrastructure/`: 155
-- `polaris/cells/`: 1167
-- `polaris/tests/`: 29
+- `polaris/cells/`: 1238
+- `polaris/tests/`: 897
 - `polaris/config/`: 5
-- **总计**：**2732** 个 Python 文件
+- **总计**：**3796** 个 Python 文件
 
 ### 6.3 测试与收集现状
 
-- `pytest --collect-only -q`（2026-04-24）结果：**13511 collected / 62 errors**
+- `pytest --collect-only -q`（2026-05-06）结果：**28677 collected / 0 errors**
 - 真实覆盖率（2026-04-24）：**23.3%**（69360/297487 lines，`pytest --cov=polaris`）
 - 0% 覆盖率模块：390 个（delivery: 155, cells: 103, kernelone: 103, infrastructure: 20, bootstrap: 7, application: 1, domain: 1）
 
 ### 6.4 当前主要 gap
 
-1. Descriptor 覆盖已提升至 **60 / 63**
-2. 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 中 25 个 high 级别遗留）
+1. Descriptor 覆盖已提升至 **64 / 63**
+2. 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 中 26 个 high 级别遗留、9 个 blocker）
 3. `fitness-rules.yaml` blocker 尚未全量自动化执行
 4. `KERNELONE_` 与 `KERNELONE_` 仍混用
 
@@ -168,9 +168,9 @@
 - ~~`director.planning`~~
 - ~~`director.tasking`~~
 
-### 6.6 环境变量前缀现状（2026-03-28）
+### 6.6 环境变量前缀现状（2026-05-06）
 
-- `KERNELONE_`: **769 处 / 165 文件**
+- `KERNELONE_`: **1825 处 / 375 文件**
 - `KERNELONE_`: **225 处 / 43 文件**
 
 ### 6.7 CLI 入口点（已更新）

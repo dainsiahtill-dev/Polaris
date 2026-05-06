@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T07:41:53.648505Z",
-  "source_hash": "4ff77446b5037c53",
+  "generated_at": "2026-05-06T15:27:43.804848Z",
+  "source_hash": "638f33ae854c7d17",
   "cell_id": "delivery.api_gateway",
   "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
   "capabilities": [
@@ -277,7 +277,7 @@
     {
       "type": "class",
       "name": "RBACMiddleware",
-      "description": "ASGI middleware that injects ``user_role`` into ``request.state``.",
+      "description": "ASGI middleware that initializes a least-privileged role projection.",
       "defined_in": "polaris/delivery/http/middleware/rbac.py",
       "methods": [
         {
@@ -288,8 +288,26 @@
     },
     {
       "type": "function",
+      "name": "_role_from_value",
+      "description": "Parse a role only when it exactly matches a known server role.",
+      "defined_in": "polaris/delivery/http/middleware/rbac.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_values",
+      "description": "Normalize trusted metadata role claims into an iterable tuple.",
+      "defined_in": "polaris/delivery/http/middleware/rbac.py"
+    },
+    {
+      "type": "function",
+      "name": "role_from_auth_context",
+      "description": "Resolve the effective role from server-bound auth metadata.",
+      "defined_in": "polaris/delivery/http/middleware/rbac.py"
+    },
+    {
+      "type": "function",
       "name": "extract_role_from_request",
-      "description": "Read the ``X-User-Role`` header and return a validated ``UserRole``.",
+      "description": "Return the server-bound role for a request.",
       "defined_in": "polaris/delivery/http/middleware/rbac.py"
     },
     {

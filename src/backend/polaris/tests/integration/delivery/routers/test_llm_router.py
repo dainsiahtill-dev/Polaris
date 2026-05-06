@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import llm as llm_router
 from polaris.delivery.http.routers._shared import require_auth
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
+    setup_exception_handlers(app)
     app.include_router(llm_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = SimpleNamespace(
@@ -91,7 +93,7 @@ class TestLlmRouter:
         ):
             response = client.post("/llm/config", json={"config": "not-a-dict"})
         assert response.status_code == 400
-        assert response.json()["detail"] == "invalid config payload"
+        assert response.json()["error"]["message"] == "invalid config payload"
 
     def test_migrate_config_happy_path(self) -> None:
         """POST /llm/config/migrate returns 200 with migrated config."""
@@ -121,7 +123,7 @@ class TestLlmRouter:
             response = client.post("/llm/config/migrate", json={})
 
         assert response.status_code == 500
-        assert response.json()["detail"] == "internal error"
+        assert response.json()["error"]["message"] == "internal error"
 
     def test_llm_status_happy_path(self) -> None:
         """GET /llm/status returns 200 with status payload."""
@@ -199,7 +201,7 @@ class TestLlmRouter:
         client = _build_client()
         response = client.get("/llm/runtime-status/invalid_role")
         assert response.status_code == 400
-        assert response.json()["detail"] == "invalid role_id"
+        assert response.json()["error"]["message"] == "invalid role_id"
 
     def test_get_role_runtime_status_docs_alias(self) -> None:
         """GET /llm/runtime-status/docs maps to architect role."""

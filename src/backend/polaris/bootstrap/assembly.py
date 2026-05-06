@@ -241,6 +241,7 @@ def assemble_core_services(container: DIContainer | None = None, settings: Setti
 
     This function sets up DI registrations and performs infrastructure-to-kernelone port injections.
     """
+    explicit_settings = settings is not None
     if settings is None:
         settings = get_settings()
 
@@ -275,10 +276,10 @@ def assemble_core_services(container: DIContainer | None = None, settings: Setti
     _inject_provider_manager_port()
 
     # 2. Base configurations
-    if container is not None and not container.has_registration(Settings):
+    if container is not None and (explicit_settings or not container.has_registration(Settings)):
         container.register_instance(Settings, settings)
 
-    if container is not None and not container.has_registration(StorageLayout):
+    if container is not None and (explicit_settings or not container.has_registration(StorageLayout)):
         storage_layout = StorageLayout(
             workspace=settings.workspace,
             runtime_base=settings.runtime_base,
