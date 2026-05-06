@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from polaris.cells.factory.cognitive_runtime.public import (
     CognitiveRuntimePublicService,
     ExportHandoffPackCommandV1,
@@ -20,8 +20,15 @@ from polaris.cells.factory.cognitive_runtime.public import (
     ValidateChangeSetCommandV1,
     get_cognitive_runtime_public_service,
 )
+from polaris.delivery.http.schemas.common import (
+    CognitiveRuntimeActionResponse,
+    CognitiveRuntimeDecisionResponse,
+    CognitiveRuntimeValidationResponse,
+    HandoffPackResponse,
+    RuntimeReceiptResponse,
+)
 
-from ._shared import require_auth
+from ._shared import StructuredHTTPException, require_auth
 
 router = APIRouter(
     prefix="/cognitive-runtime",
@@ -38,7 +45,7 @@ def _serialize(payload: Any) -> Any:
     if payload is None:
         return None
     if is_dataclass(payload) and not isinstance(payload, type):
-        return asdict(payload)  
+        return asdict(payload)
     if isinstance(payload, dict):
         return dict(payload)
     if isinstance(payload, (list, tuple)):
@@ -49,13 +56,10 @@ def _serialize(payload: Any) -> Any:
 def _unwrap_result(result: Any, field_name: str) -> dict[str, Any]:
     if getattr(result, "ok", False):
         return {"ok": True, field_name: _serialize(getattr(result, field_name))}
-    raise HTTPException(
+    raise StructuredHTTPException(
         status_code=404 if "not_found" in str(getattr(result, "error_code", "")) else 400,
-        detail={
-            "ok": False,
-            "error_code": getattr(result, "error_code", "cognitive_runtime_error"),
-            "error_message": getattr(result, "error_message", "Cognitive Runtime request failed."),
-        },
+        code=getattr(result, "error_code", "RUNTIME_ERROR"),
+        message=getattr(result, "error_message", "Cognitive Runtime request failed."),
     )
 
 
@@ -112,13 +116,10 @@ def validate_change_set(
     )
     result = service.validate_change_set(command)
     if result.validation is None:
-        raise HTTPException(
+        raise StructuredHTTPException(
             status_code=400,
-            detail={
-                "ok": False,
-                "error_code": result.error_code or "validate_change_set_failed",
-                "error_message": result.error_message or "Change-set validation failed.",
-            },
+            code=result.error_code or "VALIDATE_CHANGE_SET_FAILED",
+            message=result.error_message or "Change-set validation failed.",
         )
     return {"ok": result.ok, "validation": _serialize(result.validation)}
 
@@ -232,13 +233,10 @@ def promote_or_reject(
     )
     result = service.promote_or_reject(command)
     if result.decision is None:
-        raise HTTPException(
+        raise StructuredHTTPException(
             status_code=400,
-            detail={
-                "ok": False,
-                "error_code": result.error_code or "promote_or_reject_failed",
-                "error_message": result.error_message or "promote_or_reject failed.",
-            },
+            code=result.error_code or "PROMOTE_OR_REJECT_FAILED",
+            message=result.error_message or "promote_or_reject failed.",
         )
     return {"ok": result.ok, "decision": _serialize(result.decision)}
 
@@ -270,6 +268,155 @@ def get_handoff_pack(
         service.get_handoff_pack(GetHandoffPackQueryV1(workspace=workspace, handoff_id=handoff_id)),
         "handoff",
     )
+
+
+# --- V2 namespace aliases (backward-compatible) ---
+
+
+@router.post(
+    "/v2/cognitive-runtime/resolve-context",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_resolve_context(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return resolve_context(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/lease-edit-scope",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_lease_edit_scope(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return lease_edit_scope(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/validate-change-set",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeValidationResponse,
+)
+def v2_validate_change_set(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return validate_change_set(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/runtime-receipts",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_record_runtime_receipt(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return record_runtime_receipt(payload, service)
+
+
+@router.get(
+    "/v2/cognitive-runtime/runtime-receipts/{receipt_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeReceiptResponse,
+)
+def v2_get_runtime_receipt(
+    receipt_id: str,
+    workspace: str,
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return get_runtime_receipt(receipt_id, workspace, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/handoffs/export",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_export_handoff_pack(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return export_handoff_pack(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/handoffs/rehydrate",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_rehydrate_handoff_pack(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return rehydrate_handoff_pack(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/map-diff-to-cells",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_map_diff_to_cells(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return map_diff_to_cells(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/projection-compile",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_request_projection_compile(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return request_projection_compile(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/promote-or-reject",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeDecisionResponse,
+)
+def v2_promote_or_reject(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return promote_or_reject(payload, service)
+
+
+@router.post(
+    "/v2/cognitive-runtime/rollback-ledger",
+    dependencies=[Depends(require_auth)],
+    response_model=CognitiveRuntimeActionResponse,
+)
+def v2_record_rollback_ledger(
+    payload: dict[str, Any],
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return record_rollback_ledger(payload, service)
+
+
+@router.get(
+    "/v2/cognitive-runtime/handoffs/{handoff_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=HandoffPackResponse,
+)
+def v2_get_handoff_pack(
+    handoff_id: str,
+    workspace: str,
+    service: CognitiveRuntimePublicService = Depends(_service_dependency),
+) -> dict[str, Any]:
+    return get_handoff_pack(handoff_id, workspace, service)
 
 
 __all__ = ["_service_dependency", "router"]

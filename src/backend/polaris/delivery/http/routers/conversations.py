@@ -8,12 +8,21 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from polaris.cells.roles.session.public import Conversation, ConversationMessage, get_db
 from pydantic import BaseModel, Field
 from sqlalchemy import desc
 
-from ._shared import require_auth
+from polaris.delivery.http.schemas.common import (
+    ConversationDeleteResponse,
+    ConversationListResponse,
+    ConversationResponse,
+    MessageBatchResponse,
+    MessageDeleteResponse,
+    MessageResponse,
+)
+
+from ._shared import StructuredHTTPException, require_auth
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -42,34 +51,6 @@ class ConversationCreate(BaseModel):
 class ConversationUpdate(BaseModel):
     title: str | None = Field(None, description="对话标题")
     context_config: dict[str, Any] | None = Field(None, description="上下文配置")
-
-
-class ConversationResponse(BaseModel):
-    id: str
-    title: str | None
-    role: str
-    workspace: str | None
-    context_config: dict[str, Any]
-    message_count: int
-    created_at: str
-    updated_at: str
-    messages: list[dict[str, Any]] | None = None
-
-
-class MessageResponse(BaseModel):
-    id: str
-    conversation_id: str
-    sequence: int
-    role: str
-    content: str
-    thinking: str | None
-    meta: dict[str, Any]
-    created_at: str
-
-
-class ConversationListResponse(BaseModel):
-    conversations: list[ConversationResponse]
-    total: int
 
 
 # 依赖注入数据库会话
@@ -112,7 +93,7 @@ async def create_conversation(
             meta=json.dumps(data.initial_message.meta) if data.initial_message.meta else None,
         )
         db.add(msg)
-        setattr(conversation, "message_count", 1)  
+        conversation.message_count = 1
 
     db.commit()
     db.refresh(conversation)
@@ -158,7 +139,7 @@ async def get_conversation(
     )
 
     if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
     return conversation.to_dict(
         include_messages=include_messages,
@@ -178,12 +159,12 @@ async def update_conversation(
     )
 
     if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
     if data.title is not None:
-        setattr(conversation, "title", data.title)  
+        conversation.title = data.title
     if data.context_config is not None:
-        setattr(conversation, "context_config", json.dumps(data.context_config))  
+        conversation.context_config = json.dumps(data.context_config)
 
     db.commit()
     db.refresh(conversation)
@@ -191,7 +172,7 @@ async def update_conversation(
     return conversation.to_dict(include_messages=False)
 
 
-@router.delete("/{conversation_id}", dependencies=[Depends(require_auth)])
+@router.delete("/{conversation_id}", response_model=ConversationDeleteResponse, dependencies=[Depends(require_auth)])
 async def delete_conversation(
     conversation_id: str,
     hard: bool = False,
@@ -203,12 +184,12 @@ async def delete_conversation(
     )
 
     if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
     if hard:
         db.delete(conversation)
     else:
-        setattr(conversation, "is_deleted", 1)  
+        conversation.is_deleted = 1
 
     db.commit()
 
@@ -230,7 +211,7 @@ async def add_message(
     )
 
     if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
     # 获取当前最大序号
     max_seq = db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count()
@@ -246,7 +227,7 @@ async def add_message(
     db.add(msg)
 
     # 更新消息计数和时间戳
-    setattr(conversation, "message_count", max_seq + 1)  
+    conversation.message_count = max_seq + 1
 
     db.commit()
     db.refresh(msg)
@@ -274,7 +255,11 @@ async def list_messages(
     return [m.to_dict() for m in messages]
 
 
-@router.post("/{conversation_id}/messages/batch", dependencies=[Depends(require_auth)])
+@router.post(
+    "/{conversation_id}/messages/batch",
+    response_model=MessageBatchResponse,
+    dependencies=[Depends(require_auth)],
+)
 async def add_messages_batch(
     conversation_id: str,
     messages: list[MessageCreate],
@@ -286,7 +271,7 @@ async def add_messages_batch(
     )
 
     if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
     # 获取当前最大序号
     max_seq = db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count()
@@ -302,13 +287,17 @@ async def add_messages_batch(
         )
         db.add(msg)
 
-    setattr(conversation, "message_count", max_seq + len(messages))  
+    conversation.message_count = max_seq + len(messages)
     db.commit()
 
     return {"ok": True, "added_count": len(messages)}
 
 
-@router.delete("/{conversation_id}/messages/{message_id}", dependencies=[Depends(require_auth)])
+@router.delete(
+    "/{conversation_id}/messages/{message_id}",
+    response_model=MessageDeleteResponse,
+    dependencies=[Depends(require_auth)],
+)
 async def delete_message(
     conversation_id: str,
     message_id: str,
@@ -325,7 +314,7 @@ async def delete_message(
     )
 
     if not msg:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise StructuredHTTPException(status_code=404, code="MESSAGE_NOT_FOUND", message="Message not found")
 
     db.delete(msg)
 
@@ -337,7 +326,7 @@ async def delete_message(
             db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count()
             - 1  # 因为还没 commit
         )
-        setattr(conversation, "message_count", count_value)  
+        conversation.message_count = count_value
 
     db.commit()
 

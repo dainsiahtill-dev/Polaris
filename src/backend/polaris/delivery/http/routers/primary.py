@@ -6,8 +6,9 @@ that are not part of the /v2 API namespace.
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 from polaris.bootstrap.config import get_settings
+from polaris.delivery.http.routers._shared import StructuredHTTPException
 
 primary_router = APIRouter(tags=["primary"])
 
@@ -66,14 +67,17 @@ async def readiness_check() -> dict[str, Any]:
         checks["nats"] = nats_status
 
     if not ready:
-        raise HTTPException(
+        raise StructuredHTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
+            code="NATS_REQUIRED_BUT_NOT_CONNECTED"
+            if nats_status == "required_but_not_connected"
+            else "SERVICE_UNAVAILABLE",
+            message="NATS required but not connected"
+            if nats_status == "required_but_not_connected"
+            else "service_unavailable",
+            details={
                 "ready": False,
                 "checks": checks,
-                "reason": "NATS required but not connected"
-                if nats_status == "required_but_not_connected"
-                else "service_unavailable",
             },
         )
 

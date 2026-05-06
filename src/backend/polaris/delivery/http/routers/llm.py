@@ -8,13 +8,20 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import reconcile_llm_test_index
 from polaris.cells.llm.provider_config.public.service import sync_settings_from_llm
 from polaris.cells.llm.provider_runtime.public.service import get_provider_manager
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.cells.storage.layout.public.service import save_persisted_settings
-from polaris.delivery.http.routers._shared import get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.schemas.common import (
+    LLMConfigResponse,
+    LLMMigrateConfigResponse,
+    LLMRoleRuntimeStatusResponse,
+    LLMRuntimeStatusResponse,
+    LLMStatusResponse,
+)
 from polaris.infrastructure.llm.providers.provider_registry import ProviderManager
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.runtime_config import load_role_config
@@ -83,7 +90,7 @@ def _build_role_runtime_status(runtime_dir: str, role_id: str) -> dict[str, Any]
     return status
 
 
-@router.get("/llm/config", dependencies=[Depends(require_auth)])
+@router.get("/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def get_llm_config(request: Request) -> dict[str, Any]:
     state = get_state(request)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
@@ -91,13 +98,13 @@ def get_llm_config(request: Request) -> dict[str, Any]:
     return llm_config.redact_llm_config(config)
 
 
-@router.post("/llm/config", dependencies=[Depends(require_auth)])
+@router.post("/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
     state = get_state(request)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
     config_payload = payload.get("config") if isinstance(payload, dict) and "config" in payload else payload
     if not isinstance(config_payload, dict):
-        raise HTTPException(status_code=400, detail="invalid config payload")
+        raise StructuredHTTPException(status_code=400, code="INVALID_CONFIG", message="invalid config payload")
 
     config = llm_config.save_llm_config(
         str(state.settings.workspace),
@@ -111,22 +118,22 @@ def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]
     return llm_config.redact_llm_config(config)
 
 
-@router.post("/llm/config/migrate", dependencies=[Depends(require_auth)])
+@router.post("/llm/config/migrate", dependencies=[Depends(require_auth)], response_model=LLMMigrateConfigResponse)
 def migrate_config(payload: dict[str, Any]) -> dict[str, Any]:
     try:
-        return _provider_manager.migrate_legacy_config(payload)  
+        return _provider_manager.migrate_legacy_config(payload)
     except (RuntimeError, ValueError) as exc:  # pragma: no cover - defensive runtime path
         logger.error("migrate_config failed: %s", exc)
-        raise HTTPException(status_code=500, detail="internal error") from exc
+        raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from exc
 
 
-@router.get("/llm/status", dependencies=[Depends(require_auth)])
+@router.get("/llm/status", dependencies=[Depends(require_auth)], response_model=LLMStatusResponse)
 def llm_status(request: Request) -> dict[str, Any]:
     state = get_state(request)
     return build_llm_status(state.settings)
 
 
-@router.get("/llm/runtime-status", dependencies=[Depends(require_auth)])
+@router.get("/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)
 def get_runtime_status(request: Request) -> dict[str, Any]:
     state = get_state(request)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
@@ -142,11 +149,13 @@ def get_runtime_status(request: Request) -> dict[str, Any]:
     }
 
 
-@router.get("/llm/runtime-status/{role_id}", dependencies=[Depends(require_auth)])
+@router.get(
+    "/llm/runtime-status/{role_id}", dependencies=[Depends(require_auth)], response_model=LLMRoleRuntimeStatusResponse
+)
 def get_role_runtime_status(request: Request, role_id: str) -> dict[str, Any]:
     normalized_role_id = _normalize_runtime_role_id(role_id)
     if normalized_role_id not in ("pm", "director", "qa", "architect"):
-        raise HTTPException(status_code=400, detail="invalid role_id")
+        raise StructuredHTTPException(status_code=400, code="INVALID_ROLE_ID", message="invalid role_id")
 
     state = get_state(request)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
@@ -155,6 +164,40 @@ def get_role_runtime_status(request: Request, role_id: str) -> dict[str, Any]:
     role_status = _build_role_runtime_status(runtime_dir, normalized_role_id)
     role_status["roleId"] = normalized_role_id
     return role_status
+
+
+@router.get("/v2/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
+def get_llm_config_v2(request: Request) -> dict[str, Any]:
+    return get_llm_config(request)
+
+
+@router.post("/v2/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
+def save_llm_config_v2(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    return save_llm_config(request, payload)
+
+
+@router.post("/v2/llm/config/migrate", dependencies=[Depends(require_auth)], response_model=LLMMigrateConfigResponse)
+def migrate_config_v2(payload: dict[str, Any]) -> dict[str, Any]:
+    return migrate_config(payload)
+
+
+@router.get("/v2/llm/status", dependencies=[Depends(require_auth)], response_model=LLMStatusResponse)
+def llm_status_v2(request: Request) -> dict[str, Any]:
+    return llm_status(request)
+
+
+@router.get("/v2/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)
+def get_runtime_status_v2(request: Request) -> dict[str, Any]:
+    return get_runtime_status(request)
+
+
+@router.get(
+    "/v2/llm/runtime-status/{role_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=LLMRoleRuntimeStatusResponse,
+)
+def get_role_runtime_status_v2(request: Request, role_id: str) -> dict[str, Any]:
+    return get_role_runtime_status(request, role_id)
 
 
 __all__ = [

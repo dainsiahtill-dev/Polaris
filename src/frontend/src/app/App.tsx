@@ -200,6 +200,11 @@ function AppContent() {
   const {
     currentRun: factoryCurrentRun,
     events: factoryEvents,
+    artifacts: factoryArtifacts,
+    summaryMd: factorySummaryMd,
+    summaryJson: factorySummaryJson,
+    artifactsError: factoryArtifactsError,
+    isArtifactsLoading: factoryArtifactsLoading,
     startRun: startFactoryRun,
     stopRun: stopFactoryRun,
     isLoading: factoryIsLoading,
@@ -820,6 +825,11 @@ function AppContent() {
           fileEditEvents={fileEditEvents}
           currentRun={factoryCurrentRun}
           events={factoryEvents}
+          artifacts={factoryArtifacts}
+          summaryMd={factorySummaryMd}
+          summaryJson={factorySummaryJson}
+          artifactsError={factoryArtifactsError}
+          isArtifactsLoading={factoryArtifactsLoading}
           onStart={() => startFactoryRun({ workspace, run_director: true })}
           onCancel={() => factoryCurrentRun && stopFactoryRun(factoryCurrentRun.run_id)}
           isLoading={factoryIsLoading}

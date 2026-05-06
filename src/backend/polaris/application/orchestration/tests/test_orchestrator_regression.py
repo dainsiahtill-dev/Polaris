@@ -1,3 +1,4 @@
+# SHIM: mig-application-batch1 — migration shim pending full Cell migration (2026-03-20)
 """Regression tests for confirmed defects in application/orchestration module.
 
 M2: qa_orchestrator.py plan_audit() string evidence_paths iterates over characters

@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "tests/electron",
+  testDir: "src/backend/polaris/tests/electron",
   testMatch: "**/*.spec.ts",
   timeout: 90_000,
   expect: { timeout: 15_000 },

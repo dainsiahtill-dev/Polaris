@@ -81,7 +81,7 @@ def _extract_tool_specs_from_contracts_py(contracts_path: Path) -> dict[str, dic
 
     # Try direct import first (most reliable)
     try:
-        from polaris.kernelone.tools.contracts import _TOOL_SPECS
+        from polaris.kernelone.tool_execution.contracts import _TOOL_SPECS
 
         return dict(_TOOL_SPECS)
     except ImportError:
@@ -583,7 +583,7 @@ def main() -> int:
     workspace = Path(args.workspace).resolve()
 
     # Load tool specs from contracts.py
-    contracts_path = workspace / "polaris" / "kernelone" / "tools" / "contracts.py"
+    contracts_path = workspace / "polaris" / "kernelone" / "tool_execution" / "contracts.py"
     tool_specs = _extract_tool_specs_from_contracts_py(contracts_path)
 
     if not tool_specs:

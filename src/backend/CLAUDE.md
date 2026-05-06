@@ -124,8 +124,8 @@
 ### 6.1 Graph 图谱现状
 
 - `docs/graph/catalog/cells.yaml` — `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
-- cells.yaml 声明的 Cell：**59 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-04-24）
-- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**54 / 54**
+- cells.yaml 声明的 Cell：**63 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-04-24）
+- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**60 / 63**
 - `docs/graph/subgraphs/` 当前仅有：
   - `execution_governance_pipeline.yaml`
   - `storage_archive_pipeline.yaml`
@@ -153,7 +153,7 @@
 
 ### 6.4 当前主要 gap
 
-1. Descriptor 覆盖已提升至 **54 / 54**
+1. Descriptor 覆盖已提升至 **60 / 63**
 2. 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 中 25 个 high 级别遗留）
 3. `fitness-rules.yaml` blocker 尚未全量自动化执行
 4. `KERNELONE_` 与 `KERNELONE_` 仍混用

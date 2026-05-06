@@ -17,7 +17,8 @@ def main():
     parser.add_argument("--mode", default="all", choices=["all", "prompt", "parser", "recovery"])
     args = parser.parse_args()
 
-    sys.path.insert(0, str(Path(args.workspace) / "src" / "backend"))
+    _BACKEND_ROOT = Path(__file__).resolve().parents[4]
+    sys.path.insert(0, str(_BACKEND_ROOT))
 
     results = []
 

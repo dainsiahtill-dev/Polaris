@@ -484,30 +484,10 @@ class RoundExecutor:
                         tool_name,
                         v.reason,
                     )
-                    yield {
-                        "type": "policy_blocked",
-                        "tool": tool_name,
-                        "args": dict(getattr(call, "args", {})),
-                        "policy": getattr(v, "policy", "?") or "?",
-                        "reason": getattr(v, "reason", "?") or "?",
-                        "is_critical": getattr(v, "is_critical", False),
-                        "iteration": round_index,
-                    }
 
         if policy_result.stop_reason:
             yield {"type": "error", "error": f"policy_stop: {policy_result.stop_reason}", "iteration": round_index}
             return
-
-        if policy_result.has_approval_required:
-            for call in policy_result.requires_approval:
-                tool_name = getattr(call, "tool", "?") if isinstance(call, object) else str(call)
-                yield {
-                    "type": "requires_approval",
-                    "tool": tool_name,
-                    "call_id": getattr(call, "call_id", ""),
-                    "args": dict(getattr(call, "args", {})),
-                    "iteration": round_index,
-                }
 
         # Return policy_result through a special event type that the caller can intercept
         yield {"type": "_policy_result", "policy_result": policy_result}

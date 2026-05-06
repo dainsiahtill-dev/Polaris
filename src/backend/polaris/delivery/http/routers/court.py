@@ -6,7 +6,7 @@ All interfaces are read-only and do not modify existing execution loops or write
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from polaris.cells.docs.court_workflow.public.service import (
     COURT_TOPOLOGY,
     TECH_TO_COURT_ROLE_MAPPING,
@@ -20,7 +20,7 @@ from polaris.cells.runtime.projection.public.service import (
     read_json,
 )
 from polaris.cells.runtime.state_owner.public.service import AppState
-from polaris.delivery.http.routers._shared import get_state as get_runtime_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state as get_runtime_state, require_auth
 from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
@@ -143,7 +143,11 @@ async def get_actor_detail(
 
     actors = court_state.get("actors", {})
     if role_id not in actors:
-        raise HTTPException(status_code=404, detail=f"Role '{role_id}' not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="ROLE_NOT_FOUND",
+            message=f"Role '{role_id}' not found",
+        )
 
     actor = actors[role_id]
 
@@ -168,7 +172,11 @@ async def get_scene_detail(scene_id: str) -> dict[str, Any]:
     scenes = get_scene_configs()
 
     if scene_id not in scenes:
-        raise HTTPException(status_code=404, detail=f"Scene '{scene_id}' not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="SCENE_NOT_FOUND",
+            message=f"Scene '{scene_id}' not found",
+        )
 
     return scenes[scene_id]
 

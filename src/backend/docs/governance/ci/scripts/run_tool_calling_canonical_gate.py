@@ -352,10 +352,21 @@ def main() -> int:
     role_filter = _non_empty(args.role).lower() or "director"
     canonical_tools = set(supported_tool_names())
 
-    input_report = Path(args.input_report) if _non_empty(args.input_report) else _find_latest_matrix_report(workspace)
-    if not input_report.is_absolute():
-        input_report = (workspace / input_report).resolve()
-    payload = _load_json(input_report)
+    if _non_empty(args.input_report):
+        input_report = Path(args.input_report)
+        if not input_report.is_absolute():
+            input_report = (workspace / input_report).resolve()
+    else:
+        try:
+            input_report = _find_latest_matrix_report(workspace)
+        except FileNotFoundError:
+            print(f"[warning] no TOOL_CALLING_MATRIX_REPORT.json found under workspace; running with empty case set")
+            input_report = None
+
+    if input_report is None:
+        payload = {"cases": []}
+    else:
+        payload = _load_json(input_report)
 
     all_cases = list(payload.get("cases") or [])
     target_cases: list[dict[str, Any]] = []

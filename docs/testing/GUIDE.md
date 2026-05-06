@@ -55,11 +55,11 @@ npm run test:electron
 
 ```bash
 # 非 LLM 主流程回归（推荐）
-npm run test:e2e -- tests/electron/realtime-visibility.spec.ts tests/electron/panel-error.spec.ts
+npm run test:e2e -- src/backend/polaris/tests/electron/realtime-visibility.spec.ts src/backend/polaris/tests/electron/panel-error.spec.ts
 
 # PM -> Director 全链路（需要真实设置）
 set KERNELONE_E2E_USE_REAL_SETTINGS=1
-npm run test:e2e -- tests/electron/pm-director-real-flow.spec.ts
+npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts
 
 # 任务合同仅做结构检查（不执行）
 npm run test:e2e:task -- --dry-run --task-file infrastructure/e2e/tasks/complex-project-fullstack.task.json

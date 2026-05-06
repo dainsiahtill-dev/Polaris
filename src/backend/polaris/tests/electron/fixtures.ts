@@ -21,7 +21,24 @@ type Fixtures = {
   window: Page;
 };
 
-const repoRoot = path.resolve(__dirname, "..", "..");
+function resolveRepoRoot(startDir: string): string {
+  let current = path.resolve(startDir);
+  while (true) {
+    const packageJson = path.join(current, "package.json");
+    const electronMainEntry = path.join(current, "src", "electron", "main.cjs");
+    if (fs.existsSync(packageJson) && fs.existsSync(electronMainEntry)) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error(`[fixtures] repository root not found from ${startDir}`);
+    }
+    current = parent;
+  }
+}
+
+const repoRoot = resolveRepoRoot(__dirname);
 const e2eHomeRoot = path.join(repoRoot, ".polaris", "tmp");
 
 function createIsolatedE2EHome(): string {

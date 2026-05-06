@@ -1,24 +1,44 @@
-"""Role Chat Router - 通用角色对话状态查询
+"""Role Chat Router - 通用角色对话状态查询与对话接口
 
-提供角色LLM配置状态查询接口。
-
-注意：对话功能已迁移到 /v2/roles/sessions API。
+提供角色LLM配置状态查询接口，以及统一的角色对话（非流式/流式）接口。
 """
 
+from __future__ import annotations
+
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from polaris.cells.llm.dialogue.public.service import get_registered_roles
+from polaris.cells.llm.dialogue.public import (
+    generate_role_response,
+    generate_role_response_streaming,
+    get_registered_roles,
+)
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
+from polaris.delivery.http.schemas import (
+    AllLLMEventsResponse,
+    CacheClearResponse,
+    CacheStatsResponse,
+    RoleChatPingResponse,
+    RoleChatResponse,
+    RoleChatStatusResponse,
+    RoleListResponse,
+    RoleLLMEventsResponse,
+)
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
-from ._shared import get_state, require_auth
+from ._shared import (
+    StructuredHTTPException,
+    ensure_required_roles_ready,
+    get_state,
+    require_auth,
+)
 
 router = APIRouter()
 
 
-@router.get("/v2/role/chat/ping", dependencies=[Depends(require_auth)])
+@router.get("/v2/role/chat/ping", dependencies=[Depends(require_auth)], response_model=RoleChatPingResponse)
 async def role_chat_ping() -> dict[str, Any]:
     """健康检查端点"""
     return {
@@ -42,7 +62,7 @@ async def _load_llm_config_async(workspace: str, cache_root: str, settings: Any)
     return await asyncio.to_thread(llm_config.load_llm_config, workspace, cache_root, settings)
 
 
-@router.get("/v2/role/{role}/chat/status", dependencies=[Depends(require_auth)])
+@router.get("/v2/role/{role}/chat/status", dependencies=[Depends(require_auth)], response_model=RoleChatStatusResponse)
 async def role_chat_status(
     request: Request,
     role: str,
@@ -147,7 +167,7 @@ async def role_chat_status(
         }
 
 
-@router.get("/v2/role/chat/roles", dependencies=[Depends(require_auth)])
+@router.get("/v2/role/chat/roles", dependencies=[Depends(require_auth)], response_model=RoleListResponse)
 async def list_supported_roles() -> dict[str, Any]:
     """列出所有支持的角色"""
     return {
@@ -161,7 +181,7 @@ async def list_supported_roles() -> dict[str, Any]:
 # ============================================================================
 
 
-@router.get("/v2/role/{role}/llm-events", dependencies=[Depends(require_auth)])
+@router.get("/v2/role/{role}/llm-events", dependencies=[Depends(require_auth)], response_model=RoleLLMEventsResponse)
 async def get_role_llm_events(
     role: str,
     run_id: str | None = None,
@@ -198,7 +218,7 @@ async def get_role_llm_events(
     }
 
 
-@router.get("/v2/role/llm-events", dependencies=[Depends(require_auth)])
+@router.get("/v2/role/llm-events", dependencies=[Depends(require_auth)], response_model=AllLLMEventsResponse)
 async def get_all_llm_events(
     run_id: str | None = None,
     task_id: str | None = None,
@@ -217,7 +237,7 @@ async def get_all_llm_events(
     }
 
 
-@router.get("/v2/role/cache-stats", dependencies=[Depends(require_auth)])
+@router.get("/v2/role/cache-stats", dependencies=[Depends(require_auth)], response_model=CacheStatsResponse)
 async def get_llm_cache_stats() -> dict[str, Any]:
     """获取 LLM 缓存统计信息"""
     from ..roles.kernel_components import get_global_llm_cache
@@ -226,7 +246,7 @@ async def get_llm_cache_stats() -> dict[str, Any]:
     return cache.get_stats()
 
 
-@router.post("/v2/role/cache-clear", dependencies=[Depends(require_auth)])
+@router.post("/v2/role/cache-clear", dependencies=[Depends(require_auth)], response_model=CacheClearResponse)
 async def clear_llm_cache() -> dict[str, Any]:
     """清空 LLM 缓存"""
     from ..roles.kernel_components import get_global_llm_cache
@@ -234,3 +254,148 @@ async def clear_llm_cache() -> dict[str, Any]:
     cache = get_global_llm_cache()
     cache.clear()
     return {"ok": True, "message": "Cache cleared"}
+
+
+# ============================================================================
+# Unified Role Chat Endpoints
+# ============================================================================
+
+
+def _validate_role(role: str) -> None:
+    """Validate that the requested role is supported.
+
+    Raises:
+        StructuredHTTPException: If the role is not in the registered roles list.
+    """
+    supported = get_registered_roles()
+    if role not in supported:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="UNSUPPORTED_ROLE",
+            message=f"Role '{role}' is not supported. Supported roles: {supported}",
+        )
+
+
+@router.post("/v2/role/{role}/chat", dependencies=[Depends(require_auth)], response_model=RoleChatResponse)
+async def role_chat(
+    request: Request,
+    role: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """通过指定角色的 LLM 进行对话（非流式）
+
+    Request:
+        {
+            "message": "用户消息",
+            "context": {...}  # 可选的上下文信息
+        }
+
+    Response:
+        {
+            "ok": true,
+            "response": "AI回复",
+            "thinking": "思考过程（如果有）",
+            "role": "pm",
+            "model": "使用的模型",
+            "provider": "使用的provider"
+        }
+    """
+    state = get_state(request)
+
+    _validate_role(role)
+
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_REQUEST",
+            message="message is required",
+        )
+
+    try:
+        ensure_required_roles_ready(state, default_roles=[role])
+    except StructuredHTTPException:
+        raise
+    except (RuntimeError, ValueError) as exc:
+        raise StructuredHTTPException(
+            status_code=409,
+            code="LLM_NOT_READY",
+            message=str(exc),
+        ) from exc
+
+    try:
+        result = await generate_role_response(
+            workspace=str(state.settings.workspace),
+            settings=state.settings,
+            role=role,
+            message=message,
+            context=payload.get("context"),
+        )
+        return {"ok": True, **result}
+    except (RuntimeError, ValueError) as exc:
+        raise StructuredHTTPException(
+            status_code=500,
+            code="GENERATION_FAILED",
+            message=str(exc),
+        ) from exc
+
+
+@router.post("/v2/role/{role}/chat/stream", dependencies=[Depends(require_auth)])
+async def role_chat_stream(
+    request: Request,
+    role: str,
+    payload: dict[str, Any],
+) -> Any:
+    """通过指定角色的 LLM 进行对话（流式 SSE）
+
+    Request:
+        {
+            "message": "用户消息",
+            "context": {...}  # 可选的上下文信息
+        }
+
+    Response: SSE stream with events:
+        - thinking_chunk: 思考过程片段
+        - content_chunk: 内容片段
+        - complete: 完成事件，包含完整响应
+        - error: 错误事件
+        - complete: 结束标记
+    """
+    from polaris.delivery.http.routers.sse_utils import (
+        create_sse_response,
+        sse_event_generator,
+    )
+
+    state = get_state(request)
+
+    _validate_role(role)
+
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        return create_sse_response(_error_sse_generator("message is required"))
+
+    try:
+        ensure_required_roles_ready(state, default_roles=[role])
+    except StructuredHTTPException as exc:
+        return create_sse_response(_error_sse_generator(str(exc.structured_message)))
+    except (RuntimeError, ValueError) as exc:
+        return create_sse_response(_error_sse_generator(str(exc)))
+
+    async def _run_role_dialogue(queue: asyncio.Queue) -> None:
+        """运行角色对话并输出到队列"""
+        await generate_role_response_streaming(
+            workspace=str(state.settings.workspace),
+            settings=state.settings,
+            role=role,
+            message=message,
+            output_queue=queue,
+            context=payload.get("context"),
+        )
+
+    return create_sse_response(sse_event_generator(_run_role_dialogue, timeout=180.0))
+
+
+async def _error_sse_generator(message: str) -> Any:
+    """SSE 错误事件生成器"""
+    yield f"event: error\ndata: {message}\n\n"
+    yield "event: complete\ndata: {}\n\n"

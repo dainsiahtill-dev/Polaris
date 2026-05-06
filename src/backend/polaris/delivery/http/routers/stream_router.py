@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from polaris.delivery.http.schemas.common import StreamHealthResponse
 from polaris.kernelone.events.constants import (
     EVENT_TYPE_COMPLETE,
     EVENT_TYPE_ERROR,
@@ -80,12 +81,12 @@ def format_sse_event(event: AIStreamEvent) -> bytes:
         SSE-formatted bytes ready for HTTP streaming.
     """
     event_type_map = {
-        "chunk": "text",
-        "reasoning_chunk": "thinking",
-        EVENT_TYPE_TOOL_CALL: "tool",
+        "chunk": "content_chunk",
+        "reasoning_chunk": "thinking_chunk",
+        EVENT_TYPE_TOOL_CALL: "tool_call",
         EVENT_TYPE_TOOL_RESULT: "tool_result",
         "meta": "meta",
-        EVENT_TYPE_COMPLETE: "done",
+        EVENT_TYPE_COMPLETE: "complete",
         EVENT_TYPE_ERROR: "error",
     }
 
@@ -157,7 +158,7 @@ async def sse_stream_generator(
             await asyncio.sleep(0)
 
         # Normal completion
-        yield b"event: done\ndata: {}\n\n"
+        yield b"event: complete\ndata: {}\n\n"
     except asyncio.CancelledError:
         raise  # noqa: RUF100
     except (RuntimeError, ValueError) as exc:
@@ -369,7 +370,7 @@ async def stream_chat_with_backpressure(
     )
 
 
-@router.get("/v2/stream/health")
+@router.get("/v2/stream/health", response_model=StreamHealthResponse, dependencies=[Depends(require_auth)])
 async def stream_health() -> dict[str, str]:
     """Health check endpoint for stream subsystem.
 

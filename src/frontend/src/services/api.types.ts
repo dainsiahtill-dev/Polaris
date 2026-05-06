@@ -201,7 +201,7 @@ export interface FactoryAuditEvent {
 
 export interface FactoryStartOptions {
   workspace: string;
-  start_from?: 'auto' | 'architect' | 'pm';
+  start_from?: 'auto' | 'architect' | 'pm' | 'director';
   directive?: string;
   run_director?: boolean;
   director_iterations?: number;

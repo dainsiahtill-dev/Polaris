@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from polaris.cells.llm.control_plane.public import get_vision_service
 from polaris.cells.runtime.artifact_store.public import get_arrow_service
-from polaris.delivery.http.routers._shared import get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.kernelone.constants import MAX_FILE_SIZE_BYTES
 from pydantic import BaseModel, Field
 
@@ -366,4 +366,9 @@ def director_capabilities(request: Request) -> dict[str, Any]:
             "capabilities": get_role_capabilities("director"),
         }
     except (RuntimeError, ValueError) as exc:
-        return {"error": str(exc), "capabilities": []}
+        raise StructuredHTTPException(
+            status_code=500,
+            code="CAPABILITY_LOAD_FAILED",
+            message=str(exc),
+            details={"capabilities": []},
+        ) from exc

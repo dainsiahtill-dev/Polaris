@@ -156,8 +156,8 @@ class EventStreamer:
         """
         # Map StreamEventType to SSE event field
         event_type_map = {
-            StreamEventType.CHUNK: "chunk",
-            StreamEventType.REASONING_CHUNK: "reasoning",
+            StreamEventType.CHUNK: "content_chunk",
+            StreamEventType.REASONING_CHUNK: "thinking_chunk",
             StreamEventType.TOOL_START: "tool_start",
             StreamEventType.TOOL_CALL: "tool_call",
             StreamEventType.TOOL_END: "tool_end",

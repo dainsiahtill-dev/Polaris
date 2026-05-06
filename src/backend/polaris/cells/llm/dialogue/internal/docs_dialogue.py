@@ -502,11 +502,10 @@ async def generate_dialogue_turn_streaming(
 
             if event_type == "reasoning_chunk":
                 reasoning_emitted = True
-                await output_queue.put({"type": "reasoning_chunk", "data": {"content": event.get("reasoning", "")}})
+                await output_queue.put({"type": "thinking_chunk", "data": {"content": event.get("reasoning", "")}})
             elif event_type == "chunk":
                 chunk = event.get("chunk") or ""
                 collected_output += chunk
-                await output_queue.put({"type": "thinking_chunk", "data": {"content": chunk}})
             elif event_type == "complete":
                 break
             elif event_type == "error":

@@ -180,7 +180,7 @@ async def generate_interview_answer_streaming(
             if event_type == "reasoning_chunk":
                 await output_queue.put(
                     {
-                        "type": "reasoning_chunk",
+                        "type": "thinking_chunk",
                         "data": {"content": event.get("reasoning", "")},
                     }
                 )

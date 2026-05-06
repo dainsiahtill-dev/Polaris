@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from polaris.cells.archive.factory_archive.public.service import (
     get_factory_manifest,
     list_factory_runs,
@@ -19,10 +19,17 @@ from polaris.cells.archive.task_snapshot_archive.public.service import (
 )
 from polaris.cells.runtime.projection.public.service import format_mtime
 from polaris.cells.runtime.state_owner.public.service import AppState
+from polaris.delivery.http.schemas.common import (
+    FactorySnapshotsResponse,
+    HistoryEventsResponse,
+    HistoryManifestResponse,
+    HistoryRunListResponse,
+    TaskSnapshotsResponse,
+)
 from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
-from ._shared import get_state, require_auth
+from ._shared import StructuredHTTPException, get_state, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -559,7 +566,11 @@ def history_round_detail(request: Request, round_id: str) -> dict[str, Any]:
             break
 
     if not round_detail:
-        raise HTTPException(status_code=404, detail=f"Round {round_id} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="ROUND_NOT_FOUND",
+            message=f"Round {round_id} not found",
+        )
 
     artifacts = round_detail.get("artifacts", {})
     artifact_contents: dict[str, str] = {}
@@ -588,7 +599,11 @@ def history_round_detail(request: Request, round_id: str) -> dict[str, Any]:
 # ============================================================================
 
 
-@router.get("/v2/history/runs", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/history/runs",
+    dependencies=[Depends(require_auth)],
+    response_model=HistoryRunListResponse,
+)
 def v2_history_runs(
     request: Request,
     limit: int = 50,
@@ -663,7 +678,11 @@ def v2_history_runs(
     return {"runs": all_runs[offset : offset + limit], "total": len(all_runs)}
 
 
-@router.get("/v2/history/runs/{run_id}/manifest", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/history/runs/{run_id}/manifest",
+    dependencies=[Depends(require_auth)],
+    response_model=HistoryManifestResponse,
+)
 def v2_history_run_manifest(request: Request, run_id: str) -> dict[str, Any]:
     """Get manifest for an archived run."""
     state = get_state(request)
@@ -675,17 +694,29 @@ def v2_history_run_manifest(request: Request, run_id: str) -> dict[str, Any]:
         manifest = get_run_manifest(workspace, run_id)
 
         if manifest is None:
-            raise HTTPException(status_code=404, detail=f"Manifest not found for run {run_id}")
+            raise StructuredHTTPException(
+                status_code=404,
+                code="MANIFEST_NOT_FOUND",
+                message=f"Manifest not found for run {run_id}",
+            )
 
         return {"manifest": manifest}
-    except HTTPException:
+    except StructuredHTTPException:
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="internal error",
+        ) from e
 
 
-@router.get("/v2/history/runs/{run_id}/events", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/history/runs/{run_id}/events",
+    dependencies=[Depends(require_auth)],
+    response_model=HistoryEventsResponse,
+)
 def v2_history_run_events(request: Request, run_id: str) -> dict[str, Any]:
     """Get events for an archived run (auto-decompresses .zst)."""
     state = get_state(request)
@@ -699,10 +730,18 @@ def v2_history_run_events(request: Request, run_id: str) -> dict[str, Any]:
         return {"run_id": run_id, "events": events, "count": len(events)}
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get events for run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="internal error",
+        ) from e
 
 
-@router.get("/v2/history/tasks/snapshots", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/history/tasks/snapshots",
+    dependencies=[Depends(require_auth)],
+    response_model=TaskSnapshotsResponse,
+)
 def v2_history_task_snapshots(
     request: Request,
     limit: int = 50,
@@ -722,10 +761,18 @@ def v2_history_task_snapshots(
         }
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to list task snapshots: {e}")
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="internal error",
+        ) from e
 
 
-@router.get("/v2/history/factory/snapshots", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/history/factory/snapshots",
+    dependencies=[Depends(require_auth)],
+    response_model=FactorySnapshotsResponse,
+)
 def v2_history_factory_snapshots(
     request: Request,
     limit: int = 50,
@@ -745,7 +792,11 @@ def v2_history_factory_snapshots(
         }
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to list factory snapshots: {e}")
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="internal error",
+        ) from e
 
 
 # ============================================================================
@@ -765,14 +816,22 @@ def history_run_manifest(request: Request, run_id: str) -> dict[str, Any]:
         manifest = get_run_manifest(workspace, run_id)
 
         if manifest is None:
-            raise HTTPException(status_code=404, detail=f"Manifest not found for run {run_id}")
+            raise StructuredHTTPException(
+                status_code=404,
+                code="MANIFEST_NOT_FOUND",
+                message=f"Manifest not found for run {run_id}",
+            )
 
         return {"manifest": manifest}
-    except HTTPException:
+    except StructuredHTTPException:
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="internal error",
+        ) from e
 
 
 @router.get("/history/tasks/{snapshot_id}/manifest", dependencies=[Depends(require_auth)])
@@ -787,14 +846,22 @@ def history_task_snapshot_manifest(request: Request, snapshot_id: str) -> dict[s
         manifest = get_task_snapshot_manifest(workspace, snapshot_id)
 
         if manifest is None:
-            raise HTTPException(status_code=404, detail=f"Manifest not found for task snapshot {snapshot_id}")
+            raise StructuredHTTPException(
+                status_code=404,
+                code="MANIFEST_NOT_FOUND",
+                message=f"Manifest not found for task snapshot {snapshot_id}",
+            )
 
         return {"manifest": manifest}
-    except HTTPException:
+    except StructuredHTTPException:
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for task snapshot {snapshot_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="internal error",
+        ) from e
 
 
 @router.get("/history/factory/{run_id}/manifest", dependencies=[Depends(require_auth)])
@@ -809,11 +876,19 @@ def history_factory_manifest(request: Request, run_id: str) -> dict[str, Any]:
         manifest = get_factory_manifest(workspace, run_id)
 
         if manifest is None:
-            raise HTTPException(status_code=404, detail=f"Manifest not found for factory run {run_id}")
+            raise StructuredHTTPException(
+                status_code=404,
+                code="MANIFEST_NOT_FOUND",
+                message=f"Manifest not found for factory run {run_id}",
+            )
 
         return {"manifest": manifest}
-    except HTTPException:
+    except StructuredHTTPException:
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Failed to get manifest for factory run {run_id}: {e}")
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="internal error",
+        ) from e

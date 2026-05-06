@@ -8,7 +8,7 @@ import os
 import re
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import run_readiness_tests as run_llm_tests
 from polaris.cells.llm.provider_config.public.contracts import (
     LlmProviderConfigError,
@@ -17,7 +17,7 @@ from polaris.cells.llm.provider_config.public.contracts import (
     RoleNotConfiguredError,
 )
 from polaris.cells.llm.provider_config.public.service import resolve_llm_test_execution_context
-from polaris.delivery.http.routers._shared import get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 from .sse_utils import create_sse_response, sse_event_generator
@@ -33,19 +33,21 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _map_provider_config_error(exc: LlmProviderConfigError) -> HTTPException:
+def _map_provider_config_error(exc: LlmProviderConfigError) -> StructuredHTTPException:
     """Map domain config errors to HTTP status codes."""
     if isinstance(exc, ProviderNotFoundError):
         logger.error("Provider not found: %s", exc)
-        return HTTPException(status_code=404, detail="internal error")
+        return StructuredHTTPException(status_code=404, code="PROVIDER_NOT_FOUND", message="internal error")
     if isinstance(exc, RoleNotConfiguredError):
         logger.error("Role not configured: %s", exc)
-        return HTTPException(status_code=404, detail="internal error")
+        return StructuredHTTPException(status_code=404, code="ROLE_NOT_CONFIGURED", message="internal error")
     if isinstance(exc, ProviderConfigValidationError):
         logger.error("Provider config validation failed: %s", exc)
-        return HTTPException(status_code=400, detail="internal error")
+        return StructuredHTTPException(
+            status_code=400, code="PROVIDER_CONFIG_VALIDATION_ERROR", message="internal error"
+        )
     logger.error("Provider config error: %s", exc)
-    return HTTPException(status_code=400, detail="internal error")
+    return StructuredHTTPException(status_code=400, code="PROVIDER_CONFIG_ERROR", message="internal error")
 
 
 @router.post("/llm/test", dependencies=[Depends(require_auth)])
@@ -156,12 +158,14 @@ def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
     report_path = _resolve_test_path(state.settings, test_run_id, "report", workspace)
     if not report_path or not os.path.isfile(report_path):
-        raise HTTPException(status_code=404, detail="report not found")
+        raise StructuredHTTPException(status_code=404, code="REPORT_NOT_FOUND", message="report not found")
     try:
         with open(report_path, encoding="utf-8") as handle:
             data = json.load(handle)
     except (RuntimeError, ValueError) as e:
-        raise HTTPException(status_code=500, detail="failed to read report") from e
+        raise StructuredHTTPException(
+            status_code=500, code="REPORT_READ_FAILED", message="failed to read report"
+        ) from e
     return _normalize_report_payload(data)
 
 
@@ -172,18 +176,20 @@ def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, Any]:
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
     transcript_path = _resolve_test_path(state.settings, test_run_id, "transcript", workspace)
     if not transcript_path or not os.path.isfile(transcript_path):
-        raise HTTPException(status_code=404, detail="transcript not found")
+        raise StructuredHTTPException(status_code=404, code="TRANSCRIPT_NOT_FOUND", message="transcript not found")
     try:
         with open(transcript_path, encoding="utf-8") as handle:
             content = handle.read()
     except (RuntimeError, ValueError) as e:
-        raise HTTPException(status_code=500, detail="failed to read transcript") from e
+        raise StructuredHTTPException(
+            status_code=500, code="TRANSCRIPT_READ_FAILED", message="failed to read transcript"
+        ) from e
     return {"ok": True, "content": content}
 
 
 def _resolve_test_path(settings: Settings, run_id: str, filename: str, workspace: str) -> str:
     if not re.match(r"^[A-Za-z0-9_.-]+$", run_id or ""):
-        raise HTTPException(status_code=400, detail="invalid test run id")
+        raise StructuredHTTPException(status_code=400, code="INVALID_TEST_RUN_ID", message="invalid test run id")
     cache_root = build_cache_root(settings.ramdisk_root or "", workspace)
     candidates: list[str] = []
 
@@ -226,7 +232,7 @@ def _resolve_test_path(settings: Settings, run_id: str, filename: str, workspace
 
 def _normalize_report_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        return {"ok": False, "error": "invalid report payload"}
+        raise StructuredHTTPException(status_code=400, code="INVALID_REPORT_PAYLOAD", message="invalid report payload")
     if "test_run_id" in payload and "target" in payload:
         return payload
 

@@ -12,7 +12,7 @@ import contextlib
 import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from polaris.cells.factory.pipeline.public.types import RunPhase
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
@@ -29,6 +29,17 @@ from polaris.cells.roles.session.public.contracts import (
     ReadRoleSessionEpisodeQueryV1,
     SearchRoleSessionMemoryQueryV1,
 )
+from polaris.delivery.http.schemas.common import (
+    AgentArtifactResponse,
+    AgentEpisodeResponse,
+    AgentMemorySearchResponse,
+    AgentMemoryStateResponse,
+    AgentMessageResponse,
+    AgentSessionListResponse,
+    AgentSessionResponse,
+    AgentTurnResponse,
+    SessionDeleteResponse,
+)
 from polaris.kernelone.context.session_continuity import (
     SessionContinuityEngine,
     SessionContinuityRequest,
@@ -37,7 +48,7 @@ from polaris.kernelone.context.session_continuity import (
 )
 from pydantic import BaseModel, Field
 
-from ._shared import get_state, require_auth
+from ._shared import StructuredHTTPException, get_state, require_auth
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -217,10 +228,18 @@ async def _execute_agent_message(
     with RoleSessionService() as service:
         session = service.get_session(session_id)
         if session is None:
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+            raise StructuredHTTPException(
+                status_code=404,
+                code="SESSION_NOT_FOUND",
+                message=f"Session {session_id} not found",
+            )
         session_payload = session.to_dict(include_messages=False)
         if not _is_agent_session_payload(session_payload):
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+            raise StructuredHTTPException(
+                status_code=404,
+                code="SESSION_NOT_FOUND",
+                message=f"Session {session_id} not found",
+            )
         runtime_role = _safe_text(session_payload.get("role")) or role
         runtime_history, runtime_context = _project_agent_turn(
             service=service,
@@ -451,7 +470,9 @@ async def list_agent_sessions(
             payloads.append(
                 _build_agent_session_payload(
                     session_payload=session_payload,
-                    messages=[message.to_dict() for message in service.get_messages(str(session.id), limit=20, offset=0)],
+                    messages=[
+                        message.to_dict() for message in service.get_messages(str(session.id), limit=20, offset=0)
+                    ],
                 )
             )
             if len(payloads) >= limit:
@@ -462,6 +483,14 @@ async def list_agent_sessions(
     }
 
 
+@router.get("/v2/sessions", dependencies=[Depends(require_auth)], response_model=AgentSessionListResponse)
+async def list_agent_sessions_v2(
+    request: Request,
+    limit: int = 20,
+) -> dict[str, Any]:
+    return await list_agent_sessions(request, limit)
+
+
 @router.get("/sessions/{session_id}", dependencies=[Depends(require_auth)])
 async def get_agent_session(
     request: Request,
@@ -470,8 +499,20 @@ async def get_agent_session(
     get_state(request)
     session = _load_agent_session(session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="SESSION_NOT_FOUND",
+            message=f"Session {session_id} not found",
+        )
     return session
+
+
+@router.get("/v2/sessions/{session_id}", dependencies=[Depends(require_auth)], response_model=AgentSessionResponse)
+async def get_agent_session_v2(
+    request: Request,
+    session_id: str,
+) -> dict[str, Any]:
+    return await get_agent_session(request, session_id)
 
 
 @router.get("/sessions/{session_id}/memory/search", dependencies=[Depends(require_auth)])
@@ -485,7 +526,11 @@ async def search_agent_session_memory(
 ) -> dict[str, Any]:
     get_state(request)
     if _load_agent_session(session_id) is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="SESSION_NOT_FOUND",
+            message=f"Session {session_id} not found",
+        )
     try:
         query = SearchRoleSessionMemoryQueryV1(
             session_id=session_id,
@@ -495,7 +540,11 @@ async def search_agent_session_memory(
             limit=limit,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.search_memory(query)
@@ -519,6 +568,22 @@ async def search_agent_session_memory(
     }
 
 
+@router.get(
+    "/v2/sessions/{session_id}/memory/search",
+    dependencies=[Depends(require_auth)],
+    response_model=AgentMemorySearchResponse,
+)
+async def search_agent_session_memory_v2(
+    request: Request,
+    session_id: str,
+    q: str,
+    kind: str | None = None,
+    entity: str | None = None,
+    limit: int = 6,
+) -> dict[str, Any]:
+    return await search_agent_session_memory(request, session_id, q, kind, entity, limit)
+
+
 @router.get("/sessions/{session_id}/memory/artifacts/{artifact_id}", dependencies=[Depends(require_auth)])
 async def read_agent_session_memory_artifact(
     request: Request,
@@ -529,7 +594,11 @@ async def read_agent_session_memory_artifact(
 ) -> dict[str, Any]:
     get_state(request)
     if _load_agent_session(session_id) is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="SESSION_NOT_FOUND",
+            message=f"Session {session_id} not found",
+        )
     try:
         query = ReadRoleSessionArtifactQueryV1(
             session_id=session_id,
@@ -538,7 +607,11 @@ async def read_agent_session_memory_artifact(
             end_line=end_line,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.read_artifact(query)
@@ -557,6 +630,21 @@ async def read_agent_session_memory_artifact(
     }
 
 
+@router.get(
+    "/v2/sessions/{session_id}/memory/artifacts/{artifact_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=AgentArtifactResponse,
+)
+async def read_agent_session_memory_artifact_v2(
+    request: Request,
+    session_id: str,
+    artifact_id: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> dict[str, Any]:
+    return await read_agent_session_memory_artifact(request, session_id, artifact_id, start_line, end_line)
+
+
 @router.get("/sessions/{session_id}/memory/episodes/{episode_id}", dependencies=[Depends(require_auth)])
 async def read_agent_session_memory_episode(
     request: Request,
@@ -565,14 +653,22 @@ async def read_agent_session_memory_episode(
 ) -> dict[str, Any]:
     get_state(request)
     if _load_agent_session(session_id) is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="SESSION_NOT_FOUND",
+            message=f"Session {session_id} not found",
+        )
     try:
         query = ReadRoleSessionEpisodeQueryV1(
             session_id=session_id,
             episode_id=episode_id,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.read_episode(query)
@@ -591,6 +687,19 @@ async def read_agent_session_memory_episode(
     }
 
 
+@router.get(
+    "/v2/sessions/{session_id}/memory/episodes/{episode_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=AgentEpisodeResponse,
+)
+async def read_agent_session_memory_episode_v2(
+    request: Request,
+    session_id: str,
+    episode_id: str,
+) -> dict[str, Any]:
+    return await read_agent_session_memory_episode(request, session_id, episode_id)
+
+
 @router.get("/sessions/{session_id}/memory/state", dependencies=[Depends(require_auth)])
 async def read_agent_session_memory_state(
     request: Request,
@@ -599,14 +708,22 @@ async def read_agent_session_memory_state(
 ) -> dict[str, Any]:
     get_state(request)
     if _load_agent_session(session_id) is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="SESSION_NOT_FOUND",
+            message=f"Session {session_id} not found",
+        )
     try:
         query = GetRoleSessionStateQueryV1(
             session_id=session_id,
             path=path,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.get_state(query)
@@ -626,6 +743,19 @@ async def read_agent_session_memory_state(
     }
 
 
+@router.get(
+    "/v2/sessions/{session_id}/memory/state",
+    dependencies=[Depends(require_auth)],
+    response_model=AgentMemoryStateResponse,
+)
+async def read_agent_session_memory_state_v2(
+    request: Request,
+    session_id: str,
+    path: str,
+) -> dict[str, Any]:
+    return await read_agent_session_memory_state(request, session_id, path)
+
+
 @router.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
 async def send_agent_message(
     request: Request,
@@ -642,6 +772,17 @@ async def send_agent_message(
     return result
 
 
+@router.post(
+    "/v2/sessions/{session_id}/messages", dependencies=[Depends(require_auth)], response_model=AgentMessageResponse
+)
+async def send_agent_message_v2(
+    request: Request,
+    session_id: str,
+    payload: SessionMessageRequest,
+) -> dict[str, Any]:
+    return await send_agent_message(request, session_id, payload)
+
+
 @router.post("/sessions/{session_id}/messages/stream", dependencies=[Depends(require_auth)])
 async def send_agent_message_stream(
     request: Request,
@@ -651,10 +792,28 @@ async def send_agent_message_stream(
     state = get_state(request)
     session = _load_agent_session(session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="SESSION_NOT_FOUND",
+            message=f"Session {session_id} not found",
+        )
     message = payload.message.strip()
     role = payload.role
     output_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+
+    _sse_type_map: dict[str, str] = {
+        "text": "content_chunk",
+        "thinking": "thinking_chunk",
+        "tool": "tool_call",
+        "done": "complete",
+    }
+
+    def _normalize_sse_event_type(raw: str | None) -> str:
+        if raw in ("content_chunk", "thinking_chunk", "tool_call", "tool_result", "complete", "error", "ping"):
+            return raw
+        if raw in _sse_type_map:
+            return _sse_type_map[raw]
+        return "content_chunk"
 
     async def event_generator():
         producer_task = asyncio.create_task(
@@ -671,8 +830,13 @@ async def send_agent_message_stream(
                 event = await output_queue.get()
                 if event.get("type") == "done":
                     break
-                yield f"event: {event.get('type', 'message')}\n"
-                yield f"data: {json.dumps(event.get('data', {}), ensure_ascii=False)}\n\n"
+                raw_type = event.get("type")
+                normalized_type = _normalize_sse_event_type(raw_type)
+                data_payload = event.get("data", {})
+                if normalized_type == "content_chunk" and raw_type not in ("content_chunk", "text", None):
+                    data_payload = {**data_payload, "_original_type": raw_type}
+                yield f"event: {normalized_type}\n"
+                yield f"data: {json.dumps(data_payload, ensure_ascii=False)}\n\n"
                 # Force flush to ensure immediate delivery (P0: SSE yield blocking fix)
                 await asyncio.sleep(0)
         except (RuntimeError, ValueError) as exc:
@@ -695,6 +859,15 @@ async def send_agent_message_stream(
     )
 
 
+@router.post("/v2/sessions/{session_id}/messages/stream", dependencies=[Depends(require_auth)])
+async def send_agent_message_stream_v2(
+    request: Request,
+    session_id: str,
+    payload: SessionMessageRequest,
+) -> StreamingResponse:
+    return await send_agent_message_stream(request, session_id, payload)
+
+
 @router.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
 async def delete_agent_session(
     request: Request,
@@ -704,11 +877,27 @@ async def delete_agent_session(
     with RoleSessionService() as service:
         session = service.get_session(session_id)
         if session is None or not _is_agent_session_payload(session.to_dict(include_messages=False)):
-            return {"ok": False, "error": "Session not found"}
+            raise StructuredHTTPException(
+                status_code=404,
+                code="SESSION_NOT_FOUND",
+                message="Session not found",
+            )
         success = service.delete_session(session_id, soft=False)
     if success:
         return {"ok": True, "message": f"Session {session_id} deleted"}
-    return {"ok": False, "error": "Session not found"}
+    raise StructuredHTTPException(
+        status_code=404,
+        code="SESSION_NOT_FOUND",
+        message="Session not found",
+    )
+
+
+@router.delete("/v2/sessions/{session_id}", dependencies=[Depends(require_auth)], response_model=SessionDeleteResponse)
+async def delete_agent_session_v2(
+    request: Request,
+    session_id: str,
+) -> dict[str, Any]:
+    return await delete_agent_session(request, session_id)
 
 
 @router.post("/turn", dependencies=[Depends(require_auth)])
@@ -746,3 +935,11 @@ async def agent_turn(
         "phase": RunPhase.PENDING.value,
         "error": response.get("error"),
     }
+
+
+@router.post("/v2/turn", dependencies=[Depends(require_auth)], response_model=AgentTurnResponse)
+async def agent_turn_v2(
+    request: Request,
+    payload: AgentTurnPayload,
+) -> dict[str, Any]:
+    return await agent_turn(request, payload)

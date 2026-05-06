@@ -75,7 +75,7 @@ def load_all_vcs(vc_dir: Path) -> list[dict[str, Any]]:
     cards = []
     for f in sorted(vc_dir.glob("vc-*.yaml")):
         data = load_yaml(f)
-        if data:
+        if isinstance(data, dict):
             data["_source_file"] = f.name
             cards.append(data)
     return cards
@@ -141,6 +141,8 @@ def section_assumption_patterns(cards: list[dict[str, Any]]) -> dict[str, Any]:
     for card in cards:
         card_id = card.get("card_id", "?")
         for assumption in card.get("assumptions", []):
+            if not isinstance(assumption, dict):
+                continue
             status = assumption.get("status", "unverified")
             status_counts[status] = status_counts.get(status, 0) + 1
             statement = assumption.get("statement", "").lower()
@@ -197,6 +199,8 @@ def section_premortem(cards: list[dict[str, Any]]) -> dict[str, Any]:
     for card in cards:
         card_id = card.get("card_id", "?")
         pm = card.get("pre_mortem", {})
+        if not isinstance(pm, dict):
+            pm = {}
         failure_point = pm.get("failure_point", "")
         risk_zone = pm.get("risk_zone", [])
 

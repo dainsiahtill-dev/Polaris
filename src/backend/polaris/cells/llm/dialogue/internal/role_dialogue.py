@@ -741,7 +741,7 @@ async def generate_role_response_streaming(
 
     finally:
         # 发送结束标记
-        await output_queue.put({"type": "done"})
+        await output_queue.put({"type": "complete"})
 
 
 def _build_role_prompt(

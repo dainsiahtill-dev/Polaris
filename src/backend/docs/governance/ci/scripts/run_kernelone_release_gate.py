@@ -46,9 +46,9 @@ def _build_utf8_env() -> dict[str, str]:
 
 def _discover_suite_paths() -> list[str]:
     candidates: list[Path] = []
-    candidates.extend(sorted((BACKEND_ROOT / "tests").glob("test_kernelone_*.py")))
-    candidates.extend(sorted((BACKEND_ROOT / "tests" / "architecture").glob("test_kernelone_*.py")))
-    candidates.append(BACKEND_ROOT / "tests" / "architecture" / "test_polaris_kernel_fs_guard.py")
+    candidates.extend(sorted((BACKEND_ROOT / "polaris" / "tests").glob("test_kernelone_*.py")))
+    candidates.extend(sorted((BACKEND_ROOT / "polaris" / "tests" / "architecture").glob("test_kernelone_*.py")))
+    candidates.append(BACKEND_ROOT / "polaris" / "tests" / "architecture" / "test_polaris_kernel_fs_guard.py")
 
     suite_paths: list[str] = []
     for path in candidates:

@@ -34,6 +34,21 @@ from polaris.cells.roles.session.public.contracts import (
     ReadRoleSessionEpisodeQueryV1,
     SearchRoleSessionMemoryQueryV1,
 )
+from polaris.delivery.http.schemas.common import (
+    ArtifactDetailResponse,
+    ArtifactListResponse,
+    AuditLogResponse,
+    EpisodeDetailResponse,
+    MemorySearchResponse,
+    MemoryStateResponse,
+    MessageListResponse,
+    RoleCapabilitiesResponse,
+    SessionDeleteResponse,
+    SessionExportResponse,
+    SessionListResponse,
+    SessionResponse,
+    WorkflowExportResponse,
+)
 from polaris.domain.entities.capability import get_role_capabilities as get_caps
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.context.session_continuity import (
@@ -51,9 +66,8 @@ from polaris.kernelone.events.constants import (
     EVENT_TYPE_TOOL_RESULT,
 )
 from pydantic import BaseModel
-from starlette.responses import JSONResponse
 
-from ._shared import StructuredHTTPException, get_state, require_auth, structured_error_response
+from ._shared import StructuredHTTPException, get_state, require_auth
 from .sse_utils import create_sse_response, sse_event_generator
 
 if TYPE_CHECKING:
@@ -192,7 +206,7 @@ def _build_task_filter_from_artifacts(artifacts: list[Any]) -> str:
 # ==================== Session Endpoints ====================
 
 
-@router.post("/v2/roles/sessions", dependencies=[Depends(require_auth)])
+@router.post("/v2/roles/sessions", dependencies=[Depends(require_auth)], response_model=SessionResponse)
 async def create_session(
     request: Request,
     payload: CreateSessionRequest,
@@ -240,13 +254,14 @@ async def create_session(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
-@router.get("/v2/roles/sessions", dependencies=[Depends(require_auth)])
+@router.get("/v2/roles/sessions", dependencies=[Depends(require_auth)], response_model=SessionListResponse)
 async def list_sessions(
     request: Request,
     role: str | None = None,
@@ -289,13 +304,14 @@ async def list_sessions(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
-@router.get("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)])
+@router.get("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)], response_model=SessionResponse)
 async def get_session(
     request: Request,
     session_id: str,
@@ -315,9 +331,10 @@ async def get_session(
             session = service.get_session(session_id)
 
             if not session:
-                return JSONResponse(
-                    {"ok": False, "error": f"Session not found: {session_id}"},
+                raise StructuredHTTPException(
                     status_code=404,
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
             return {
@@ -326,13 +343,14 @@ async def get_session(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
-@router.put("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)])
+@router.put("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)], response_model=SessionResponse)
 async def update_session(
     request: Request,
     session_id: str,
@@ -367,9 +385,10 @@ async def update_session(
             )
 
             if not session:
-                raise HTTPException(
+                raise StructuredHTTPException(
                     status_code=404,
-                    detail=f"Session not found: {session_id}",
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
             return {
@@ -378,13 +397,18 @@ async def update_session(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
-@router.delete("/v2/roles/sessions/{session_id}", dependencies=[Depends(require_auth)])
+@router.delete(
+    "/v2/roles/sessions/{session_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=SessionDeleteResponse,
+)
 async def delete_session(
     request: Request,
     session_id: str,
@@ -404,9 +428,10 @@ async def delete_session(
             success = service.delete_session(session_id, soft=soft)
 
             if not success:
-                return JSONResponse(
-                    {"ok": False, "error": f"Session not found: {session_id}"},
+                raise StructuredHTTPException(
                     status_code=404,
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
             return {
@@ -414,16 +439,19 @@ async def delete_session(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
 # ==================== Message Endpoints ====================
 
 
-@router.get("/v2/roles/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/sessions/{session_id}/messages", dependencies=[Depends(require_auth)], response_model=MessageListResponse
+)
 async def get_messages(
     request: Request,
     session_id: str,
@@ -445,9 +473,10 @@ async def get_messages(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                raise HTTPException(
+                raise StructuredHTTPException(
                     status_code=404,
-                    detail=f"Session not found: {session_id}",
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
             messages = service.get_messages(session_id, limit=limit, offset=offset)
@@ -459,13 +488,16 @@ async def get_messages(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
-@router.post("/v2/roles/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
+@router.post(
+    "/v2/roles/sessions/{session_id}/messages", dependencies=[Depends(require_auth)], response_model=SessionResponse
+)
 async def send_message(
     request: Request,
     session_id: str,
@@ -500,9 +532,10 @@ async def send_message(
             )
 
             if not session:
-                raise HTTPException(
+                raise StructuredHTTPException(
                     status_code=404,
-                    detail=f"Session not found: {session_id}",
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
             return {
@@ -511,10 +544,11 @@ async def send_message(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
 @router.post("/v2/roles/sessions/{session_id}/messages/stream", dependencies=[Depends(require_auth)])
@@ -680,18 +714,22 @@ async def send_message_stream(
         raise
     except (RuntimeError, ValueError) as e:
         logger.error(f"Role session action failed: {e}")
-        return structured_error_response(
+        raise StructuredHTTPException(
             status_code=500,
-            code="internal_error",
+            code="INTERNAL_ERROR",
             message="An internal error occurred while processing the role session.",
             details={"exception": str(e)},
-        )
+        ) from e
 
 
 # ==================== Attachment Endpoints ====================
 
 
-@router.post("/v2/roles/sessions/{session_id}/actions/attach", dependencies=[Depends(require_auth)])
+@router.post(
+    "/v2/roles/sessions/{session_id}/actions/attach",
+    dependencies=[Depends(require_auth)],
+    response_model=SessionResponse,
+)
 async def attach_session(
     request: Request,
     session_id: str,
@@ -726,10 +764,11 @@ async def attach_session(
             )
 
             if not attachment:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise StructuredHTTPException(
+                    status_code=404,
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
+                )
 
             session = service.get_session(session_id)
 
@@ -740,13 +779,18 @@ async def attach_session(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
-@router.post("/v2/roles/sessions/{session_id}/actions/detach", dependencies=[Depends(require_auth)])
+@router.post(
+    "/v2/roles/sessions/{session_id}/actions/detach",
+    dependencies=[Depends(require_auth)],
+    response_model=SessionResponse,
+)
 async def detach_session(
     request: Request,
     session_id: str,
@@ -766,10 +810,11 @@ async def detach_session(
             success = service.detach_session(session_id)
 
             if not success:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise StructuredHTTPException(
+                    status_code=404,
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
+                )
 
             session = service.get_session(session_id)
 
@@ -779,16 +824,21 @@ async def detach_session(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
 # ==================== Export Endpoints ====================
 
 
-@router.get("/v2/roles/sessions/{session_id}/artifacts", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/sessions/{session_id}/artifacts",
+    dependencies=[Depends(require_auth)],
+    response_model=ArtifactListResponse,
+)
 async def get_artifacts(
     request: Request,
     session_id: str,
@@ -810,9 +860,10 @@ async def get_artifacts(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                raise HTTPException(
+                raise StructuredHTTPException(
                     status_code=404,
-                    detail=f"Session not found: {session_id}",
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
         # Use artifact service to list artifacts
@@ -825,13 +876,16 @@ async def get_artifacts(
         }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
-@router.get("/v2/roles/sessions/{session_id}/audit", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/sessions/{session_id}/audit", dependencies=[Depends(require_auth)], response_model=AuditLogResponse
+)
 async def get_audit(
     request: Request,
     session_id: str,
@@ -855,9 +909,10 @@ async def get_audit(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                raise HTTPException(
+                raise StructuredHTTPException(
                     status_code=404,
-                    detail=f"Session not found: {session_id}",
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
         # Use audit service to get events
@@ -870,16 +925,21 @@ async def get_audit(
         }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
 # ==================== Context OS Memory Endpoints ====================
 
 
-@router.get("/v2/roles/sessions/{session_id}/memory/search", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/sessions/{session_id}/memory/search",
+    dependencies=[Depends(require_auth)],
+    response_model=MemorySearchResponse,
+)
 async def search_session_memory(
     request: Request,
     session_id: str,
@@ -898,17 +958,21 @@ async def search_session_memory(
             limit=limit,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.search_memory(query)
 
     if not result.ok:
-        return {
-            "ok": False,
-            "error_code": result.error_code,
-            "error": result.error_message or "search_memory failed",
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code=result.error_code or "SEARCH_MEMORY_FAILED",
+            message=result.error_message or "search_memory failed",
+        )
 
     items = list(result.payload or [])
     return {
@@ -922,7 +986,11 @@ async def search_session_memory(
     }
 
 
-@router.get("/v2/roles/sessions/{session_id}/memory/artifacts/{artifact_id}", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/sessions/{session_id}/memory/artifacts/{artifact_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=ArtifactDetailResponse,
+)
 async def read_session_memory_artifact(
     request: Request,
     session_id: str,
@@ -939,17 +1007,21 @@ async def read_session_memory_artifact(
             end_line=end_line,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.read_artifact(query)
 
     if not result.ok:
-        return {
-            "ok": False,
-            "error_code": result.error_code,
-            "error": result.error_message or "read_artifact failed",
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code=result.error_code or "READ_ARTIFACT_FAILED",
+            message=result.error_message or "read_artifact failed",
+        )
 
     return {
         "ok": True,
@@ -958,7 +1030,11 @@ async def read_session_memory_artifact(
     }
 
 
-@router.get("/v2/roles/sessions/{session_id}/memory/episodes/{episode_id}", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/sessions/{session_id}/memory/episodes/{episode_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=EpisodeDetailResponse,
+)
 async def read_session_memory_episode(
     request: Request,
     session_id: str,
@@ -971,17 +1047,21 @@ async def read_session_memory_episode(
             episode_id=episode_id,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.read_episode(query)
 
     if not result.ok:
-        return {
-            "ok": False,
-            "error_code": result.error_code,
-            "error": result.error_message or "read_episode failed",
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code=result.error_code or "READ_EPISODE_FAILED",
+            message=result.error_message or "read_episode failed",
+        )
 
     return {
         "ok": True,
@@ -990,7 +1070,11 @@ async def read_session_memory_episode(
     }
 
 
-@router.get("/v2/roles/sessions/{session_id}/memory/state", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/sessions/{session_id}/memory/state",
+    dependencies=[Depends(require_auth)],
+    response_model=MemoryStateResponse,
+)
 async def read_session_memory_state(
     request: Request,
     session_id: str,
@@ -1003,17 +1087,21 @@ async def read_session_memory_state(
             path=path,
         )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_QUERY",
+            message=str(exc),
+        ) from exc
 
     with RoleSessionContextMemoryService() as service:
         result = service.get_state(query)
 
     if not result.ok:
-        return {
-            "ok": False,
-            "error_code": result.error_code,
-            "error": result.error_message or "get_state failed",
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code=result.error_code or "GET_STATE_FAILED",
+            message=result.error_message or "get_state failed",
+        )
 
     return {
         "ok": True,
@@ -1023,7 +1111,11 @@ async def read_session_memory_state(
     }
 
 
-@router.post("/v2/roles/sessions/{session_id}/actions/export", dependencies=[Depends(require_auth)])
+@router.post(
+    "/v2/roles/sessions/{session_id}/actions/export",
+    dependencies=[Depends(require_auth)],
+    response_model=SessionExportResponse,
+)
 async def export_session(
     request: Request,
     session_id: str,
@@ -1053,10 +1145,11 @@ async def export_session(
             )
 
             if not export_data:
-                return {
-                    "ok": False,
-                    "error": f"Session not found: {session_id}",
-                }
+                raise StructuredHTTPException(
+                    status_code=404,
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
+                )
 
             if payload.format == "markdown":
                 # 转换为 Markdown 格式
@@ -1079,16 +1172,21 @@ async def export_session(
             }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
 # ==================== Export to Workflow Endpoint ====================
 
 
-@router.post("/v2/roles/sessions/{session_id}/actions/export-to-workflow", dependencies=[Depends(require_auth)])
+@router.post(
+    "/v2/roles/sessions/{session_id}/actions/export-to-workflow",
+    dependencies=[Depends(require_auth)],
+    response_model=WorkflowExportResponse,
+)
 async def export_to_workflow(
     request: Request,
     session_id: str,
@@ -1125,9 +1223,10 @@ async def export_to_workflow(
         with RoleSessionService() as service:
             session = service.get_session(session_id)
             if not session:
-                raise HTTPException(
+                raise StructuredHTTPException(
                     status_code=404,
-                    detail=f"Session not found: {session_id}",
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
                 )
 
         # 1. Collect session content
@@ -1251,16 +1350,21 @@ async def export_to_workflow(
         }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
 
 
 # ==================== Capabilities Endpoint ====================
 
 
-@router.get("/v2/roles/capabilities/{role}", dependencies=[Depends(require_auth)])
+@router.get(
+    "/v2/roles/capabilities/{role}",
+    dependencies=[Depends(require_auth)],
+    response_model=RoleCapabilitiesResponse,
+)
 async def get_role_capabilities(
     request: Request,
     role: str,
@@ -1291,7 +1395,8 @@ async def get_role_capabilities(
         }
 
     except (RuntimeError, ValueError) as e:
-        return {
-            "ok": False,
-            "error": str(e),
-        }
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from polaris.cells.factory.pipeline.public import (
     TERMINAL_RUN_STATUSES,
@@ -38,6 +38,7 @@ from polaris.cells.storage.layout.public.service import (
     save_persisted_settings,
     sync_process_settings_environment,
 )
+from polaris.delivery.http.routers._shared import StructuredHTTPException
 from polaris.delivery.http.routers.sse_utils import (
     create_sse_jetstream_consumer,
     sse_jetstream_generator,
@@ -91,7 +92,9 @@ def _get_service(workspace: str) -> FactoryRunService:
 def _resolve_workspace(state: AppState, workspace: str | None = None) -> str:
     requested = str(workspace or getattr(state.settings, "workspace", "") or "").strip()
     if not requested:
-        raise HTTPException(status_code=400, detail="workspace not configured")
+        raise StructuredHTTPException(
+            status_code=400, code="WORKSPACE_NOT_CONFIGURED", message="workspace not configured"
+        )
     return str(Path(requested).resolve())
 
 
@@ -933,7 +936,7 @@ async def get_factory_run_status(
     service = _get_service(_resolve_workspace(state))
     run = await service.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
     return _map_service_run_to_contract(run)
 
 
@@ -947,7 +950,7 @@ async def get_factory_run_events(
     service = _get_service(_resolve_workspace(state))
     run = await service.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     events = await service.get_run_events(run_id)
     return events[-limit:]
@@ -964,7 +967,7 @@ async def get_factory_run_audit_bundle(
     service = _get_service(workspace)
     run = await service.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     events = await service.get_run_events(run_id)
     artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
@@ -1014,7 +1017,7 @@ async def stream_factory_run_events(
     service = _get_service(workspace)
     run = await service.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     async def event_generator():
         last_event_count = 0
@@ -1039,7 +1042,7 @@ async def stream_factory_run_events(
                 last_event_count += 1
 
             if current_run.status in TERMINAL_RUN_STATUSES:
-                yield f"event: done\ndata: {snapshot_payload}\n\n"
+                yield f"event: complete\ndata: {snapshot_payload}\n\n"
                 return
 
             await asyncio.sleep(0.5)
@@ -1065,18 +1068,16 @@ async def control_factory_run(
     service = _get_service(_resolve_workspace(state))
     run = await service.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     if payload.action == "cancel":
         return _map_service_run_to_contract(await service.cancel_run(run_id, payload.reason))
 
-    raise HTTPException(
+    raise StructuredHTTPException(
         status_code=501,
-        detail={
-            "error": "NOT_IMPLEMENTED",
-            "message": f"Factory action '{payload.action}' is not implemented in this phase",
-            "supported_actions": ["cancel"],
-        },
+        code="INVALID_REQUEST",
+        message=f"Factory action '{payload.action}' is not implemented in this phase",
+        details={"supported_actions": ["cancel"]},
     )
 
 
@@ -1090,7 +1091,7 @@ async def get_factory_run_artifacts(
     service = _get_service(workspace)
     run = await service.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
     return _build_artifacts_response(run=run, artifacts=artifacts)

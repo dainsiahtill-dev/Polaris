@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from polaris.cells.llm.dialogue.public.service import (
     generate_dialogue_turn as generate_docs_dialogue_turn,
@@ -25,12 +25,16 @@ from polaris.cells.workspace.integrity.internal.workspace_service import (
     is_safe_docs_path,
     select_docs_target_root,
 )
-from polaris.delivery.http.routers._shared import get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas import (
     DocsInitApplyPayload,
+    DocsInitApplyResponse,
     DocsInitDialoguePayload,
+    DocsInitDialogueResponse,
     DocsInitPreviewPayload,
+    DocsInitPreviewResponse,
     DocsInitSuggestPayload,
+    DocsInitSuggestResponse,
 )
 from polaris.kernelone.events import emit_event
 from polaris.kernelone.llm import config_store as llm_config
@@ -91,21 +95,37 @@ def _bind_docs_wizard_llm_from_architect_role(state: AppState) -> dict[str, Any]
     docs_cfg = roles.get("docs") if isinstance(roles.get("docs"), dict) else None
     role_cfg = architect_cfg or docs_cfg
     if not isinstance(role_cfg, dict):
-        raise HTTPException(status_code=409, detail="Architect角色未配置，请先在 LLM 设置中完成角色绑定。")
+        raise StructuredHTTPException(
+            status_code=409,
+            code="ARCHITECT_NOT_CONFIGURED",
+            message="Architect角色未配置，请先在 LLM 设置中完成角色绑定。",
+        )
 
     provider_id = str(role_cfg.get("provider_id") or "").strip()
     model = str(role_cfg.get("model") or "").strip()
     if not provider_id or not model:
-        raise HTTPException(status_code=409, detail="Architect角色缺少 provider_id/model，请先完成角色绑定。")
+        raise StructuredHTTPException(
+            status_code=409,
+            code="ARCHITECT_NOT_CONFIGURED",
+            message="Architect角色缺少 provider_id/model，请先完成角色绑定。",
+        )
 
     providers = config.get("providers") or {}
     provider_cfg = providers.get(provider_id) if isinstance(providers.get(provider_id), dict) else None
     if not isinstance(provider_cfg, dict):
-        raise HTTPException(status_code=409, detail=f"Architect绑定的提供商不存在: {provider_id}")
+        raise StructuredHTTPException(
+            status_code=409,
+            code="ARCHITECT_NOT_CONFIGURED",
+            message=f"Architect绑定的提供商不存在: {provider_id}",
+        )
 
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
     if not provider_type:
-        raise HTTPException(status_code=409, detail=f"Architect绑定的提供商缺少 type: {provider_id}")
+        raise StructuredHTTPException(
+            status_code=409,
+            code="ARCHITECT_NOT_CONFIGURED",
+            message=f"Architect绑定的提供商缺少 type: {provider_id}",
+        )
 
     # Keep docs wizard runtime aligned with architect role without restricting provider type.
     state.settings.architect_spec_provider = provider_type
@@ -153,14 +173,8 @@ def _join_lines(value: Any) -> str:
     return ""
 
 
-@router.post("/docs/init/dialogue", dependencies=[Depends(require_auth)])
-async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload) -> dict[str, Any]:
-    state = get_state(request)
-    workspace = state.settings.workspace
-    workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
-    _bind_docs_wizard_llm_from_architect_role(state)
-
-    fields = {
+def _build_fields(payload: DocsInitDialoguePayload | DocsInitSuggestPayload | DocsInitPreviewPayload) -> dict[str, str]:
+    return {
         "goal": payload.goal or "",
         "in_scope": payload.in_scope or "",
         "out_of_scope": payload.out_of_scope or "",
@@ -168,6 +182,9 @@ async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload)
         "definition_of_done": payload.definition_of_done or "",
         "backlog": payload.backlog or "",
     }
+
+
+def _build_history(payload: DocsInitDialoguePayload) -> list[dict[str, Any]]:
     history: list[dict[str, Any]] = []
     for turn in payload.history or []:
         role = str(turn.role or "").strip().lower()
@@ -179,6 +196,17 @@ async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload)
         if questions:
             row["questions"] = questions
         history.append(row)
+    return history
+
+
+async def _docs_init_dialogue_core(request: Request, payload: DocsInitDialoguePayload) -> DocsInitDialogueResponse:
+    state = get_state(request)
+    workspace = state.settings.workspace
+    workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
+    _bind_docs_wizard_llm_from_architect_role(state)
+
+    fields = _build_fields(payload)
+    history = _build_history(payload)
 
     result = await generate_docs_dialogue_turn(
         workspace=workspace_str,
@@ -188,21 +216,22 @@ async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload)
         message=str(payload.message or ""),
     )
     if not result:
-        raise HTTPException(
+        raise StructuredHTTPException(
             status_code=409,
-            detail="Architect role LLM Dialogue failed: output may be truncated or format mismatch; please check max_tokens, model output format, and network connectivity.",
+            code="ARCHITECT_NOT_CONFIGURED",
+            message="Architect role LLM Dialogue failed: output may be truncated or format mismatch; please check max_tokens, model output format, and network connectivity.",
         )
 
     result_fields = result.get("fields")
     out_fields: dict[str, Any] = result_fields if isinstance(result_fields, dict) else {}
-    return {
-        "ok": True,
-        "reply": str(result.get("reply") or ""),
-        "questions": result.get("questions") or [],
-        "tiaochen": result.get("tiaochen") or [],
-        "meta": result.get("meta") or {},
-        "handoffs": result.get("handoffs") or {},
-        "fields": {
+    return DocsInitDialogueResponse(
+        ok=True,
+        reply=str(result.get("reply") or ""),
+        questions=result.get("questions") or [],
+        tiaochen=result.get("tiaochen") or [],
+        meta=result.get("meta") or {},
+        handoffs=result.get("handoffs") or {},
+        fields={
             "goal": _join_lines(out_fields.get("goal") or ""),
             "in_scope": _join_lines(out_fields.get("in_scope") or ""),
             "out_of_scope": _join_lines(out_fields.get("out_of_scope") or ""),
@@ -210,40 +239,28 @@ async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload)
             "definition_of_done": _join_lines(out_fields.get("definition_of_done") or ""),
             "backlog": _join_lines(out_fields.get("backlog") or ""),
         },
-    }
+    )
 
 
-@router.post("/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
-async def docs_init_dialogue_stream(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
-    """Stream docs dialogue turn using Server-Sent Events (SSE).
+@router.post("/v2/docs/init/dialogue", dependencies=[Depends(require_auth)], response_model=DocsInitDialogueResponse)
+async def docs_init_dialogue_v2(request: Request, payload: DocsInitDialoguePayload) -> DocsInitDialogueResponse:
+    return await _docs_init_dialogue_core(request, payload)
 
-    Emits ``thinking_chunk`` events with incremental LLM tokens,
-    followed by a terminal ``complete`` event with the parsed result.
-    """
+
+@router.post("/docs/init/dialogue", dependencies=[Depends(require_auth)], response_model=DocsInitDialogueResponse)
+async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload) -> DocsInitDialogueResponse:
+    # DEPRECATED
+    return await _docs_init_dialogue_core(request, payload)
+
+
+async def _docs_init_dialogue_stream_core(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
     _bind_docs_wizard_llm_from_architect_role(state)
 
-    fields = {
-        "goal": payload.goal or "",
-        "in_scope": payload.in_scope or "",
-        "out_of_scope": payload.out_of_scope or "",
-        "constraints": payload.constraints or "",
-        "definition_of_done": payload.definition_of_done or "",
-        "backlog": payload.backlog or "",
-    }
-    history: list[dict[str, Any]] = []
-    for turn in payload.history or []:
-        role = str(turn.role or "").strip().lower()
-        content = str(turn.content or "").strip()
-        if role not in ("user", "assistant") or not content:
-            continue
-        questions = [str(item).strip() for item in (turn.questions or []) if str(item).strip()]
-        row: dict[str, Any] = {"role": role, "content": content}
-        if questions:
-            row["questions"] = questions
-        history.append(row)
+    fields = _build_fields(payload)
+    history = _build_history(payload)
 
     async def _run_dialogue(queue: asyncio.Queue[dict[str, Any]]) -> None:
         await generate_docs_dialogue_turn_streaming(
@@ -258,26 +275,33 @@ async def docs_init_dialogue_stream(request: Request, payload: DocsInitDialogueP
     return create_sse_response(sse_event_generator(_run_dialogue))
 
 
-@router.post("/docs/init/suggest", dependencies=[Depends(require_auth)])
-async def docs_init_suggest(request: Request, payload: DocsInitSuggestPayload) -> dict[str, Any]:
+@router.post("/v2/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
+async def docs_init_dialogue_stream_v2(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
+    return await _docs_init_dialogue_stream_core(request, payload)
+
+
+@router.post("/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
+async def docs_init_dialogue_stream(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
+    # DEPRECATED
+    return await _docs_init_dialogue_stream_core(request, payload)
+
+
+async def _docs_init_suggest_core(request: Request, payload: DocsInitSuggestPayload) -> DocsInitSuggestResponse:
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
     _bind_docs_wizard_llm_from_architect_role(state)
-    fields = {
-        "goal": payload.goal or "",
-        "in_scope": payload.in_scope or "",
-        "out_of_scope": payload.out_of_scope or "",
-        "constraints": payload.constraints or "",
-        "definition_of_done": payload.definition_of_done or "",
-        "backlog": payload.backlog or "",
-    }
+    fields = _build_fields(payload)
     ai_fields = await generate_docs_ai_fields(workspace_str, state.settings, fields)
     if not ai_fields:
-        raise HTTPException(status_code=409, detail="Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。")
-    return {
-        "ok": True,
-        "fields": {
+        raise StructuredHTTPException(
+            status_code=409,
+            code="ARCHITECT_NOT_CONFIGURED",
+            message="Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。",
+        )
+    return DocsInitSuggestResponse(
+        ok=True,
+        fields={
             "goal": "\n".join(ai_fields.get("goal") or []),
             "in_scope": "\n".join(ai_fields.get("in_scope") or []),
             "out_of_scope": "\n".join(ai_fields.get("out_of_scope") or []),
@@ -285,11 +309,21 @@ async def docs_init_suggest(request: Request, payload: DocsInitSuggestPayload) -
             "definition_of_done": "\n".join(ai_fields.get("definition_of_done") or []),
             "backlog": "\n".join(ai_fields.get("backlog") or []),
         },
-    }
+    )
 
 
-@router.post("/docs/init/preview", dependencies=[Depends(require_auth)])
-async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -> dict[str, Any]:
+@router.post("/v2/docs/init/suggest", dependencies=[Depends(require_auth)], response_model=DocsInitSuggestResponse)
+async def docs_init_suggest_v2(request: Request, payload: DocsInitSuggestPayload) -> DocsInitSuggestResponse:
+    return await _docs_init_suggest_core(request, payload)
+
+
+@router.post("/docs/init/suggest", dependencies=[Depends(require_auth)], response_model=DocsInitSuggestResponse)
+async def docs_init_suggest(request: Request, payload: DocsInitSuggestPayload) -> DocsInitSuggestResponse:
+    # DEPRECATED
+    return await _docs_init_suggest_core(request, payload)
+
+
+async def _docs_init_preview_core(request: Request, payload: DocsInitPreviewPayload) -> DocsInitPreviewResponse:
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
@@ -300,17 +334,14 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
     profile = detect_project_profile(workspace_str)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace_str)
     qa_commands = default_qa_commands(profile)
-    fields = {
-        "goal": payload.goal or "",
-        "in_scope": payload.in_scope or "",
-        "out_of_scope": payload.out_of_scope or "",
-        "constraints": payload.constraints or "",
-        "definition_of_done": payload.definition_of_done or "",
-        "backlog": payload.backlog or "",
-    }
+    fields = _build_fields(payload)
     ai_fields = await generate_docs_ai_fields(workspace_str, state.settings, fields)
     if not ai_fields:
-        raise HTTPException(status_code=409, detail="Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。")
+        raise StructuredHTTPException(
+            status_code=409,
+            code="ARCHITECT_NOT_CONFIGURED",
+            message="Architect角色 LLM 不可用，请检查 provider/model 与网络连通性。",
+        )
     if ai_fields.get("goal"):
         fields["goal"] = "\n".join(ai_fields.get("goal") or [])
     if ai_fields.get("in_scope"):
@@ -325,30 +356,42 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
         fields["backlog"] = "\n".join(ai_fields.get("backlog") or [])
     docs_map = build_docs_templates(workspace_str, mode, fields, qa_commands)
     target_root = select_docs_target_root(workspace_str)
-    files: list[dict[str, Any]] = []
+    from polaris.delivery.http.schemas.common import DocsInitPreviewFile
+
+    files: list[DocsInitPreviewFile] = []
     for rel_path, content in docs_map.items():
         suffix = rel_path.replace("docs/", "", 1)
         target_path = target_root.rstrip("/") + "/" + suffix if target_root != "docs" else rel_path
         full_path = resolve_artifact_path(workspace_str, cache_root, normalize_rel_path(target_path))
         files.append(
-            {
-                "path": target_path.replace("\\", "/"),
-                "content": content,
-                "exists": os.path.isfile(full_path),
-            }
+            DocsInitPreviewFile(
+                path=target_path.replace("\\", "/"),
+                content=content,
+                exists=os.path.isfile(full_path),
+            )
         )
-    return {
-        "ok": True,
-        "mode": mode,
-        "target_root": target_root,
-        "docs_exists": workspace_has_docs(workspace_str),
-        "project": profile,
-        "files": files,
-    }
+    return DocsInitPreviewResponse(
+        ok=True,
+        mode=mode,
+        target_root=target_root,
+        docs_exists=workspace_has_docs(workspace_str),
+        project=profile,
+        files=files,
+    )
 
 
-@router.post("/docs/init/preview/stream", dependencies=[Depends(require_auth)])
-async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
+@router.post("/v2/docs/init/preview", dependencies=[Depends(require_auth)], response_model=DocsInitPreviewResponse)
+async def docs_init_preview_v2(request: Request, payload: DocsInitPreviewPayload) -> DocsInitPreviewResponse:
+    return await _docs_init_preview_core(request, payload)
+
+
+@router.post("/docs/init/preview", dependencies=[Depends(require_auth)], response_model=DocsInitPreviewResponse)
+async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -> DocsInitPreviewResponse:
+    # DEPRECATED
+    return await _docs_init_preview_core(request, payload)
+
+
+async def _docs_init_preview_stream_core(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
     """流式生成文档预览（SSE），实时显示执行进度"""
 
     state = get_state(request)
@@ -483,27 +526,53 @@ async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPay
     return create_sse_response(sse_event_generator(_generate_preview_stream, timeout=180.0))
 
 
-@router.post("/docs/init/apply", dependencies=[Depends(require_auth)])
-def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> dict[str, Any]:
+@router.post("/v2/docs/init/preview/stream", dependencies=[Depends(require_auth)])
+async def docs_init_preview_stream_v2(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
+    return await _docs_init_preview_stream_core(request, payload)
+
+
+@router.post("/docs/init/preview/stream", dependencies=[Depends(require_auth)])
+async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
+    # DEPRECATED
+    return await _docs_init_preview_stream_core(request, payload)
+
+
+def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
     cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace_str)
     target_root = normalize_rel_path(payload.target_root or "workspace/docs")
     if not target_root or not target_root.lower().startswith("workspace/docs"):
-        raise HTTPException(status_code=400, detail="target_root must be under workspace/docs/")
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_DOCS_PATH",
+            message="target_root must be under workspace/docs/",
+        )
     files = payload.files or []
     if not files:
-        raise HTTPException(status_code=400, detail="no files to write")
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_REQUEST",
+            message="no files to write",
+        )
     created: list[str] = []
     for item in files:
         rel_path = normalize_rel_path(item.path)
         if not is_safe_docs_path(rel_path, target_root):
-            raise HTTPException(status_code=400, detail=f"invalid docs path: {item.path}")
+            raise StructuredHTTPException(
+                status_code=400,
+                code="INVALID_DOCS_PATH",
+                message=f"invalid docs path: {item.path}",
+            )
         try:
             full_path = resolve_artifact_path(workspace_str, cache_root, rel_path)
         except (RuntimeError, ValueError) as e:
-            raise HTTPException(status_code=400, detail=f"invalid docs path: {item.path}") from e
+            raise StructuredHTTPException(
+                status_code=400,
+                code="INVALID_DOCS_PATH",
+                message=f"invalid docs path: {item.path}",
+            ) from e
         write_text_atomic(full_path, item.content or "")
         created.append(rel_path.replace("\\", "/"))
     # Record init event (best effort, with semantic suppression in emit_event)
@@ -528,4 +597,15 @@ def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> dict[str
         _sync_plan_to_runtime(workspace_str, cache_root)
     except (RuntimeError, ValueError):
         log.warning("PLAN_SYNC_FAIL: post-apply sync failed", exc_info=True)
-    return {"ok": True, "files": created}
+    return DocsInitApplyResponse(ok=True, files=created)
+
+
+@router.post("/v2/docs/init/apply", dependencies=[Depends(require_auth)], response_model=DocsInitApplyResponse)
+def docs_init_apply_v2(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:
+    return _docs_init_apply_core(request, payload)
+
+
+@router.post("/docs/init/apply", dependencies=[Depends(require_auth)], response_model=DocsInitApplyResponse)
+def docs_init_apply(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:
+    # DEPRECATED
+    return _docs_init_apply_core(request, payload)

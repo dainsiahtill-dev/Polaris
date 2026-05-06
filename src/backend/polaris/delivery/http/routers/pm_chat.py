@@ -13,18 +13,19 @@ from polaris.delivery.http.routers.sse_utils import (
     create_sse_response,
     sse_event_generator,
 )
+from polaris.delivery.http.schemas.common import PMChatPingResponse, PMChatStatusResponse
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
-from ._shared import get_state, require_auth
+from ._shared import StructuredHTTPException, get_state, require_auth
 
 router = APIRouter()
 
 
-@router.get("/v2/pm/chat/ping", dependencies=[Depends(require_auth)])
+@router.get("/v2/pm/chat/ping", response_model=PMChatPingResponse, dependencies=[Depends(require_auth)])
 def pm_chat_ping() -> dict[str, str]:
     """简单的ping测试端点"""
-    return {"status": "ok", "message": "PM Chat router is working"}
+    return {"status": "ok", "message": "PM Chat router is working", "role": "pm"}
 
 
 @router.post("/v2/pm/chat", dependencies=[Depends(require_auth)])
@@ -50,10 +51,11 @@ async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
 
     message = str(payload.get("message") or "").strip()
     if not message:
-        return {
-            "ok": False,
-            "error": "message is required",
-        }
+        raise StructuredHTTPException(
+            status_code=422,
+            code="MISSING_MESSAGE",
+            message="message is required",
+        )
 
     try:
         result = await generate_role_response(
@@ -66,10 +68,11 @@ async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, **result}
 
     except (RuntimeError, ValueError) as exc:
-        return {
-            "ok": False,
-            "error": str(exc),
-        }
+        raise StructuredHTTPException(
+            status_code=500,
+            code="ROLE_RESPONSE_ERROR",
+            message=str(exc),
+        ) from exc
 
 
 @router.post("/v2/pm/chat/stream", dependencies=[Depends(require_auth)])
@@ -114,10 +117,10 @@ async def pm_chat_stream(request: Request, payload: dict[str, Any]):
 async def _error_generator(message: str):
     """错误事件生成器"""
     yield f"event: error\ndata: {message}\n\n"
-    yield "event: done\ndata: {}\n\n"
+    yield "event: complete\ndata: {}\n\n"
 
 
-@router.get("/v2/pm/chat/status", dependencies=[Depends(require_auth)])
+@router.get("/v2/pm/chat/status", response_model=PMChatStatusResponse, dependencies=[Depends(require_auth)])
 def pm_chat_status(request: Request) -> dict[str, Any]:
     """获取PM角色LLM配置状态"""
     state = get_state(request)
@@ -140,41 +143,41 @@ def pm_chat_status(request: Request) -> dict[str, Any]:
 
         pm_role = roles.get("pm")
         if not isinstance(pm_role, dict):
-            return {
-                "ready": False,
-                "configured": False,
-                "error": "PM role not configured",
-                "debug": {
+            raise StructuredHTTPException(
+                status_code=409,
+                code="PM_ROLE_NOT_CONFIGURED",
+                message="PM role not configured",
+                details={
                     "roles_keys": list(roles.keys()) if roles else None,
                 },
-            }
+            )
 
         provider_id = str(pm_role.get("provider_id") or "").strip()
         model = str(pm_role.get("model") or "").strip()
 
         if not provider_id or not model:
-            return {
-                "ready": False,
-                "configured": False,
-                "error": "PM role provider or model not set",
-                "debug": {
+            raise StructuredHTTPException(
+                status_code=409,
+                code="PM_ROLE_PROVIDER_OR_MODEL_NOT_SET",
+                message="PM role provider or model not set",
+                details={
                     "pm_role": pm_role,
                     "provider_id": provider_id if provider_id else "(empty)",
                     "model": model if model else "(empty)",
                 },
-            }
+            )
 
         provider_cfg = providers.get(provider_id)
         if not isinstance(provider_cfg, dict):
-            return {
-                "ready": False,
-                "configured": False,
-                "error": f"Provider '{provider_id}' not found",
-                "debug": {
+            raise StructuredHTTPException(
+                status_code=409,
+                code="PROVIDER_NOT_FOUND",
+                message=f"Provider '{provider_id}' not found",
+                details={
                     "pm_role": pm_role,
                     "available_providers": list(providers.keys()),
                 },
-            }
+            )
 
         return {
             "ready": True,
@@ -195,10 +198,11 @@ def pm_chat_status(request: Request) -> dict[str, Any]:
     except (RuntimeError, ValueError) as exc:
         import traceback
 
-        return {
-            "ready": False,
-            "error": str(exc),
-            "debug": {
+        raise StructuredHTTPException(
+            status_code=500,
+            code="STATUS_CHECK_ERROR",
+            message=str(exc),
+            details={
                 "exception": traceback.format_exc(),
             },
-        }
+        ) from exc

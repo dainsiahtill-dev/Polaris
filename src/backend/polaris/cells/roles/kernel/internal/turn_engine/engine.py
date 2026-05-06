@@ -877,11 +877,7 @@ class TurnEngine(TurnEngineCompatMixin):
                         "turn_id": event.turn_id,
                     }
                 elif isinstance(event, FinalizationEvent):
-                    event_dict = {
-                        "type": "finalization",
-                        "mode": event.mode,
-                        "turn_id": event.turn_id,
-                    }
+                    continue
                 elif isinstance(event, CompletionEvent):
                     event_dict = {
                         "type": "complete",
@@ -924,7 +920,7 @@ class TurnEngine(TurnEngineCompatMixin):
                         "turn_id": event.turn_id,
                     }
                 else:
-                    event_dict = {"type": "unknown", "turn_id": getattr(event, "turn_id", turn_id)}
+                    continue
                 yield event_dict
         except Exception as exc:
             logger.exception("TransactionKernel execute_stream failed: turn_id=%s", turn_id)

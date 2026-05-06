@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from polaris.cells.policy.permission.public import (
     DecisionContext,
     PermissionService,
@@ -28,6 +28,7 @@ from polaris.cells.roles.profile.public import (
     SubjectType,
 )
 from polaris.delivery.http.dependencies import require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -197,10 +198,10 @@ async def check_permission(
 
     except ValueError as e:
         logger.error("Permission check invalid request: %s", e)
-        raise HTTPException(status_code=400, detail="invalid request") from e
+        raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message="invalid request") from e
     except RuntimeError as e:
         logger.error("Permission check failed: %s", e)
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
 @router.get("/effective", response_model=EffectivePermissionsResponse, dependencies=[Depends(require_auth)])
@@ -228,10 +229,10 @@ async def get_effective_permissions(
 
     except ValueError as e:
         logger.error("Get effective permissions invalid request: %s", e)
-        raise HTTPException(status_code=400, detail="invalid request") from e
+        raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message="invalid request") from e
     except RuntimeError as e:
         logger.error("Get effective permissions failed: %s", e)
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
 @router.get("/roles", response_model=RoleListResponse, dependencies=[Depends(require_auth)])
@@ -258,7 +259,7 @@ async def list_roles(
 
     except (RuntimeError, ValueError) as e:
         logger.error("List roles failed: %s", e)
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
 @router.post("/assign", response_model=RoleAssignResponse, dependencies=[Depends(require_auth)])
@@ -292,10 +293,10 @@ async def assign_role(
 
     except ValueError as e:
         logger.error("Assign role invalid request: %s", e)
-        raise HTTPException(status_code=400, detail="invalid request") from e
+        raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message="invalid request") from e
     except RuntimeError as e:
         logger.error("Assign role failed: %s", e)
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e
 
 
 @router.get("/policies", response_model=PolicyListResponse, dependencies=[Depends(require_auth)])
@@ -324,4 +325,4 @@ async def list_policies(
 
     except (RuntimeError, ValueError) as e:
         logger.error("List policies failed: %s", e)
-        raise HTTPException(status_code=500, detail="internal error") from e
+        raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from e

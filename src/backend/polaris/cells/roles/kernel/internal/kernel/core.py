@@ -1189,11 +1189,7 @@ class RoleExecutionKernel:
                     "error": event.error,
                 }
             elif isinstance(event, FinalizationEvent):
-                event_dict = {
-                    "type": "finalization",
-                    "mode": event.mode,
-                    "turn_id": event.turn_id,
-                }
+                continue
             elif isinstance(event, CompletionEvent):
                 final_content = "".join(accumulated_content)
                 final_thinking = "".join(accumulated_thinking) or None
@@ -1262,7 +1258,7 @@ class RoleExecutionKernel:
                     "turn_id": event.turn_id,
                 }
             else:
-                event_dict = {"type": "unknown", "turn_id": getattr(event, "turn_id", turn_id)}
+                continue
 
             await uep_publisher.publish_stream_event(
                 workspace=self.workspace or os.getcwd(),

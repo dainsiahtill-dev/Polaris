@@ -1,3 +1,4 @@
+# SHIM: mig-application-batch1 — migration shim pending full Cell migration (2026-03-20)
 """Application-layer orchestrator for the QA (Quality Assurance) domain.
 
 This module provides a high-level facade that encapsulates the QA audit
@@ -362,11 +363,7 @@ class QaOrchestrator:
                 verdict_str = "NEEDS_REVIEW"
 
             suggestions_raw = raw.details.get("suggestions") if isinstance(raw.details, dict) else None
-            suggestions = (
-                tuple(str(s) for s in suggestions_raw)
-                if isinstance(suggestions_raw, (list, tuple))
-                else ()
-            )
+            suggestions = tuple(str(s) for s in suggestions_raw) if isinstance(suggestions_raw, (list, tuple)) else ()
 
             return QaVerdictResult(
                 verdict=verdict_str,

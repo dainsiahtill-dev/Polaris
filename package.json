@@ -24,7 +24,7 @@
     "e2e:prepare": "npm run build:renderer",
     "test:e2e": "playwright test -c playwright.electron.config.ts",
     "pretest:e2e": "npm run e2e:prepare",
-    "test:e2e:panel": "playwright test -c playwright.electron.config.ts tests/electron/panel-error.spec.ts",
+    "test:e2e:panel": "playwright test -c playwright.electron.config.ts src/backend/polaris/tests/electron/panel-error.spec.ts",
     "pretest:e2e:panel": "npm run e2e:prepare",
     "test:e2e:task": "node --env-file-if-exists=.env infrastructure/scripts/run-panel-task-e2e.mjs",
     "test:e2e:semantic": "node --env-file-if-exists=.env infrastructure/scripts/run-stagehand-panel-task.mjs",

@@ -129,7 +129,6 @@ class StreamEventHandler:
         full_content: list[str] = []
         thinking_content: list[str] = []
         native_tool_calls: list[dict[str, Any]] = []
-        native_tool_provider = "auto"
         emitted_round_content = ""
         emitted_round_thinking = ""
         realtime_seen_tool_signatures: set[str] = set()
@@ -171,7 +170,7 @@ class StreamEventHandler:
                 raw_metadata = event.get("metadata")
                 metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
                 if tool_name:
-                    normalized_call, normalized_provider = normalize_stream_tool_call_payload(
+                    normalized_call, _normalized_provider = normalize_stream_tool_call_payload(
                         tool_name=tool_name,
                         tool_args=tool_args,
                         call_id=call_id,
@@ -179,8 +178,6 @@ class StreamEventHandler:
                     )
                     if normalized_call is not None:
                         native_tool_calls.append(normalized_call)
-                    if normalized_provider != "auto":
-                        native_tool_provider = normalized_provider
                     signature = tool_call_signature(tool_name, tool_args)
                     if signature not in realtime_seen_tool_signatures:
                         realtime_seen_tool_signatures.add(signature)
@@ -196,12 +193,7 @@ class StreamEventHandler:
                 yield {"type": "error", "error": error_message, "iteration": round_index}
                 return
             elif event_type == "context_metadata":
-                yield {
-                    "type": "context_metadata",
-                    "context_tokens": int(event.get("context_tokens", 0)),
-                    "usage": event.get("usage"),
-                    "iteration": round_index,
-                }
+                continue
             elif event_type == "complete":
                 if content and not full_content:
                     full_content.append(content)
@@ -258,15 +250,7 @@ class StreamEventHandler:
 
         self._patch_buffer.flush()
 
-        yield {
-            "type": "_internal_materialize",
-            "raw_output": "".join(full_content),
-            "thinking_content": thinking_content,
-            "native_tool_calls": native_tool_calls or None,
-            "native_tool_provider": native_tool_provider,
-            "emitted_round_content": emitted_round_content,
-            "emitted_round_thinking": emitted_round_thinking,
-        }
+        # _internal_materialize is intentionally not yielded to SSE
 
     @staticmethod
     def emit_deltas(

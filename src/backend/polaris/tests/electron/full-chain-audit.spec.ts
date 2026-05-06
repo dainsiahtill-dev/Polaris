@@ -53,6 +53,23 @@ function toPosixPath(filePath: string): string {
   return String(filePath || "").split(path.sep).join("/");
 }
 
+function resolveRepoRoot(startDir: string): string {
+  let current = path.resolve(startDir);
+  while (true) {
+    const packageJson = path.join(current, "package.json");
+    const electronMainEntry = path.join(current, "src", "electron", "main.cjs");
+    if (fs.existsSync(packageJson) && fs.existsSync(electronMainEntry)) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error(`repository root not found from ${startDir}`);
+    }
+    current = parent;
+  }
+}
+
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await fs.access(targetPath);
@@ -584,7 +601,7 @@ test.setTimeout(70 * 60 * 1000);
 test("unattended full-chain audit with strong JSON evidence package", async ({ window, testEnv }, testInfo) => {
   test.skip(!testEnv.useRealSettings, "Set KERNELONE_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
 
-  const repoRoot = path.resolve(__dirname, "..", "..");
+  const repoRoot = resolveRepoRoot(__dirname);
   const logsRoot = path.join(repoRoot, ".polaris", "logs");
   const startEpochSeconds = Date.now() / 1000;
   const auditPath = path.join(logsRoot, `full_chain_audit_${new Date().toISOString().replace(/[:.]/g, "-")}.json`);

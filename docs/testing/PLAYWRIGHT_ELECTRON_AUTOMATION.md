@@ -11,11 +11,11 @@ npm install
 npx playwright install
 
 # 非 LLM 主流程回归（推荐）
-npm run test:e2e -- tests/electron/realtime-visibility.spec.ts tests/electron/panel-error.spec.ts
+npm run test:e2e -- src/backend/polaris/tests/electron/realtime-visibility.spec.ts src/backend/polaris/tests/electron/panel-error.spec.ts
 
 # PM -> Director 全链路（需要真实设置）
 set KERNELONE_E2E_USE_REAL_SETTINGS=1
-npm run test:e2e -- tests/electron/pm-director-real-flow.spec.ts
+npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts
 
 # Claude 无人值守修复循环（真实 PM -> Director 全链路）
 npm run auto:fix:real-flow
@@ -55,9 +55,9 @@ npm run test:e2e
 ## 2. 当前实现总览（代码入口）
 
 1. Playwright 配置：`playwright.electron.config.ts`
-2. Electron 测试夹具：`tests/electron/fixtures.ts`
-3. 固定门禁模板用例：`tests/electron/panel-error.spec.ts`
-4. 一句话任务用例：`tests/electron/panel-task.spec.ts`
+2. Electron 测试夹具：`src/backend/polaris/tests/electron/fixtures.ts`
+3. 固定门禁模板用例：`src/backend/polaris/tests/electron/panel-error.spec.ts`
+4. 一句话任务用例：`src/backend/polaris/tests/electron/panel-task.spec.ts`
 5. 任务解析器（自然语言 -> 可执行步骤）：`infrastructure/scripts/resolve-panel-task.mjs`
 6. 一句话任务执行入口：`infrastructure/scripts/run-panel-task-e2e.mjs`
 7. Stagehand 语义兜底入口：`infrastructure/scripts/run-stagehand-panel-task.mjs`
@@ -84,9 +84,9 @@ npm run test:e2e
 1. 全量 Electron E2E：`npm run test:e2e`
 2. 面板门禁模板：`npm run test:e2e:panel`
 3. 非 LLM 可见性回归：
-   `npm run test:e2e -- tests/electron/realtime-visibility.spec.ts tests/electron/panel-error.spec.ts`
+   `npm run test:e2e -- src/backend/polaris/tests/electron/realtime-visibility.spec.ts src/backend/polaris/tests/electron/panel-error.spec.ts`
 4. PM -> Director 全链路：
-   `set KERNELONE_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- tests/electron/pm-director-real-flow.spec.ts`
+   `set KERNELONE_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts`
 5. 任务合同 dry-run（仅结构检查，不执行）：
    `npm run test:e2e:task -- --dry-run --task-file infrastructure/e2e/tasks/complex-project-fullstack.task.json`
 6. 混合栈 dry-run：
@@ -139,7 +139,7 @@ npm run test:e2e
 3. Panel Gate  
 执行面板导航与字段操作，断言目标行为成功
 
-对应实现见：`tests/electron/panel-error.spec.ts` 与 `tests/electron/panel-task.spec.ts`。
+对应实现见：`src/backend/polaris/tests/electron/panel-error.spec.ts` 与 `src/backend/polaris/tests/electron/panel-task.spec.ts`。
 
 ---
 
@@ -230,7 +230,7 @@ npm run test:e2e
 4. `intents` 中补充动作意图词（如输入/点击/切换）
 
 ### 9.2 新增复杂交互动作（代码扩展）
-当词典驱动不够时，在 `tests/electron/panel-task.spec.ts` 增加动作处理逻辑：
+当词典驱动不够时，在 `src/backend/polaris/tests/electron/panel-task.spec.ts` 增加动作处理逻辑：
 
 1. 在 `executeNavigationStep` 增加特殊导航策略
 2. 在 `resolveFieldLocator` 增加字段定位策略

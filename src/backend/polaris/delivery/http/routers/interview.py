@@ -12,7 +12,12 @@ from polaris.cells.llm.evaluation.public.service import (
     generate_interview_answer,
     generate_interview_answer_streaming,
 )
-from polaris.delivery.http.routers._shared import get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.schemas import (
+    InterviewAskResponse,
+    InterviewCancelResponse,
+    InterviewSaveResponse,
+)
 
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
 from .sse_utils import create_sse_response, sse_event_generator
@@ -33,7 +38,11 @@ async def run_interactive_interview_question(settings, role, provider_id, model,
     )
 
     if result is None:
-        return {"ok": False, "error": "Failed to generate interview answer"}
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERVIEW_GENERATION_FAILED",
+            message="Failed to generate interview answer",
+        )
 
     return {
         "ok": True,
@@ -75,7 +84,9 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/llm/interview/ask", dependencies=[Depends(require_auth)])
+@router.post(
+    "/llm/interview/ask", dependencies=[Depends(require_auth)], response_model=InterviewAskResponse
+)  # DEPRECATED
 async def llm_interview_ask(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
     state = get_state(request)
     return await run_interactive_interview_question(
@@ -95,7 +106,29 @@ async def llm_interview_ask(request: Request, payload: InterviewAskPayload) -> d
     )
 
 
-@router.post("/llm/interview/save", dependencies=[Depends(require_auth)])
+@router.post("/v2/llm/interview/ask", dependencies=[Depends(require_auth)], response_model=InterviewAskResponse)
+async def v2_llm_interview_ask(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
+    state = get_state(request)
+    return await run_interactive_interview_question(
+        state.settings,
+        payload.role,
+        payload.provider_id,
+        payload.model,
+        payload.question,
+        session_id=payload.session_id,
+        context=payload.context,
+        expects_thinking=payload.expects_thinking,
+        criteria=payload.criteria,
+        api_key=payload.api_key,
+        extra_headers=payload.headers,
+        env_overrides=payload.env_overrides,
+        debug=payload.debug,
+    )
+
+
+@router.post(
+    "/llm/interview/save", dependencies=[Depends(require_auth)], response_model=InterviewSaveResponse
+)  # DEPRECATED
 def llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[str, Any]:
     state = get_state(request)
     return save_interactive_interview_report(
@@ -108,14 +141,68 @@ def llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[
     )
 
 
-@router.post("/llm/interview/cancel", dependencies=[Depends(require_auth)])
+@router.post("/v2/llm/interview/save", dependencies=[Depends(require_auth)], response_model=InterviewSaveResponse)
+def v2_llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[str, Any]:
+    state = get_state(request)
+    return save_interactive_interview_report(
+        state.settings,
+        payload.role,
+        payload.provider_id,
+        payload.model,
+        payload.report,
+        session_id=payload.session_id,
+    )
+
+
+@router.post(
+    "/llm/interview/cancel", dependencies=[Depends(require_auth)], response_model=InterviewCancelResponse
+)  # DEPRECATED
 def llm_interview_cancel(payload: InterviewCancelPayload) -> dict[str, Any]:
     # Best-effort cancellation (primarily for Codex CLI streaming subprocess).
     return cancel_interactive_interview_stream(payload.session_id)
 
 
-@router.post("/llm/interview/stream", dependencies=[Depends(require_auth)])
+@router.post("/v2/llm/interview/cancel", dependencies=[Depends(require_auth)], response_model=InterviewCancelResponse)
+def v2_llm_interview_cancel(payload: InterviewCancelPayload) -> dict[str, Any]:
+    # Best-effort cancellation (primarily for Codex CLI streaming subprocess).
+    return cancel_interactive_interview_stream(payload.session_id)
+
+
+@router.post("/llm/interview/stream", dependencies=[Depends(require_auth)])  # DEPRECATED
 async def llm_interview_stream(request: Request, payload: InterviewAskPayload):
+    """Stream interview responses using Server-Sent Events (SSE)
+
+    This endpoint provides real-time output from the LLM as it executes,
+    allowing the client to see progress before the final result is ready.
+    """
+    state = get_state(request)
+    run_id = payload.session_id or f"interactive-{uuid4().hex}"
+
+    async def _run_interview(queue: asyncio.Queue) -> None:
+        await run_interactive_interview_streaming(
+            state.settings,
+            payload.role,
+            payload.provider_id,
+            payload.model,
+            payload.question,
+            session_id=run_id,
+            context=payload.context,
+            expects_thinking=payload.expects_thinking,
+            criteria=payload.criteria,
+            api_key=payload.api_key,
+            extra_headers=payload.headers,
+            env_overrides=payload.env_overrides,
+            output_queue=queue,
+        )
+
+    async def _cleanup() -> None:
+        await asyncio.to_thread(cancel_interactive_interview_stream, run_id)
+
+    return create_sse_response(sse_event_generator(_run_interview, cleanup_fn=_cleanup))
+
+
+@router.post("/v2/llm/interview/stream", dependencies=[Depends(require_auth)])
+async def v2_llm_interview_stream(request: Request, payload: InterviewAskPayload):
     """Stream interview responses using Server-Sent Events (SSE)
 
     This endpoint provides real-time output from the LLM as it executes,

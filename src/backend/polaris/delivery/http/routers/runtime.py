@@ -10,6 +10,12 @@ from polaris.cells.runtime.state_owner.public.service import (
     reset_runtime_records,
 )
 from polaris.cells.storage.layout.public import polaris_home
+from polaris.delivery.http.schemas.common import (
+    RuntimeClearResponse,
+    RuntimeMigrationStatusResponse,
+    RuntimeResetTasksResponse,
+    RuntimeStorageLayoutResponse,
+)
 from polaris.kernelone._runtime_config import resolve_env_str
 from polaris.kernelone.process import (
     clear_director_stop_flag,
@@ -79,8 +85,7 @@ class RuntimeClearPayload(BaseModel):
     scope: Literal["pm", "director", "dialogue", "all"] = "all"
 
 
-@router.get("/runtime/storage-layout", dependencies=[Depends(require_auth)])
-async def runtime_storage_layout(request: Request) -> dict[str, Any]:
+def _runtime_storage_layout_core(request: Request) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -151,8 +156,25 @@ async def runtime_storage_layout(request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/runtime/clear", dependencies=[Depends(require_auth)])
-async def runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:
+@router.get(
+    "/runtime/storage-layout",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeStorageLayoutResponse,
+)
+async def runtime_storage_layout(request: Request) -> dict[str, Any]:  # DEPRECATED
+    return _runtime_storage_layout_core(request)
+
+
+@router.get(
+    "/v2/runtime/storage/layout",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeStorageLayoutResponse,
+)
+async def v2_runtime_storage_layout(request: Request) -> dict[str, Any]:
+    return _runtime_storage_layout_core(request)
+
+
+def _runtime_clear_core(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -166,8 +188,25 @@ async def runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[
     }
 
 
-@router.get("/runtime/migration-status", dependencies=[Depends(require_auth)])
-async def runtime_migration_status(request: Request) -> dict[str, Any]:
+@router.post(
+    "/runtime/clear",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeClearResponse,
+)
+async def runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:  # DEPRECATED
+    return _runtime_clear_core(request, payload)
+
+
+@router.post(
+    "/v2/runtime/clear",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeClearResponse,
+)
+async def v2_runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:
+    return _runtime_clear_core(request, payload)
+
+
+def _runtime_migration_status_core(request: Request) -> dict[str, Any]:
     """Get migration status for storage layout v2.
 
     Returns:
@@ -235,8 +274,25 @@ async def runtime_migration_status(request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/runtime/reset-tasks", dependencies=[Depends(require_auth)])
-async def runtime_reset_tasks(request: Request) -> dict[str, Any]:
+@router.get(
+    "/runtime/migration-status",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeMigrationStatusResponse,
+)
+async def runtime_migration_status(request: Request) -> dict[str, Any]:  # DEPRECATED
+    return _runtime_migration_status_core(request)
+
+
+@router.get(
+    "/v2/runtime/migration/status",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeMigrationStatusResponse,
+)
+async def v2_runtime_migration_status(request: Request) -> dict[str, Any]:
+    return _runtime_migration_status_core(request)
+
+
+def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -253,12 +309,12 @@ async def runtime_reset_tasks(request: Request) -> dict[str, Any]:
         from polaris.cells.orchestration.pm_planning.public.service import PMService
         from polaris.infrastructure.di.container import get_container
 
-        container = await get_container()
-        pm_service = await container.resolve_async(PMService)
+        container = get_container()
+        pm_service = container.resolve(PMService)
         pm_status = pm_service.get_status()
         if pm_status.get("running"):
             pm_running = True
-            await pm_service.stop()
+            pm_service.stop()
     except (RuntimeError, ValueError) as e:
         logger.debug(f"PM stop failed: {e}")
 
@@ -270,12 +326,12 @@ async def runtime_reset_tasks(request: Request) -> dict[str, Any]:
         from polaris.cells.director.execution.public.service import DirectorService
         from polaris.infrastructure.di.container import get_container
 
-        container = await get_container()
-        director_service = await container.resolve_async(DirectorService)
-        director_status = await director_service.get_status()
+        container = get_container()
+        director_service = container.resolve(DirectorService)
+        director_status = director_service.get_status()
         if str(director_status.get("state", "")).strip().upper() == "RUNNING":
             director_running = True
-            await director_service.stop()
+            director_service.stop()
     except (RuntimeError, ValueError) as e:
         logger.debug(f"Director stop failed: {e}")
 
@@ -302,3 +358,21 @@ async def runtime_reset_tasks(request: Request) -> dict[str, Any]:
         "director_external_terminated": director_external_terminated,
         **result,
     }
+
+
+@router.post(
+    "/runtime/reset-tasks",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeResetTasksResponse,
+)
+async def runtime_reset_tasks(request: Request) -> dict[str, Any]:  # DEPRECATED
+    return _runtime_reset_tasks_core(request)
+
+
+@router.post(
+    "/v2/runtime/reset/tasks",
+    dependencies=[Depends(require_auth)],
+    response_model=RuntimeResetTasksResponse,
+)
+async def v2_runtime_reset_tasks(request: Request) -> dict[str, Any]:
+    return _runtime_reset_tasks_core(request)
