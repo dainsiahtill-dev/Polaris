@@ -411,7 +411,7 @@ export const lancedbService = {
 
 export const llmService = {
   async getStatus(): Promise<ApiResult<LLMStatus>> {
-    const res = await apiFetch('/llm/status');
+    const res = await apiFetch('/v2/llm/status');
     return handleResponse(res, 'Failed to load LLM status');
   },
 };

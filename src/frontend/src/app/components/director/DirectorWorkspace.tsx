@@ -52,6 +52,8 @@ import { AIDialoguePanel } from '@/app/components/ai-dialogue';
 import { RealTimeFileDiff } from './RealTimeFileDiff';
 import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
+import { DirectorTaskPanel as DirectorTaskPanelView } from './DirectorTaskPanel';
+import { runDirector } from '@/services';
 import type { PmTask } from '@/types/task';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 import type { LogEntry } from '@/types/log';
@@ -89,6 +91,8 @@ interface DirectorWorkspaceProps {
 interface ExecutionTask {
   id: string;
   name: string;
+  rawStatus?: string;
+  goal?: string;
   description?: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked';
   type: 'code' | 'test' | 'debug' | 'review';
@@ -104,14 +108,23 @@ interface ExecutionTask {
   estimatedTime?: number;
   actualTime?: number;
   dependencies?: string[];
+  blockedBy?: string[];
   tags?: string[];
   createdAt?: string;
   startedAt?: string;
   completedAt?: string;
   assignedWorker?: string;
+  claimedBy?: string;
+  pmTaskId?: string;
+  blueprintId?: string;
+  blueprintPath?: string;
+  source?: string;
   filesModified?: number;
   retries?: number;
   maxRetries?: number;
+  executionSteps?: string[];
+  acceptanceCriteria?: string[];
+  targetFiles?: string[];
   currentFilePath?: string;
   activityUpdatedAt?: string;
   lineStats?: TaskLineStats;
@@ -120,6 +133,7 @@ interface ExecutionTask {
   currentPhase?: string;
   phaseIndex?: number;
   phaseTotal?: number;
+  taskScopedFileEvents?: FileEditEvent[];
 }
 
 interface ExecutionSession {
@@ -222,6 +236,92 @@ function readTaskString(task: PmTask, keys: string[]): string {
   return '';
 }
 
+function readStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item.trim();
+      }
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        return String(record.description || record.title || record.name || record.path || record.id || '').trim();
+      }
+      return String(item || '').trim();
+    })
+    .filter((item) => item.length > 0);
+}
+
+function readTaskStringList(task: PmTask, keys: string[]): string[] {
+  const metadata = readTaskMetadata(task);
+  for (const key of keys) {
+    const directList = readStringList((task as unknown as Record<string, unknown>)[key]);
+    if (directList.length > 0) {
+      return directList;
+    }
+    const metadataList = readStringList(metadata[key]);
+    if (metadataList.length > 0) {
+      return metadataList;
+    }
+  }
+  return [];
+}
+
+function hasUsableTaskValue(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  return value !== undefined && value !== null;
+}
+
+function mergeTaskRows(detailRow: PmTask, liveRow: PmTask): PmTask {
+  const detailRecord = detailRow as unknown as Record<string, unknown>;
+  const liveRecord = liveRow as unknown as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...detailRecord, ...liveRecord };
+  const detailMetadata = readTaskMetadata(detailRow);
+  const liveMetadata = readTaskMetadata(liveRow);
+  const mergedMetadata = { ...detailMetadata, ...liveMetadata };
+  if (hasUsableTaskValue(mergedMetadata)) {
+    merged.metadata = mergedMetadata;
+  }
+
+  for (const key of [
+    'goal',
+    'description',
+    'acceptance',
+    'acceptance_criteria',
+    'execution_steps',
+    'target_files',
+    'current_file',
+    'current_file_path',
+    'dependencies',
+    'pm_task_id',
+  ]) {
+    if (!hasUsableTaskValue(liveRecord[key]) && hasUsableTaskValue(detailRecord[key])) {
+      merged[key] = detailRecord[key];
+    }
+  }
+
+  if (
+    typeof detailRecord.description === 'string'
+    && detailRecord.description.trim()
+    && typeof liveRecord.description === 'string'
+    && [liveRecord.subject, liveRecord.title, liveRecord.id].some((value) => liveRecord.description === value)
+  ) {
+    merged.description = detailRecord.description;
+  }
+
+  return merged as unknown as PmTask;
+}
+
 function toTaskToken(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
@@ -233,12 +333,16 @@ function toNonNegativeInt(value: unknown): number {
 
 function resolveTaskIdentityCandidates(task: PmTask): string[] {
   const metadata = readTaskMetadata(task);
+  const rawTask = task as unknown as Record<string, unknown>;
   const candidates = [
     task.id,
     task.title,
+    rawTask.subject,
+    rawTask.pm_task_id,
     task.goal,
     metadata.pm_task_id,
     metadata.task_id,
+    metadata.subject,
     metadata.id,
   ];
   const normalized: string[] = [];
@@ -331,6 +435,13 @@ export function buildTaskRealtimeTelemetry(
     for (const token of candidates) {
       tokenToTaskId.set(token, taskId);
     }
+    const rawTask = task as unknown as Record<string, unknown>;
+    for (const aliasKey of ['subject', 'pm_task_id', 'task_id', 'backlog_ref']) {
+      const aliasToken = toTaskToken(rawTask[aliasKey] ?? readTaskMetadata(task)[aliasKey]);
+      if (aliasToken) {
+        tokenToTaskId.set(aliasToken, taskId);
+      }
+    }
   }
 
   const accumulators = new Map<string, TaskRealtimeTelemetryAccumulator>();
@@ -341,7 +452,25 @@ export function buildTaskRealtimeTelemetry(
     if (!rawTaskId) {
       continue;
     }
-    const mappedTaskId = tokenToTaskId.get(toTaskToken(rawTaskId)) || rawTaskId;
+    const rawTaskToken = toTaskToken(rawTaskId);
+    let mappedTaskId = tokenToTaskId.get(rawTaskToken) || "";
+    if (!mappedTaskId) {
+      for (const task of tasks) {
+        const taskId = String(task.id || '').trim();
+        if (!taskId) {
+          continue;
+        }
+        const aliases = [
+          ...resolveTaskIdentityCandidates(task),
+          ...readTaskStringList(task, ['target_task_ids', 'related_task_ids']),
+        ];
+        if (aliases.some((alias) => toTaskToken(alias) === rawTaskToken)) {
+          mappedTaskId = taskId;
+          break;
+        }
+      }
+    }
+    mappedTaskId = mappedTaskId || rawTaskId;
     if (!taskIdSet.has(mappedTaskId)) {
       continue;
     }
@@ -540,19 +669,39 @@ export function DirectorWorkspace({
 
     const syncTasks = async () => {
       try {
-        const source = directorRunning ? 'workflow' : 'auto';
-        const response = await apiFetchFresh(`/v2/director/tasks?source=${source}`);
-        if (!response.ok) {
+        const sources = directorRunning ? ['workflow', 'local'] : ['auto', 'local'];
+        const rows: PmTask[] = [];
+        for (const source of sources) {
+          const response = await apiFetchFresh(`/v2/director/tasks?source=${source}`);
+          if (!response.ok) {
+            continue;
+          }
+          const payload = await response.json();
+          if (!Array.isArray(payload) || cancelled) {
+            continue;
+          }
+          rows.push(
+            ...payload
+              .filter((item): item is PmTask => {
+                return Boolean(item && typeof item === 'object' && String((item as { id?: unknown }).id || '').trim());
+              })
+              .map((item) => ({
+                ...item,
+                metadata: {
+                  ...readTaskMetadata(item),
+                  director_task_source: source,
+                },
+              })),
+          );
+        }
+        if (cancelled) {
           return;
         }
-        const payload = await response.json();
-        if (!Array.isArray(payload) || cancelled) {
-          return;
+        const merged = new Map<string, PmTask>();
+        for (const row of rows) {
+          merged.set(String(row.id), row);
         }
-        const normalized = payload.filter((item): item is PmTask => {
-          return Boolean(item && typeof item === 'object' && String((item as { id?: unknown }).id || '').trim());
-        });
-        setFallbackTasks(normalized);
+        setFallbackTasks(Array.from(merged.values()));
       } catch {
         // Ignore polling errors and keep using live push data.
       }
@@ -575,7 +724,8 @@ export function DirectorWorkspace({
     const toTaskId = (task: PmTask): string => String(task.id || '').trim();
     const merged = new Map<string, PmTask>();
 
-    // fallback tasks only fill gaps; live realtime tasks are source of truth.
+    // Live realtime rows own volatile state; fallback rows fill the task contract details
+    // that runtime projection may omit.
     for (const task of fallbackTasks) {
       const taskId = toTaskId(task);
       if (taskId) {
@@ -586,7 +736,8 @@ export function DirectorWorkspace({
     for (const task of tasks) {
       const taskId = toTaskId(task);
       if (taskId) {
-        merged.set(taskId, task);
+        const existing = merged.get(taskId);
+        merged.set(taskId, existing ? mergeTaskRows(existing, task) : task);
       }
     }
 
@@ -621,7 +772,7 @@ export function DirectorWorkspace({
     const isCurrent = currentTaskId
       ? task.id === currentTaskId
       : currentTaskTitle
-        ? (task.title || task.goal || '').trim() === String(currentTaskTitle || '').trim()
+        ? (task.title || task.subject || task.goal || '').trim() === String(currentTaskTitle || '').trim()
         : false;
     const status = resolveTaskExecutionStatus({
       rawStatus,
@@ -631,8 +782,10 @@ export function DirectorWorkspace({
       isCurrent,
     });
 
-    const title = String(task.title || task.goal || task.id || '未命名任务').trim();
-    const lowered = `${title} ${String(task.goal || '')}`.toLowerCase();
+    const title = readTaskString(task, ['title', 'subject', 'goal', 'id']) || '未命名任务';
+    const goal = readTaskString(task, ['goal', 'pm_task_goal', 'summary']);
+    const description = readTaskString(task, ['description', 'goal', 'summary']);
+    const lowered = `${title} ${goal}`.toLowerCase();
     const type: ExecutionTask['type'] = lowered.includes('test')
       ? 'test'
       : lowered.includes('debug') || lowered.includes('fix')
@@ -667,6 +820,7 @@ export function DirectorWorkspace({
     const dependencies = task.dependencies
       || task.blocked_by
       || (Array.isArray(metadata.dependencies) ? metadata.dependencies : undefined);
+    const blockedBy = readTaskStringList(task, ['blocked_by', 'blockedBy']);
     const tags = task.tags || (Array.isArray(metadata.tags) ? metadata.tags : []);
     const telemetry = taskRealtimeTelemetry.get(taskId);
     const filesModified = Math.max(
@@ -687,37 +841,67 @@ export function DirectorWorkspace({
       'assignedTo',
       'assignee',
     ]);
+    const claimedBy = readTaskString(task, ['claimed_by', 'claimedBy', 'worker_id']);
+    const identityTokens = new Set(resolveTaskIdentityCandidates(task));
+    const taskScopedFileEvents = fileEditEvents.filter((event) => {
+      const token = toTaskToken(event.taskId);
+      return Boolean(token && identityTokens.has(token));
+    });
+
+    const progressFromTelemetry =
+      telemetry?.phaseIndex !== undefined
+        && telemetry?.phaseTotal !== undefined
+        && telemetry.phaseTotal > 0
+        ? Math.min(99, Math.max(1, Math.round((telemetry.phaseIndex / telemetry.phaseTotal) * 100)))
+        : undefined;
 
     return {
       id: task.id || title,
       name: title,
-      description: String(task.description || task.goal || '').trim(),
+      rawStatus,
+      goal,
+      description,
       status,
       type,
       priority: String(priorityValue).toLowerCase() as ExecutionTask['priority'],
-      progress: status === 'running' ? 50 : status === 'completed' ? 100 : status === 'failed' ? 0 : undefined,
-      output: String(task.summary || task.output || '').trim(),
-      error: status === 'failed' || status === 'blocked' ? String(task.error || task.state || task.status || '').trim() : '',
+      progress: status === 'running' ? (progressFromTelemetry ?? 50) : status === 'completed' ? 100 : status === 'failed' ? 0 : undefined,
+      output: readTaskString(task, ['summary', 'output', 'result_summary']),
+      error: status === 'failed' || status === 'blocked'
+        ? readTaskString(task, ['error', 'error_detail', 'state', 'status'])
+        : '',
       budget: budgetInfo,
       estimatedTime: task.estimated_time || task.estimatedTime,
       actualTime,
       dependencies: Array.isArray(dependencies) ? dependencies.map((item) => String(item)) : undefined,
+      blockedBy,
       tags: Array.isArray(tags) ? tags.map((tag) => String(tag)) : [],
       createdAt,
       startedAt,
       completedAt,
       assignedWorker: assignedWorker || undefined,
+      claimedBy: claimedBy || undefined,
+      pmTaskId: readTaskString(task, ['pm_task_id', 'task_id']) || taskId || undefined,
+      blueprintId: readTaskString(task, ['blueprint_id', 'blueprintId']) || undefined,
+      blueprintPath: readTaskString(task, ['blueprint_path', 'runtime_blueprint_path']) || undefined,
+      source: readTaskString(task, ['director_task_source', 'source']) || undefined,
       filesModified,
+      executionSteps: readTaskStringList(task, ['execution_steps', 'executionSteps', 'execution_checklist', 'steps', 'checklist']),
+      acceptanceCriteria: [
+        ...readStringList(task.acceptance),
+        ...readTaskStringList(task, ['acceptance_criteria', 'acceptanceCriteria', 'acceptance']),
+      ].filter((item, index, all) => all.indexOf(item) === index),
+      targetFiles: readTaskStringList(task, ['target_files', 'scope_paths', 'files', 'targetFiles']),
       // Progress tracking from telemetry (merged from taskProgressMap and fileEditEvents)
       retries: telemetry?.retryCount ?? retries,
       maxRetries: telemetry?.maxRetries,
       currentFilePath: telemetry?.currentFilePath || readTaskString(task, ['current_file', 'current_file_path']),
       activityUpdatedAt: telemetry?.activityUpdatedAt,
-      lineStats: telemetry?.lineStats,
-      operationStats: telemetry?.operationStats,
+      lineStats: telemetry?.lineStats || (metadata.line_stats as TaskLineStats | undefined),
+      operationStats: telemetry?.operationStats || (metadata.operation_stats as TaskOperationStats | undefined),
       currentPhase: telemetry?.currentPhase,
       phaseIndex: telemetry?.phaseIndex,
       phaseTotal: telemetry?.phaseTotal,
+      taskScopedFileEvents,
     };
   });
   const executionTaskMap = useMemo(() => {
@@ -743,8 +927,30 @@ export function DirectorWorkspace({
       : currentTaskTitle || '当前任务队列';
     const newLog = `[${new Date().toLocaleTimeString()}] ${nextAction} Director 执行: ${targetName}`;
     setTerminalOutput(prev => prev + newLog + '\n');
-    onToggleDirector();
-  }, [currentTaskTitle, directorRunning, executionTasks, onToggleDirector, selectedTaskId]);
+
+    if (directorRunning) {
+      onToggleDirector();
+      return;
+    }
+
+    if (!selectedTaskId) {
+      onToggleDirector();
+      return;
+    }
+
+    const result = await runDirector({
+      workspace,
+      task_id: selectedTaskId,
+      task_filter: selectedTaskId,
+      execution_mode: 'parallel',
+    });
+    if (!result.ok || !result.data) {
+      setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director 任务启动失败: ${result.error || 'unknown error'}\n`);
+      return;
+    }
+    const data = result.data;
+    setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director run 已创建: ${data.run_id} queued=${data.tasks_queued}\n`);
+  }, [currentTaskTitle, directorRunning, executionTasks, onToggleDirector, selectedTaskId, workspace]);
 
   const handlePause = useCallback(() => {
     if (!directorRunning) {
@@ -827,7 +1033,7 @@ export function DirectorWorkspace({
           {/* 实时任务统计 */}
           <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 border border-white/10">
             <Clock className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-xs text-slate-400">待定:</span>
+            <span className="text-xs text-slate-400">未领取:</span>
             <span className="text-xs font-mono text-slate-300 min-w-[20px] text-center">
               {pendingTasks}
             </span>
@@ -992,7 +1198,7 @@ export function DirectorWorkspace({
           <Panel defaultSize={showAIDialogue ? 60 : 85} minSize={40}>
             <div className="h-full overflow-hidden">
               {activeView === 'tasks' && (
-                <DirectorTaskPanel
+                <DirectorTaskPanelView
                   tasks={executionTasks}
                   workers={workers}
                   taskMap={executionTaskMap}
@@ -1160,7 +1366,7 @@ function DirectorTaskPanel({
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'running': return '正在进行';
-      case 'pending': return '待定';
+      case 'pending': return '未领取';
       case 'completed': return '已完成';
       case 'failed': return '失败';
       case 'blocked': return '阻塞';
@@ -1257,6 +1463,7 @@ function DirectorTaskPanel({
   const workerBusyCount = workerRows.filter((worker) => worker.status === 'busy').length;
   const workerIdleCount = workerRows.filter((worker) => worker.status === 'idle').length;
   const workerFailedCount = workerRows.filter((worker) => worker.status === 'failed').length;
+  const selectedTask = selectedTaskId ? taskMap.get(selectedTaskId) || null : null;
 
   const getWorkerStatusLabel = (status: RuntimeWorkerState['status']) => {
     if (status === 'busy') return '执行中';
@@ -1274,6 +1481,21 @@ function DirectorTaskPanel({
     if (status === 'stopped') return 'text-slate-300 border-slate-500/30 bg-slate-500/10';
     if (status === 'failed') return 'text-red-300 border-red-500/30 bg-red-500/10';
     return 'text-slate-300 border-slate-500/30 bg-slate-500/10';
+  };
+
+  const renderCompactList = (items: string[] | undefined, empty: string) => {
+    if (!items || items.length === 0) {
+      return <span className="text-slate-500">{empty}</span>;
+    }
+    return (
+      <div className="flex flex-wrap gap-1">
+        {items.map((item) => (
+          <span key={item} className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300">
+            {item}
+          </span>
+        ))}
+      </div>
+    );
   };
 
   const TaskGroup = ({ status, tasks: groupTasks }: { status: string; tasks: ExecutionTask[] }) => {
@@ -1548,7 +1770,7 @@ function DirectorTaskPanel({
           />
           <StatCard
             icon={<Clock className="w-3.5 h-3.5 text-slate-400" />}
-            label="待定"
+            label="未领取"
             value={pendingCount}
             color="slate"
           />
@@ -1615,6 +1837,115 @@ function DirectorTaskPanel({
             </div>
           </div>
         )}
+
+        {/* Selected task detail */}
+        <div data-testid="director-task-detail" className="mx-4 mb-3 rounded-xl border border-white/10 bg-slate-950/45 p-3">
+          {selectedTask ? (
+            <div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+                    {getStatusIcon(selectedTask.status)}
+                    <span className="truncate">{selectedTask.name}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
+                    <span className={cn('rounded border px-1.5 py-0.5', getStatusColor(selectedTask.status))}>
+                      {getStatusLabel(selectedTask.status)}
+                    </span>
+                    {selectedTask.rawStatus ? (
+                      <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-slate-400">
+                        raw: {selectedTask.rawStatus}
+                      </span>
+                    ) : null}
+                    {selectedTask.pmTaskId ? (
+                      <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-slate-400">
+                        PM: {selectedTask.pmTaskId}
+                      </span>
+                    ) : null}
+                    {selectedTask.claimedBy || selectedTask.assignedWorker ? (
+                      <span className="rounded border border-indigo-400/25 bg-indigo-500/10 px-1.5 py-0.5 text-indigo-200">
+                        owner: {selectedTask.claimedBy || selectedTask.assignedWorker}
+                      </span>
+                    ) : (
+                      <span className="rounded border border-slate-500/25 bg-slate-500/10 px-1.5 py-0.5 text-slate-400">
+                        未领取
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {selectedTask.blueprintId || selectedTask.blueprintPath ? (
+                  <span className="shrink-0 rounded border border-cyan-400/25 bg-cyan-500/10 px-2 py-1 text-[10px] text-cyan-200">
+                    {selectedTask.blueprintId || 'blueprint'}
+                  </span>
+                ) : null}
+              </div>
+
+              {(selectedTask.goal || selectedTask.description) && (
+                <div className="mt-3 text-xs leading-5 text-slate-300">
+                  {selectedTask.goal || selectedTask.description}
+                </div>
+              )}
+
+              <div className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
+                <DetailBlock title="执行步骤">
+                  {renderCompactList(selectedTask.executionSteps, '无步骤字段')}
+                </DetailBlock>
+                <DetailBlock title="验收标准">
+                  {renderCompactList(selectedTask.acceptanceCriteria, '无验收字段')}
+                </DetailBlock>
+                <DetailBlock title="目标文件">
+                  {renderCompactList(selectedTask.targetFiles, '无目标文件')}
+                </DetailBlock>
+                <DetailBlock title="依赖/阻塞">
+                  {renderCompactList([...(selectedTask.dependencies || []), ...(selectedTask.blockedBy || [])], '无依赖或阻塞')}
+                </DetailBlock>
+              </div>
+
+              {selectedTask.blueprintPath ? (
+                <div className="mt-3 truncate rounded-md border border-cyan-400/20 bg-cyan-500/5 px-2 py-1 text-[10px] text-cyan-100" title={selectedTask.blueprintPath}>
+                  蓝图路径: {selectedTask.blueprintPath}
+                </div>
+              ) : null}
+
+              {selectedTask.error ? (
+                <div className="mt-3 rounded-md border border-red-500/25 bg-red-500/10 p-2 text-[11px] leading-5 text-red-200">
+                  {selectedTask.error}
+                </div>
+              ) : null}
+
+              <div className="mt-3 rounded-md border border-white/10 bg-white/[0.035] p-2">
+                <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-400">
+                  <span>任务级实时文件变更</span>
+                  <span>{selectedTask.taskScopedFileEvents?.length || 0} events</span>
+                </div>
+                {selectedTask.taskScopedFileEvents && selectedTask.taskScopedFileEvents.length > 0 ? (
+                  <div className="space-y-1">
+                    {selectedTask.taskScopedFileEvents.slice(-4).reverse().map((event) => (
+                      <div key={event.id} className="flex items-center justify-between gap-2 rounded border border-white/5 bg-slate-950/50 px-2 py-1 text-[10px]">
+                        <span className="truncate text-slate-300">{event.filePath}</span>
+                        <span className={cn(
+                          'shrink-0 rounded px-1.5 py-0.5',
+                          event.operation === 'create' ? 'bg-emerald-500/15 text-emerald-200' :
+                            event.operation === 'delete' ? 'bg-red-500/15 text-red-200' :
+                              'bg-blue-500/15 text-blue-200',
+                        )}>
+                          {event.operation}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-500">该任务暂未收到文件增删改事件。</div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <Hash className="h-3.5 w-3.5" />
+              点击左侧任务卡查看完整任务合同、领取状态、验收标准和实时文件变更。
+            </div>
+          )}
+        </div>
 
         {/* Worker 实时状态 */}
         <div className="px-4 pb-3">
@@ -1697,6 +2028,15 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
       {icon}
       <span className="text-lg font-bold mt-1">{value}</span>
       <span className="text-[9px] opacity-70">{label}</span>
+    </div>
+  );
+}
+
+function DetailBlock({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.025] p-2">
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">{title}</div>
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }

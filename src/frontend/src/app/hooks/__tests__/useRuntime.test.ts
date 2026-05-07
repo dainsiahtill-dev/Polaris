@@ -341,4 +341,106 @@ describe('useRuntime llm filtering and dedup', () => {
 
     expect(settingsHookMock.load).not.toHaveBeenCalled();
   });
+
+  it('populates file edit events from direct websocket file_edit messages', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'file_edit',
+      timestamp: '2026-05-07T01:00:00.000Z',
+      event: {
+        file_path: 'src/new.ts',
+        operation: 'create',
+        content_size: 32,
+        task_id: 'PM-1',
+        added_lines: 2,
+      },
+    });
+
+    expect(result.current.fileEditEvents).toHaveLength(1);
+    expect(result.current.fileEditEvents[0]).toMatchObject({
+      filePath: 'src/new.ts',
+      operation: 'create',
+      contentSize: 32,
+      taskId: 'PM-1',
+      addedLines: 2,
+    });
+  });
+
+  it('populates file edit events from runtime.v2 event.file_edit messages', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'event',
+      event: {
+        schema_version: 'runtime.v2',
+        event_id: 'file-edit-evt-1',
+        channel: 'event.file_edit',
+        kind: 'file_edit',
+        timestamp: '2026-05-07T01:00:00.000Z',
+        payload: {
+          raw: {
+            file_path: 'src/changed.ts',
+            operation: 'modify',
+            content_size: 64,
+            task_id: 'PM-2',
+            modified_lines: 1,
+          },
+        },
+      },
+    });
+
+    expect(result.current.fileEditEvents).toHaveLength(1);
+    expect(result.current.fileEditEvents[0]).toMatchObject({
+      filePath: 'src/changed.ts',
+      operation: 'modify',
+      contentSize: 64,
+      taskId: 'PM-2',
+      modifiedLines: 1,
+      schemaVersion: 'runtime.v2',
+      sourceChannel: 'event.file_edit',
+    });
+  });
+
+  it('populates file edit events from schema-tagged direct fanout messages', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'file_edit',
+      protocol: 'runtime.v2',
+      schema_version: 'runtime.v2',
+      event_schema: 'runtime.event.file_edit.v1',
+      channel: 'event.file_edit',
+      kind: 'file_edit',
+      source: 'process_local_fanout',
+      timestamp: '2026-05-07T01:00:00.000Z',
+      event: {
+        file_path: 'src/fanout.ts',
+        operation: 'modify',
+        content_size: 96,
+        task_id: 'PM-3',
+        modified_lines: 4,
+      },
+    });
+
+    expect(result.current.fileEditEvents).toHaveLength(1);
+    expect(result.current.fileEditEvents[0]).toMatchObject({
+      filePath: 'src/fanout.ts',
+      operation: 'modify',
+      contentSize: 96,
+      taskId: 'PM-3',
+      modifiedLines: 4,
+      schemaVersion: 'runtime.v2',
+      eventSchema: 'runtime.event.file_edit.v1',
+      sourceChannel: 'event.file_edit',
+      eventKind: 'file_edit',
+      provenance: 'process_local_fanout',
+    });
+  });
 });

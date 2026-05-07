@@ -14,8 +14,21 @@ from polaris.kernelone.storage.io_paths import build_cache_root
 
 from .contracts import ModelSpec
 
-# SSOT: All model configuration MUST come from llm_config.json
-# Hardcoded defaults are REMOVED - if config is missing, raise error.
+# SSOT: explicit model configuration MUST come from llm_config.json. A narrow
+# compatibility fallback is kept only for stable registry-prefixed local model
+# aliases that otherwise cannot pass budget checks after a successful LLM test.
+
+_KNOWN_MODEL_LIMITS: dict[str, dict[str, Any]] = {
+    # Compatibility profile for repo-prefixed Ollama model identifiers returned
+    # by model registries such as ModelScope. Explicit llm_config.json limits
+    # always win over this fallback.
+    "qwen3-coder-30b-a3b-instruct-gguf": {
+        "max_context_tokens": 32_768,
+        "max_output_tokens": 8_192,
+        "supports_tools": True,
+        "supports_json_schema": True,
+    },
+}
 
 
 def _to_int(value: Any) -> int | None:
@@ -97,13 +110,25 @@ class ModelCatalog:
 
         model_key = _normalize_model_key(model)
         model_specific = self._extract_model_specific(cfg, model_key)
+        known_model_cfg = self._resolve_known_model_limits(provider_type, model_key)
         model_limit_cfg = (
             self._load_global_model_limits(provider_id, model_key, config_payload) if provider_cfg is None else {}
         )
 
-        max_context_tokens = self._resolve_context_window(cfg, model_specific, model_limit_cfg, model_key)
+        max_context_tokens = self._resolve_context_window(
+            cfg,
+            model_specific,
+            model_limit_cfg,
+            known_model_cfg,
+            model_key,
+        )
         max_output_tokens = self._resolve_output_limit(
-            cfg, model_specific, model_limit_cfg, model_key, max_context_tokens
+            cfg,
+            model_specific,
+            model_limit_cfg,
+            known_model_cfg,
+            model_key,
+            max_context_tokens,
         )
 
         # Resolve capabilities: explicit config > provider config > conservative defaults (False)
@@ -118,17 +143,17 @@ class ModelCatalog:
             supports_tools=bool(
                 model_specific.get("supports_tools")
                 if "supports_tools" in model_specific
-                else cfg.get("supports_tools", False)
+                else cfg.get("supports_tools", known_model_cfg.get("supports_tools", False))
             ),
             supports_json_schema=bool(
                 model_specific.get("supports_json_schema")
                 if "supports_json_schema" in model_specific
-                else cfg.get("supports_json_schema", False)
+                else cfg.get("supports_json_schema", known_model_cfg.get("supports_json_schema", False))
             ),
             supports_vision=bool(
                 model_specific.get("supports_vision")
                 if "supports_vision" in model_specific
-                else cfg.get("supports_vision", False)
+                else cfg.get("supports_vision", known_model_cfg.get("supports_vision", False))
             ),
             cost_hint=str(model_specific.get("cost_hint") or cfg.get("cost_hint") or "") or None,
         )
@@ -164,13 +189,15 @@ class ModelCatalog:
 
         provider_limits = model_limits.get(provider_id)
         if isinstance(provider_limits, dict):
-            direct = provider_limits.get(model_key) or provider_limits.get(model_key.lower())
-            if isinstance(direct, dict):
-                return direct
+            for candidate in _model_key_candidates(model_key):
+                direct = provider_limits.get(candidate) or provider_limits.get(candidate.lower())
+                if isinstance(direct, dict):
+                    return direct
 
-        direct_global = model_limits.get(model_key) or model_limits.get(model_key.lower())
-        if isinstance(direct_global, dict):
-            return direct_global
+        for candidate in _model_key_candidates(model_key):
+            direct_global = model_limits.get(candidate) or model_limits.get(candidate.lower())
+            if isinstance(direct_global, dict):
+                return direct_global
 
         return {}
 
@@ -181,18 +208,33 @@ class ModelCatalog:
             return {}
 
         # exact match first
-        raw_model_entry = model_specific.get(model_key)
-        if isinstance(raw_model_entry, dict):
-            return dict(raw_model_entry)
+        for candidate in _model_key_candidates(model_key):
+            raw_model_entry = model_specific.get(candidate)
+            if isinstance(raw_model_entry, dict):
+                return dict(raw_model_entry)
 
         for normalized, value in _iter_longest_prefix_matches(model_specific):
             if not isinstance(value, dict):
                 continue
-            if model_key == normalized:
-                return dict(value)
-            # Prefix match allows variants like "gpt-4o-mini".
-            if model_key.startswith(normalized):
-                return dict(value)
+            for candidate in _model_key_candidates(model_key):
+                if candidate == normalized:
+                    return dict(value)
+                # Prefix match allows variants like "gpt-4o-mini".
+                if candidate.startswith(normalized):
+                    return dict(value)
+        return {}
+
+    def _resolve_known_model_limits(self, provider_type: str, model_key: str) -> dict[str, Any]:
+        if provider_type != "ollama":
+            return {}
+        for candidate in _model_key_candidates(model_key):
+            direct = _KNOWN_MODEL_LIMITS.get(candidate)
+            if isinstance(direct, dict):
+                return dict(direct)
+        for normalized, value in _iter_longest_prefix_matches(_KNOWN_MODEL_LIMITS):
+            for candidate in _model_key_candidates(model_key):
+                if candidate == normalized or candidate.startswith(normalized):
+                    return dict(value)
         return {}
 
     def _resolve_context_window(
@@ -200,6 +242,7 @@ class ModelCatalog:
         provider_cfg: dict[str, Any],
         model_specific: dict[str, Any],
         model_limit_cfg: dict[str, Any],
+        known_model_cfg: dict[str, Any],
         model_key: str,
     ) -> int:
         """Resolve context window from config. Raises if not found."""
@@ -210,6 +253,8 @@ class ModelCatalog:
             model_limit_cfg.get("context_window"),
             provider_cfg.get("max_context_tokens"),
             provider_cfg.get("context_window"),
+            known_model_cfg.get("max_context_tokens"),
+            known_model_cfg.get("context_window"),
         ]
         for candidate in candidates:
             if candidate is not None:
@@ -228,6 +273,7 @@ class ModelCatalog:
         provider_cfg: dict[str, Any],
         model_specific: dict[str, Any],
         model_limit_cfg: dict[str, Any],
+        known_model_cfg: dict[str, Any],
         model_key: str,
         max_context_tokens: int,
     ) -> int:
@@ -241,6 +287,9 @@ class ModelCatalog:
             model_limit_cfg.get("max_tokens"),
             provider_cfg.get("max_output_tokens"),
             provider_cfg.get("max_tokens"),
+            known_model_cfg.get("max_output_tokens"),
+            known_model_cfg.get("output_tokens"),
+            known_model_cfg.get("max_tokens"),
         ]
         for candidate in candidates:
             if candidate is not None:

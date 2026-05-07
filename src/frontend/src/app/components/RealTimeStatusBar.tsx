@@ -1,9 +1,11 @@
-import { Clock, Zap, PlayCircle, Square, Cpu, Database, Wifi } from 'lucide-react';
+import { Clock, Zap, PlayCircle, Square, Cpu, Database, Wifi, FileCode } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
 import { AnimateCountUp } from '@/app/components/ui/animate-count-up';
 import { AnimateBorder } from '@/app/components/ui/animate-border';
 import { StatusBadge } from '@/app/components/ui/badge';
+import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
 
 interface RealTimeStatusBarProps {
   pmRunning: boolean;
@@ -13,16 +15,28 @@ interface RealTimeStatusBarProps {
   pmIteration: number | null;
   llmStatus?: string;
   lancedbOk?: boolean;
+  fileEditEvents?: FileEditEvent[];
 }
 
 function formatDuration(startedAt: number | null) {
-  if (!startedAt) return '';
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - startedAt));
+  const normalizedStartedAt = normalizeStartedAtSeconds(startedAt);
+  if (!normalizedStartedAt) return '';
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - normalizedStartedAt));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h${minutes % 60}m`;
+}
+
+function activeLabel(duration: string) {
+  return [UI_TERMS.states.active, duration].filter(Boolean).join(' ');
+}
+
+function displayRuntimeStatus(status: string) {
+  if (status === 'ready') return '就绪';
+  if (status === 'blocked') return '阻塞';
+  return '未判';
 }
 
 export function RealTimeStatusBar({
@@ -33,6 +47,7 @@ export function RealTimeStatusBar({
   pmIteration,
   llmStatus,
   lancedbOk,
+  fileEditEvents = [],
 }: RealTimeStatusBarProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -43,6 +58,10 @@ export function RealTimeStatusBar({
 
   const pmDuration = formatDuration(pmStartedAt);
   const directorDuration = formatDuration(directorStartedAt);
+  const latestFileEdit = fileEditEvents
+    .filter((event) => Boolean(event.filePath))
+    .slice()
+    .sort((a, b) => Date.parse(String(b.timestamp || '')) - Date.parse(String(a.timestamp || '')))[0] || null;
 
   return (
     <div className="h-11 bg-black/80 backdrop-blur-xl border-b border-accent/20 flex items-center px-5 relative overflow-hidden">
@@ -76,7 +95,7 @@ export function RealTimeStatusBar({
             <div className="flex flex-col">
               <div className="text-[10px] font-semibold text-accent tracking-wide">{UI_TERMS.roles.pm}</div>
               <div className="text-[9px] text-text-muted font-mono">
-                {pmRunning ? `${UI_TERMS.states.active} ${pmDuration}` : UI_TERMS.states.idle}
+                {pmRunning ? activeLabel(pmDuration) : UI_TERMS.states.idle}
               </div>
             </div>
           </div>
@@ -117,7 +136,7 @@ export function RealTimeStatusBar({
             <div className="flex flex-col">
               <div className="text-[10px] font-semibold text-status-info tracking-wide">{UI_TERMS.roles.director}</div>
               <div className="text-[9px] text-text-muted font-mono">
-                {directorRunning ? `${UI_TERMS.states.active} ${directorDuration}` : UI_TERMS.states.idle}
+                {directorRunning ? activeLabel(directorDuration) : UI_TERMS.states.idle}
               </div>
             </div>
           </div>
@@ -170,11 +189,7 @@ export function RealTimeStatusBar({
                 pulse={llmStatus === 'ready'}
                 className="text-[9px] border-0 bg-transparent p-0"
               >
-                {llmStatus === 'ready'
-                  ? UI_TERMS.states.ready
-                  : llmStatus === 'blocked'
-                    ? UI_TERMS.states.blocked
-                    : UI_TERMS.states.unknown}
+                {displayRuntimeStatus(llmStatus)}
               </StatusBadge>
             </div>
           </div>
@@ -192,8 +207,24 @@ export function RealTimeStatusBar({
                 pulse={lancedbOk}
                 className="text-[9px] border-0 bg-transparent p-0"
               >
-                {lancedbOk ? UI_TERMS.states.ready : UI_TERMS.states.offline}
+                {lancedbOk ? '就绪' : '离线'}
               </StatusBadge>
+            </div>
+          </div>
+        )}
+
+        {latestFileEdit && (
+          <div
+            className="bg-bg-panel/80 backdrop-blur-sm rounded-lg px-2.5 py-1.5 flex items-center gap-1.5 border border-border max-w-[240px]"
+            data-testid="runtime-file-edit-status"
+            title={latestFileEdit.filePath}
+          >
+            <FileCode className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <div className="flex min-w-0 flex-col">
+              <div className="text-[8px] text-text-muted font-mono tracking-wider">文件变更</div>
+              <div className="truncate text-[10px] font-mono text-text-main">
+                {latestFileEdit.operation} {latestFileEdit.filePath}
+              </div>
             </div>
           </div>
         )}

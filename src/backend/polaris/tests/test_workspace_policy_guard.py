@@ -123,6 +123,7 @@ def test_sync_process_settings_environment_overrides_stale_runtime_env(tmp_path:
 
     assert "KERNELONE_RUNTIME_ROOT" not in os.environ
     assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") == str(runtime_cache.resolve())
+    assert os.environ.get("KERNELONE_STATE_TO_RAMDISK") == "0"
     assert os.environ.get("KERNELONE_WORKSPACE") == str(workspace.resolve())
 
 
@@ -145,6 +146,24 @@ def test_sync_process_settings_environment_uses_default_cache_not_stale_runtime_
 
     assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") == str(default_system_cache_base())
     assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") != str(stale_runtime_root)
+    assert os.environ.get("KERNELONE_STATE_TO_RAMDISK") == "0"
+
+
+def test_sync_process_settings_environment_preserves_explicit_runtime_root(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    runtime_root = tmp_path / "runtime-root"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "stale-runtime"))
+
+    settings = Settings(
+        workspace=str(workspace),
+        runtime={"root": str(runtime_root), "cache_root": None, "use_ramdisk": False},
+    )
+    sync_process_settings_environment(settings)
+
+    assert os.environ.get("KERNELONE_RUNTIME_ROOT") == str(runtime_root.resolve())
+    assert os.environ.get("KERNELONE_STATE_TO_RAMDISK") == "0"
 
 
 def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) -> None:
@@ -188,5 +207,6 @@ def test_sync_process_settings_environment_tracks_nats_settings(tmp_path: Path) 
         "KERNELONE_NATS_RECONNECT_WAIT",
         "KERNELONE_NATS_MAX_RECONNECT",
         "KERNELONE_NATS_STREAM_NAME",
+        "KERNELONE_STATE_TO_RAMDISK",
     ):
         os.environ.pop(name, None)

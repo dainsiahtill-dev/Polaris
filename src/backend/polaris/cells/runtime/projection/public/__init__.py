@@ -8,6 +8,12 @@ from polaris.cells.runtime.projection.public.contracts import (
     RuntimeProjectionQueryV1,
     RuntimeProjectionResultV1,
 )
+from polaris.cells.runtime.projection.public.role_contracts import (
+    ChiefEngineerBlueprintDetailV1,
+    ChiefEngineerBlueprintListV1,
+    ChiefEngineerBlueprintSummaryV1,
+    RoleTaskContractV1,
+)
 from polaris.cells.runtime.projection.public.service import (
     CodeChangeState,
     CodeChangeStatus,
@@ -77,6 +83,9 @@ from polaris.cells.runtime.projection.public.service import (
 )
 
 __all__ = [
+    "ChiefEngineerBlueprintDetailV1",
+    "ChiefEngineerBlueprintListV1",
+    "ChiefEngineerBlueprintSummaryV1",
     "CodeChangeState",
     "CodeChangeStatus",
     "DiffHunk",
@@ -85,6 +94,7 @@ __all__ = [
     "PMTaskState",
     "QATaskNode",
     "QATaskState",
+    "RoleTaskContractV1",
     "build_cache_root",
     "build_director_status",
     "build_llm_status",

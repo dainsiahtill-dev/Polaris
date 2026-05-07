@@ -325,6 +325,17 @@ class PMService:
             logger.debug("Failed to resolve PM execution broker status for %s: %s", execution_id, exc)
             return None
 
+    def _resolve_execution_snapshot(self) -> Any | None:
+        execution_id = self._handle.execution_id
+        if not execution_id:
+            return None
+        try:
+            broker = get_execution_broker_service()
+            return broker.get_process_snapshot(execution_id)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            logger.debug("Failed to resolve PM execution broker snapshot for %s: %s", execution_id, exc)
+            return None
+
     def _is_execution_active(self) -> bool:
         execution_status = self._resolve_execution_status()
         if execution_status is not None:
@@ -344,6 +355,27 @@ class PMService:
         if not log_path:
             log_path = self._resolve_log_path()
 
+        snapshot = self._resolve_execution_snapshot()
+        exit_code: int | None = None
+        execution_error = ""
+        terminal = False
+        ok: bool | None = None
+        if snapshot is not None:
+            result = getattr(snapshot, "result", None)
+            result_exit_code = getattr(result, "exit_code", None)
+            if isinstance(result, dict):
+                result_exit_code = result.get("exit_code")
+            if isinstance(result_exit_code, int):
+                exit_code = result_exit_code
+            execution_error = str(getattr(snapshot, "error", "") or "")
+            status_obj = getattr(snapshot, "status", None)
+            terminal = bool(getattr(status_obj, "terminal", False))
+            ok = bool(getattr(snapshot, "ok", False))
+
+        contract_path = self._resolve_contract_path()
+        contract_exists = contract_path.exists()
+        contract_size = contract_path.stat().st_size if contract_exists else 0
+
         return {
             "running": running,
             "pid": self._handle.pid,
@@ -353,6 +385,13 @@ class PMService:
             "source": "execution_broker" if execution_status is not None else "handle",
             "status": execution_status.value if execution_status is not None else None,
             "execution_id": execution_id,
+            "terminal": terminal,
+            "ok": ok,
+            "exit_code": exit_code,
+            "error": execution_error,
+            "contract_path": str(contract_path),
+            "contract_exists": contract_exists,
+            "contract_size": contract_size,
         }
 
     async def _check_backend_available(self) -> str | None:
@@ -372,6 +411,10 @@ class PMService:
     def _resolve_log_path(self) -> str:
         storage = self._refresh_storage_layout()
         return str(storage.get_path("logs", "pm.process.log"))
+
+    def _resolve_contract_path(self) -> Path:
+        storage = self._refresh_storage_layout()
+        return storage.get_path("contracts", "pm_tasks.contract.json")
 
     def _resolve_effective_workspace(self) -> Path:
         configured_raw = str(getattr(self._settings, "workspace", "") or "").strip()

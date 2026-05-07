@@ -170,6 +170,20 @@ describe('ControlPanel', () => {
     });
   });
 
+  describe('Chief Engineer Workspace', () => {
+    it('shows chief engineer workspace entry when provided', () => {
+      render(<ControlPanel {...defaultProps} onEnterChiefEngineerWorkspace={vi.fn()} />);
+      expect(screen.getByText('Chief Engineer 工作区')).toBeInTheDocument();
+    });
+
+    it('calls onEnterChiefEngineerWorkspace from the more menu entry', () => {
+      const onEnterChiefEngineerWorkspace = vi.fn();
+      render(<ControlPanel {...defaultProps} onEnterChiefEngineerWorkspace={onEnterChiefEngineerWorkspace} />);
+      fireEvent.click(screen.getByText('Chief Engineer 工作区'));
+      expect(onEnterChiefEngineerWorkspace).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('Ollama Stop', () => {
     it('shows Ollama section when onStopOllama is provided', () => {
       render(<ControlPanel {...defaultProps} onStopOllama={vi.fn()} />);
@@ -223,6 +237,22 @@ describe('ControlPanel', () => {
         />
       );
       expect(screen.getByText('Implementing login')).toBeInTheDocument();
+    });
+
+    it('filters structured runtime fragments from compact task labels', () => {
+      render(
+        <ControlPanel
+          {...defaultProps}
+          pmRunning={true}
+          currentTask="}"
+          isExecutingTool={true}
+          currentToolName='"summary": {}'
+        />
+      );
+
+      expect(screen.queryByText('}')).not.toBeInTheDocument();
+      expect(screen.queryByText(/summary/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/正在执行:/)).not.toBeInTheDocument();
     });
   });
 

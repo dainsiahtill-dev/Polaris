@@ -8,23 +8,56 @@
  */
 
 import { renderHook, act } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWebSocketWithFallback } from '../useWebSocketWithFallback';
 
 // Mock fetch
-const mockFetch = jest.fn();
+const mockFetch = vi.fn();
+
+class MockWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+
+  readonly url: string;
+  readyState = MockWebSocket.CONNECTING;
+  binaryType: BinaryType = 'blob';
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  send = vi.fn();
+
+  close = vi.fn(() => {
+    this.readyState = MockWebSocket.CLOSED;
+  });
+}
+
+const originalFetch = global.fetch;
+const originalWebSocket = global.WebSocket;
 
 describe('useWebSocketWithFallback', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ type: 'fallback_poll', data: 'test' }),
     });
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
+    global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
   });
 
   afterEach(() => {
-    jest.useRealTimers();
+    global.fetch = originalFetch;
+    global.WebSocket = originalWebSocket;
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   describe('Initial State', () => {

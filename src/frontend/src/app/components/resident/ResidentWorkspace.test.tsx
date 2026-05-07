@@ -136,8 +136,9 @@ describe('ResidentWorkspace', () => {
       />,
     );
 
+    expect(screen.getByText('AGI 工作区')).toBeInTheDocument();
     expect(screen.getByText('Software Engineering AGI')).toBeInTheDocument();
-    expect(screen.getByText('Latest Meta-Cognition')).toBeInTheDocument();
+    expect(screen.getByText('最新元认知')).toBeInTheDocument();
     expect(screen.getByText('Task decomposition')).toBeInTheDocument();
   });
 
@@ -151,9 +152,9 @@ describe('ResidentWorkspace', () => {
       />,
     );
 
-    expect(screen.getByText('Goal Synthesis Console')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Tighten Director retries' } });
-    fireEvent.change(screen.getByLabelText('Motivation'), {
+    expect(screen.getByText('目标生成台')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('目标标题'), { target: { value: 'Tighten Director retries' } });
+    fireEvent.change(screen.getByLabelText('目标描述'), {
       target: { value: 'Retry storms are causing noise.' },
     });
     fireEvent.click(screen.getByRole('button', { name: /创建 AGI 目标/i }));
@@ -176,6 +177,7 @@ describe('ResidentWorkspace', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('Stabilize PM contract quality'));
     expect(screen.getByRole('button', { name: '暂存' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '暂存' }));
     fireEvent.click(screen.getByRole('button', { name: '写入 PM' }));

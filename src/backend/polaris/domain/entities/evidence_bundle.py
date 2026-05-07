@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from polaris.kernelone.utils.time_utils import utc_now
 
@@ -97,6 +97,8 @@ class FileChange:
 @dataclass(frozen=True)
 class TestRunEvidence:
     """测试运行结果证据"""
+
+    __test__: ClassVar[bool] = False
 
     test_command: str
     exit_code: int

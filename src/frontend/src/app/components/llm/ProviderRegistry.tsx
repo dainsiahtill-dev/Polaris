@@ -28,7 +28,7 @@ class ProviderRegistryClass {
     
     try {
       // Fetch providers from backend
-      const response = await apiFetch('/llm/providers');
+      const response = await apiFetch('/v2/llm/providers');
       if (!response.ok) {
         throw new Error(`加载提供商失败: ${response.statusText}`);
       }
@@ -62,7 +62,7 @@ class ProviderRegistryClass {
   }
 
   private async fetchProviderConfig(providerType: string): Promise<ProviderConfig> {
-    const response = await apiFetch(`/llm/providers/${providerType}/config`);
+    const response = await apiFetch(`/v2/llm/providers/${providerType}/config`);
     if (!response.ok) {
       throw new Error(`获取配置失败： ${providerType}`);
     }
@@ -151,7 +151,7 @@ class ProviderRegistryClass {
 
   async validateProviderConfig(providerType: string, config: ProviderConfig): Promise<ValidationResult> {
     try {
-      const response = await apiFetch(`/llm/providers/${providerType}/validate`, {
+      const response = await apiFetch(`/v2/llm/providers/${providerType}/validate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

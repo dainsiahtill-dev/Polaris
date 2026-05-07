@@ -577,7 +577,7 @@ class CellPmInvokePort:
                     role="pm",
                     workspace=state_workspace_full,
                     prompt=prompt,
-                    fallback_model=state_model,
+                    fallback_model="",
                     timeout=state_timeout,
                     adapter=AppLLMRuntimeAdapter(),
                     blocked_provider_types={

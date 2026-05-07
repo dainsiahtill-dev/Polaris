@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections import deque
 from contextlib import suppress
@@ -161,6 +162,14 @@ async def runtime_websocket(
         connection_id=connection_id, runtime_root=cache_root
     )
     await REALTIME_SIGNAL_HUB.ensure_watch(cache_root)
+    connection_state = getattr(websocket.app.state, "connection_state", None)
+    if connection_state is not None:
+        connection_state.active_connections = max(0, int(getattr(connection_state, "active_connections", 0))) + 1
+        connection_state.total_connections = int(getattr(connection_state, "total_connections", 0)) + 1
+        connection_state.last_connection_id = connection_id
+        connection_state.last_event = "open"
+        connection_state.last_error = ""
+        connection_state.last_updated_at = time.time()
 
     # Create helper functions for main loop
     async def send_status(force: bool = False, last_sig: str = "") -> tuple[str, dict[str, Any]]:
@@ -263,6 +272,10 @@ async def runtime_websocket(
         )
     except WebSocketSendError as exc:
         close_reason = f"{exc.error_type}:{exc.message}"
+        if connection_state is not None:
+            connection_state.last_event = "send_error"
+            connection_state.last_error = close_reason
+            connection_state.last_updated_at = time.time()
         await _log_connection_event(
             resolved_workspace,
             cache_root,
@@ -272,6 +285,10 @@ async def runtime_websocket(
         )
     except (RuntimeError, ValueError) as exc:
         close_reason = f"{type(exc).__name__}:{exc!s}"
+        if connection_state is not None:
+            connection_state.last_event = "error"
+            connection_state.last_error = close_reason
+            connection_state.last_updated_at = time.time()
         await _log_connection_event(
             resolved_workspace,
             cache_root,
@@ -280,6 +297,14 @@ async def runtime_websocket(
             {"client": client, "error_type": type(exc).__name__, "error": str(exc), **workspace_details},
         )
     finally:
+        if connection_state is not None:
+            connection_state.active_connections = max(
+                0,
+                int(getattr(connection_state, "active_connections", 0)) - 1,
+            )
+            connection_state.last_event = "closed"
+            connection_state.last_updated_at = time.time()
+
         # Cleanup — each step guarded so one failure doesn't block others.
         async def _safe_cleanup(coro: Any, label: str) -> None:
             try:

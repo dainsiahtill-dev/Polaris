@@ -34,6 +34,7 @@ export interface TaskBudget {
 export interface PmTask {
     id: string;
     title: string;
+    subject?: string;
     goal?: string;
     summary?: string;
     description?: string;
@@ -46,9 +47,14 @@ export interface PmTask {
     acceptance_criteria?: string[];
     command?: string;
     execution_checklist?: string[];
+    steps?: string[];
     qa_contract?: Record<string, unknown>;
     scope_paths?: string[];
     target_files?: string[];
+    files?: string[];
+    blueprint_id?: string | null;
+    blueprint_path?: string | null;
+    runtime_blueprint_path?: string | null;
     // 可选扩展字段
     metadata?: Record<string, unknown>;
     budget?: TaskBudget;

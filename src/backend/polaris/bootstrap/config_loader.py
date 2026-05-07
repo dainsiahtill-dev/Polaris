@@ -111,6 +111,14 @@ class ConfigLoader:
         "llm.provider": ("KERNELONE_LLM_PROVIDER", None, None),
         "llm.base_url": ("KERNELONE_LLM_BASE_URL", None, None),
         "llm.api_key": ("KERNELONE_LLM_API_KEY", None, None),
+        "runtime.root": ("KERNELONE_RUNTIME_ROOT", None, None),
+        "runtime.cache_root": ("KERNELONE_RUNTIME_CACHE_ROOT", None, None),
+        "runtime.use_ramdisk": (
+            "KERNELONE_STATE_TO_RAMDISK",
+            None,
+            lambda v: v.lower() in ("1", "true", "yes", "on"),
+        ),
+        "runtime.ramdisk_root": ("KERNELONE_RAMDISK_ROOT", None, None),
         "workspace": ("KERNELONE_WORKSPACE", None, None),
         "self_upgrade_mode": (
             "KERNELONE_SELF_UPGRADE_MODE",
@@ -266,11 +274,6 @@ class ConfigLoader:
         cors_origins = os.environ.get("KERNELONE_CORS_ORIGINS")
         if cors_origins:
             env_config["server.cors_origins"] = [o.strip() for o in cors_origins.split(",") if o.strip()]
-
-        # Handle ramdisk root
-        ramdisk_root = os.environ.get("KERNELONE_RAMDISK_ROOT")
-        if ramdisk_root:
-            env_config["runtime.ramdisk_root"] = ramdisk_root
 
         return env_config
 

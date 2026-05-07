@@ -286,7 +286,7 @@ export const test = base.extend<Fixtures>({
       cleanupIsolatedE2EHome(isolatedE2EHome);
     }
   },
-  electronApp: async ({ mainProcessLogs, testEnv }, use) => {
+  electronApp: async ({ mainProcessLogs, testEnv }, use, testInfo) => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       KERNELONE_E2E: "1",
@@ -298,6 +298,13 @@ export const test = base.extend<Fixtures>({
     if (!testEnv.useRealSettings) {
       env.KERNELONE_HOME = testEnv.isolatedE2EHome;
       env.KERNELONE_RUNTIME_ROOT = testEnv.isolatedRuntimeRoot;
+      env.KERNELONE_STATE_TO_RAMDISK = "0";
+    } else {
+      const realSettingsHome = String(env.KERNELONE_E2E_HOME || env.KERNELONE_HOME || "").trim();
+      if (realSettingsHome) {
+        env.KERNELONE_HOME = path.resolve(realSettingsHome);
+        env.KERNELONE_RUNTIME_ROOT = env.KERNELONE_RUNTIME_ROOT || path.join(env.KERNELONE_HOME, "runtime-cache");
+      }
       env.KERNELONE_STATE_TO_RAMDISK = "0";
     }
 
@@ -341,6 +348,18 @@ export const test = base.extend<Fixtures>({
 
       await use(app);
     } finally {
+      const stdoutPath = testInfo.outputPath("electron-main-stdout.log");
+      const stderrPath = testInfo.outputPath("electron-main-stderr.log");
+      fs.writeFileSync(stdoutPath, `${mainProcessLogs.stdout.join("\n")}\n`, { encoding: "utf8" });
+      fs.writeFileSync(stderrPath, `${mainProcessLogs.stderr.join("\n")}\n`, { encoding: "utf8" });
+      await testInfo.attach("electron-main-stdout", {
+        path: stdoutPath,
+        contentType: "text/plain",
+      });
+      await testInfo.attach("electron-main-stderr", {
+        path: stderrPath,
+        contentType: "text/plain",
+      });
       appProcess?.stdout?.off("data", onStdout);
       appProcess?.stderr?.off("data", onStderr);
       if (app) {
@@ -351,9 +370,39 @@ export const test = base.extend<Fixtures>({
       }
     }
   },
-  window: async ({ electronApp }, use) => {
+  window: async ({ electronApp }, use, testInfo) => {
     const page = await electronApp.firstWindow();
     await page.waitForLoadState("domcontentloaded");
+    const capturedDialogTexts = new Set<string>();
+    let dialogEvidenceCounter = 0;
+
+    const captureDialogEvidence = async (label: string, message: string): Promise<void> => {
+      const normalizedMessage = String(message || "").trim() || "(empty dialog message)";
+      const evidenceKey = `${label}:${normalizedMessage}`;
+      if (capturedDialogTexts.has(evidenceKey)) {
+        return;
+      }
+      capturedDialogTexts.add(evidenceKey);
+      dialogEvidenceCounter += 1;
+      const safeLabel = label.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 48) || "dialog";
+      const baseName = `auto-dismiss-${String(dialogEvidenceCounter).padStart(2, "0")}-${safeLabel}`;
+      const textPath = testInfo.outputPath(`${baseName}.txt`);
+      const screenshotPath = testInfo.outputPath(`${baseName}.png`);
+      fs.writeFileSync(textPath, normalizedMessage, { encoding: "utf8" });
+      await testInfo.attach(`${baseName}-text`, {
+        path: textPath,
+        contentType: "text/plain",
+      });
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        await testInfo.attach(`${baseName}-screenshot`, {
+          path: screenshotPath,
+          contentType: "image/png",
+        });
+      } catch {
+        // The page may already be closing when a native dialog appears.
+      }
+    };
 
     // Auto-dismiss engine failure dialog - persistent handler
     const dismissDialog = async () => {
@@ -368,6 +417,8 @@ export const test = base.extend<Fixtures>({
           if (await dialog.count() === 0) continue;
           const closeButton = dialog.getByRole("button", { name: /关闭|Close|OK|确定/i });
           if (await closeButton.count() > 0 && await closeButton.isVisible().catch(() => false)) {
+            const dialogText = await dialog.textContent().catch(() => "");
+            await captureDialogEvidence("engine-alertdialog", dialogText || "engine alert dialog");
             await closeButton.click();
             await page.waitForTimeout(500);
           }
@@ -380,6 +431,7 @@ export const test = base.extend<Fixtures>({
     // Handle dialog events as they happen
     page.on("dialog", async (dialog) => {
       console.log("[fixtures] Auto-dismissing dialog:", dialog.message());
+      await captureDialogEvidence("native-dialog", dialog.message());
       await dialog.dismiss();
     });
 

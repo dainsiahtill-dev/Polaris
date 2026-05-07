@@ -40,6 +40,7 @@ def compute_llm_config_sync_updates(config: Mapping[str, Any]) -> dict[str, Any]
         updates["pm_backend"] = "auto"
         if pm_role.get("model"):
             updates["pm_model"] = pm_role.get("model")
+            updates["model"] = pm_role.get("model")
 
     director_role = roles.get("director") if isinstance(roles.get("director"), dict) else None
     if director_role and director_role.get("model"):

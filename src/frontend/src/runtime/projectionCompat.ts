@@ -63,11 +63,24 @@ interface LegacyWorkflowResponse {
     id?: string;
     title?: string;
     name?: string;
+    subject?: string;
     status?: string;
     assignee?: string;
     priority?: string;
     started_at?: string;
     completed_at?: string;
+    metadata?: Record<string, unknown>;
+    blueprint_id?: string | null;
+    blueprint_path?: string | null;
+    runtime_blueprint_path?: string | null;
+    acceptance?: unknown[];
+    acceptance_criteria?: string[];
+    execution_checklist?: string[];
+    target_files?: string[];
+    scope_paths?: string[];
+    files?: string[];
+    dependencies?: string[];
+    blocked_by?: string[];
   }>;
 }
 
@@ -104,17 +117,30 @@ interface NestedStatusResponse {
   } | null;
   snapshot?: {
     run_id?: string;
-    tasks?: Array<{
-      id?: string;
-      title?: string;
-      name?: string;
-      goal?: string;
-      status?: string;
-      assignee?: string;
-      priority?: string;
-      done?: boolean;
-      completed?: boolean;
-    }>;
+  tasks?: Array<{
+    id?: string;
+    title?: string;
+    name?: string;
+    subject?: string;
+    goal?: string;
+    status?: string;
+    assignee?: string;
+    priority?: string;
+    done?: boolean;
+    completed?: boolean;
+    metadata?: Record<string, unknown>;
+    blueprint_id?: string | null;
+    blueprint_path?: string | null;
+    runtime_blueprint_path?: string | null;
+    acceptance?: unknown[];
+    acceptance_criteria?: string[];
+    execution_checklist?: string[];
+    target_files?: string[];
+    scope_paths?: string[];
+    files?: string[];
+    dependencies?: string[];
+    blocked_by?: string[];
+  }>;
     timestamp?: string;
     progress?: number;
   } | null;
@@ -271,12 +297,24 @@ function normalizeWorkflowStatus(legacy: LegacyResponse, nested?: NestedStatusRe
       const status = String(t.status ?? '').toLowerCase();
       return {
         id: t.id || `task-${index}`,
-        title: t.title || t.name || t.goal || `Task ${index}`,
+        title: t.title || t.name || t.subject || t.goal || t.id || '未命名任务',
         status: normalizeTaskStatus(status),
         assignee: t.assignee,
         priority: normalizePriority(t.priority),
         started_at: undefined,
         completed_at: undefined,
+        metadata: t.metadata,
+        blueprint_id: t.blueprint_id,
+        blueprint_path: t.blueprint_path,
+        runtime_blueprint_path: t.runtime_blueprint_path,
+        acceptance: t.acceptance,
+        acceptance_criteria: t.acceptance_criteria,
+        execution_checklist: t.execution_checklist,
+        target_files: t.target_files,
+        scope_paths: t.scope_paths,
+        files: t.files,
+        dependencies: t.dependencies,
+        blocked_by: t.blocked_by,
       };
     });
 
@@ -307,12 +345,24 @@ function normalizeWorkflowStatus(legacy: LegacyResponse, nested?: NestedStatusRe
   const tasks: WorkflowTask[] =
     legacy.tasks?.map((t, index) => ({
       id: t.id || `task-${index}`,
-      title: t.title || t.name || `Task ${index}`,
+      title: t.title || t.name || t.subject || t.id || '未命名任务',
       status: normalizeTaskStatus(t.status),
       assignee: t.assignee,
       priority: normalizePriority(t.priority),
       started_at: t.started_at,
       completed_at: t.completed_at,
+      metadata: t.metadata,
+      blueprint_id: t.blueprint_id,
+      blueprint_path: t.blueprint_path,
+      runtime_blueprint_path: t.runtime_blueprint_path,
+      acceptance: t.acceptance,
+      acceptance_criteria: t.acceptance_criteria,
+      execution_checklist: t.execution_checklist,
+      target_files: t.target_files,
+      scope_paths: t.scope_paths,
+      files: t.files,
+      dependencies: t.dependencies,
+      blocked_by: t.blocked_by,
     })) || [];
 
   return {

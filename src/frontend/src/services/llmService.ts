@@ -29,21 +29,21 @@ export type {
  * 获取LLM配置
  */
 export async function getLLMConfig(): Promise<ApiResult<LLMConfigResponse>> {
-  return apiGet<LLMConfigResponse>('/llm/config', '读取LLM配置失败');
+  return apiGet<LLMConfigResponse>('/v2/llm/config', '读取LLM配置失败');
 }
 
 /**
  * 保存LLM配置
  */
 export async function saveLLMConfig(config: LLMConfigResponse): Promise<ApiResult<LLMConfigResponse>> {
-  return apiPost<LLMConfigResponse>('/llm/config', config, '保存LLM配置失败');
+  return apiPost<LLMConfigResponse>('/v2/llm/config', config, '保存LLM配置失败');
 }
 
 /**
  * 获取LLM状态
  */
 export async function getLLMStatus(): Promise<ApiResult<LLMStatusResponse>> {
-  return apiGet<LLMStatusResponse>('/llm/status', '读取LLM状态失败');
+  return apiGet<LLMStatusResponse>('/v2/llm/status', '读取LLM状态失败');
 }
 
 // ============================================================================

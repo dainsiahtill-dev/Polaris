@@ -112,6 +112,7 @@ export {
   // Director Tasks
   listDirectorTasks,
   createDirectorTask,
+  runDirector,
 } from './pmService';
 
 export type {
@@ -119,6 +120,8 @@ export type {
   DirectorStatus,
   DirectorTask,
   CreateDirectorTaskPayload,
+  RunDirectorPayload,
+  RunDirectorResponse,
 } from './pmService';
 
 // ============================================================================

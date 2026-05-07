@@ -354,6 +354,11 @@ class RuntimeEventFanout:
             try:
                 payload = message.payload if isinstance(message.payload, dict) else {}
                 event = {
+                    "schema_version": "runtime.v2",
+                    "event_schema": "runtime.event.task_trace.v1",
+                    "channel": "event.task_trace",
+                    "kind": "task_trace",
+                    "source": "message_bus.task_trace",
                     "type": "task_trace",
                     "event": payload,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -382,6 +387,11 @@ class RuntimeEventFanout:
             try:
                 payload = message.payload if isinstance(message.payload, dict) else {}
                 event = {
+                    "schema_version": "runtime.v2",
+                    "event_schema": "runtime.event.sequential.v1",
+                    "channel": "event.sequential",
+                    "kind": event_type,
+                    "source": "message_bus.sequential",
                     "type": event_type,
                     "event": payload,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -420,6 +430,11 @@ class RuntimeEventFanout:
             modified_lines = 0
 
         return {
+            "schema_version": "runtime.v2",
+            "event_schema": "runtime.event.file_edit.v1",
+            "channel": "event.file_edit",
+            "kind": "file_edit",
+            "source": "message_bus.file_written",
             "id": f"{file_path}-{timestamp}",
             "file_path": file_path,
             "operation": operation,

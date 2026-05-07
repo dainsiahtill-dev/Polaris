@@ -67,7 +67,7 @@ interface V2EventMessage {
   event: Record<string, unknown>;
 }
 
-type RuntimeRole = 'pm' | 'director' | 'qa';
+type RuntimeRole = 'pm' | 'chief_engineer' | 'director' | 'qa';
 
 // ============================================================================
 // RuntimeSocketManager Singleton
@@ -304,7 +304,7 @@ class RuntimeSocketManager {
               .filter((value): value is string => value.length > 0)
               .filter(
                 (value): value is RuntimeRole =>
-                  value === 'pm' || value === 'director' || value === 'qa'
+                  value === 'pm' || value === 'chief_engineer' || value === 'director' || value === 'qa'
               );
             this.subscribedRoles = Array.from(new Set(roles));
             this.hasExplicitRoleFilter = true;

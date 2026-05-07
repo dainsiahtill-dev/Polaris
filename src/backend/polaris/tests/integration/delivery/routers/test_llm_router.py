@@ -95,6 +95,26 @@ class TestLlmRouter:
         assert response.status_code == 400
         assert response.json()["error"]["message"] == "invalid config payload"
 
+    def test_save_llm_config_validation_error_returns_400(self) -> None:
+        """POST /llm/config exposes validation failures as client errors."""
+        client = _build_client()
+        with (
+            patch(
+                "polaris.delivery.http.routers.llm.build_cache_root",
+                return_value="/tmp/cache",
+            ),
+            patch(
+                "polaris.delivery.http.routers.llm.llm_config.save_llm_config",
+                side_effect=ValueError("Invalid LLM configuration: provider timeout too high"),
+            ),
+        ):
+            response = client.post("/llm/config", json={"providers": {}, "roles": {}})
+
+        assert response.status_code == 400
+        payload: dict[str, Any] = response.json()
+        assert payload["error"]["code"] == "INVALID_LLM_CONFIG"
+        assert "provider timeout too high" in payload["error"]["message"]
+
     def test_migrate_config_happy_path(self) -> None:
         """POST /llm/config/migrate returns 200 with migrated config."""
         client = _build_client()

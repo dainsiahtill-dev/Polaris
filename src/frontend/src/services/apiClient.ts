@@ -23,10 +23,32 @@ export class ApiError extends Error {
   }
 }
 
+function extractStringDetail(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) {
+    return value;
+  }
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const payload = value as Record<string, unknown>;
+  return (
+    extractStringDetail(payload.message) ||
+    extractStringDetail(payload.detail) ||
+    extractStringDetail(payload.error) ||
+    extractStringDetail(payload.code)
+  );
+}
+
 export async function extractErrorDetail(response: Response, fallback: string): Promise<string> {
   try {
     const payload = (await response.json()) as ApiErrorDetail;
-    return payload.detail || payload.error || payload.message || fallback;
+    return (
+      extractStringDetail(payload.detail) ||
+      extractStringDetail(payload.error) ||
+      extractStringDetail(payload.message) ||
+      fallback
+    );
   } catch {
     return fallback;
   }

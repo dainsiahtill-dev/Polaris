@@ -19,6 +19,7 @@ from polaris.delivery.ws.endpoints.helpers import (
     stream_signature,
     wants_role,
 )
+from polaris.delivery.ws.endpoints.models import RUNTIME_EVENT_PROTOCOL_VERSION, RUNTIME_EVENT_SCHEMA_VERSION
 from polaris.delivery.ws.endpoints.signature_utils import remember_stream_signature
 from polaris.delivery.ws.endpoints.stream import (
     emit_stream_line,
@@ -297,19 +298,45 @@ async def _drain_fanout_events(
     )
 
     for item in file_events:
-        payload = {"type": "file_edit", "event": item, "timestamp": datetime.now(timezone.utc).isoformat()}
+        event_ts = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "type": "file_edit",
+            "protocol": RUNTIME_EVENT_SCHEMA_VERSION,
+            "schema_version": RUNTIME_EVENT_SCHEMA_VERSION,
+            "protocol_version": RUNTIME_EVENT_PROTOCOL_VERSION,
+            "event_schema": "runtime.event.file_edit.v1",
+            "channel": "event.file_edit",
+            "kind": "file_edit",
+            "source": "process_local_fanout",
+            "event": item,
+            "timestamp": event_ts,
+        }
         if await send_json_safe(
             websocket, payload, connection_id=connection_id, client=client, workspace=resolved_workspace
         ):
             sent_any = True
 
     for item in task_trace_events:
+        item.setdefault("protocol", RUNTIME_EVENT_SCHEMA_VERSION)
+        item.setdefault("schema_version", RUNTIME_EVENT_SCHEMA_VERSION)
+        item.setdefault("protocol_version", RUNTIME_EVENT_PROTOCOL_VERSION)
+        item.setdefault("event_schema", "runtime.event.task_trace.v1")
+        item.setdefault("channel", "event.task_trace")
+        item.setdefault("kind", "task_trace")
+        item.setdefault("source", "process_local_fanout")
         if await send_json_safe(
             websocket, item, connection_id=connection_id, client=client, workspace=resolved_workspace
         ):
             sent_any = True
 
     for item in sequential_events:
+        item.setdefault("protocol", RUNTIME_EVENT_SCHEMA_VERSION)
+        item.setdefault("schema_version", RUNTIME_EVENT_SCHEMA_VERSION)
+        item.setdefault("protocol_version", RUNTIME_EVENT_PROTOCOL_VERSION)
+        item.setdefault("event_schema", "runtime.event.sequential.v1")
+        item.setdefault("channel", "event.sequential")
+        item.setdefault("kind", item.get("type") or "sequential")
+        item.setdefault("source", "process_local_fanout")
         if await send_json_safe(
             websocket, item, connection_id=connection_id, client=client, workspace=resolved_workspace
         ):

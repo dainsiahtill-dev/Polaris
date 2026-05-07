@@ -1,25 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  Edit3,
+  Eye,
   FileText,
   FolderOpen,
-  ChevronRight,
-  ChevronDown,
   RefreshCw,
   Save,
-  Eye,
-  Edit3,
   Search,
-  Plus,
-  MoreHorizontal,
-  FilePlus,
-  FolderPlus,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { cn } from '@/app/components/ui/utils';
-import { fileService } from '@/services/api';
-import { toast } from 'sonner';
 import { sanitizeMarkdown } from '@/app/utils/xssSanitizer';
+import { pmDocumentService, type PmDocumentInfo } from '@/services/pmService';
+import { toast } from 'sonner';
 
 interface PMDocumentPanelProps {
   workspace: string;
@@ -30,10 +27,11 @@ interface PMDocumentPanelProps {
 interface FileNode {
   name: string;
   path: string;
+  displayPath: string;
   type: 'file' | 'directory';
   children?: FileNode[];
   expanded?: boolean;
-  content?: string;
+  document?: PmDocumentInfo;
 }
 
 export function PMDocumentPanel({
@@ -44,48 +42,48 @@ export function PMDocumentPanel({
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [fileContent, setFileContent] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isTreeLoading, setIsTreeLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [treeError, setTreeError] = useState<string | null>(null);
+  const [contentError, setContentError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'preview' | 'edit'>('preview');
 
-  // Load file tree on mount
-  useEffect(() => {
-    loadFileTree();
+  const loadFileTree = useCallback(async () => {
+    setIsTreeLoading(true);
+    setTreeError(null);
+
+    const result = await pmDocumentService.list();
+    if (!result.ok || !result.data) {
+      setFileTree([]);
+      setTreeError(result.error || '无法读取 PM 文档索引');
+      setIsTreeLoading(false);
+      return;
+    }
+
+    setFileTree(buildFileTree(result.data.documents, workspace));
+    setIsTreeLoading(false);
   }, [workspace]);
 
-  const loadFileTree = async () => {
-    // Mock file tree for now - in real implementation, this would fetch from backend
-    const mockTree: FileNode[] = [
-      {
-        name: 'docs',
-        path: 'docs',
-        type: 'directory',
-        expanded: true,
-        children: [
-          { name: 'PRD.md', path: 'docs/PRD.md', type: 'file' },
-          { name: 'Architecture.md', path: 'docs/Architecture.md', type: 'file' },
-          { name: 'API.md', path: 'docs/API.md', type: 'file' },
-        ],
-      },
-      {
-        name: 'AGENTS.md',
-        path: 'AGENTS.md',
-        type: 'file',
-      },
-      {
-        name: 'TASKS.md',
-        path: 'TASKS.md',
-        type: 'file',
-      },
-      {
-        name: 'README.md',
-        path: 'README.md',
-        type: 'file',
-      },
-    ];
-    setFileTree(mockTree);
-  };
+  useEffect(() => {
+    void loadFileTree();
+  }, [loadFileTree]);
+
+  const toggleDirectory = useCallback((node: FileNode) => {
+    const updateTree = (nodes: FileNode[]): FileNode[] =>
+      nodes.map((current) => {
+        if (current.path === node.path) {
+          return { ...current, expanded: !current.expanded };
+        }
+        if (current.children) {
+          return { ...current, children: updateTree(current.children) };
+        }
+        return current;
+      });
+
+    setFileTree((currentTree) => updateTree(currentTree));
+  }, []);
 
   const handleFileSelect = useCallback(async (node: FileNode) => {
     if (node.type === 'directory') {
@@ -94,50 +92,55 @@ export function PMDocumentPanel({
     }
 
     setIsLoading(true);
+    setContentError(null);
     setSelectedFile(node);
     onDocumentSelect(node.path);
 
-    try {
-      const result = await fileService.read(node.path);
-      if (result.ok && result.data) {
-        setFileContent(result.data.content || '');
-      } else {
-        // Mock content for demonstration
-        setFileContent(`# ${node.name}\n\n这是 ${node.name} 的内容。\n\n## 概述\n\n文档内容将在这里显示...\n\n## 详细信息\n\n- 项目: Polaris\n- 路径: ${node.path}\n- 类型: 文档\n`);
-      }
-    } catch {
-      toast.error('加载文件失败');
-    } finally {
-      setIsLoading(false);
+    const result = await pmDocumentService.get(node.path);
+    if (result.ok && result.data) {
+      setFileContent(result.data.content || '');
+    } else {
+      const message = result.error || '加载 PM 文档失败';
+      setFileContent('');
+      setContentError(message);
+      toast.error(message);
     }
-  }, [onDocumentSelect]);
 
-  const toggleDirectory = (node: FileNode) => {
-    const updateTree = (nodes: FileNode[]): FileNode[] => {
-      return nodes.map((n) => {
-        if (n.path === node.path) {
-          return { ...n, expanded: !n.expanded };
-        }
-        if (n.children) {
-          return { ...n, children: updateTree(n.children) };
-        }
-        return n;
-      });
-    };
-    setFileTree(updateTree(fileTree));
-  };
+    setIsLoading(false);
+  }, [onDocumentSelect, toggleDirectory]);
 
   const handleSave = async () => {
     if (!selectedFile) return;
 
-    try {
-      // In real implementation, this would call the save API
+    setIsSaving(true);
+    const result = await pmDocumentService.save(
+      selectedFile.path,
+      fileContent,
+      'Updated from PM document workspace',
+    );
+
+    if (result.ok && result.data?.success) {
       toast.success('文件已保存');
-      setIsEditing(false);
       setViewMode('preview');
-    } catch {
-      toast.error('保存失败');
+      const now = new Date().toISOString();
+      setSelectedFile((previous) => previous
+        ? {
+          ...previous,
+          document: {
+            path: previous.document?.path || previous.path,
+            current_version: result.data?.version || previous.document?.current_version || 1,
+            version_count: previous.document?.version_count ? previous.document.version_count + 1 : 1,
+            last_modified: now,
+            created_at: previous.document?.created_at || now,
+          },
+        }
+        : previous);
+      await loadFileTree();
+    } else {
+      toast.error(result.error || '保存失败');
     }
+
+    setIsSaving(false);
   };
 
   const filteredTree = searchQuery.trim()
@@ -145,106 +148,112 @@ export function PMDocumentPanel({
     : fileTree;
 
   return (
-    <div className="h-full flex">
-      {/* File Tree Sidebar */}
-      <div className="w-64 flex flex-col border-r border-white/10 bg-slate-950/30">
-        {/* Toolbar */}
-        <div className="h-14 flex items-center justify-between px-3 border-b border-white/10">
+    <div className="flex h-full">
+      <div className="flex w-64 flex-col border-r border-white/10 bg-slate-950/30">
+        <div className="flex h-14 items-center justify-between border-b border-white/10 px-3">
           <span className="text-sm font-medium text-slate-300">文档</span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-slate-400 hover:text-slate-200"
-              onClick={loadFileTree}
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-slate-400 hover:text-slate-200"
-            >
-              <FilePlus className="w-3.5 h-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-slate-400 hover:text-slate-200"
-            >
-              <FolderPlus className="w-3.5 h-3.5" />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-slate-400 hover:text-slate-200"
+            onClick={() => void loadFileTree()}
+            disabled={isTreeLoading}
+            aria-label="刷新文档列表"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isTreeLoading && 'animate-spin')} />
+          </Button>
         </div>
 
-        {/* Search */}
-        <div className="p-2 border-b border-white/10">
+        <div className="border-b border-white/10 p-2">
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <Input
               placeholder="搜索文档..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-7 h-8 text-xs bg-white/5 border-white/10 text-slate-200 placeholder:text-slate-600 focus:border-amber-500/50"
+              onChange={(event) => setSearchQuery(event.target.value)}
+              className="h-8 border-white/10 bg-white/5 pl-7 text-xs text-slate-200 placeholder:text-slate-600 focus:border-amber-500/50"
             />
           </div>
         </div>
 
-        {/* File Tree */}
-        <div className="flex-1 overflow-auto py-2">
-          {filteredTree.map((node) => (
-            <FileTreeNode
-              key={node.path}
-              node={node}
-              level={0}
-              selectedPath={selectedFile?.path}
-              onSelect={handleFileSelect}
+        <div className="flex-1 overflow-auto py-2" data-testid="pm-document-tree">
+          {treeError ? (
+            <PanelMessage
+              icon={<AlertCircle className="h-4 w-4 text-red-400" />}
+              title="文档索引不可用"
+              description={treeError}
+              testId="pm-document-error"
             />
-          ))}
+          ) : isTreeLoading ? (
+            <PanelMessage
+              icon={<RefreshCw className="h-4 w-4 animate-spin text-amber-400" />}
+              title="正在读取真实 PM 文档索引"
+              description="来源：/v2/pm/documents"
+            />
+          ) : filteredTree.length > 0 ? (
+            filteredTree.map((node) => (
+              <FileTreeNode
+                key={node.path}
+                node={node}
+                level={0}
+                selectedPath={selectedFile?.path ?? selectedPath ?? undefined}
+                onSelect={handleFileSelect}
+              />
+            ))
+          ) : (
+            <PanelMessage
+              icon={<FolderOpen className="h-4 w-4 text-slate-500" />}
+              title="暂无已跟踪文档"
+              description="运行 Architect/PM 并生成文档后，这里才会显示真实工件。"
+              testId="pm-document-empty"
+            />
+          )}
         </div>
       </div>
 
-      {/* Document Editor */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
         {selectedFile ? (
           <>
-            {/* Editor Header */}
-            <div className="h-14 flex items-center justify-between px-4 border-b border-white/10 bg-white/[0.02]">
-              <div className="flex items-center gap-3">
-                <FileText className="w-4 h-4 text-amber-400" />
-                <div>
-                  <h3 className="text-sm font-medium text-slate-200">
-                    {selectedFile.name}
-                  </h3>
-                  <p className="text-[10px] text-slate-500">{selectedFile.path}</p>
+            <div className="flex h-14 items-center justify-between border-b border-white/10 bg-white/[0.02] px-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <FileText className="h-4 w-4 flex-shrink-0 text-amber-400" />
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-medium text-slate-200">{selectedFile.name}</h3>
+                  <p className="truncate text-[10px] text-slate-500">{selectedFile.displayPath}</p>
+                  <p
+                    className="mt-0.5 truncate text-[10px] text-amber-300/80"
+                    data-testid="pm-document-provenance"
+                    title={buildDocumentProvenance(selectedFile)}
+                  >
+                    {buildDocumentProvenance(selectedFile)}
+                  </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                {/* View Mode Toggle */}
-                <div className="flex items-center p-1 rounded-lg bg-white/5 border border-white/10">
+                <div className="flex items-center rounded-lg border border-white/10 bg-white/5 p-1">
                   <button
                     onClick={() => setViewMode('preview')}
                     className={cn(
-                      'px-2.5 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1',
+                      'flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all',
                       viewMode === 'preview'
                         ? 'bg-amber-500/20 text-amber-400'
-                        : 'text-slate-500 hover:text-slate-300'
+                        : 'text-slate-500 hover:text-slate-300',
                     )}
                   >
-                    <Eye className="w-3 h-3" />
+                    <Eye className="h-3 w-3" />
                     预览
                   </button>
                   <button
                     onClick={() => setViewMode('edit')}
                     className={cn(
-                      'px-2.5 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1',
+                      'flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all',
                       viewMode === 'edit'
                         ? 'bg-amber-500/20 text-amber-400'
-                        : 'text-slate-500 hover:text-slate-300'
+                        : 'text-slate-500 hover:text-slate-300',
                     )}
                   >
-                    <Edit3 className="w-3 h-3" />
+                    <Edit3 className="h-3 w-3" />
                     编辑
                   </button>
                 </div>
@@ -253,34 +262,36 @@ export function PMDocumentPanel({
                   <Button
                     size="sm"
                     onClick={handleSave}
-                    className="bg-amber-600 hover:bg-amber-700 text-white"
+                    disabled={isSaving}
+                    className="bg-amber-600 text-white hover:bg-amber-700"
                   >
-                    <Save className="w-3.5 h-3.5 mr-1.5" />
-                    保存
+                    <Save className={cn('mr-1.5 h-3.5 w-3.5', isSaving && 'animate-pulse')} />
+                    {isSaving ? '保存中' : '保存'}
                   </Button>
                 )}
-
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-slate-400 hover:text-slate-200"
-                >
-                  <MoreHorizontal className="w-4 h-4" />
-                </Button>
               </div>
             </div>
 
-            {/* Editor Content */}
             <div className="flex-1 overflow-auto">
               {isLoading ? (
-                <div className="h-full flex items-center justify-center text-slate-500">
-                  <RefreshCw className="w-5 h-5 animate-spin" />
+                <div className="flex h-full items-center justify-center text-slate-500">
+                  <RefreshCw className="h-5 w-5 animate-spin" />
+                </div>
+              ) : contentError ? (
+                <div className="flex h-full items-center justify-center p-6">
+                  <div className="max-w-md rounded-lg border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
+                    <div className="flex items-center gap-2 font-medium">
+                      <AlertCircle className="h-4 w-4" />
+                      文档读取失败
+                    </div>
+                    <p className="mt-2 text-xs text-red-200/80">{contentError}</p>
+                  </div>
                 </div>
               ) : viewMode === 'edit' ? (
                 <textarea
                   value={fileContent}
-                  onChange={(e) => setFileContent(e.target.value)}
-                  className="w-full h-full p-4 bg-slate-950 text-slate-200 font-mono text-sm resize-none focus:outline-none"
+                  onChange={(event) => setFileContent(event.target.value)}
+                  className="h-full w-full resize-none bg-slate-950 p-4 font-mono text-sm text-slate-200 focus:outline-none"
                   spellCheck={false}
                 />
               ) : (
@@ -289,10 +300,10 @@ export function PMDocumentPanel({
             </div>
           </>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-slate-500">
-            <FolderOpen className="w-12 h-12 mb-4 opacity-20" />
+          <div className="flex h-full flex-col items-center justify-center text-slate-500">
+            <FolderOpen className="mb-4 h-12 w-12 opacity-20" />
             <p className="text-sm">选择文档以查看</p>
-            <p className="text-xs text-slate-600 mt-1">从左侧列表选择文件</p>
+            <p className="mt-1 text-xs text-slate-600">左侧只显示 PM 已跟踪的真实文档</p>
           </div>
         )}
       </div>
@@ -300,7 +311,119 @@ export function PMDocumentPanel({
   );
 }
 
-// File Tree Node Component
+function formatDocumentTimestamp(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return 'modified unknown';
+  return `modified ${raw}`;
+}
+
+function buildDocumentProvenance(node: FileNode): string {
+  const version = String(node.document?.current_version || '-').trim() || '-';
+  const modified = formatDocumentTimestamp(node.document?.last_modified);
+  return `PM docs API · v${version} · ${modified}`;
+}
+
+function displayDocumentPath(path: string, workspace: string): string {
+  const normalizedPath = path.replace(/\\/g, '/');
+  const normalizedWorkspace = workspace.replace(/\\/g, '/').replace(/\/+$/, '');
+  const lowerPath = normalizedPath.toLowerCase();
+  const lowerWorkspace = normalizedWorkspace.toLowerCase();
+
+  if (lowerWorkspace && lowerPath.startsWith(`${lowerWorkspace}/`)) {
+    return normalizedPath.slice(normalizedWorkspace.length + 1);
+  }
+
+  const workspaceMarker = '/workspace/';
+  const markerIndex = lowerPath.indexOf(workspaceMarker);
+  if (markerIndex >= 0) {
+    return normalizedPath.slice(markerIndex + 1);
+  }
+
+  return normalizedPath;
+}
+
+function sortTree(nodes: FileNode[]): FileNode[] {
+  return [...nodes]
+    .sort((left, right) => {
+      if (left.type !== right.type) return left.type === 'directory' ? -1 : 1;
+      return left.name.localeCompare(right.name);
+    })
+    .map((node) => ({
+      ...node,
+      children: node.children ? sortTree(node.children) : undefined,
+    }));
+}
+
+function buildFileTree(documents: PmDocumentInfo[], workspace: string): FileNode[] {
+  const roots: FileNode[] = [];
+  const directories = new Map<string, FileNode>();
+
+  for (const document of documents) {
+    const displayPath = displayDocumentPath(document.path, workspace);
+    const segments = displayPath.split('/').filter(Boolean);
+    if (segments.length === 0) continue;
+
+    let currentLevel = roots;
+    let currentPath = '';
+
+    segments.forEach((segment, index) => {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      const isLeaf = index === segments.length - 1;
+
+      if (isLeaf) {
+        currentLevel.push({
+          name: segment,
+          path: document.path,
+          displayPath,
+          type: 'file',
+          document,
+        });
+        return;
+      }
+
+      let directory = directories.get(currentPath);
+      if (!directory) {
+        directory = {
+          name: segment,
+          path: `directory:${currentPath}`,
+          displayPath: currentPath,
+          type: 'directory',
+          expanded: true,
+          children: [],
+        };
+        directories.set(currentPath, directory);
+        currentLevel.push(directory);
+      }
+
+      currentLevel = directory.children ?? [];
+    });
+  }
+
+  return sortTree(roots);
+}
+
+function PanelMessage({
+  icon,
+  title,
+  description,
+  testId,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  testId?: string;
+}) {
+  return (
+    <div data-testid={testId} className="px-3 py-6 text-center">
+      <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-white/5">
+        {icon}
+      </div>
+      <p className="text-xs font-medium text-slate-300">{title}</p>
+      <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{description}</p>
+    </div>
+  );
+}
+
 interface FileTreeNodeProps {
   node: FileNode;
   level: number;
@@ -319,30 +442,36 @@ function FileTreeNode({ node, level, selectedPath, onSelect }: FileTreeNodeProps
         onClick={() => onSelect(node)}
         style={{ paddingLeft }}
         className={cn(
-          'flex items-center gap-1.5 py-1.5 pr-3 cursor-pointer transition-colors',
+          'flex cursor-pointer items-center gap-1.5 py-1.5 pr-3 transition-colors',
           isSelected
             ? 'bg-amber-500/10 text-amber-400'
-            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200',
         )}
       >
-        {isDirectory && (
+        {isDirectory ? (
           <span className="text-slate-500">
             {node.expanded ? (
-              <ChevronDown className="w-3.5 h-3.5" />
+              <ChevronDown className="h-3.5 w-3.5" />
             ) : (
-              <ChevronRight className="w-3.5 h-3.5" />
+              <ChevronRight className="h-3.5 w-3.5" />
             )}
           </span>
+        ) : (
+          <span className="w-3.5" />
         )}
-        {!isDirectory && <span className="w-3.5" />}
 
         {isDirectory ? (
-          <FolderOpen className="w-4 h-4 text-amber-500/70" />
+          <FolderOpen className="h-4 w-4 text-amber-500/70" />
         ) : (
-          <FileText className="w-4 h-4 text-slate-500" />
+          <FileText className="h-4 w-4 text-slate-500" />
         )}
 
-        <span className="text-xs truncate">{node.name}</span>
+        <span className="truncate text-xs">{node.name}</span>
+        {node.document && (
+          <span className="ml-auto rounded bg-white/5 px-1.5 py-0.5 text-[9px] text-slate-500">
+            v{node.document.current_version || '-'}
+          </span>
+        )}
       </div>
 
       {isDirectory && node.expanded && node.children && (
@@ -362,33 +491,30 @@ function FileTreeNode({ node, level, selectedPath, onSelect }: FileTreeNodeProps
   );
 }
 
-// Markdown Preview Component
 function MarkdownPreview({ content }: { content: string }) {
-  // Simple markdown rendering - in production, use a proper markdown library
   const renderMarkdown = (text: string): string => {
     return text
-      .replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold text-slate-100 mb-4">$1</h1>')
-      .replace(/^## (.*$)/gim, '<h2 class="text-xl font-semibold text-slate-200 mb-3 mt-6">$1</h2>')
-      .replace(/^### (.*$)/gim, '<h3 class="text-lg font-medium text-slate-300 mb-2 mt-4">$1</h3>')
+      .replace(/^# (.*$)/gim, '<h1 class="mb-4 text-2xl font-bold text-slate-100">$1</h1>')
+      .replace(/^## (.*$)/gim, '<h2 class="mb-3 mt-6 text-xl font-semibold text-slate-200">$1</h2>')
+      .replace(/^### (.*$)/gim, '<h3 class="mb-2 mt-4 text-lg font-medium text-slate-300">$1</h3>')
       .replace(/\*\*(.*?)\*\*/g, '<strong class="text-slate-200">$1</strong>')
       .replace(/\*(.*?)\*/g, '<em class="text-slate-300">$1</em>')
-      .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 text-xs font-mono">$1</code>')
-      .replace(/^- (.*$)/gim, '<li class="text-slate-300 ml-4">$1</li>')
+      .replace(/`([^`]+)`/g, '<code class="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-amber-400">$1</code>')
+      .replace(/^- (.*$)/gim, '<li class="ml-4 text-slate-300">$1</li>')
       .replace(/\n/g, '<br />');
   };
 
   return (
     <div
-      className="p-6 prose prose-invert prose-amber max-w-none"
+      className="prose prose-invert prose-amber max-w-none p-6"
       dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(renderMarkdown(content)) }}
     />
   );
 }
 
-// Helper function to filter tree
 function filterTree(nodes: FileNode[], query: string): FileNode[] {
   return nodes.reduce<FileNode[]>((acc, node) => {
-    const matches = node.name.toLowerCase().includes(query);
+    const matches = node.name.toLowerCase().includes(query) || node.displayPath.toLowerCase().includes(query);
 
     if (node.type === 'directory' && node.children) {
       const filteredChildren = filterTree(node.children, query);

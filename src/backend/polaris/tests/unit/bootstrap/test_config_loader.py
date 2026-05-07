@@ -168,6 +168,19 @@ class TestConfigLoaderLoadEnv:
 
         assert env_config.get("runtime.ramdisk_root") == "/mnt/ramdisk"
 
+    def test_load_env_runtime_roots_and_ramdisk_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should preserve runtime root env values in the merged config snapshot."""
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", "/tmp/runtime-root")
+        monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", "/tmp/runtime-cache")
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+
+        loader = ConfigLoader()
+        snapshot = loader.load()
+
+        assert snapshot.get("runtime.root") == "/tmp/runtime-root"
+        assert snapshot.get("runtime.cache_root") == "/tmp/runtime-cache"
+        assert snapshot.get("runtime.use_ramdisk") is False
+
 
 class TestConfigLoaderFlattenDict:
     """Test nested dictionary flattening."""

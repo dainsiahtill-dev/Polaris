@@ -173,6 +173,8 @@ def sync_process_settings_environment(settings: "Settings") -> None:
     else:
         os.environ.pop("KERNELONE_RUNTIME_ROOT", None)
 
+    os.environ["KERNELONE_STATE_TO_RAMDISK"] = "1" if bool(getattr(runtime_settings, "use_ramdisk", True)) else "0"
+
     runtime_cache_root = _runtime_cache_env_value(settings)
     if runtime_cache_root:
         os.environ["KERNELONE_RUNTIME_CACHE_ROOT"] = runtime_cache_root

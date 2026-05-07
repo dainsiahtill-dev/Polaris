@@ -16,6 +16,7 @@ from typing import Any, cast
 from polaris.bootstrap.config import get_settings
 from polaris.cells.llm.dialogue.public.service import generate_role_response
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .base import BaseRoleAdapter
@@ -782,9 +783,8 @@ class QAAdapter(BaseRoleAdapter):
         Returns:
             Test execution result with pass/fail and details
         """
-        import subprocess
-
         workspace = Path(self.workspace).resolve()
+        executor = CommandExecutionService(workspace)
         test_results: list[dict[str, Any]] = []
         passed_count = 0
         failed_count = 0
@@ -800,54 +800,57 @@ class QAAdapter(BaseRoleAdapter):
             test_commands = ["pytest", "python -m pytest"]
 
         for cmd in test_commands:
-            cmd_parts = cmd.split()
             try:
-                result = subprocess.run(
-                    cmd_parts,
-                    cwd=str(workspace),
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                exit_code = result.returncode
-                output = result.stdout + result.stderr
-
-                if exit_code == 0:
-                    passed_count += 1
-                    test_results.append(
-                        {
-                            "command": cmd,
-                            "status": "passed",
-                            "exit_code": exit_code,
-                            "output_length": len(output),
-                        }
-                    )
-                elif exit_code == 5:
-                    skipped_count += 1
-                    test_results.append(
-                        {
-                            "command": cmd,
-                            "status": "skipped",
-                            "exit_code": exit_code,
-                            "output_length": len(output),
-                        }
-                    )
-                else:
-                    failed_count += 1
-                    test_results.append(
-                        {
-                            "command": cmd,
-                            "status": "failed",
-                            "exit_code": exit_code,
-                            "output": output[-500:] if len(output) > 500 else output,
-                        }
-                    )
-            except subprocess.TimeoutExpired:
-                errors.append(f"test_timeout:{cmd}")
-                failed_count += 1
-            except Exception as exc:  # noqa: BLE001
+                request = executor.parse_command(cmd, cwd=str(workspace), timeout_seconds=120)
+                result = executor.run(request)
+            except (RuntimeError, ValueError) as exc:
                 errors.append(f"test_error:{cmd}:{exc}")
                 failed_count += 1
+                continue
+
+            exit_code = int(result.get("returncode", 1))
+            output = f"{result.get('stdout') or ''}{result.get('stderr') or ''}"
+            if result.get("timed_out"):
+                errors.append(f"test_timeout:{cmd}:{result.get('error') or ''}".rstrip(":"))
+                failed_count += 1
+                test_results.append(
+                    {
+                        "command": cmd,
+                        "status": "failed",
+                        "exit_code": 124,
+                        "output": output[-500:] if len(output) > 500 else output,
+                    }
+                )
+            elif exit_code == 0:
+                passed_count += 1
+                test_results.append(
+                    {
+                        "command": cmd,
+                        "status": "passed",
+                        "exit_code": exit_code,
+                        "output_length": len(output),
+                    }
+                )
+            elif exit_code == 5:
+                skipped_count += 1
+                test_results.append(
+                    {
+                        "command": cmd,
+                        "status": "skipped",
+                        "exit_code": exit_code,
+                        "output_length": len(output),
+                    }
+                )
+            else:
+                failed_count += 1
+                test_results.append(
+                    {
+                        "command": cmd,
+                        "status": "failed",
+                        "exit_code": exit_code,
+                        "output": output[-500:] if len(output) > 500 else output,
+                    }
+                )
 
         all_passed = passed_count > 0 and failed_count == 0 and len(errors) == 0
 

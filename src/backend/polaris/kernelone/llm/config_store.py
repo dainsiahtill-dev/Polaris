@@ -20,7 +20,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone import _runtime_config
-from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS, MAX_SUPPORTED_SCHEMA_VERSION
+from polaris.kernelone.constants import MAX_LLM_PROVIDER_TIMEOUT_SECONDS, MAX_SUPPORTED_SCHEMA_VERSION
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.llm.exceptions import ConfigMigrationError
@@ -174,7 +174,7 @@ class ProviderConfig(BaseModel):
     name: str | None = None
     base_url: HttpUrl | None = None
     command: str | None = None
-    timeout: float = Field(default=60.0, gt=0, le=DEFAULT_OPERATION_TIMEOUT_SECONDS)
+    timeout: float = Field(default=60.0, gt=0, le=MAX_LLM_PROVIDER_TIMEOUT_SECONDS)
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0, le=100000)
 
@@ -205,7 +205,7 @@ class ProviderConfig(BaseModel):
 class RoleConfig(BaseModel):
     """Validation model for a single role configuration."""
 
-    provider_id: str = Field(..., min_length=1)
+    provider_id: str | None = Field(default=None, min_length=1)
     model: str | None = None
     profile: str | None = None
 
@@ -920,8 +920,12 @@ def validate_llm_config(config: dict[str, Any]) -> tuple[bool, list[str], list[s
     if isinstance(roles, dict):
         required_roles = config.get("policies", {}).get("required_ready_roles", [])
         for role_id in required_roles:
-            if role_id not in roles:
+            role_cfg = roles.get(role_id)
+            if role_id not in roles or not isinstance(role_cfg, dict):
                 errors.append(f"Required role '{role_id}' not defined in roles")
+                continue
+            if not role_cfg.get("provider_id"):
+                errors.append(f"Required role '{role_id}' is missing 'provider_id'")
 
         for role_id, role_cfg in roles.items():
             if not isinstance(role_cfg, dict):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shlex
 import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -52,6 +53,14 @@ _STATUS_MAP: dict[ExecutionStatus, ExecutionProcessStatusV1] = {
 }
 _LOG_DRAIN_MAX_SECONDS_ENV = "KERNELONE_EXECUTION_BROKER_LOG_DRAIN_MAX_SECONDS"
 _LOG_DRAIN_TERMINAL_IDLE_SECONDS = 5.0
+_SENSITIVE_ARG_NAMES = {
+    "--api-key",
+    "--apikey",
+    "--auth-token",
+    "--password",
+    "--secret",
+    "--token",
+}
 
 
 def _resolve_log_drain_max_seconds() -> float | None:
@@ -80,6 +89,34 @@ def _extract_exit_code(snapshot: ExecutionSnapshot) -> int | None:
         return int(value) if isinstance(value, int) else None
     value = getattr(result, "exit_code", None)
     return int(value) if isinstance(value, int) else None
+
+
+def _format_args_for_log(args: Iterable[str]) -> str:
+    sanitized: list[str] = []
+    redact_next = False
+    for raw in args:
+        value = str(raw)
+        lowered = value.strip().lower()
+        if redact_next:
+            sanitized.append("[REDACTED]")
+            redact_next = False
+            continue
+        if lowered in _SENSITIVE_ARG_NAMES:
+            sanitized.append(value)
+            redact_next = True
+            continue
+        if any(lowered.startswith(f"{name}=") for name in _SENSITIVE_ARG_NAMES):
+            key = value.split("=", 1)[0]
+            sanitized.append(f"{key}=[REDACTED]")
+            continue
+        sanitized.append(value)
+    return shlex.join(sanitized)
+
+
+async def _wait_for_terminal_snapshot(handle: ExecutionHandle, *, timeout_seconds: float = 10.0) -> ExecutionSnapshot:
+    with contextlib.suppress(TimeoutError):
+        await handle.wait(timeout=max(timeout_seconds, 0.0))
+    return handle.snapshot()
 
 
 class ExecutionBrokerService:
@@ -131,6 +168,7 @@ class ExecutionBrokerService:
                         "workspace": command.workspace,
                         "log_path": command.log_path or "",
                         "execution_broker": "runtime.execution_broker",
+                        "args": list(command.args),
                         # User metadata stored separately - cannot override internal fields
                         "_user_metadata": dict(command.metadata),
                     },
@@ -466,6 +504,17 @@ class ExecutionBrokerService:
         execution_id = handle.execution_id
 
         try:
+            start_snapshot = handle.snapshot()
+            log_file.write(
+                "[execution_broker] launched "
+                f"execution_id={execution_id} "
+                f"pid={start_snapshot.pid} "
+                f"status={start_snapshot.status.value}\n"
+            )
+            args = start_snapshot.metadata.get("args")
+            if isinstance(args, list):
+                log_file.write(f"[execution_broker] command={_format_args_for_log(str(item) for item in args)}\n")
+            log_file.flush()
             # Use iterator approach with per-chunk timeout
             # This ensures we don't block forever on stream()
             stream_iter = handle.stream().__aiter__()
@@ -523,6 +572,17 @@ class ExecutionBrokerService:
                 error_type=type(exc).__name__,
             )
         finally:
+            with contextlib.suppress(Exception):
+                snapshot = await _wait_for_terminal_snapshot(handle)
+                log_file.write(
+                    "[execution_broker] terminal "
+                    f"execution_id={execution_id} "
+                    f"pid={snapshot.pid} "
+                    f"status={snapshot.status.value} "
+                    f"exit_code={_extract_exit_code(snapshot)} "
+                    f"error={snapshot.error or ''}\n"
+                )
+                log_file.flush()
             with contextlib.suppress(Exception):
                 log_file.close()
             # Always remove task from registry to prevent memory leak

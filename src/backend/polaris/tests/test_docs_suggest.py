@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import pytest
 from polaris.cells.llm.dialogue.internal.docs_suggest import generate_docs_fields, generate_docs_fields_stream
-from polaris.kernelone.llm.engine.contracts import AIResponse, AIStreamEvent
+from polaris.cells.llm.provider_runtime.public.service import CellAIResponse
 
 
-class _SequenceAIExecutor:
-    responses: list[AIResponse] = []
+class _DocsAIExecutor:
+    responses: list[CellAIResponse] = []
+    stream_events: list[dict[str, object]] = []
 
     def __init__(self, workspace: str | None = None) -> None:
         self.workspace = workspace
@@ -15,24 +16,20 @@ class _SequenceAIExecutor:
         assert self.responses, "expected queued AI responses"
         return self.responses.pop(0)
 
-
-class _PreviewStreamExecutor:
-    def __init__(self, workspace: str | None = None) -> None:
-        self.workspace = workspace
-
     async def invoke_stream(self, request):
-        yield AIStreamEvent.reasoning_event("first-thought")
-        yield AIStreamEvent.chunk_event("not-json-at-all")
-        yield AIStreamEvent.complete({"output": "not-json-at-all"})
+        assert self.stream_events, "expected queued stream events"
+        for event in self.stream_events:
+            yield event
 
 
 @pytest.mark.asyncio
 async def test_generate_docs_fields_repairs_non_json_output(monkeypatch):
-    monkeypatch.setattr("polaris.cells.llm.dialogue.internal.docs_suggest.AIExecutor", _SequenceAIExecutor)
-    _SequenceAIExecutor.responses = [
-        AIResponse.success("preface before malformed output"),
-        AIResponse.success(
-            """
+    monkeypatch.setattr("polaris.cells.llm.dialogue.internal.docs_suggest.CellAIExecutor", _DocsAIExecutor)
+    _DocsAIExecutor.responses = [
+        CellAIResponse(ok=True, output="preface before malformed output"),
+        CellAIResponse(
+            ok=True,
+            output="""
             {
               "fields": {
                 "goal": ["修复后的目标"],
@@ -43,7 +40,7 @@ async def test_generate_docs_fields_repairs_non_json_output(monkeypatch):
                 "backlog": ["修复后的任务"]
               }
             }
-            """
+            """,
         ),
     ]
 
@@ -65,9 +62,13 @@ async def test_generate_docs_fields_repairs_non_json_output(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_docs_fields_stream_falls_back_after_parse_failure(monkeypatch):
-    monkeypatch.setattr("polaris.cells.llm.dialogue.internal.docs_suggest.StreamExecutor", _PreviewStreamExecutor)
-    monkeypatch.setattr("polaris.cells.llm.dialogue.internal.docs_suggest.AIExecutor", _SequenceAIExecutor)
-    _SequenceAIExecutor.responses = [AIResponse.success("still not valid json")]
+    monkeypatch.setattr("polaris.cells.llm.dialogue.internal.docs_suggest.CellAIExecutor", _DocsAIExecutor)
+    _DocsAIExecutor.responses = [CellAIResponse(ok=True, output="still not valid json")]
+    _DocsAIExecutor.stream_events = [
+        {"type": "reasoning_chunk", "reasoning": "first-thought"},
+        {"type": "chunk", "chunk": "not-json-at-all"},
+        {"type": "complete", "meta": {"output": "not-json-at-all"}},
+    ]
 
     events = [
         event

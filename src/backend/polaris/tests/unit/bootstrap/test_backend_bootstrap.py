@@ -6,6 +6,7 @@ sequence, port selection, and environment setup logic.
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -173,6 +174,36 @@ class TestBackendBootstrapperDebugTracing:
         bootstrapper._configure_debug_tracing(snapshot)
 
         assert os.environ.get("KERNELONE_DEBUG_TRACING") == "1"
+
+
+class TestBackendBootstrapperRuntimeEnvironment:
+    """Test runtime environment synchronization."""
+
+    def test_setup_environment_variables_tracks_runtime_roots(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should not drop runtime root values after config loading."""
+        from polaris.domain.models.config_snapshot import ConfigSnapshot, SourceType
+
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", "stale-root")
+        monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", "stale-cache")
+        snapshot = ConfigSnapshot.from_flat_dict(
+            {
+                "runtime.root": "/tmp/runtime-root",
+                "runtime.cache_root": "/tmp/runtime-cache",
+                "runtime.use_ramdisk": False,
+                "nats.enabled": False,
+                "nats.required": False,
+            },
+            SourceType.ENV,
+        )
+        request = MagicMock()
+        request.token = ""
+        request.workspace = ""
+
+        BackendBootstrapper()._setup_environment_variables(snapshot, request)
+
+        assert os.environ.get("KERNELONE_RUNTIME_ROOT") == "/tmp/runtime-root"
+        assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") == "/tmp/runtime-cache"
+        assert os.environ.get("KERNELONE_STATE_TO_RAMDISK") == "0"
 
 
 class TestBackendBootstrapperWorkspacePolicy:

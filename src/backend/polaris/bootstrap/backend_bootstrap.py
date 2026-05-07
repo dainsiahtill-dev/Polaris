@@ -363,6 +363,24 @@ class BackendBootstrapper:
             os.environ.pop("KERNELONE_WORKSPACE", None)
 
         # Set ramdisk root if configured
+        runtime_root = config.get("runtime.root")
+        if runtime_root:
+            os.environ["KERNELONE_RUNTIME_ROOT"] = str(runtime_root)
+        else:
+            os.environ.pop("KERNELONE_RUNTIME_ROOT", None)
+
+        runtime_cache_root = config.get("runtime.cache_root")
+        if runtime_cache_root:
+            os.environ["KERNELONE_RUNTIME_CACHE_ROOT"] = str(runtime_cache_root)
+        else:
+            os.environ.pop("KERNELONE_RUNTIME_CACHE_ROOT", None)
+
+        if config.has("runtime.use_ramdisk"):
+            state_to_ramdisk = "1" if config.get_typed("runtime.use_ramdisk", bool, True) else "0"
+            os.environ["KERNELONE_STATE_TO_RAMDISK"] = state_to_ramdisk
+        else:
+            os.environ.pop("KERNELONE_STATE_TO_RAMDISK", None)
+
         ramdisk_root = config.get("runtime.ramdisk_root")
         if ramdisk_root:
             os.environ["KERNELONE_RAMDISK_ROOT"] = str(ramdisk_root)

@@ -30,6 +30,12 @@ exclude = [
     "node_modules",
     "src/backend/tests",       # test files use lots of dynamic imports
     "src/backend/polaris/tests",
+    # Squad B Wave 1 baseline: archive snapshots / generated artefacts.
+    "**/_archived/**",
+    "**/_archived*",
+    "**/.polaris/**",
+    "**/playwright-report/**",
+    "**/test-results/**",
 ]
 
 [lint]
@@ -80,7 +86,9 @@ ignore = [
     # ---- ANNOTATION RULES (GRADUAL ADOPTION) ----
     # ANN001-ANN003: Missing type annotations for args/returns/self
     #   Status: DISABLED temporarily — codebase has too many missing annotations
-    "ANN001", "ANN002", "ANN003", "ANN101", "ANN102",
+    # NOTE: ANN101/ANN102 were removed upstream in ruff 0.5+; do NOT list them
+    # here or every ruff invocation prints a "removed rules" warning.
+    "ANN001", "ANN002", "ANN003",
     # ANN201-ANN202: Missing return type annotations
     "ANN201", "ANN202",
     # ANN401: Dynamically typed expressions (Any) — too many to fix now

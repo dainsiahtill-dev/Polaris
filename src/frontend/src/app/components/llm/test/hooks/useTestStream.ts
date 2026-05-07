@@ -130,7 +130,7 @@ export function useTestStream(options: UseTestStreamOptions = {}) {
         requestBody.timeout = payload.timeout;
       }
 
-      const response = await fetch(`${backendInfo.baseUrl}/llm/test/stream`, {
+      const response = await fetch(`${backendInfo.baseUrl}/v2/llm/test/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

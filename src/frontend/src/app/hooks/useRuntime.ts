@@ -80,7 +80,7 @@ export interface WebSocketMessage {
 export interface UseRuntimeOptions {
   channels?: string[];
   tailLines?: number;
-  roles?: ('pm' | 'director' | 'qa')[];
+  roles?: ('pm' | 'chief_engineer' | 'director' | 'qa')[];
   baseUrl?: string;
   autoConnect?: boolean;
   maxRetries?: number;
@@ -136,7 +136,7 @@ export interface UseRuntimeResult {
   disconnect: () => void;
   reconnect: () => void;
   refresh: () => void;
-  updateSubscription: (roles: ('pm' | 'director' | 'qa')[]) => void;
+  updateSubscription: (roles: ('pm' | 'chief_engineer' | 'director' | 'qa')[]) => void;
 }
 
 // ============================================================================
@@ -160,6 +160,7 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
   const kind = String(eventPayload.kind || '').trim().toLowerCase();
   const envelopePayload = Parsing.isRecord(eventPayload.payload) ? eventPayload.payload : null;
   const rawPayload = Parsing.isRecord(envelopePayload?.raw) ? envelopePayload.raw : null;
+  const nestedEvent = Parsing.isRecord(eventPayload.event) ? eventPayload.event : null;
   const eventName = String(eventPayload.event_name || eventPayload.event || eventPayload.name || kind || '')
     .trim()
     .toLowerCase();
@@ -185,6 +186,21 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
   }
   if (targetChannel === 'runtime_events' || kind === 'runtime_event') {
     return { type: 'line', channel: 'runtime_events', text: JSON.stringify(mergedPayload) };
+  }
+  if (targetChannel === 'event.file_edit' || targetChannel === 'file_edit' || kind === 'file_edit') {
+    return {
+      type: 'file_edit',
+      event: {
+        ...mergedPayload,
+        ...(rawPayload || nestedEvent || {}),
+        schema_version: eventPayload.schema_version || envelopePayload?.schema_version,
+        event_schema: eventPayload.event_schema || envelopePayload?.event_schema,
+        channel: eventPayload.channel || eventPayload.category,
+        kind: eventPayload.kind || eventPayload.event || eventPayload.name,
+        source: eventPayload.source || envelopePayload?.source,
+      },
+      timestamp: String(eventPayload.timestamp || eventPayload.ts || rawPayload?.timestamp || nestedEvent?.timestamp || ''),
+    };
   }
   if (targetChannel === 'llm' || v2Domain === 'llm' || kind.startsWith('llm.')) {
     return { type: 'line', channel: 'llm', text: JSON.stringify(mergedPayload) };
@@ -836,8 +852,12 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           return;
         }
 
-        if (msgType === 'file_edit') {
-          const fileEditEvent = Parsing.extractFileEditEvents({ event: payload.event, timestamp: payload.timestamp });
+        if (finalMsgType === 'file_edit') {
+          const eventPayload = Parsing.isRecord(payload.event) ? payload.event : null;
+          const fileEditEvent = eventPayload
+            ? Parsing.extractFileEditEvents({ event: eventPayload, timestamp: payload.timestamp })
+              || Parsing.extractRuntimeFileEditEvent(eventPayload)
+            : null;
           if (fileEditEvent) {
             appendFileEditEvent(fileEditEvent);
           }
@@ -923,6 +943,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
 
           const canonicalTasks = selectTaskRows(projection);
           setTasks(canonicalTasks.map(t => ({
+            ...(t as unknown as Record<string, unknown>),
             id: t.id,
             title: t.title,
             status: t.status.toUpperCase() as TaskStatus,
@@ -930,7 +951,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
             priority: (t.priority === 'high' ? 1 : t.priority === 'medium' ? 3 : t.priority === 'low' ? 5 : 3) as PmTask['priority'],
             assignee: t.assignee,
             done: t.status.toUpperCase() === 'COMPLETED' || t.status.toUpperCase() === 'SUCCESS',
-            acceptance: [],
+            acceptance: Array.isArray(t.acceptance) ? t.acceptance as PmTask['acceptance'] : [],
           })));
 
           setWorkers(Parsing.extractDirectorWorkers(payload.director_status ?? null) as RuntimeWorkerState[]);
@@ -982,6 +1003,8 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
                 const raw = JSON.parse(line);
                 const log = parseRuntimeEvent(raw);
                 if (log) logs.push(log);
+                const fileEdit = Parsing.extractRuntimeFileEditEvent(raw);
+                if (fileEdit) appendFileEditEvent(fileEdit);
               } catch (err) {
                 devLogger.warn('[useRuntime] Runtime event parse error:', err);
               }
@@ -1052,6 +1075,8 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               const log = parseRuntimeEvent(raw);
               if (log) {
                 appendExecutionLog(log);
+                const fileEdit = Parsing.extractRuntimeFileEditEvent(raw);
+                if (fileEdit) appendFileEditEvent(fileEdit);
 
                 if (raw.name === 'pm_quality_gate_retry' || raw.name === 'pm_quality_gate') {
                   const qg = parseQualityGateEvent(raw);

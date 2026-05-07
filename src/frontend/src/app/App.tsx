@@ -26,9 +26,11 @@ import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { RuntimeErrorDialog } from '@/app/components/RuntimeErrorDialog';
 import { PMWorkspace } from '@/app/components/pm';
 import { DirectorWorkspace } from '@/app/components/director';
+import { ChiefEngineerWorkspace } from '@/app/components/chief-engineer';
 import { FactoryWorkspace } from '@/app/components/factory/FactoryWorkspace';
 import { ResidentWorkspace } from '@/app/components/resident';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
+import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
 import { apiFetch, apiFetchFresh, openPath, pickWorkspace } from '@/api';
 import { useRuntime } from './hooks/useRuntime';
 import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
@@ -38,6 +40,7 @@ import { useUsageStats } from './hooks/useUsageStats';
 import { useFactory } from '@/hooks/useFactory';
 import { getLatestExecutionActivityLog } from '@/app/utils/appRuntime';
 import { isLancedbExplicitlyBlocked } from '@/app/utils/lancedbGate';
+import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
 
 // Lazy load pages
 
@@ -153,12 +156,17 @@ function shouldKeepRicherSnapshot(
   return false;
 }
 
+function isActiveRuntimePhase(value: string): boolean {
+  const token = String(value || '').trim().toLowerCase();
+  return Boolean(token && !['idle', 'unknown', 'none'].includes(token));
+}
+
 function AppContent() {
   const workspacePanelRef = useRef<ImperativePanelHandle>(null);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
 
   const { state: ui, actions: uiActions } = useUIState();
-  const [activeRoleView, setActiveRoleView] = useState<'main' | 'pm' | 'director' | 'factory' | 'agi'>('main');
+  const [activeRoleView, setActiveRoleView] = useState<'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics'>('main');
   const { settings, load: loadSettings, update: updateSettings } = useSettings();
   const { notifications, remove: removeNotification, error: notifyError } = useNotifications();
   const workspace = settings?.workspace || '';
@@ -187,7 +195,8 @@ function AppContent() {
     isConnected: runtimeConnected,
     runId: runtimeRunId,
     taskProgressMap,
-  } = useRuntime({ roles: ['pm', 'director', 'qa'], workspace });
+    taskTraceMap,
+  } = useRuntime({ roles: ['pm', 'chief_engineer', 'director', 'qa'], workspace });
 
   // Connection status notifications (WebSocket fallback alerts)
   useRuntimeConnectionNotifications({
@@ -544,7 +553,7 @@ function AppContent() {
 
     const refreshLlmGate = async () => {
       try {
-        const response = await apiFetch('/llm/status');
+        const response = await apiFetch('/v2/llm/status');
         if (!response.ok) {
           throw new Error(`llm status fetch failed: ${response.status}`);
         }
@@ -583,9 +592,10 @@ function AppContent() {
     };
   }, [workspace, live, llmStatus, applyLlmStatusPayload]);
 
+  const runtimeLlmGateActive = Boolean(pmStatus?.running) || directorRunning || isActiveRuntimePhase(currentPhase);
   const llmStatusForBar = llmRuntimeState.state === 'READY'
     ? 'ready'
-    : llmRuntimeState.state === 'BLOCKED'
+    : llmRuntimeState.state === 'BLOCKED' && runtimeLlmGateActive
       ? 'blocked'
       : 'unknown';
 
@@ -698,6 +708,11 @@ function AppContent() {
     void refreshProgressSnapshot();
   };
 
+  const handleEnterChiefEngineerWorkspace = () => {
+    setActiveRoleView('chief_engineer');
+    void refreshProgressSnapshot();
+  };
+
   const handleEnterDirectorWorkspace = () => {
     setActiveRoleView('director');
     void refreshProgressSnapshot();
@@ -714,9 +729,56 @@ function AppContent() {
     void refreshProgressSnapshot();
   };
 
+  const handleEnterRuntimeDiagnostics = () => {
+    setActiveRoleView('diagnostics');
+  };
+
   const handleBackToMain = () => {
     setActiveRoleView('main');
   };
+
+  if (activeRoleView === 'chief_engineer') {
+    return (
+      <ErrorBoundaryClass onError={(error) => {
+        notifyError(error.message || '发生未知错误');
+      }}>
+        <ChiefEngineerWorkspace
+          workspace={workspace}
+          engineStatus={engineStatus}
+          tasks={directorWorkspaceTasks}
+          workers={runtimeWorkers}
+          pmState={snapshot?.pm_state ?? null}
+          directorRunning={directorRunning}
+          isStartingDirector={isStartingDirector}
+          onBackToMain={handleBackToMain}
+          onEnterDirectorWorkspace={handleEnterDirectorWorkspace}
+          onToggleDirector={() => toggleDirector(directorRunning, {
+            required: agentsRequired,
+            draftReady: agentsDraftReady,
+          }, directorSeedTasks)}
+        />
+        <LlmRuntimeOverlay
+          activeView={activeRoleView}
+          websocketLive={live}
+          websocketReconnecting={reconnecting}
+          websocketAttemptCount={attemptCount}
+          pmRunning={Boolean(pmStatus?.running)}
+          directorRunning={directorRunning}
+          llmState={llmRuntimeState.state}
+          llmBlockedRoles={llmRuntimeState.blockedRoles}
+          llmRequiredRoles={llmRuntimeState.requiredRoles}
+          llmLastUpdated={llmRuntimeState.lastUpdated}
+          currentPhase={currentPhase}
+          qualityGate={qualityGate}
+          executionLogs={executionLogs}
+          llmStreamEvents={llmStreamEvents}
+          processStreamEvents={processStreamEvents}
+          fileEditEvents={fileEditEvents}
+        />
+        <Toaster position="bottom-right" />
+      </ErrorBoundaryClass>
+    );
+  }
 
   // Render Director Workspace
   if (activeRoleView === 'director') {
@@ -761,6 +823,7 @@ function AppContent() {
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
+          fileEditEvents={fileEditEvents}
         />
         <Toaster position="bottom-right" />
       </ErrorBoundaryClass>
@@ -786,6 +849,9 @@ function AppContent() {
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
           currentPhase={currentPhase}
+          qualityGate={qualityGate}
+          taskTraceMap={taskTraceMap}
+          onOpenSettings={() => uiActions.openSettings()}
         />
         <LlmRuntimeOverlay
           activeView={activeRoleView}
@@ -803,6 +869,7 @@ function AppContent() {
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
+          fileEditEvents={fileEditEvents}
         />
         <Toaster position="bottom-right" />
       </ErrorBoundaryClass>
@@ -852,6 +919,7 @@ function AppContent() {
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
+          fileEditEvents={fileEditEvents}
         />
         <Toaster position="bottom-right" />
       </ErrorBoundaryClass>
@@ -884,6 +952,44 @@ function AppContent() {
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
+          fileEditEvents={fileEditEvents}
+        />
+        <Toaster position="bottom-right" />
+      </ErrorBoundaryClass>
+    );
+  }
+
+  if (activeRoleView === 'diagnostics') {
+    return (
+      <ErrorBoundaryClass onError={(error) => {
+        notifyError(error.message || '发生未知错误');
+      }}>
+        <RuntimeDiagnosticsWorkspace
+          workspace={workspace}
+          connectionState={{
+            live,
+            reconnecting,
+            attemptCount,
+          }}
+          onBackToMain={handleBackToMain}
+        />
+        <LlmRuntimeOverlay
+          activeView={activeRoleView}
+          websocketLive={live}
+          websocketReconnecting={reconnecting}
+          websocketAttemptCount={attemptCount}
+          pmRunning={Boolean(pmStatus?.running)}
+          directorRunning={directorRunning}
+          llmState={llmRuntimeState.state}
+          llmBlockedRoles={llmRuntimeState.blockedRoles}
+          llmRequiredRoles={llmRuntimeState.requiredRoles}
+          llmLastUpdated={llmRuntimeState.lastUpdated}
+          currentPhase={currentPhase}
+          qualityGate={qualityGate}
+          executionLogs={executionLogs}
+          llmStreamEvents={llmStreamEvents}
+          processStreamEvents={processStreamEvents}
+          fileEditEvents={fileEditEvents}
         />
         <Toaster position="bottom-right" />
       </ErrorBoundaryClass>
@@ -949,9 +1055,11 @@ function AppContent() {
           onToggleTerminal={uiActions.toggleTerminal}
           isTerminalOpen={ui.showTerminal}
           onEnterPMWorkspace={handleEnterPMWorkspace}
+          onEnterChiefEngineerWorkspace={handleEnterChiefEngineerWorkspace}
           onEnterDirectorWorkspace={handleEnterDirectorWorkspace}
           onEnterFactoryMode={handleEnterFactoryMode}
           onEnterAGIWorkspace={handleEnterAGIWorkspace}
+          onEnterRuntimeDiagnostics={handleEnterRuntimeDiagnostics}
           // 新增：即时反馈状态
           currentPhase={currentPhase}
           currentTask={engineStatus?.roles?.Director?.task_title ?? undefined}
@@ -962,11 +1070,12 @@ function AppContent() {
         <RealTimeStatusBar
           pmRunning={!!pmStatus?.running}
           directorRunning={directorRunning}
-          pmStartedAt={pmStatus?.started_at ? new Date(pmStatus.started_at).getTime() / 1000 : null}
-          directorStartedAt={directorStatus?.started_at ? new Date(directorStatus.started_at).getTime() / 1000 : null}
+          pmStartedAt={normalizeStartedAtSeconds(pmStatus?.started_at)}
+          directorStartedAt={normalizeStartedAtSeconds(directorStatus?.started_at)}
           pmIteration={toIterationValue(displaySnapshot)}
           llmStatus={llmStatusForBar}
           lancedbOk={lancedbStatus?.ok}
+          fileEditEvents={fileEditEvents}
         />
 
         <LlmRuntimeOverlay
@@ -985,6 +1094,7 @@ function AppContent() {
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
+          fileEditEvents={fileEditEvents}
         />
 
         <PanelGroup direction="horizontal" autoSaveId="polaris-main-layout-v2" className="flex-1 flex overflow-hidden">

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
+from pathlib import Path
 
 BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 for candidate in (BACKEND_ROOT,):
@@ -11,6 +13,7 @@ for candidate in (BACKEND_ROOT,):
 from polaris.cells.orchestration.pm_planning.public.service import evaluate_pm_task_quality  # noqa: E402
 from polaris.delivery.cli.pm.orchestration_engine import (  # noqa: E402
     _apply_requirements_fallback_for_empty_tasks,
+    _downgrade_recovered_pm_invoke_error,
 )
 from polaris.delivery.cli.pm.tasks_utils import (  # noqa: E402
     _extract_requirement_file_candidates,
@@ -343,3 +346,46 @@ def test_empty_tasks_fallback_recovers_failed_planning_iteration() -> None:
     joined_warnings = "\n".join(str(item) for item in warnings)
     assert "upstream payload was empty" in joined_warnings
     assert "deterministic requirements fallback used" in joined_warnings
+
+
+def test_recovered_pm_invoke_error_is_downgraded_to_warning(tmp_path: Path) -> None:
+    pm_state_path = tmp_path / "pm_state.json"
+    pm_state = {
+        "last_pm_error_code": "PM_LLM_INVOKE_FAILED",
+        "last_pm_error_detail": "provider model unsupported by token plan",
+        "last_updated_ts": "old",
+    }
+
+    downgraded = _downgrade_recovered_pm_invoke_error(
+        pm_state=pm_state,
+        pm_state_full=str(pm_state_path),
+        timestamp="2026-05-07 08:00:00",
+    )
+
+    assert downgraded is True
+    assert pm_state["last_pm_error_code"] == ""
+    assert pm_state["last_pm_error_detail"] == ""
+    assert pm_state["last_pm_warning_code"] == "PM_LLM_FALLBACK_APPLIED"
+    assert pm_state["last_pm_warning_detail"] == "provider model unsupported by token plan"
+    assert pm_state["last_updated_ts"] == "2026-05-07 08:00:00"
+
+    persisted = json.loads(pm_state_path.read_text(encoding="utf-8"))
+    assert persisted == pm_state
+
+
+def test_recovered_pm_invoke_error_keeps_unrelated_pm_errors(tmp_path: Path) -> None:
+    pm_state_path = tmp_path / "pm_state.json"
+    pm_state = {
+        "last_pm_error_code": "PM_EMPTY_TASKS_WITH_REQUIREMENTS",
+        "last_pm_error_detail": "no fallback tasks available",
+    }
+
+    downgraded = _downgrade_recovered_pm_invoke_error(
+        pm_state=pm_state,
+        pm_state_full=str(pm_state_path),
+        timestamp="2026-05-07 08:00:00",
+    )
+
+    assert downgraded is False
+    assert pm_state["last_pm_error_code"] == "PM_EMPTY_TASKS_WITH_REQUIREMENTS"
+    assert not pm_state_path.exists()

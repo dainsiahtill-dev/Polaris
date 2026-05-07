@@ -242,6 +242,139 @@ def test_list_tasks_workflow_uses_projection_task_rows(monkeypatch) -> None:
     assert service.list_calls == 0
 
 
+def test_list_tasks_returns_director_task_pool_contract_fields(monkeypatch) -> None:
+    workflow_tasks: list[dict[str, object]] = [
+        {
+            "id": "runtime-1",
+            "subject": "Implement backend contract",
+            "description": "Normalize Director task pool output",
+            "status": "in_progress",
+            "priority": "HIGH",
+            "claimed_by": "director-worker-1",
+            "current_file": "src/backend/polaris/delivery/http/v2/director.py",
+            "metadata": {
+                "pm_task_id": "PM-42",
+                "goal": "Expose task pool details",
+                "acceptance_criteria": [
+                    {"description": "shows status buckets"},
+                    {"title": "shows task details"},
+                ],
+                "target_files": ["src/backend/polaris/delivery/http/v2/director.py"],
+                "dependencies": ["PM-41"],
+                "runtime_execution": {"worker_id": "director-worker-1"},
+            },
+            "result": None,
+        }
+    ]
+    service = _FakeDirectorService(
+        status={"workspace": "X:\\workspace", "state": "RUNNING"},
+        local_tasks=[],
+    )
+
+    from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
+
+    async def _fake_build_async(workspace, cache_root=None, state=None):
+        return RuntimeProjection(
+            pm_local={},
+            director_local={},
+            workflow_archive={"status": {"tasks": {"task_rows": workflow_tasks}}},
+            engine_fallback=None,
+            task_rows=workflow_tasks,
+        )
+
+    monkeypatch.setattr(v2_director.RuntimeProjectionService, "build_async", _fake_build_async)
+
+    payload = asyncio.run(
+        v2_director.list_tasks(
+            request=_build_fake_request(),
+            source="workflow",
+            service=service,
+        )
+    )
+
+    assert len(payload) == 1
+    task = payload[0]
+    assert task.status == "RUNNING"
+    assert task.goal == "Expose task pool details"
+    assert task.acceptance == ["shows status buckets", "shows task details"]
+    assert task.target_files == ["src/backend/polaris/delivery/http/v2/director.py"]
+    assert task.dependencies == ["PM-41"]
+    assert task.current_file == "src/backend/polaris/delivery/http/v2/director.py"
+    assert task.worker == "director-worker-1"
+    assert task.claimed_by == "director-worker-1"
+    assert task.pm_task_id == "PM-42"
+
+
+def test_list_tasks_normalizes_director_task_pool_statuses_and_filter(monkeypatch) -> None:
+    workflow_tasks: list[dict[str, object]] = [
+        {"id": "pending-1", "subject": "Ready", "status": "READY", "priority": "MEDIUM", "metadata": {}},
+        {"id": "claimed-1", "subject": "Claimed", "status": "claimed", "priority": "MEDIUM", "metadata": {}},
+        {"id": "running-1", "subject": "Running", "status": "IN_PROGRESS", "priority": "MEDIUM", "metadata": {}},
+        {
+            "id": "blocked-1",
+            "subject": "Blocked",
+            "status": "blocked",
+            "priority": "MEDIUM",
+            "blocked_by": ["pending-1"],
+            "metadata": {},
+        },
+        {
+            "id": "failed-1",
+            "subject": "Failed",
+            "status": "timeout",
+            "priority": "MEDIUM",
+            "error_message": "command timed out",
+            "metadata": {},
+        },
+        {"id": "completed-1", "subject": "Done", "status": "completed", "priority": "MEDIUM", "metadata": {}},
+    ]
+    service = _FakeDirectorService(
+        status={"workspace": "X:\\workspace", "state": "RUNNING"},
+        local_tasks=[],
+    )
+
+    from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
+
+    async def _fake_build_async(workspace, cache_root=None, state=None):
+        return RuntimeProjection(
+            pm_local={},
+            director_local={},
+            workflow_archive={"status": {"tasks": {"task_rows": workflow_tasks}}},
+            engine_fallback=None,
+            task_rows=workflow_tasks,
+        )
+
+    monkeypatch.setattr(v2_director.RuntimeProjectionService, "build_async", _fake_build_async)
+
+    payload = asyncio.run(
+        v2_director.list_tasks(
+            request=_build_fake_request(),
+            source="workflow",
+            service=service,
+        )
+    )
+    assert [task.status for task in payload] == [
+        "PENDING",
+        "CLAIMED",
+        "RUNNING",
+        "BLOCKED",
+        "FAILED",
+        "COMPLETED",
+    ]
+    assert payload[3].dependencies == ["pending-1"]
+    assert payload[4].error == "command timed out"
+
+    running_payload = asyncio.run(
+        v2_director.list_tasks(
+            request=_build_fake_request(),
+            status="running",
+            source="workflow",
+            service=service,
+        )
+    )
+    assert [task.id for task in running_payload] == ["running-1"]
+
+
 def test_list_tasks_auto_falls_back_to_snapshot_pm_contract_rows(monkeypatch) -> None:
     service = _FakeDirectorService(
         status={"workspace": "X:\\workspace", "state": "IDLE"},

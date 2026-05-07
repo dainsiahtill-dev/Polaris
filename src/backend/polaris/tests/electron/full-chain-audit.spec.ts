@@ -49,7 +49,7 @@ const LEAKAGE_KEYWORDS = [
   "<thinking>",
   "<tool_call>",
 ];
-const DIRECTOR_RESULT_TIMEOUT_MS = 5 * 60 * 1000;
+const DIRECTOR_RESULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 function toPosixPath(filePath: string): string {
   return String(filePath || "").split(path.sep).join("/");
@@ -187,6 +187,8 @@ async function waitForRuntimeArtifact(
   const deadline = Date.now() + timeoutMs;
   let lastRuntimeRoot = "";
   let lastArtifactPath = "";
+  let lastPmStatus = "";
+  let lastDirectorStatus = "";
 
   while (Date.now() < deadline) {
     const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
@@ -197,13 +199,23 @@ async function waitForRuntimeArtifact(
         return { runtimeRoot: lastRuntimeRoot, artifactPath: lastArtifactPath };
       }
     }
+    if (Date.now() % 10_000 < 1200) {
+      const [pmStatus, directorStatus] = await Promise.all([
+        requestJson<PmStatusPayload>(window, "/v2/pm/status").catch((error) => ({ error: String(error) })),
+        requestJson<DirectorStatusPayload>(window, "/v2/director/status").catch((error) => ({ error: String(error) })),
+      ]);
+      lastPmStatus = JSON.stringify(pmStatus);
+      lastDirectorStatus = JSON.stringify(directorStatus);
+    }
     await sleep(1000);
   }
 
   throw new Error(
     `Timed out waiting for runtime artifact ${relPath}; `
     + `last_runtime_root=${lastRuntimeRoot || "(empty)"} `
-    + `last_path=${lastArtifactPath || "(empty)"}`,
+    + `last_path=${lastArtifactPath || "(empty)"} `
+    + `last_pm_status=${lastPmStatus || "(unavailable)"} `
+    + `last_director_status=${lastDirectorStatus || "(unavailable)"}`,
   );
 }
 
@@ -392,6 +404,15 @@ async function findLatestEventsPath(runtimeRoot: string): Promise<string | null>
   }
   candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
   return candidates[0]?.filePath || null;
+}
+
+async function findToolEventPaths(runtimeRoot: string): Promise<string[]> {
+  const eventsRoot = path.join(runtimeRoot, "events");
+  if (!(await pathExists(eventsRoot))) return [];
+  const entries = await fs.readdir(eventsRoot, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isFile() && /\.llm\.events\.jsonl$/i.test(entry.name))
+    .map((entry) => path.join(eventsRoot, entry.name));
 }
 
 function detectPromptLeakage(text: string, evidencePath: string): Array<{ type: string; evidence: string; fixed: boolean }> {
@@ -883,9 +904,15 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       }
     }
 
+    const toolAuditEvents: RuntimeEvent[] = [];
     if (latestEventsPath) {
-      audit.director_tool_audit = analyzeToolAudit(await readJsonLines<RuntimeEvent>(latestEventsPath), startEpochSeconds);
+      toolAuditEvents.push(...await readJsonLines<RuntimeEvent>(latestEventsPath));
     }
+    for (const toolEventsPath of await findToolEventPaths(runtimeRoot)) {
+      audit.evidence_paths.logs.push(toPosixPath(toolEventsPath));
+      toolAuditEvents.push(...await readJsonLines<RuntimeEvent>(toolEventsPath));
+    }
+    audit.director_tool_audit = analyzeToolAudit(toolAuditEvents, startEpochSeconds);
     if (audit.issues_fixed.length > 0 && audit.acceptance_results.qa_phase === "PASS") {
       audit.issues_fixed = audit.issues_fixed.map((item) => ({ ...item, verified: true }));
     }

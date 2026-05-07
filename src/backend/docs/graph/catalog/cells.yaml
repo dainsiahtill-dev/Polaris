@@ -849,38 +849,6 @@ cells:
       gaps:
         - Factory archive API compatibility routes are still being standardized.
 
-  - id: polaris.compatibility
-    title: Compatibility Layer
-    kind: capability
-    visibility: public
-    stateful: false
-    owner: polaris
-    purpose: >
-      TRANSITIONAL - Compatibility cell for managing deprecated
-      interfaces and transitional adapters. This cell provides
-      backward compatibility shims while migration to new cell
-      boundaries is completed.
-    current_modules: []
-    owned_paths:
-      - polaris/cells/compatibility/**
-    public_contracts:
-      modules:
-        - polaris.cells.compatibility
-      commands: []
-      queries: []
-      events: []
-      results: []
-      errors: []
-    depends_on: []
-    subgraphs: []
-    state_owners: []
-    effects_allowed: []
-    verification:
-      tests: []
-      gaps:
-        - "TRANSITIONAL: Cell pending completion or removal"
-        - No public contracts defined yet
-
   - id: context.engine
     title: Context Engine
     kind: capability

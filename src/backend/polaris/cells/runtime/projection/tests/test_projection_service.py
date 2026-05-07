@@ -10,6 +10,7 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     RuntimeProjection,
     RuntimeProjectionService,
     TaskSource,
+    _parse_engine_updated_at,
     _safe_int,
     _state_token,
     _task_totals,
@@ -18,6 +19,9 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     merge_director_status,
     select_task_rows,
     select_task_rows_from_projection,
+)
+from polaris.cells.runtime.projection.internal.status_snapshot_builder import (
+    _parse_engine_updated_at as _parse_status_snapshot_updated_at,
 )
 
 if TYPE_CHECKING:
@@ -106,6 +110,17 @@ class TestWorkflowHasLiveRows:
     def test_empty_rows(self) -> None:
         assert _workflow_has_live_rows({"tasks": {"task_rows": []}}) is False
         assert _workflow_has_live_rows(None) is False
+
+
+class TestParseEngineUpdatedAt:
+    def test_accepts_legacy_timestamp(self) -> None:
+        assert _parse_engine_updated_at("2026-05-07 15:36:07") is not None
+
+    def test_accepts_iso_z_timestamp(self) -> None:
+        assert _parse_engine_updated_at("2026-05-07T15:36:07Z") is not None
+
+    def test_status_snapshot_builder_accepts_iso_z_timestamp(self) -> None:
+        assert _parse_status_snapshot_updated_at("2026-05-07T15:36:07Z") is not None
 
 
 # =============================================================================

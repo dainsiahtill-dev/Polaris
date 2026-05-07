@@ -450,7 +450,15 @@ def _safe_publish_sync(bus: Any, msg: Message) -> None:
         return
 
     try:
-        asyncio.get_event_loop().run_until_complete(_safe_publish(bus, msg))
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        # CLI paths often write durable JSONL events without owning an asyncio
+        # loop. In that case MessageBus fanout is unavailable by design.
+        logger.debug("MessageBus sync publish skipped: no current event loop")
+        return
+
+    try:
+        loop.run_until_complete(_safe_publish(bus, msg))
     except (RuntimeError, ValueError) as exc:
         logger.warning("MessageBus sync publish failed: %s", exc)
 

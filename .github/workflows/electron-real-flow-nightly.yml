@@ -1,0 +1,114 @@
+name: Electron Real LLM Flow Nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 18 * * *"
+
+concurrency:
+  group: electron-real-flow-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  real-flow:
+    name: Real LLM Electron Flow
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      KERNELONE_E2E_HOME: ${{ runner.temp }}\polaris-e2e-home
+      KERNELONE_E2E_SETTINGS_JSON_BASE64: ${{ secrets.POLARIS_E2E_SETTINGS_JSON_BASE64 }}
+      KERNELONE_E2E_LLM_CONFIG_JSON_BASE64: ${{ secrets.POLARIS_E2E_LLM_CONFIG_JSON_BASE64 }}
+      KERNELONE_E2E_ALLOW_HOST_SETTINGS: "0"
+      KERNELONE_NATS_SERVER_BIN: ${{ secrets.POLARIS_E2E_NATS_SERVER_BIN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Prepare Python environment
+        run: npm run setup:dev
+
+      - name: Ensure nats-server is available
+        shell: pwsh
+        run: |
+          if ($env:KERNELONE_NATS_SERVER_BIN) {
+            Write-Host "Using explicit nats-server binary from repository secret."
+            exit 0
+          }
+          $existing = Get-Command nats-server -ErrorAction SilentlyContinue
+          if ($existing) {
+            Write-Host "nats-server already available on PATH."
+            exit 0
+          }
+          winget install --id NATSAuthors.NATSServer -e --accept-package-agreements --accept-source-agreements
+
+      - name: Validate real settings secret
+        shell: pwsh
+        run: |
+          if (-not $env:KERNELONE_E2E_SETTINGS_JSON_BASE64) {
+            Write-Error "Missing repository secret POLARIS_E2E_SETTINGS_JSON_BASE64. This nightly must run against real LLM settings and must not silently skip."
+            exit 2
+          }
+
+      - name: Build renderer
+        run: npm run build:renderer
+
+      - name: Run real LLM Electron flow
+        run: npm run test:e2e:real-flow
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-real-flow-playwright-report
+          path: |
+            playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Electron test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-real-flow-test-results
+          path: |
+            test-results/electron/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload sanitized runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-real-flow-runtime-sanitized
+          path: |
+            test-results/electron-real-flow/runtime-sanitized/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload full chain audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-real-flow-full-chain-audit
+          path: |
+            .polaris/logs/full_chain_audit_*.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30

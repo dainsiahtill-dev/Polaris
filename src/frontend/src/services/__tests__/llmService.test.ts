@@ -44,7 +44,7 @@ describe('llmService', () => {
 
       const result = await llmService.getLLMConfig();
 
-      expect(mockApiGet).toHaveBeenCalledWith('/llm/config', '读取LLM配置失败');
+      expect(mockApiGet).toHaveBeenCalledWith('/v2/llm/config', '读取LLM配置失败');
       expect(result.ok).toBe(true);
     });
 
@@ -76,7 +76,7 @@ describe('llmService', () => {
 
       const result = await llmService.saveLLMConfig(config);
 
-      expect(mockApiPost).toHaveBeenCalledWith('/llm/config', config, '保存LLM配置失败');
+      expect(mockApiPost).toHaveBeenCalledWith('/v2/llm/config', config, '保存LLM配置失败');
       expect(result.ok).toBe(true);
       expect(result.data).toEqual(config);
     });
@@ -112,7 +112,7 @@ describe('llmService', () => {
 
       const result = await llmService.getLLMStatus();
 
-      expect(mockApiGet).toHaveBeenCalledWith('/llm/status', '读取LLM状态失败');
+      expect(mockApiGet).toHaveBeenCalledWith('/v2/llm/status', '读取LLM状态失败');
       expect(result.ok).toBe(true);
     });
 

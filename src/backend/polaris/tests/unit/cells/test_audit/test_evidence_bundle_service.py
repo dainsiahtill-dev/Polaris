@@ -99,7 +99,7 @@ class TestEvidenceBundleService:
     def test_list_bundles_no_index(self, service: EvidenceBundleService, tmp_path: Path) -> None:
         workspace = str(tmp_path)
         with patch("polaris.cells.audit.evidence.bundle_service._workspace_fs") as mock_fs:
-            mock_fs.return_value.workspace_exists.return_value = False
+            mock_fs.return_value.exists.return_value = False
             result = service.list_bundles(workspace)
         assert result == []
 
@@ -110,9 +110,8 @@ class TestEvidenceBundleService:
             {"bundle_id": "b2", "source_type": "manual", "source_run_id": None},
         ]
         with patch("polaris.cells.audit.evidence.bundle_service._workspace_fs") as mock_fs:
-            mock_fs.return_value.workspace_exists.return_value = True
-            mock_fs.return_value.workspace_is_file.return_value = True
-            mock_fs.return_value.workspace_read_text.return_value = (
+            mock_fs.return_value.exists.return_value = True
+            mock_fs.return_value.read_text.return_value = (
                 "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
             )
             result = service.list_bundles(workspace)
@@ -126,9 +125,8 @@ class TestEvidenceBundleService:
             {"bundle_id": "b2", "source_type": "manual", "source_run_id": None},
         ]
         with patch("polaris.cells.audit.evidence.bundle_service._workspace_fs") as mock_fs:
-            mock_fs.return_value.workspace_exists.return_value = True
-            mock_fs.return_value.workspace_is_file.return_value = True
-            mock_fs.return_value.workspace_read_text.return_value = (
+            mock_fs.return_value.exists.return_value = True
+            mock_fs.return_value.read_text.return_value = (
                 "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
             )
             result = service.list_bundles(workspace, source_type=SourceType.DIRECTOR_RUN)
@@ -142,9 +140,8 @@ class TestEvidenceBundleService:
             {"bundle_id": "b2", "source_type": "director_run", "source_run_id": "r2"},
         ]
         with patch("polaris.cells.audit.evidence.bundle_service._workspace_fs") as mock_fs:
-            mock_fs.return_value.workspace_exists.return_value = True
-            mock_fs.return_value.workspace_is_file.return_value = True
-            mock_fs.return_value.workspace_read_text.return_value = (
+            mock_fs.return_value.exists.return_value = True
+            mock_fs.return_value.read_text.return_value = (
                 "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
             )
             result = service.list_bundles(workspace, source_run_id="r1")
@@ -155,9 +152,8 @@ class TestEvidenceBundleService:
         workspace = str(tmp_path)
         entries = [{"bundle_id": f"b{i}", "source_type": "director_run"} for i in range(10)]
         with patch("polaris.cells.audit.evidence.bundle_service._workspace_fs") as mock_fs:
-            mock_fs.return_value.workspace_exists.return_value = True
-            mock_fs.return_value.workspace_is_file.return_value = True
-            mock_fs.return_value.workspace_read_text.return_value = (
+            mock_fs.return_value.exists.return_value = True
+            mock_fs.return_value.read_text.return_value = (
                 "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
             )
             result = service.list_bundles(workspace, limit=3)
@@ -166,9 +162,8 @@ class TestEvidenceBundleService:
     def test_list_bundles_skips_bad_json(self, service: EvidenceBundleService, tmp_path: Path) -> None:
         workspace = str(tmp_path)
         with patch("polaris.cells.audit.evidence.bundle_service._workspace_fs") as mock_fs:
-            mock_fs.return_value.workspace_exists.return_value = True
-            mock_fs.return_value.workspace_is_file.return_value = True
-            mock_fs.return_value.workspace_read_text.return_value = (
+            mock_fs.return_value.exists.return_value = True
+            mock_fs.return_value.read_text.return_value = (
                 json.dumps({"bundle_id": "b1", "source_type": "director_run"}) + "\nnot json\n"
             )
             result = service.list_bundles(workspace)
@@ -251,9 +246,10 @@ class TestEvidenceBundleService:
 
         def capture_append(rel_path: str, text: str, **kwargs: Any) -> None:
             nonlocal captured_text
+            assert rel_path == "runtime/evidence_index.jsonl"
             captured_text += text
 
-        mock_fs.workspace_append_text.side_effect = capture_append
+        mock_fs.append_text.side_effect = capture_append
         with patch("polaris.cells.audit.evidence.bundle_service._workspace_fs", return_value=mock_fs):
             service._update_index(str(tmp_path), bundle)
 
@@ -264,6 +260,39 @@ class TestEvidenceBundleService:
         assert entry["bundle_id"] == "b1"
         assert entry["source_run_id"] == "r1"
         assert "a.py" in entry["affected_files"]
+
+    def test_update_and_list_index_with_external_runtime_root(
+        self,
+        service: EvidenceBundleService,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        runtime_root = tmp_path / "runtime-cache"
+        workspace.mkdir()
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+        monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(runtime_root))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+
+        bundle = EvidenceBundle(
+            bundle_id="external-runtime-bundle",
+            workspace=str(workspace.resolve()),
+            base_sha="sha-unknown",
+            head_sha=None,
+            working_tree_dirty=True,
+            change_set=[FileChange(path="a.py", change_type=ChangeType.ADDED)],
+            source_type=SourceType.DIRECTOR_RUN,
+            source_run_id="run-external",
+        )
+
+        service._update_index(str(workspace), bundle)
+        index_path = _get_bundle_index_path(str(workspace))
+
+        assert index_path.is_file()
+        assert str(index_path).startswith(str(runtime_root.resolve()))
+        listed = service.list_bundles(str(workspace), source_run_id="run-external")
+        assert len(listed) == 1
+        assert listed[0]["bundle_id"] == "external-runtime-bundle"
 
 
 class TestFactoryFunctions:

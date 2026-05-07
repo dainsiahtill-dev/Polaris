@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from typing import Any
 
-from polaris.delivery.cli.pm.command_runner import parse_command_args
 from polaris.delivery.cli.pm.utils import normalize_path_list, normalize_str_list
+from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.runtime.shared_types import normalize_path
 
 _ALLOWED_QA_MODES = {"off", "shadow", "blocking"}
@@ -191,9 +190,13 @@ def _execute_verify_command(
     working_dir: str,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    parsed_command: list[str] = []
+    executor = CommandExecutionService(working_dir)
     try:
-        parsed_command = parse_command_args(command)
+        request = executor.parse_command(
+            command,
+            cwd=working_dir,
+            timeout_seconds=timeout_seconds,
+        )
     except ValueError as exc:
         return {
             "command": command,
@@ -208,7 +211,7 @@ def _execute_verify_command(
 
     record: dict[str, Any] = {
         "command": command,
-        "command_args": parsed_command,
+        "command_args": [request.executable, *request.args],
         "working_dir": working_dir,
         "timeout_seconds": timeout_seconds,
         "exit_code": -1,
@@ -216,29 +219,14 @@ def _execute_verify_command(
         "stderr_tail": [],
         "deferred": False,
     }
-    try:
-        completed = subprocess.run(
-            parsed_command,
-            cwd=working_dir,
-            shell=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired:
-        record["exit_code"] = 124
-        record["stderr_tail"] = [f"command timeout after {timeout_seconds}s"]
-        return record
-    except (RuntimeError, ValueError) as exc:
-        record["exit_code"] = 1
-        record["stderr_tail"] = [f"verify runtime error: {exc}"]
-        return record
-
-    record["exit_code"] = int(completed.returncode)
-    record["stdout_tail"] = _tail_non_empty_lines(completed.stdout, limit=6)
-    record["stderr_tail"] = _tail_non_empty_lines(completed.stderr, limit=6)
+    result = executor.run(request)
+    timed_out = bool(result.get("timed_out"))
+    record["exit_code"] = 124 if timed_out else int(result.get("returncode", 1))
+    record["stdout_tail"] = _tail_non_empty_lines(str(result.get("stdout") or ""), limit=6)
+    stderr = str(result.get("stderr") or "")
+    if result.get("error"):
+        stderr = f"{stderr}\n{result['error']}" if stderr else str(result["error"])
+    record["stderr_tail"] = _tail_non_empty_lines(stderr, limit=6)
     return record
 
 

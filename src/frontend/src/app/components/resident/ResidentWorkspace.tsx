@@ -79,7 +79,7 @@ export function ResidentWorkspace({
 }: ResidentWorkspaceProps) {
   const resident = useResident({ workspace, liveResident: residentSnapshot });
   const [activeTab, setActiveTab] = useState<AgiTab>(initialTab);
-  const [showNewGoal, setShowNewGoal] = useState(false);
+  const [showNewGoal, setShowNewGoal] = useState(initialTab === 'goals');
   const [expandedGoal, setExpandedGoal] = useState<string | null>(null);
 
   // New goal form state
@@ -93,6 +93,8 @@ export function ResidentWorkspace({
   const currentFocus = resident.residentAgenda?.current_focus?.[0] || null;
   const pendingGoals = resident.goals.filter(g => g.status === 'pending');
   const approvedGoals = resident.goals.filter(g => g.status === 'approved' || g.status === 'materialized');
+  const latestInsight = resident.residentInsights?.[0] || null;
+  const capabilities = resident.residentCapabilityGraph?.capabilities || [];
 
   const handleCreateGoal = async () => {
     if (!newGoalTitle.trim()) return;
@@ -214,6 +216,67 @@ export function ResidentWorkspace({
         {/* Tab Content */}
         {activeTab === 'overview' && (
           <div className="space-y-3">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <Card className="border-slate-800 bg-slate-900/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-sm text-slate-300">
+                    <Bot className="size-4 text-cyan-400" />
+                    AGI 身份
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-base font-medium text-white">
+                    {resident.residentIdentity?.name || 'Software Engineering AGI'}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-400">
+                    {resident.residentIdentity?.mission || '尚未设定任务宣言'}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-slate-800 bg-slate-900/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-sm text-slate-300">
+                    <FileSearch className="size-4 text-cyan-400" />
+                    最新元认知
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {latestInsight ? (
+                    <div className="space-y-1">
+                      <div className="text-sm font-medium text-white">{latestInsight.summary}</div>
+                      <div className="text-xs text-slate-500">
+                        {latestInsight.strategy_tag || latestInsight.insight_type || '未分类'} · 置信度{' '}
+                        {Math.round((latestInsight.confidence ?? 0) * 100)}%
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-500">暂无元认知记录</div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {capabilities.length > 0 && (
+              <Card className="border-slate-800 bg-slate-900/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-slate-300">能力图谱</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {capabilities.slice(0, 4).map((capability) => (
+                      <div key={capability.capability_id} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+                        <div className="text-sm font-medium text-slate-200">{capability.name}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          成功率 {Math.round((capability.success_rate ?? 0) * 100)}% · 证据 {capability.evidence_count ?? 0}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Recent Goals */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -233,6 +296,8 @@ export function ResidentWorkspace({
                   expanded={expandedGoal === goal.goal_id}
                   onToggle={() => setExpandedGoal(expandedGoal === goal.goal_id ? null : goal.goal_id || null)}
                   onApprove={() => void resident.approveGoal(String(goal.goal_id))}
+                  onStage={() => void resident.stageGoal(String(goal.goal_id), false)}
+                  onPromoteToPm={() => void resident.stageGoal(String(goal.goal_id), true)}
                   onRun={() => void resident.runGoal(String(goal.goal_id), false, 1)}
                   disabled={Boolean(resident.actionKey)}
                 />
@@ -279,7 +344,7 @@ export function ResidentWorkspace({
               <Card className="border-slate-800 bg-slate-900/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center justify-between text-sm">
-                    <span>新建目标</span>
+                    <span>目标生成台</span>
                     <Button size="sm" variant="ghost" onClick={() => setShowNewGoal(false)}>
                       <X className="size-4" />
                     </Button>
@@ -287,12 +352,14 @@ export function ResidentWorkspace({
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <Input
+                    aria-label="目标标题"
                     placeholder="目标标题"
                     value={newGoalTitle}
                     onChange={(e) => setNewGoalTitle(e.target.value)}
                     className="border-slate-700 bg-slate-950"
                   />
                   <Textarea
+                    aria-label="目标描述"
                     placeholder="目标描述（可选）"
                     value={newGoalDesc}
                     onChange={(e) => setNewGoalDesc(e.target.value)}
@@ -305,7 +372,7 @@ export function ResidentWorkspace({
                       disabled={!newGoalTitle.trim() || resident.isActing('create-goal')}
                       className="bg-cyan-500 text-black hover:bg-cyan-400"
                     >
-                      创建
+                      创建 AGI 目标
                     </Button>
                     <Button variant="ghost" onClick={() => setShowNewGoal(false)}>
                       取消
@@ -325,6 +392,8 @@ export function ResidentWorkspace({
                   expanded={expandedGoal === goal.goal_id}
                   onToggle={() => setExpandedGoal(expandedGoal === goal.goal_id ? null : goal.goal_id || null)}
                   onApprove={() => void resident.approveGoal(String(goal.goal_id))}
+                  onStage={() => void resident.stageGoal(String(goal.goal_id), false)}
+                  onPromoteToPm={() => void resident.stageGoal(String(goal.goal_id), true)}
                   onRun={() => void resident.runGoal(String(goal.goal_id), false, 1)}
                   disabled={Boolean(resident.actionKey)}
                 />
@@ -366,6 +435,8 @@ function GoalItem({
   expanded,
   onToggle,
   onApprove,
+  onStage,
+  onPromoteToPm,
   onRun,
   disabled,
 }: {
@@ -374,6 +445,8 @@ function GoalItem({
   expanded: boolean;
   onToggle: () => void;
   onApprove: () => void;
+  onStage: () => void;
+  onPromoteToPm: () => void;
   onRun: () => void;
   disabled: boolean;
 }) {
@@ -423,10 +496,18 @@ function GoalItem({
               </Button>
             )}
             {isApproved && (
-              <Button size="sm" onClick={onRun} disabled={disabled} className="bg-cyan-500 text-black hover:bg-cyan-400">
-                <Play className="mr-1 size-3" />
-                执行
-              </Button>
+              <>
+                <Button size="sm" variant="outline" onClick={onStage} disabled={disabled}>
+                  暂存
+                </Button>
+                <Button size="sm" variant="outline" onClick={onPromoteToPm} disabled={disabled}>
+                  写入 PM
+                </Button>
+                <Button size="sm" onClick={onRun} disabled={disabled} className="bg-cyan-500 text-black hover:bg-cyan-400">
+                  <Play className="mr-1 size-3" />
+                  交给 PM
+                </Button>
+              </>
             )}
           </div>
         </div>

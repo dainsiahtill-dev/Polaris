@@ -10,6 +10,7 @@ from polaris.cells.llm.evaluation.public.service import (
     update_index_with_report,
 )
 from polaris.cells.storage.layout.internal.settings_utils import get_polaris_root
+from polaris.kernelone.storage import resolve_runtime_path
 
 
 def _index_path(workspace: str) -> str:
@@ -79,7 +80,7 @@ def test_update_index_with_report_updates_roles_and_providers(tmp_path):
 
 def test_reconcile_llm_test_index_scans_reports(tmp_path):
     workspace = str(tmp_path)
-    reports_dir = os.path.join(workspace, ".polaris", "runtime", "llm_tests", "reports")
+    reports_dir = resolve_runtime_path(workspace, "runtime/llm_tests/reports")
     os.makedirs(reports_dir, exist_ok=True)
 
     report = {
@@ -121,7 +122,7 @@ def test_reconcile_preserves_existing_entries(tmp_path):
 
 def test_multiple_reports_same_role_updates_to_latest(tmp_path):
     workspace = str(tmp_path)
-    reports_dir = os.path.join(workspace, ".polaris", "runtime", "llm_tests", "reports")
+    reports_dir = resolve_runtime_path(workspace, "runtime/llm_tests/reports")
     os.makedirs(reports_dir, exist_ok=True)
 
     for run_id, timestamp, ready in [("run1", "2024-01-01T00:00:00Z", True), ("run2", "2024-01-02T00:00:00Z", False)]:
@@ -151,7 +152,7 @@ def test_reconcile_preserves_unrelated_providers(tmp_path):
     with open(index_path, "w", encoding="utf-8") as f:
         json.dump(initial_index, f)
 
-    reports_dir = os.path.join(workspace, ".polaris", "runtime", "llm_tests", "reports")
+    reports_dir = resolve_runtime_path(workspace, "runtime/llm_tests/reports")
     os.makedirs(reports_dir, exist_ok=True)
     report = {
         "test_run_id": "new",
@@ -196,3 +197,22 @@ def test_load_llm_test_index_prefers_global_index_over_workspace_copy(tmp_path):
     assert index["roles"]["pm"]["ready"] is True
     assert "global_provider" in index["providers"]
     assert "workspace_provider" not in index["providers"]
+
+
+def test_load_llm_test_index_uses_app_global_index_for_separate_workspace(tmp_path):
+    workspace = str(tmp_path / "target-project")
+    os.makedirs(workspace, exist_ok=True)
+
+    global_index = {
+        "roles": {"pm": {"ready": True, "grade": "PASS"}},
+        "providers": {"configured_provider": {"model": "configured-model", "ready": True}},
+    }
+    global_path = _index_path(workspace)
+    os.makedirs(os.path.dirname(global_path), exist_ok=True)
+    with open(global_path, "w", encoding="utf-8") as f:
+        json.dump(global_index, f)
+
+    index = load_llm_test_index(workspace)
+
+    assert index["roles"]["pm"]["ready"] is True
+    assert index["providers"]["configured_provider"]["model"] == "configured-model"

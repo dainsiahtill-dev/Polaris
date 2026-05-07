@@ -177,3 +177,5 @@ src/backend/polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/d
 src/backend/truthlog_test_runtime/*
 src/backend/*.json
 tmp_pytest_*/
+.pytest_tmp*/
+pytest-cache-files-*/

@@ -12,8 +12,10 @@ import { useRuntimeStore } from './useRuntimeStore';
 import { useRuntimeTransport } from '@/runtime/transport';
 import { useSettings } from '@/hooks';
 
+type RuntimeRole = 'pm' | 'chief_engineer' | 'director' | 'qa';
+
 interface UseRuntimeConnectionOptions {
-  roles?: ('pm' | 'director' | 'qa')[];
+  roles?: RuntimeRole[];
   autoConnect?: boolean;
   workspace?: string;
 }
@@ -24,17 +26,18 @@ const RUNTIME_STREAM_CHANNELS = [
   'llm',
   'dialogue',
   'runtime_events',
+  'event.file_edit',
 ] as const;
 
 function normalizeRoles(
-  input: ('pm' | 'director' | 'qa')[]
-): ('pm' | 'director' | 'qa')[] {
-  return Array.from(new Set(input)).sort() as ('pm' | 'director' | 'qa')[];
+  input: RuntimeRole[]
+): RuntimeRole[] {
+  return Array.from(new Set(input)).sort() as RuntimeRole[];
 }
 
 function areRolesEqual(
-  left: ('pm' | 'director' | 'qa')[],
-  right: ('pm' | 'director' | 'qa')[]
+  left: RuntimeRole[],
+  right: RuntimeRole[]
 ): boolean {
   if (left.length !== right.length) {
     return false;
@@ -62,7 +65,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     () => normalizedRoles.join('|'),
     [normalizedRoles]
   );
-  const [subscriptionRoles, setSubscriptionRoles] = useState<('pm' | 'director' | 'qa')[]>(
+  const [subscriptionRoles, setSubscriptionRoles] = useState<RuntimeRole[]>(
     normalizedRoles
   );
   const subscriptionRolesSignature = useMemo(
@@ -93,7 +96,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
 
   // Refs
   const activeRef = useRef(true);
-  const rolesRef = useRef<('pm' | 'director' | 'qa')[]>(subscriptionRoles);
+  const rolesRef = useRef<RuntimeRole[]>(subscriptionRoles);
   const workspaceRef = useRef<string>(workspace);
   const propRolesSignatureRef = useRef<string>(normalizedRolesSignature);
 
@@ -143,7 +146,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
 
   // Update subscription
   const updateSubscription = useCallback(
-    (nextRoles: ('pm' | 'director' | 'qa')[]) => {
+    (nextRoles: RuntimeRole[]) => {
       const normalizedNextRoles = normalizeRoles(nextRoles);
       rolesRef.current = normalizedNextRoles;
       setSubscriptionRoles((previous) => {

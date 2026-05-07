@@ -9,6 +9,7 @@ from polaris.kernelone._runtime_config import (
 )
 from polaris.kernelone.storage import (
     UNSUPPORTED_PATH_PREFIX,
+    StorageLayout,
     resolve_global_path,
     resolve_runtime_path,
     resolve_storage_roots,
@@ -126,3 +127,16 @@ def test_runtime_path_is_outside_workspace_when_external_runtime(
     runtime_file = Path(resolve_runtime_path(str(workspace), "runtime/events/e.jsonl"))
     assert workspace.resolve() not in runtime_file.parents
     assert os.path.commonpath([str(runtime_root.resolve()), str(runtime_file)]) == str(runtime_root.resolve())
+
+
+def test_storage_layout_matches_runtime_roots_when_runtime_base_contains_metadata_dir(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_base = tmp_path / ".polaris" / "e2e-home" / "runtime-cache"
+    runtime_base.mkdir(parents=True, exist_ok=True)
+
+    layout = StorageLayout(workspace, runtime_base)
+    key = workspace_key(str(workspace.resolve()))
+
+    assert layout.runtime_root == runtime_base.resolve() / "projects" / key / "runtime"
+    assert ".polaris/.polaris" not in layout.runtime_root.as_posix()

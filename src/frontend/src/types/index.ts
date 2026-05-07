@@ -1,6 +1,7 @@
 export * from './task';
 export * from './log';
 export * from './taskTrace';
+export * from './roleContracts';
 export {
   Notification,
   FileInfo,

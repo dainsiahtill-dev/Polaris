@@ -30,7 +30,7 @@ export async function getPmStatus(): Promise<ApiResult<PmStatus>> {
  * 获取Director状态
  */
 export async function getDirectorStatus(): Promise<ApiResult<DirectorStatus>> {
-  const result = await apiGet<DirectorStatusPayload>('/v2/director/status', 'Failed to load Director status');
+  const result = await apiGet<DirectorStatusPayload>('/v2/director/status?source=auto', 'Failed to load Director status');
 
   if (!result.ok || !result.data) {
     return { ok: false, error: result.error || 'Failed to load Director status' };
@@ -108,21 +108,21 @@ export async function stopPm(): Promise<ApiResult<void>> {
  * 单次运行PM
  */
 export async function runPmOnce(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/pm/run_once', 'PM run once failed');
+  return apiPostEmpty<void>('/v2/pm/run_once', 'PM Run Once failed');
 }
 
 /**
  * 启动Director
  */
 export async function startDirector(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/director/start', 'Failed to start Chief Engineer');
+  return apiPostEmpty<void>('/v2/director/start', 'Failed to start Director');
 }
 
 /**
  * 停止Director
  */
 export async function stopDirector(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/director/stop', 'Failed to stop Chief Engineer');
+  return apiPostEmpty<void>('/v2/director/stop', 'Failed to stop Director');
 }
 
 // ============================================================================
@@ -152,8 +152,30 @@ export interface CreateDirectorTaskPayload {
     pm_task_title: string;
     pm_task_status: string;
     acceptance: string[];
+    blueprint_id?: string | null;
+    blueprint_path?: string | null;
+    runtime_blueprint_path?: string | null;
+    guardrails?: unknown;
+    no_touch_zones?: unknown;
+    context_snapshot_ref?: string | null;
     [key: string]: unknown;
   };
+}
+
+export interface RunDirectorPayload {
+  workspace: string;
+  task_id?: string | null;
+  task_filter?: string | null;
+  max_workers?: number;
+  execution_mode?: 'serial' | 'parallel';
+}
+
+export interface RunDirectorResponse {
+  run_id: string;
+  status: string;
+  workspace: string;
+  tasks_queued: number;
+  message: string;
 }
 
 /**
@@ -170,3 +192,69 @@ export async function listDirectorTasks(source?: string): Promise<ApiResult<Dire
 export async function createDirectorTask(payload: CreateDirectorTaskPayload): Promise<ApiResult<DirectorTask>> {
   return apiPost<DirectorTask>('/v2/director/tasks', payload, 'Failed to create Director task');
 }
+
+/**
+ * 通过统一编排入口运行 Director，可选绑定单个任务。
+ */
+export async function runDirector(payload: RunDirectorPayload): Promise<ApiResult<RunDirectorResponse>> {
+  return apiPost<RunDirectorResponse>('/v2/director/run', payload, 'Failed to run Director');
+}
+
+// ============================================================================
+// PM Document Services
+// ============================================================================
+
+export interface PmDocumentInfo {
+  path: string;
+  current_version: string | number;
+  version_count: number;
+  last_modified: string;
+  created_at: string;
+}
+
+export interface PmDocumentListResponse {
+  documents: PmDocumentInfo[];
+  pagination: Record<string, unknown>;
+}
+
+export interface PmDocumentDetailResponse extends PmDocumentInfo {
+  content?: string | null;
+  versions?: Array<Record<string, unknown>> | null;
+  analysis?: Record<string, unknown> | null;
+}
+
+export interface PmDocumentWriteResponse {
+  success: boolean;
+  path: string;
+  version?: string | null;
+  checksum?: string | null;
+}
+
+function encodeDocumentPath(path: string): string {
+  return path
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+export const pmDocumentService = {
+  list(): Promise<ApiResult<PmDocumentListResponse>> {
+    return apiGet<PmDocumentListResponse>('/v2/pm/documents', 'Failed to list PM documents');
+  },
+
+  get(path: string): Promise<ApiResult<PmDocumentDetailResponse>> {
+    return apiGet<PmDocumentDetailResponse>(
+      `/v2/pm/documents/${encodeDocumentPath(path)}`,
+      'Failed to read PM document',
+    );
+  },
+
+  save(path: string, content: string, changeSummary: string): Promise<ApiResult<PmDocumentWriteResponse>> {
+    return apiPost<PmDocumentWriteResponse>(
+      `/v2/pm/documents/${encodeDocumentPath(path)}`,
+      { content, change_summary: changeSummary },
+      'Failed to save PM document',
+    );
+  },
+};

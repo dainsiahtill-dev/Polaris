@@ -79,7 +79,7 @@ describe('ContextSidebar', () => {
     it('should display dialogue tab header text', () => {
       render(<ContextSidebar {...baseProps} />);
 
-      expect(screen.getByText(/对话流/i)).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /对话流/i })).toBeInTheDocument();
     });
 
     it('should display connection status badge', () => {

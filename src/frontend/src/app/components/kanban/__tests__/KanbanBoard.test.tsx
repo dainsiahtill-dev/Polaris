@@ -1,12 +1,42 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import React from 'react';
 import { KanbanBoard, convertToKanbanTask } from '../KanbanBoard';
 import type { KanbanTask } from '../types';
 
 // Mock framer-motion
 vi.mock('framer-motion', () => ({
   motion: {
-    div: ({ children }: { children: React.ReactNode }) => children,
+    div: React.forwardRef<
+      HTMLDivElement,
+      React.HTMLAttributes<HTMLDivElement> & {
+        animate?: unknown;
+        exit?: unknown;
+        initial?: unknown;
+        layout?: unknown;
+        transition?: unknown;
+        variants?: unknown;
+        whileHover?: unknown;
+        whileTap?: unknown;
+      }
+    >(
+      ({
+        children,
+        animate: _animate,
+        exit: _exit,
+        initial: _initial,
+        layout: _layout,
+        transition: _transition,
+        variants: _variants,
+        whileHover: _whileHover,
+        whileTap: _whileTap,
+        ...props
+      }, ref) => (
+        <div ref={ref} {...props}>
+          {children}
+        </div>
+      )
+    ),
   },
 }));
 

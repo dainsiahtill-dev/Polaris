@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import queue
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -763,9 +764,11 @@ class PopenAsyncHandle:
         self._started_at = started_at
         self._status: ProcessStatus = ProcessStatus.RUNNING
         self._exit_code: int | None = None
-        # Queues for pump threads to deposit lines（有界队列防止内存泄漏）
-        self._stdout_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=500)
-        self._stderr_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=500)
+        # Thread-safe queues for pump threads to deposit lines. asyncio.Queue is
+        # not safe to mutate from these background threads and can silently lose
+        # subprocess stderr/stdout in broker logs.
+        self._stdout_queue: queue.Queue[str] = queue.Queue(maxsize=500)
+        self._stderr_queue: queue.Queue[str] = queue.Queue(maxsize=500)
         self._stream_done = False
         self._proc_alive = True
         self._stdin_used = False
@@ -792,7 +795,7 @@ class PopenAsyncHandle:
                 for line in self._proc.stdout or []:
                     try:
                         self._stdout_queue.put_nowait(line.rstrip("\n\r"))
-                    except asyncio.QueueFull:
+                    except queue.Full:
                         break
             except (RuntimeError, ValueError) as exc:
                 _logger.warning(
@@ -801,14 +804,15 @@ class PopenAsyncHandle:
                     exc_info=True,
                 )
             finally:
-                self._stdout_queue.put_nowait("")  # EOF sentinel
+                with contextlib.suppress(queue.Full):
+                    self._stdout_queue.put_nowait("")  # EOF sentinel
 
         def pump_stderr() -> None:
             try:
                 for line in self._proc.stderr or []:
                     try:
                         self._stderr_queue.put_nowait(line.rstrip("\n\r"))
-                    except asyncio.QueueFull:
+                    except queue.Full:
                         break
             except (RuntimeError, ValueError) as exc:
                 _logger.warning(
@@ -817,7 +821,8 @@ class PopenAsyncHandle:
                     exc_info=True,
                 )
             finally:
-                self._stderr_queue.put_nowait("")  # EOF sentinel
+                with contextlib.suppress(queue.Full):
+                    self._stderr_queue.put_nowait("")  # EOF sentinel
 
         t_out = threading.Thread(target=pump_stdout, daemon=True, name=f"popen-stdout-{self.pid}")
         t_err = threading.Thread(target=pump_stderr, daemon=True, name=f"popen-stderr-{self.pid}")
@@ -867,7 +872,7 @@ class PopenAsyncHandle:
                             yield StreamChunk(line="", source=ProcessStreamSource.STDOUT, pid=pid)
                             break
                         yield StreamChunk(line=line, source=ProcessStreamSource.STDOUT, pid=pid)
-                    except asyncio.QueueEmpty:
+                    except queue.Empty:
                         break
 
                 # Drain all available stderr
@@ -879,7 +884,7 @@ class PopenAsyncHandle:
                             yield StreamChunk(line="", source=ProcessStreamSource.STDERR, pid=pid)
                             break
                         yield StreamChunk(line=line, source=ProcessStreamSource.STDERR, pid=pid)
-                    except asyncio.QueueEmpty:
+                    except queue.Empty:
                         break
 
                 await asyncio.sleep(0.01)

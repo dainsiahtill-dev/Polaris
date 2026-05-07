@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncGenerator, Iterable, Mapping
+from typing import Any
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 from polaris.kernelone.llm.runtime_config import _ROLE_BINDING_MODE_ENV_KEYS, MASKED_SECRET
 
 from .provider_contract import KernelLLMRuntimeAdapter, RuntimeProviderInvokeResult
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +47,97 @@ class KernelLLM:
             blocked_provider_types=blocked_provider_types,
             environ=self._environ,
         )
+
+    async def invoke(
+        self,
+        *,
+        task_type: str,
+        role: str,
+        prompt: str,
+        options: Mapping[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Invoke the canonical KernelOne LLM executor.
+
+        ``KernelLLM`` is the public runtime facade imported by Cells.  Earlier
+        migrations added Cell callers that expected this generic executor API,
+        while the facade only exposed the role-provider path.  Keeping the
+        bridge here prevents individual Cells from depending on lower-level
+        executor modules directly.
+        """
+        from polaris.kernelone.llm.engine.executor import AIExecutor
+
+        request_context = _normalize_request_context(context)
+        request = _build_ai_request(
+            task_type=task_type,
+            role=role,
+            prompt=prompt,
+            options=options,
+            context=request_context,
+        )
+        executor = AIExecutor(workspace=_workspace_from_context(request_context))
+        response = await executor.invoke(request)
+        return response.to_dict()
+
+    async def invoke_stream(
+        self,
+        *,
+        task_type: str,
+        role: str,
+        prompt: str,
+        options: Mapping[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> AsyncGenerator[Any, None]:
+        """Invoke the canonical KernelOne streaming executor."""
+        from polaris.kernelone.llm.engine.executor import AIExecutor
+
+        request_context = _normalize_request_context(context)
+        request = _build_ai_request(
+            task_type=task_type,
+            role=role,
+            prompt=prompt,
+            options=options,
+            context=request_context,
+        )
+        executor = AIExecutor(workspace=_workspace_from_context(request_context))
+        async for event in executor.invoke_stream(request):
+            yield event
+
+
+def _normalize_request_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
+    return dict(context or {})
+
+
+def _workspace_from_context(context: Mapping[str, Any]) -> str | None:
+    workspace = context.get("workspace")
+    if workspace is None:
+        workspace = context.get("workspace_path")
+    token = str(workspace or "").strip()
+    return token or None
+
+
+def _build_ai_request(
+    *,
+    task_type: str,
+    role: str,
+    prompt: str,
+    options: Mapping[str, Any] | None,
+    context: Mapping[str, Any],
+) -> Any:
+    from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+
+    task_token = str(task_type or TaskType.GENERATION.value).strip().lower() or TaskType.GENERATION.value
+    try:
+        normalized_task_type = TaskType(task_token)
+    except ValueError:
+        normalized_task_type = TaskType.GENERATION
+    return AIRequest(
+        task_type=normalized_task_type,
+        role=str(role or ""),
+        input=str(prompt or ""),
+        options=dict(options or {}),
+        context=dict(context),
+    )
 
 
 def normalize_provider_type(provider_type: str) -> str:

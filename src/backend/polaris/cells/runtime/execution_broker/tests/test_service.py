@@ -56,7 +56,11 @@ async def test_launch_process_wait_and_log(tmp_path: Path) -> None:
         assert wait_result.exit_code == 0
         assert log_path.exists()
         content = log_path.read_text(encoding="utf-8")
+        assert "[execution_broker] launched" in content
+        assert "[execution_broker] command=" in content
         assert "broker-ok" in content
+        assert "[execution_broker] terminal" in content
+        assert "exit_code=0" in content
     finally:
         await runtime.close()
 

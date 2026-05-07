@@ -35,6 +35,11 @@ export interface FileEditEvent {
   addedLines?: number;
   deletedLines?: number;
   modifiedLines?: number;
+  schemaVersion?: string;
+  eventSchema?: string;
+  sourceChannel?: string;
+  eventKind?: string;
+  provenance?: string;
 }
 
 export interface TaskProgress {
@@ -318,7 +323,10 @@ export const useRuntimeStore = create<RuntimeState>()(
 
     appendFileEditEvent: (event) =>
       set((s) => {
-        s.fileEditEvents = [...s.fileEditEvents, event].slice(-50);
+        s.fileEditEvents = [
+          ...s.fileEditEvents.filter((item) => item.id !== event.id),
+          event,
+        ].slice(-50);
       }),
 
     // Bulk reset

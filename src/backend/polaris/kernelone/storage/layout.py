@@ -560,6 +560,13 @@ def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tupl
     )
 
 
+def _runtime_projects_root(runtime_base: str, metadata_dir_name: str) -> str:
+    runtime_base_parts = runtime_base.replace("\\", "/").split("/")
+    if metadata_dir_name in runtime_base_parts:
+        return os.path.join(runtime_base, "projects")
+    return os.path.join(runtime_base, metadata_dir_name, "projects")
+
+
 def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None) -> StorageRoots:
     """Internal resolver — replaceable via DI / patching for testing.
 
@@ -624,14 +631,8 @@ def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None)
     projects_root = project_local_root
     project_root = project_local_root
     project_persistent_root = project_local_root
-    # Avoid double .polaris nesting when runtime_base already contains metadata_dir_name as a path segment
-    # e.g., runtime_base="C:/Temp/FileServer/.polaris/runtime" already contains ".polaris"
-    # so joining with metadata_dir_name=".polaris" produces double nesting
-    runtime_base_parts = runtime_base.replace("\\", "/").split("/")
-    if metadata_dir_name in runtime_base_parts:
-        runtime_projects_root = os.path.join(runtime_base, "projects")
-    else:
-        runtime_projects_root = os.path.join(runtime_base, metadata_dir_name, "projects")
+    # Avoid double metadata-dir nesting when runtime_base already contains it.
+    runtime_projects_root = _runtime_projects_root(runtime_base, metadata_dir_name)
     runtime_project_root = os.path.join(runtime_projects_root, key, "runtime")
 
     roots = StorageRoots(
@@ -780,7 +781,8 @@ class StorageLayout:
         self._workspace = Path(workspace).resolve()
         self._runtime_base = Path(runtime_base).resolve()
         self._key = workspace_key(str(self._workspace))
-        self._runtime_root = self._runtime_base / get_workspace_metadata_dir_name() / "projects" / self._key / "runtime"
+        runtime_projects_root = Path(_runtime_projects_root(str(self._runtime_base), get_workspace_metadata_dir_name()))
+        self._runtime_root = runtime_projects_root / self._key / "runtime"
         self._workspace_root = self._workspace / get_workspace_metadata_dir_name()
         self._config_root = Path(kernelone_home()) / "config"
 

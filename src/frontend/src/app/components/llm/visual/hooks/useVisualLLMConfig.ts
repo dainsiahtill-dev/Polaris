@@ -131,7 +131,7 @@ export function useVisualLLMConfig({ config, status, onConfigChange }: UseVisual
 
     const fetchRuntimeStatus = async () => {
       try {
-        const response = await apiFetch('/llm/runtime-status');
+        const response = await apiFetch('/v2/llm/runtime-status');
         if (!response.ok || disposed) return;
         const data = (await response.json()) as RuntimeStatus;
         if (!disposed) {

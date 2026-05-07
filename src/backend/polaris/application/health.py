@@ -62,8 +62,6 @@ def check_backend_available(settings: Settings) -> str | None:
     runtime_kind = str(binding.get("kind") or "").strip().lower()
     if runtime_kind == "codex" and not shutil.which("codex"):
         return "codex command not found in PATH. PM role mapping points to codex provider."
-    if runtime_kind == "ollama" and not shutil.which("ollama"):
-        return "ollama command not found in PATH. PM role mapping points to ollama provider."
     return None
 
 
@@ -88,14 +86,6 @@ def build_runtime_issues(settings: Settings, workspace: str) -> list[dict[str, s
                 "code": "CODEX_MISSING",
                 "title": "Codex 未安装",
                 "detail": "检测不到 codex 命令。请安装 Codex 或在设置里切换 PM backend/provider。",
-            }
-        )
-    if runtime_kind == "ollama" and not shutil.which("ollama"):
-        issues.append(
-            {
-                "code": "OLLAMA_MISSING",
-                "title": "Ollama 未安装",
-                "detail": "检测不到 ollama 命令。请安装 Ollama 或在设置里切换 PM backend/provider。",
             }
         )
     return issues

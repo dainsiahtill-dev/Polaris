@@ -149,6 +149,15 @@ exclude = [
 [tool.ruff]
 target-version = "py310"
 line-length = 120
+# Squad B Wave 1 baseline: keep historical archive snapshots out of lint scope.
+# These are immutable snapshots used for governance audits; we don't gate on them.
+extend-exclude = [
+    "**/_archived/**",
+    "**/_archived*",
+    "**/.polaris/**",
+    "**/playwright-report/**",
+    "**/test-results/**",
+]
 
 # 静态门禁：Thin CLI 策略
 # 允许 scripts/ 目录中的 sys.argv 和 argparse 使用
@@ -176,12 +185,21 @@ ignore = [
     "B008",  # do not perform function calls in argument defaults
     "F401",  # imported but unused — disabled: re-export patterns are legitimate (ACGA public contract re-exports); noisy with --fix and breaks import chains
     # ---- ANNOTATION RULES (GRADUAL ADOPTION) ----
-    "ANN001", "ANN002", "ANN003", "ANN101", "ANN102",
+    # NOTE: ANN101/ANN102 were removed upstream in ruff 0.5+; keep them out
+    # of this list to avoid the "ignoring removed rules" warning every run.
+    "ANN001", "ANN002", "ANN003",
     "ANN201", "ANN202", "ANN203", "ANN204",
     "ANN401",  # Dynamically typed expressions (Any)
     # ---- RUFF-SPECIFIC RULES ----
     "RUF012",  # Mutable class defaults
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are allowed to use blind-except, magic numbers, blanket ignores.
+"**/tests/**" = ["B011", "BLE001"]
+"**/test_*.py" = ["B011", "BLE001"]
+# CLI delivery layer is allowed to print directly.
+"src/backend/polaris/delivery/cli/**" = ["T20"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -196,10 +214,36 @@ line-length = 120
 target-version = ["py310", "py311", "py312"]
 
 [tool.coverage.run]
+# Squad B Wave 1: explicitly include every polaris top-level subpackage so
+# that delivery/ (279 files) is no longer a measurement blind spot. Using the
+# package form (rather than a path under src/backend) tells coverage.py to
+# walk the import graph and record any imported submodule, even if the
+# current test suite never imports it (rendered as 0% rather than absent).
+source_pkgs = [
+    "polaris",
+]
+# Keep the legacy `source` for tools that don't honour `source_pkgs`.
 source = ["src/backend"]
+relative_files = true
 omit = [
+    # Path-style globs (POSIX) and module-style globs to match both
+    # Windows backslash paths and Linux forward slashes.
     "*/tests/*",
-    "*/test_*",
+    "*\\tests\\*",
+    "*/test_*.py",
+    "*\\test_*.py",
+    "**/conftest.py",
+    "**/_archived/**",
+    "**/_archived*",
+    "src/backend/polaris/cells/llm/evaluation/fixtures/**",
+]
+
+[tool.coverage.paths]
+# Map both the absolute build path and the relative repo path to the same
+# logical source so coverage merges runs from CI vs developer machines.
+polaris = [
+    "src/backend/polaris",
+    "*/src/backend/polaris",
 ]
 
 [tool.coverage.report]

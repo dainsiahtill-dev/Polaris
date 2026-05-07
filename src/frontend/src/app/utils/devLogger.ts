@@ -23,7 +23,8 @@ interface LoggerInstance {
 }
 
 const isDev = import.meta.env.DEV;
-const forceDebug = true; // 测试阶段强制开启调试
+const isTest = import.meta.env.MODE === 'test';
+const forceDebug = import.meta.env.VITE_POLARIS_FORCE_DEBUG === '1';
 
 const isDebugDisabled = (): boolean => {
   try {
@@ -35,6 +36,7 @@ const isDebugDisabled = (): boolean => {
 
 const shouldLog = (level: LogLevel = 'debug'): boolean => {
   if (level === 'error') return true; // error 始终输出
+  if (isTest) return false;
   return (forceDebug && !isDebugDisabled()) || isDev;
 };
 

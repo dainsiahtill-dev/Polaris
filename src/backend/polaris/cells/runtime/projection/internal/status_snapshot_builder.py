@@ -133,6 +133,9 @@ def _parse_engine_updated_at(value: Any) -> float | None:
     if not text:
         return None
     try:
+        normalized = text.replace("Z", "+00:00")
+        if "T" in normalized:
+            return datetime.fromisoformat(normalized).timestamp()
         return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").timestamp()
     except (RuntimeError, ValueError):
         return None

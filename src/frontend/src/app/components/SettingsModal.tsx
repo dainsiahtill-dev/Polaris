@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
 import { apiFetch } from '@/api';
+import { extractErrorDetail } from '@/services/apiClient';
 import { devLogger } from '@/app/utils/devLogger';
 
 import type {
@@ -246,6 +247,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   const interviewAbortRef = useRef<AbortController | null>(null);
   const llmConfigRef = useRef<LLMConfig | null>(null);
   const lastSavedConfigRef = useRef<LLMConfig | null>(null);
+  const llmErrorRef = useRef<string | null>(null);
   const llmSavePendingRef = useRef<LLMConfig | null>(null);
   const llmSaveQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
   const [deletingProviders, setDeletingProviders] = useState<Record<string, boolean>>({});
@@ -438,7 +440,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     setLlmLoading(true);
     setLlmError(null);
     try {
-      const res = await apiFetch('/llm/config');
+      const res = await apiFetch('/v2/llm/config');
       if (!res.ok) {
         throw new Error('读取 LLM 配置失败');
       }
@@ -456,7 +458,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
 
   const loadLLMStatus = async () => {
     try {
-      const res = await apiFetch('/llm/status');
+      const res = await apiFetch('/v2/llm/status');
       if (!res.ok) {
         throw new Error('读取 LLM 状态失败');
       }
@@ -643,18 +645,19 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
       if (!llmSavePendingRef.current) return true;
       setLlmSaving(true);
       setLlmError(null);
+      llmErrorRef.current = null;
       let success = true;
       while (llmSavePendingRef.current) {
         const configToSave = llmSavePendingRef.current;
         llmSavePendingRef.current = null;
         try {
-          const res = await apiFetch('/llm/config', {
+          const res = await apiFetch('/v2/llm/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(configToSave),
           });
           if (!res.ok) {
-            throw new Error('保存 LLM 配置失败');
+            throw new Error(await extractErrorDetail(res, '保存 LLM 配置失败'));
           }
           const data = (await res.json()) as LLMConfig;
           setLLMConfig(data);
@@ -663,7 +666,9 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
           await refreshProviderKeyStatus(data.providers || {});
           await loadLLMStatus();
         } catch (err) {
-          setLlmError(err instanceof Error ? err.message : '保存 LLM 配置失败');
+          const message = err instanceof Error ? err.message : '保存 LLM 配置失败';
+          setLlmError(message);
+          llmErrorRef.current = message;
           success = false;
           llmSavePendingRef.current = null;
           break;
@@ -968,7 +973,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   ): Promise<ProviderValidationResult | null> => {
     if (!providerType) return null;
     try {
-      const res = await apiFetch(`/llm/providers/${providerType}/validate`, {
+      const res = await apiFetch(`/v2/llm/providers/${providerType}/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
@@ -1120,7 +1125,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
         api_key: apiKey ? '***' : null
       };
       devLogger.debug('[runProviderTest] Test parameters:', { testRole, testModel, suites, providerId });
-      emitEvent('command', `POST /llm/test ${JSON.stringify(payload)}`);
+      emitEvent('command', `POST /v2/llm/test ${JSON.stringify(payload)}`);
 
       const willInvoke = suites.some((suite) => suite !== 'connectivity');
       if (willInvoke && (provider.conn.kind === 'codex_cli' || provider.conn.kind === 'gemini_cli')) {
@@ -1136,7 +1141,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
       }
 
       emitEvent('stdout', '发送测试请求...');
-      const res = await apiFetch('/llm/test', {
+      const res = await apiFetch('/v2/llm/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1310,7 +1315,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     const envResult = providerCfg ? await resolveEnvOverrides(providerId, providerCfg) : null;
     setLlmTesting((prev) => ({ ...prev, [role]: true }));
     try {
-      const res = await apiFetch('/llm/test', {
+      const res = await apiFetch('/v2/llm/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1488,7 +1493,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
       test_level: 'full',
       api_key: apiKey ? '***' : null
     };
-    emitEvent('command', `POST /llm/test ${JSON.stringify(payload)}`);
+    emitEvent('command', `POST /v2/llm/test ${JSON.stringify(payload)}`);
     emitEvent('stdout', '发送面试请求...');
     if (interviewAbortRef.current) {
       interviewAbortRef.current.abort();
@@ -1496,7 +1501,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     const controller = new AbortController();
     interviewAbortRef.current = controller;
     try {
-      const res = await apiFetch('/llm/test', {
+      const res = await apiFetch('/v2/llm/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1571,7 +1576,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     }
     const apiKey = await resolveApiKey(payload.providerId, providerCfg);
     const envResult = await resolveEnvOverrides(payload.providerId, providerCfg);
-    const res = await apiFetch('/llm/interview/ask', {
+    const res = await apiFetch('/v2/llm/interview/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1622,7 +1627,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     if (!payload.model) {
       throw new Error('Model is required to save interview report');
     }
-    const res = await apiFetch('/llm/interview/save', {
+    const res = await apiFetch('/v2/llm/interview/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1720,7 +1725,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     const providerCfg = llmConfig.providers?.[providerId];
     if (!providerCfg) return;
     const apiKey = await resolveApiKey(providerId, providerCfg);
-    const res = await apiFetch(`/llm/providers/${providerId}/models`, {
+    const res = await apiFetch(`/v2/llm/providers/${providerId}/models`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey }),
@@ -1738,7 +1743,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
 
   const openReport = async (runId: string) => {
     try {
-      const res = await apiFetch(`/llm/test/${runId}`);
+      const res = await apiFetch(`/v2/llm/test/${runId}`);
       if (!res.ok) return;
       const data = await res.json();
       setReportDrawer({ open: true, data });
@@ -1805,7 +1810,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     try {
       const llmSaved = await saveLLMConfig();
       if (!llmSaved) {
-        throw new Error('LLM 配置保存失败');
+        throw new Error(llmErrorRef.current || 'LLM 配置保存失败');
       }
       await onSave({
         prompt_profile: promptProfile,
@@ -2476,9 +2481,11 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
               </TabsContent>
 
               <TabsContent value="arsenal" className="mt-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
-                <Suspense fallback={<DeferredSectionFallback label="军械库" />}>
-                  <ArsenalPanel />
-                </Suspense>
+                {activeTab === 'arsenal' ? (
+                  <Suspense fallback={<DeferredSectionFallback label="军械库" />}>
+                    <ArsenalPanel />
+                  </Suspense>
+                ) : null}
               </TabsContent>
 
               <TabsContent value="services" className="mt-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">

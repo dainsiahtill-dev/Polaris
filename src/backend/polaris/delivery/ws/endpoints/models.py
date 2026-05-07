@@ -49,10 +49,15 @@ V2_CHANNEL_TO_SUBJECT: dict[str, str] = {
     "status.snapshot": "status.snapshot",
 }
 
+RUNTIME_EVENT_SCHEMA_VERSION = "runtime.v2"
+RUNTIME_EVENT_PROTOCOL_VERSION = 2
+
 
 __all__ = [
     "JOURNAL_CHANNELS",
     "LEGACY_LLM_CHANNELS",
+    "RUNTIME_EVENT_PROTOCOL_VERSION",
+    "RUNTIME_EVENT_SCHEMA_VERSION",
     "V2_CHANNEL_TO_SUBJECT",
     "WebSocketSendError",
 ]

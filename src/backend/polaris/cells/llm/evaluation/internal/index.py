@@ -13,9 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from polaris.cells.storage.layout.public.service import get_polaris_root
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.storage import resolve_global_path, resolve_runtime_path
 
 from .utils import utc_now, write_json_atomic
 
@@ -214,8 +213,8 @@ def _workspace_index_path(workspace_path: str | None) -> str:
 
 
 def _global_index_path(workspace_path: str | None) -> str:
-    root = workspace_path or get_polaris_root()
-    return str(Path(root) / get_workspace_metadata_dir_name() / "config" / "llm" / "llm_test_index.json")
+    del workspace_path
+    return resolve_global_path("config/llm/llm_test_index.json")
 
 
 def _resolve_index_paths(workspace: Any) -> list[str]:

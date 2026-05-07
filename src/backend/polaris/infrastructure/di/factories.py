@@ -67,14 +67,13 @@ def create_tool_spec_registry(_: DIContainer) -> type[ToolSpecRegistry]:
 def reset_tool_spec_registry_for_test() -> None:
     """Reset ToolSpecRegistry for test isolation.
 
-    Clears all registered tool specs to provide a clean slate for tests.
-    Also resets the cached registry reference in contracts.py to ensure
-    re-initialization on next access.
+    Restores the registry to its built-in baseline. Leaving it empty makes
+    later tests order-dependent because production imports populate the
+    registry by default.
     """
-    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+    from polaris.kernelone.tool_execution.tool_spec_registry import migrate_from_contracts_specs
 
-    # Clear the registry data for a clean test slate
-    ToolSpecRegistry.clear()
+    migrate_from_contracts_specs()
 
 
 # =============================================================================

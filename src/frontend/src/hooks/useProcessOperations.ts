@@ -76,6 +76,34 @@ function toTaskRecord(task: PmTask): PmTask & Record<string, unknown> {
   return task as PmTask & Record<string, unknown>;
 }
 
+function taskMetadata(task: PmTask): Record<string, unknown> {
+  const metadata = toTaskRecord(task).metadata;
+  return metadata && typeof metadata === 'object'
+    ? metadata as Record<string, unknown>
+    : {};
+}
+
+function readTaskValue(task: PmTask, keys: string[]): unknown {
+  const taskRecord = toTaskRecord(task);
+  const metadata = taskMetadata(task);
+  for (const key of keys) {
+    const directValue = taskRecord[key];
+    if (directValue !== undefined && directValue !== null) {
+      return directValue;
+    }
+    const metadataValue = metadata[key];
+    if (metadataValue !== undefined && metadataValue !== null) {
+      return metadataValue;
+    }
+  }
+  return undefined;
+}
+
+function readTaskString(task: PmTask, keys: string[]): string {
+  const value = readTaskValue(task, keys);
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function buildDirectorTaskPayload(task: PmTask): CreateDirectorTaskPayload {
   const title = String(task.title || task.goal || task.id || '未命名任务').trim();
   const description = String(task.summary || task.goal || '').trim();
@@ -103,6 +131,12 @@ function buildDirectorTaskPayload(task: PmTask): CreateDirectorTaskPayload {
       qa_contract: taskRecord.qa_contract && typeof taskRecord.qa_contract === 'object'
         ? taskRecord.qa_contract
         : {},
+      blueprint_id: readTaskString(task, ['blueprint_id', 'blueprintId']) || null,
+      blueprint_path: readTaskString(task, ['blueprint_path', 'blueprintPath']) || null,
+      runtime_blueprint_path: readTaskString(task, ['runtime_blueprint_path', 'runtimeBlueprintPath']) || null,
+      guardrails: readTaskValue(task, ['guardrails']),
+      no_touch_zones: readTaskValue(task, ['no_touch_zones', 'noTouchZones']),
+      context_snapshot_ref: readTaskString(task, ['context_snapshot_ref', 'contextSnapshotRef']) || null,
       source: 'pm_contract',
     },
   };
@@ -337,7 +371,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     setField('directorActionError', null);
     setField('isStartingDirector', true);
 
-    const startToastId = toast.loading('Starting Chief Engineer...', {
+    const startToastId = toast.loading('Starting Director...', {
       duration: 5000,
     });
 
@@ -345,7 +379,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
       if (checkAgents?.required) {
         toast.dismiss(startToastId);
         if (checkAgents.draftReady) {
-          toast.warning('Please review and confirm AGENTS.generated.md before starting Chief Engineer.');
+          toast.warning('Please review and confirm AGENTS.generated.md before starting Director.');
         } else {
           toast.warning('Please run PM first to read the spec and generate AGENTS.generated.md.');
         }
@@ -354,7 +388,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
 
       if (lancedbBlocked) {
         toast.dismiss(startToastId);
-        toast.warning(lancedbBlockMessage || 'LanceDB is required to start Chief Engineer.');
+        toast.warning(lancedbBlockMessage || 'LanceDB is required to start Director.');
         return false;
       }
 
@@ -365,22 +399,22 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
       if (!result.ok) {
         toast.dismiss(startToastId);
         const combined = await handleProcessError(
-          result.error || 'Failed to start Chief Engineer',
+          result.error || 'Failed to start Director',
           'runtime/logs/director.process.log',
           'director'
         );
         onOpenLogs?.('director', combined);
-        toast.error('Failed to start Chief Engineer');
+        toast.error('Failed to start Director');
         return false;
       }
 
       toast.dismiss(startToastId);
-      toast.success('Chief Engineer started');
+      toast.success('Director started');
       onStatusChange?.();
       return true;
     } catch (err) {
       toast.dismiss(startToastId);
-      const message = err instanceof Error ? err.message : 'Chief Engineer operation failed';
+      const message = err instanceof Error ? err.message : 'Director operation failed';
       setField('directorActionError', message);
       toast.error(message);
       return false;
@@ -396,12 +430,12 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     try {
       const result = await stopDirector();
       if (!result.ok) {
-        throw new Error(result.error || 'Failed to stop Chief Engineer');
+        throw new Error(result.error || 'Failed to stop Director');
       }
       onStatusChange?.();
       return true;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Chief Engineer operation failed';
+      const message = err instanceof Error ? err.message : 'Director operation failed';
       setField('directorActionError', message);
       toast.error(message);
       return false;

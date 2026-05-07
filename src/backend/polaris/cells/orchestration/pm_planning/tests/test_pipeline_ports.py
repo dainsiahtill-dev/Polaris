@@ -487,3 +487,33 @@ def test_cell_pm_invoke_port_raises_on_ollama_error(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(RuntimeError, match="Ollama PM backend failed: request timed out"):
         port.invoke(NoopPmStatePort(), "prompt", "ollama", SimpleNamespace(), None)
+
+
+def test_cell_pm_invoke_port_does_not_pass_stale_state_model_as_runtime_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class StateWithStaleModel(NoopPmStatePort):
+        @property
+        def workspace_full(self) -> str:
+            return "."
+
+        @property
+        def model(self) -> str:
+            return "modelscope.cn/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:latest"
+
+    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(attempted=True, ok=True, output='{"tasks": []}', error="")
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
+        fake_invoke_role_runtime_provider,
+    )
+
+    port = CellPmInvokePort()
+    output = port.invoke(StateWithStaleModel(), "prompt", "generic", SimpleNamespace(), None)
+
+    assert output == '{"tasks": []}'
+    assert captured["fallback_model"] == ""

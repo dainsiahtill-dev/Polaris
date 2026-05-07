@@ -16,6 +16,10 @@
 - Run real PM/Director acceptance checks:
   - PowerShell: `$env:KERNELONE_E2E_USE_REAL_SETTINGS='1'; npm run test:e2e:acceptance`
   - POSIX shell: `KERNELONE_E2E_USE_REAL_SETTINGS=1 npm run test:e2e:acceptance`
+- Run the deterministic real LLM nightly profile:
+  - `npm run test:e2e:real-flow`
+  - Required input: `KERNELONE_E2E_SETTINGS_JSON_BASE64`, `KERNELONE_E2E_SETTINGS_JSON`, `KERNELONE_HOME/config/settings.json`, or explicit `KERNELONE_E2E_ALLOW_HOST_SETTINGS=1`
+  - Dry run: `npm run test:e2e:real-flow -- --dry-run`
 - Run panel regression template only:
   - `npm run test:e2e:panel`
 - Run one-line natural language panel task:
@@ -45,6 +49,10 @@
 - `E2E_PANEL_CODEX_DANGEROUS=1`: optionally enable `--dangerously-bypass-approvals-and-sandbox` for non-interactive Codex runs
 - `KERNELONE_REAL_FLOW_AUTOFIX_MAX_ATTEMPTS`: max Claude repair rounds for `auto:fix:real-flow` (default `2`)
 - `KERNELONE_REAL_FLOW_AUTOFIX_SKIP_BUILD=1`: skip `npm run build` in the real-flow repair loop
+- `KERNELONE_E2E_SETTINGS_JSON_BASE64`: UTF-8 JSON settings seed for `test:e2e:real-flow`
+- `KERNELONE_E2E_SETTINGS_JSON`: raw JSON settings seed for `test:e2e:real-flow`
+- `KERNELONE_E2E_HOME`: home directory where the real-flow runner writes seeded `config/settings.json`
+- `KERNELONE_E2E_ALLOW_HOST_SETTINGS=1`: allow the real-flow runner to use the host Polaris settings instead of a deterministic seed
 - `KERNELONE_CLAUDE_MODEL`: optional model override passed to `claude --model`
 - `KERNELONE_CLAUDE_PERMISSION_MODE`: optional permission mode override (default `bypassPermissions`)
 - `KERNELONE_CLAUDE_AGENT`: optional Claude custom agent name
@@ -74,6 +82,7 @@ npm run test:e2e:panel
 - Suggested AGENTS snippet path: `docs/templates/AGENTS.electron-playwright.md`.
 - Auto-fix runner writes a UTF-8 log to `.polaris/logs/autofix_panel_*.log`.
 - Real-flow auto-fix writes UTF-8 prompt/output/audit files to `.polaris/logs/autofix_real_flow_*`.
+- Real-flow nightly CI is defined in `.github/workflows/electron-real-flow-nightly.yml` and intentionally fails when the real settings secret is missing.
 - Auto-fix requires local Codex CLI auth (`codex login`) before execution.
 - Real-flow auto-fix requires local Claude CLI auth (`claude`) and real Polaris settings because it forces `KERNELONE_E2E_USE_REAL_SETTINGS=1`.
 - 默认会阻断 LLM 相关测试任务；仅当显式设置 `KERNELONE_E2E_ALLOW_LLM_TESTS=1` 才允许执行。

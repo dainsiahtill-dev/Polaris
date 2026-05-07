@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { CodeMap3D } from './CodeMap3D';
 import { Card } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
@@ -17,25 +17,33 @@ export function ArsenalPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch('/arsenal/code_map');
+      const res = await apiFetch('/arsenal/code_map', { signal });
       if (!res.ok) throw new Error('拉取军械库图谱失败');
       const json = await res.json();
+      if (signal?.aborted) return;
       setData(json);
     } catch (err: unknown) {
+      if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+        return;
+      }
       const message = err instanceof Error ? err.message : '拉取军械库图谱失败';
       setError(message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    const controller = new AbortController();
+    void fetchData(controller.signal);
+    return () => controller.abort();
+  }, [fetchData]);
 
   return (
     <div className="space-y-4 text-text-main h-full">
@@ -50,7 +58,7 @@ export function ArsenalPanel() {
         <Button
           variant="outline"
           size="sm"
-          onClick={fetchData}
+          onClick={() => void fetchData()}
           disabled={loading}
           className="border-white/10 hover:bg-white/5"
         >

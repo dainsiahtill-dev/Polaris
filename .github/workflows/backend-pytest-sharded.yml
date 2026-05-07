@@ -1,0 +1,51 @@
+name: Backend Pytest Sharded
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/backend/**"
+      - "scripts/**"
+      - "infrastructure/scripts/run-backend-pytest-shard.py"
+      - ".github/workflows/backend-pytest-sharded.yml"
+      - "pyproject.toml"
+
+jobs:
+  backend-pytest:
+    name: Backend pytest shard ${{ matrix.shard }}/8
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Run pytest shard
+        run: |
+          python infrastructure/scripts/run-backend-pytest-shard.py \
+            --shard-index ${{ matrix.shard }} \
+            --shard-count 8 \
+            --batch-size 60 \
+            --batch-timeout 900
+
+      - name: Upload shard summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-shard-${{ matrix.shard }}
+          path: test-results/backend-pytest-shards/

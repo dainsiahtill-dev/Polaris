@@ -14,8 +14,9 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from hashlib import sha256
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Request, Response
 from polaris.delivery.http.endpoint_policy import (
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _LOOPBACK_CLIENTS = {"127.0.0.1", "::1", "localhost"}
+_last_rate_limit_middleware: RateLimitMiddleware | None = None
 
 
 def _is_truthy_env(value: str | None) -> bool:
@@ -168,6 +170,46 @@ class RateLimitStore:
                 client_key = self._get_client_key(request)
                 self._store.pop(client_key, None)
 
+    def snapshot(self, now: float | None = None) -> dict[str, Any]:
+        """Return a diagnostic snapshot without exposing raw client IPs."""
+
+        observed_at = time.time() if now is None else now
+        with self._lock:
+            entries: list[dict[str, Any]] = []
+            blocked_count = 0
+            total_violations = 0
+            for key, entry in self._store.items():
+                blocked_remaining = max(0.0, entry.blocked_until - observed_at)
+                if blocked_remaining > 0:
+                    blocked_count += 1
+                total_violations += entry.total_violations
+                entries.append(
+                    {
+                        "client_key_hash": sha256(f"polaris-rate:{key}".encode()).hexdigest()[:12],
+                        "tokens": round(entry.tokens, 3),
+                        "blocked_remaining_seconds": round(blocked_remaining, 3),
+                        "total_violations": entry.total_violations,
+                        "last_update_age_seconds": round(max(0.0, observed_at - entry.last_update), 3),
+                    }
+                )
+
+            entries.sort(
+                key=lambda item: (
+                    float(item["blocked_remaining_seconds"]),
+                    int(item["total_violations"]),
+                ),
+                reverse=True,
+            )
+            return {
+                "entry_count": len(self._store),
+                "blocked_count": blocked_count,
+                "total_violations": total_violations,
+                "clients": entries[:20],
+                "max_entries": self._max_entries,
+                "trusted_proxy_count": len(self._trusted_proxies),
+                "trust_x_forwarded_for": self._trust_x_forwarded_for,
+            }
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Rate limiting middleware for FastAPI."""
@@ -198,6 +240,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._exempt_loopback = _is_truthy_env(os.environ.get("KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK"))
         if self._enabled and self._exempt_loopback:
             logger.info("Rate limiting exempts loopback clients via environment")
+
+    def diagnostics_snapshot(self) -> dict[str, Any]:
+        """Return current middleware configuration and token bucket state."""
+
+        return {
+            "enabled": self._enabled,
+            "requests_per_second": self._rps,
+            "burst_size": self._burst,
+            "excluded_paths": sorted(self._excluded_paths),
+            "exempt_loopback": self._exempt_loopback,
+            "store": self._store.snapshot(),
+        }
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request with rate limiting."""
@@ -268,8 +322,33 @@ def get_rate_limit_middleware(
 
     logger.info("Initializing rate limiting: %s RPS, burst=%s", rps, burst)
 
-    return RateLimitMiddleware(
+    global _last_rate_limit_middleware
+    _last_rate_limit_middleware = RateLimitMiddleware(
         app=app,
         requests_per_second=rps,
         burst_size=burst,
     )
+    return _last_rate_limit_middleware
+
+
+def get_rate_limit_diagnostics() -> dict[str, Any]:
+    """Return rate-limit diagnostics without creating middleware state."""
+
+    if _last_rate_limit_middleware is not None:
+        return _last_rate_limit_middleware.diagnostics_snapshot()
+    return {
+        "enabled": os.environ.get("KERNELONE_RATE_LIMIT_ENABLED", "true").lower() not in ("false", "0", "no", "off"),
+        "requests_per_second": float(os.environ.get("KERNELONE_RATE_LIMIT_RPS", "10")),
+        "burst_size": int(os.environ.get("KERNELONE_RATE_LIMIT_BURST", "20")),
+        "excluded_paths": [],
+        "exempt_loopback": _is_truthy_env(os.environ.get("KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK")),
+        "store": {
+            "entry_count": 0,
+            "blocked_count": 0,
+            "total_violations": 0,
+            "clients": [],
+            "max_entries": 0,
+            "trusted_proxy_count": 0,
+            "trust_x_forwarded_for": False,
+        },
+    }

@@ -242,7 +242,9 @@ def resolve_pm_backend_kind(
         return backend, llm_cfg
     if backend != "auto":
         backend = "auto"
-    return provider_kind, llm_cfg
+    if provider_kind == "codex":
+        return "codex", llm_cfg
+    return "generic", llm_cfg
 
 
 def ensure_pm_backend_available(backend_kind: str) -> None:
@@ -279,7 +281,7 @@ def _invoke_generic_runtime_provider(
         fallback_model=model,
         timeout=state.timeout,
         adapter=AppLLMRuntimeAdapter(),
-        blocked_provider_types={"", "ollama", "codex", "codex_cli", "codex_sdk"},
+        blocked_provider_types={"", "codex", "codex_cli", "codex_sdk"},
     )
     if not provider_result.attempted or not provider_result.ok:
         error_message = str(provider_result.error or "").strip() or "runtime_provider_unavailable"

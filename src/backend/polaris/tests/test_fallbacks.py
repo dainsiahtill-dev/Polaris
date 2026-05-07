@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 from polaris.kernelone.llm.robust_parser.fallbacks import (
     FallbackAttempt,
@@ -13,6 +15,8 @@ from pydantic import BaseModel
 
 class TestSchema(BaseModel):
     """Test schema for fallback tests."""
+
+    __test__: ClassVar[bool] = False
 
     name: str
     value: int

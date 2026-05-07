@@ -22,6 +22,8 @@ export interface FileWriteEvent {
 export interface ExecutionTask {
   id: string;
   name: string;
+  rawStatus?: string;
+  goal?: string;
   description?: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked';
   type: 'code' | 'test' | 'debug' | 'review';
@@ -37,20 +39,41 @@ export interface ExecutionTask {
   estimatedTime?: number;
   actualTime?: number;
   dependencies?: string[];
+  blockedBy?: string[];
   tags?: string[];
   createdAt?: string;
   startedAt?: string;
   completedAt?: string;
   assignedWorker?: string;
+  claimedBy?: string;
+  pmTaskId?: string;
+  blueprintId?: string;
+  blueprintPath?: string;
+  source?: string;
   filesModified?: number;
   retries?: number;
   maxRetries?: number;
+  executionSteps?: string[];
+  acceptanceCriteria?: string[];
+  targetFiles?: string[];
   // Real-time file write tracking
   currentFile?: string;
+  currentFilePath?: string;
+  activityUpdatedAt?: string;
   fileWriteEvents?: FileWriteEvent[];
   totalAddedLines?: number;
   totalDeletedLines?: number;
   totalModifiedLines?: number;
+  lineStats?: {
+    added: number;
+    deleted: number;
+    modified: number;
+  };
+  operationStats?: {
+    create: number;
+    modify: number;
+    delete: number;
+  };
   // Phase information
   currentPhase?: string;
   phaseIndex?: number;
@@ -360,9 +383,17 @@ export function useDirectorWorkspace({
         if (!Array.isArray(payload) || cancelled) {
           return;
         }
-        const normalized = payload.filter((item): item is PmTask => {
-          return Boolean(item && typeof item === 'object' && String((item as { id?: unknown }).id || '').trim());
-        });
+        const normalized = payload
+          .filter((item): item is PmTask => {
+            return Boolean(item && typeof item === 'object' && String((item as { id?: unknown }).id || '').trim());
+          })
+          .map((item) => ({
+            ...item,
+            metadata: {
+              ...readTaskMetadata(item),
+              director_task_source: source,
+            },
+          }));
         setFallbackTasks(normalized);
       } catch {
         // Ignore polling errors and keep using live push data.
@@ -511,6 +542,7 @@ export function useDirectorWorkspace({
       return {
         id: task.id || title,
         name: title,
+        rawStatus,
         description: String(task.description || task.goal || '').trim(),
         status,
         type,
@@ -527,6 +559,11 @@ export function useDirectorWorkspace({
         startedAt,
         completedAt,
         assignedWorker: assignedWorker || undefined,
+        claimedBy: readTaskString(task, ['claimed_by', 'claimedBy', 'worker_id']) || undefined,
+        pmTaskId: readTaskString(task, ['pm_task_id', 'task_id']) || task.id || undefined,
+        blueprintId: readTaskString(task, ['blueprint_id', 'blueprintId']) || undefined,
+        blueprintPath: readTaskString(task, ['blueprint_path', 'runtime_blueprint_path']) || undefined,
+        source: readTaskString(task, ['director_task_source', 'source']) || undefined,
         filesModified: filesModified || fileEvents.length,
         retries,
         maxRetries,

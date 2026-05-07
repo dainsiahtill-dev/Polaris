@@ -252,6 +252,9 @@ class TestRuntimeEventFanout:
                 assert len(file_events1) == 1
                 assert len(file_events2) == 1
                 assert file_events1[0]["file_path"] == "/test.py"
+                assert file_events1[0]["event_schema"] == "runtime.event.file_edit.v1"
+                assert file_events1[0]["source"] == "message_bus.file_written"
+                assert file_events1[0]["schema_version"] == "runtime.v2"
         finally:
             await fanout.close()
 

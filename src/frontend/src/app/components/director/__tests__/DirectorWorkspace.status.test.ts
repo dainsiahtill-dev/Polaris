@@ -5,7 +5,7 @@ import {
   buildTaskRealtimeTelemetry,
   computePatchLineStats,
   resolveTaskExecutionStatus,
-} from '../DirectorWorkspace';
+} from '../taskSelectors';
 
 describe('resolveTaskExecutionStatus', () => {
   it('maps claimed tasks to running', () => {
@@ -112,15 +112,49 @@ describe('buildTaskRealtimeTelemetry', () => {
         timestamp: '2026-03-05T10:00:01.000Z',
         addedLines: 3,
       },
+      {
+        id: 'evt-3',
+        filePath: 'src/c.ts',
+        operation: 'delete',
+        contentSize: 0,
+        taskId: 'PM-1',
+        timestamp: '2026-03-05T10:00:02.000Z',
+        deletedLines: 2,
+      },
     ];
 
     const telemetry = buildTaskRealtimeTelemetry(tasks, events);
     const payload = telemetry.get('PM-1');
 
     expect(payload).toBeTruthy();
-    expect(payload?.filesTouchedCount).toBe(2);
-    expect(payload?.currentFilePath).toBe('src/b.ts');
-    expect(payload?.lineStats).toEqual({ added: 4, deleted: 0, modified: 1 });
-    expect(payload?.operationStats).toEqual({ create: 1, modify: 1, delete: 0 });
+    expect(payload?.filesTouchedCount).toBe(3);
+    expect(payload?.currentFilePath).toBe('src/c.ts');
+    expect(payload?.lineStats).toEqual({ added: 4, deleted: 2, modified: 1 });
+    expect(payload?.operationStats).toEqual({ create: 1, modify: 1, delete: 1 });
+  });
+
+  it('maps file edit telemetry by PM identity aliases from Director task rows', () => {
+    const tasks: PmTask[] = [
+      {
+        ...makeTask('director-row-1'),
+        subject: 'PM-Contract-1',
+      },
+    ];
+    const events: FileEditEvent[] = [
+      {
+        id: 'evt-subject',
+        filePath: 'src/task-board.tsx',
+        operation: 'modify',
+        contentSize: 20,
+        taskId: 'PM-Contract-1',
+        timestamp: '2026-05-07T10:00:00.000Z',
+        modifiedLines: 2,
+      },
+    ];
+
+    const telemetry = buildTaskRealtimeTelemetry(tasks, events);
+
+    expect(telemetry.get('director-row-1')?.currentFilePath).toBe('src/task-board.tsx');
+    expect(telemetry.get('director-row-1')?.lineStats.modified).toBe(2);
   });
 });

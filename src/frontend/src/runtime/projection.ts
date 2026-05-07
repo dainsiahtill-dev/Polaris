@@ -142,6 +142,19 @@ export interface WorkflowTask {
   started_at?: string;
   /** ISO timestamp when task completed */
   completed_at?: string;
+  /** Optional PM/CE/Director contract provenance */
+  metadata?: Record<string, unknown>;
+  blueprint_id?: string | null;
+  blueprint_path?: string | null;
+  runtime_blueprint_path?: string | null;
+  acceptance?: unknown[];
+  acceptance_criteria?: string[];
+  execution_checklist?: string[];
+  target_files?: string[];
+  scope_paths?: string[];
+  files?: string[];
+  dependencies?: string[];
+  blocked_by?: string[];
 }
 
 /**

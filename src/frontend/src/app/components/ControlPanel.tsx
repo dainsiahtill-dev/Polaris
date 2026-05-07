@@ -1,8 +1,9 @@
-import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot } from 'lucide-react';
+import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import { UsageHUD, type UsageStats } from './UsageHUD';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
 import { MiniStatusBadge } from '@/app/components/ai-dialogue/ManusStyleStatusIndicator';
+import { cleanRuntimeDisplayText } from '@/app/utils/runtimeDisplay';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,9 +35,11 @@ interface ControlPanelProps {
   onRefresh: () => void;
   onOpenBrain?: () => void;
   onEnterPMWorkspace?: () => void;
+  onEnterChiefEngineerWorkspace?: () => void;
   onEnterDirectorWorkspace?: () => void;
   onEnterFactoryMode?: () => void;
   onEnterAGIWorkspace?: () => void;
+  onEnterRuntimeDiagnostics?: () => void;
   workspaceError?: string | null;
   isStartingPM?: boolean;
   isStoppingPM?: boolean;
@@ -83,9 +86,11 @@ export function ControlPanel({
   onRefresh,
   onOpenBrain,
   onEnterPMWorkspace,
+  onEnterChiefEngineerWorkspace,
   onEnterDirectorWorkspace,
   onEnterFactoryMode,
   onEnterAGIWorkspace,
+  onEnterRuntimeDiagnostics,
   workspaceError,
   isStartingPM,
   isStoppingPM,
@@ -125,6 +130,8 @@ export function ControlPanel({
       : memoryRefsMode === 'soft'
         ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
         : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+  const displayCurrentTask = cleanRuntimeDisplayText(currentTask);
+  const displayCurrentToolName = cleanRuntimeDisplayText(currentToolName);
 
   // 计算当前状态指示
   const getStatusIndicator = () => {
@@ -300,18 +307,18 @@ export function ControlPanel({
         {/* Vital Signs (Ping/Health) */}
         <div className="no-drag flex items-center gap-2 px-2.5 py-1 bg-[rgba(35,25,14,0.55)] rounded-lg border border-white/5 backdrop-blur-md">
           {/* 当前任务显示 */}
-          {(pmRunning || directorRunning) && currentTask && (
+          {(pmRunning || directorRunning) && displayCurrentTask && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 max-w-[200px]">
-              <span className="text-[10px] text-amber-300 truncate" title={currentTask}>
-                {isExecutingTool && currentToolName ? `工具: ${currentToolName}` : currentTask}
+              <span className="text-[10px] text-amber-300 truncate" title={displayCurrentTask}>
+                {isExecutingTool && displayCurrentToolName ? `工具: ${displayCurrentToolName}` : displayCurrentTask}
               </span>
             </div>
           )}
           {/* 无任务时显示工具执行 */}
-          {(pmRunning || directorRunning) && !currentTask && isExecutingTool && currentToolName && (
+          {(pmRunning || directorRunning) && !displayCurrentTask && isExecutingTool && displayCurrentToolName && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 max-w-[200px]">
-              <span className="text-[10px] text-cyan-300 truncate" title={currentToolName}>
-                正在执行: {currentToolName}
+              <span className="text-[10px] text-cyan-300 truncate" title={displayCurrentToolName}>
+                正在执行: {displayCurrentToolName}
               </span>
             </div>
           )}
@@ -420,6 +427,12 @@ export function ControlPanel({
                 PM 工作区
               </DropdownMenuItem>
             )}
+            {onEnterChiefEngineerWorkspace && (
+              <DropdownMenuItem data-testid="enter-chief-engineer-workspace" onClick={onEnterChiefEngineerWorkspace}>
+                <ClipboardList className="size-4 mr-2" />
+                Chief Engineer 工作区
+              </DropdownMenuItem>
+            )}
             {onEnterDirectorWorkspace && (
               <DropdownMenuItem data-testid="enter-director-workspace" onClick={onEnterDirectorWorkspace}>
                 <Hammer className="size-4 mr-2" />
@@ -430,6 +443,12 @@ export function ControlPanel({
               <DropdownMenuItem onClick={onEnterAGIWorkspace}>
                 <Bot className="size-4 mr-2" />
                 AGI 工作区
+              </DropdownMenuItem>
+            )}
+            {onEnterRuntimeDiagnostics && (
+              <DropdownMenuItem data-testid="enter-runtime-diagnostics" onClick={onEnterRuntimeDiagnostics}>
+                <Gauge className="size-4 mr-2" />
+                运行诊断
               </DropdownMenuItem>
             )}
             {showAgents && (
@@ -467,6 +486,7 @@ export function ControlPanel({
 
         <button
           onClick={onOpenSettings}
+          data-testid="control-panel-open-settings"
           className="btn-icon"
           title={UI_TERMS.actions.openSettings}
         >

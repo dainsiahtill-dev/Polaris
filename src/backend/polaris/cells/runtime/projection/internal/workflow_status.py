@@ -479,6 +479,17 @@ def build_workflow_task_rows(
         item_metadata_raw = item.get("metadata")
         metadata: dict[str, Any] = item_metadata_raw if isinstance(item_metadata_raw, dict) else {}
         metadata.setdefault("pm_task_id", task_id)
+        blueprint_id = str(item.get("blueprint_id") or item.get("blueprintId") or "").strip()
+        blueprint_path = str(
+            item.get("blueprint_path") or item.get("runtime_blueprint_path") or item.get("blueprintPath") or ""
+        ).strip()
+        runtime_blueprint_path = str(item.get("runtime_blueprint_path") or blueprint_path or "").strip()
+        if blueprint_id:
+            metadata.setdefault("blueprint_id", blueprint_id)
+        if blueprint_path:
+            metadata.setdefault("blueprint_path", blueprint_path)
+        if runtime_blueprint_path:
+            metadata.setdefault("runtime_blueprint_path", runtime_blueprint_path)
         metadata.setdefault(
             "workflow_state",
             canonicalize_workflow_task_state(item.get("status") or item.get("state")),
@@ -510,6 +521,9 @@ def build_workflow_task_rows(
                 "claimed_by": claimed_by or None,
                 "result": result,
                 "metadata": metadata,
+                "blueprint_id": blueprint_id or metadata.get("blueprint_id"),
+                "blueprint_path": blueprint_path or metadata.get("blueprint_path"),
+                "runtime_blueprint_path": runtime_blueprint_path or metadata.get("runtime_blueprint_path"),
             }
         )
     return rows

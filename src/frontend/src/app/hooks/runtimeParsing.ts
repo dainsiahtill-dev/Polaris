@@ -371,7 +371,10 @@ export function parseFileEditEvent(
   timestamp: string,
   taskId?: string,
 ): FileEditEvent | null {
-  const filePath = toStringValue(event.filePath) || toStringValue(event.file_path);
+  const filePath =
+    toStringValue(event.filePath) ||
+    toStringValue(event.file_path) ||
+    toStringValue(event.filepath);
   if (!filePath) return null;
   
   const rawOperation = toStringValue(event.operation).toLowerCase();
@@ -380,7 +383,11 @@ export function parseFileEditEvent(
       ? rawOperation
       : 'modify';
       
-  const contentSize = toNumberValue(event.contentSize) ?? toNumberValue(event.content_size) ?? 0;
+  const contentSize =
+    toNumberValue(event.contentSize) ??
+    toNumberValue(event.content_size) ??
+    toNumberValue(event.size_bytes) ??
+    0;
   const addedLines = toNumberValue(event.addedLines) ?? toNumberValue(event.added_lines);
   const deletedLines = toNumberValue(event.deletedLines) ?? toNumberValue(event.deleted_lines);
   const modifiedLines = toNumberValue(event.modifiedLines) ?? toNumberValue(event.modified_lines);
@@ -399,6 +406,39 @@ export function parseFileEditEvent(
   };
 }
 
+function readFileEditSchemaMetadata(event: Record<string, unknown>): Pick<
+  FileEditEvent,
+  'schemaVersion' | 'eventSchema' | 'sourceChannel' | 'eventKind' | 'provenance'
+> {
+  const schemaVersion =
+    toStringValue(event.schemaVersion) ||
+    toStringValue(event.schema_version) ||
+    toStringValue(event.protocol);
+  const eventSchema = toStringValue(event.eventSchema) || toStringValue(event.event_schema);
+  const sourceChannel =
+    toStringValue(event.sourceChannel) ||
+    toStringValue(event.channel) ||
+    toStringValue(event.category);
+  const eventKind =
+    toStringValue(event.eventKind) ||
+    toStringValue(event.kind) ||
+    toStringValue(event.event) ||
+    toStringValue(event.name) ||
+    toStringValue(event.type);
+  const provenance =
+    toStringValue(event.provenance) ||
+    toStringValue(event.source) ||
+    (sourceChannel ? `ws:${sourceChannel}` : '');
+
+  return {
+    schemaVersion: schemaVersion || undefined,
+    eventSchema: eventSchema || undefined,
+    sourceChannel: sourceChannel || undefined,
+    eventKind: eventKind || undefined,
+    provenance: provenance || undefined,
+  };
+}
+
 export function extractFileEditEvents(payload: {
   event?: Record<string, unknown> | null;
   timestamp?: string;
@@ -406,7 +446,10 @@ export function extractFileEditEvents(payload: {
   const event = isRecord(payload.event) ? payload.event : null;
   if (!event) return null;
   
-  const filePath = toStringValue(event.filePath) || toStringValue(event.file_path);
+  const filePath =
+    toStringValue(event.filePath) ||
+    toStringValue(event.file_path) ||
+    toStringValue(event.filepath);
   if (!filePath) return null;
   
   const rawOperation = toStringValue(event.operation).toLowerCase();
@@ -415,11 +458,16 @@ export function extractFileEditEvents(payload: {
       ? rawOperation
       : 'modify';
       
-  const contentSize = toNumberValue(event.contentSize) ?? toNumberValue(event.content_size) ?? 0;
+  const contentSize =
+    toNumberValue(event.contentSize) ??
+    toNumberValue(event.content_size) ??
+    toNumberValue(event.size_bytes) ??
+    0;
   const addedLines = toNumberValue(event.addedLines) ?? toNumberValue(event.added_lines);
   const deletedLines = toNumberValue(event.deletedLines) ?? toNumberValue(event.deleted_lines);
   const modifiedLines = toNumberValue(event.modifiedLines) ?? toNumberValue(event.modified_lines);
   const timestamp = toStringValue(event.timestamp) || toStringValue(payload.timestamp) || new Date().toISOString();
+  const schemaMetadata = readFileEditSchemaMetadata(event);
   
   return {
     id: toStringValue(event.id) || `${filePath}-${timestamp}`,
@@ -432,7 +480,72 @@ export function extractFileEditEvents(payload: {
     addedLines: typeof addedLines === 'number' ? Math.max(0, addedLines) : undefined,
     deletedLines: typeof deletedLines === 'number' ? Math.max(0, deletedLines) : undefined,
     modifiedLines: typeof modifiedLines === 'number' ? Math.max(0, modifiedLines) : undefined,
+    ...schemaMetadata,
   };
+}
+
+function fileEditCandidateFromRuntimeEvent(event: Record<string, unknown>): Record<string, unknown> | null {
+  const eventToken = toStringValue(event.event || event.name || event.kind || event.type || event.event_name)
+    .toLowerCase();
+  const channelToken = toStringValue(event.channel || event.category).toLowerCase();
+  const domainToken = toStringValue(event.domain).toLowerCase();
+  const payload = isRecord(event.payload) ? event.payload : null;
+  const data = isRecord(event.data) ? event.data : null;
+  const raw = isRecord(payload?.raw) ? payload.raw : null;
+  const nestedPayload = isRecord(payload?.payload) ? payload.payload : null;
+  const nestedEvent = isRecord(event.event) ? event.event : null;
+
+  const candidates = [
+    raw,
+    data,
+    nestedPayload,
+    nestedEvent,
+    payload,
+    event,
+  ].filter((item): item is Record<string, unknown> => Boolean(item));
+
+  const hasFileEditShape = candidates.some((candidate) => {
+    return Boolean(toStringValue(candidate.filePath) || toStringValue(candidate.file_path) || toStringValue(candidate.filepath));
+  });
+  if (!hasFileEditShape) return null;
+
+  const isFileEditEvent =
+    channelToken === 'event.file_edit' ||
+    channelToken === 'file_edit' ||
+    domainToken === 'file_edit' ||
+    eventToken === 'file_edit' ||
+    eventToken === 'file_written' ||
+    eventToken === 'file.write' ||
+    eventToken === 'file_written_event' ||
+    eventToken.endsWith('.file_edit') ||
+    eventToken.endsWith('.file_written');
+
+  if (!isFileEditEvent) return null;
+  return candidates.find((candidate) =>
+    Boolean(toStringValue(candidate.filePath) || toStringValue(candidate.file_path) || toStringValue(candidate.filepath))
+  ) || null;
+}
+
+export function extractRuntimeFileEditEvent(event: Record<string, unknown>): FileEditEvent | null {
+  const candidate = fileEditCandidateFromRuntimeEvent(event);
+  if (!candidate) return null;
+  const timestamp =
+    toStringValue(candidate.timestamp) ||
+    toStringValue(event.timestamp) ||
+    toStringValue(event.ts) ||
+    new Date().toISOString();
+  return extractFileEditEvents({
+    event: {
+      ...event,
+      ...candidate,
+      schema_version: candidate.schema_version || event.schema_version,
+      event_schema: candidate.event_schema || event.event_schema,
+      channel: candidate.channel || event.channel || event.category,
+      kind: candidate.kind || event.kind || event.event || event.name,
+      source: candidate.source || event.source,
+    },
+    timestamp,
+  });
 }
 
 // ============================================================

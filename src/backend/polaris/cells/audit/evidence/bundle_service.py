@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 # External storage threshold: 100KB
 EXTERNAL_STORAGE_THRESHOLD = 100 * 1024
+_BUNDLE_INDEX_LOGICAL_PATH = "runtime/evidence_index.jsonl"
 
 
 def _get_fs_adapter() -> Any:
@@ -52,7 +53,7 @@ def _get_bundle_storage_path(workspace: str, bundle_id: str) -> Path:
 
 def _get_bundle_index_path(workspace: str) -> Path:
     """Get bundle index path."""
-    return Path(resolve_runtime_path(workspace, "runtime/evidence_index.jsonl"))
+    return Path(resolve_runtime_path(workspace, _BUNDLE_INDEX_LOGICAL_PATH))
 
 
 def _workspace_fs(workspace: str) -> KernelFileSystem:
@@ -214,13 +215,12 @@ class EvidenceBundleService:
         """List bundles metadata from index."""
         workspace_root = str(Path(workspace).resolve())
         fs = _workspace_fs(workspace_root)
-        index_path = _get_bundle_index_path(workspace_root)
-        index_rel = _workspace_rel(fs, index_path)
-        if not fs.workspace_exists(index_rel) or not fs.workspace_is_file(index_rel):
+        index_logical = _BUNDLE_INDEX_LOGICAL_PATH
+        if not fs.exists(index_logical):
             return []
 
         results = []
-        raw_lines = fs.workspace_read_text(index_rel, encoding="utf-8").splitlines()
+        raw_lines = fs.read_text(index_logical, encoding="utf-8").splitlines()
         for line in raw_lines:
             text = line.strip()
             if not text:
@@ -344,8 +344,6 @@ class EvidenceBundleService:
         """Update bundle index."""
         workspace_root = str(Path(workspace).resolve())
         fs = _workspace_fs(workspace_root)
-        index_path = _get_bundle_index_path(workspace_root)
-        index_rel = _workspace_rel(fs, index_path)
 
         entry = {
             "bundle_id": bundle.bundle_id,
@@ -357,8 +355,8 @@ class EvidenceBundleService:
             "affected_files": bundle.affected_files,
         }
 
-        fs.workspace_append_text(
-            index_rel,
+        fs.append_text(
+            _BUNDLE_INDEX_LOGICAL_PATH,
             json.dumps(entry, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )

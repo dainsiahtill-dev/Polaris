@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from polaris.kernelone.constants import MAX_LLM_PROVIDER_TIMEOUT_SECONDS
 from polaris.kernelone.llm.config_store import (
     normalize_llm_config,
     validate_llm_config,
@@ -102,6 +103,38 @@ class TestValidateLLMConfig:
         assert is_valid is True
         assert len(errors) == 0
 
+    def test_validate_accepts_long_provider_timeout(self) -> None:
+        """Provider saves must allow long LLM calls without rejecting valid config."""
+        config = {
+            "schema_version": 2,
+            "providers": {
+                "slow-provider": {
+                    "type": "minimax",
+                    "timeout": 360,
+                }
+            },
+            "roles": {"pm": {"provider_id": "slow-provider"}},
+        }
+        is_valid, errors, _ = validate_llm_config(config)
+        assert is_valid is True
+        assert errors == []
+
+    def test_validate_rejects_unbounded_provider_timeout(self) -> None:
+        """Provider timeout still has a hard safety bound."""
+        config = {
+            "schema_version": 2,
+            "providers": {
+                "unbounded-provider": {
+                    "type": "minimax",
+                    "timeout": MAX_LLM_PROVIDER_TIMEOUT_SECONDS + 1,
+                }
+            },
+            "roles": {"pm": {"provider_id": "unbounded-provider"}},
+        }
+        is_valid, errors, _ = validate_llm_config(config)
+        assert is_valid is False
+        assert any("timeout" in error.lower() for error in errors)
+
     def test_validate_missing_provider_type(self) -> None:
         """Test validate detects missing provider type."""
         config = {"schema_version": 2, "providers": {"test": {"name": "Test Provider"}}}
@@ -119,6 +152,18 @@ class TestValidateLLMConfig:
         is_valid, errors, _ = validate_llm_config(config)
         assert is_valid is False
         assert any("non-existent" in e.lower() for e in errors)
+
+    def test_validate_rejects_required_role_without_provider_id(self) -> None:
+        """Required role rows must be present with provider_id before saving."""
+        config = {
+            "schema_version": 2,
+            "providers": {"test": {"type": "ollama"}},
+            "roles": {"pm": {"model": "llama3"}},
+            "policies": {"required_ready_roles": ["pm"]},
+        }
+        is_valid, errors, _ = validate_llm_config(config)
+        assert is_valid is False
+        assert any("missing 'provider_id'" in e for e in errors)
 
     def test_validate_warns_dangerous_sandbox(self) -> None:
         """Test validate warns about dangerous sandbox mode."""

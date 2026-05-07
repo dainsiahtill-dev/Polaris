@@ -207,6 +207,21 @@ describe('RealTimeStatusBar', () => {
       // Should display 0s for negative duration
       expect(screen.getByText(/0s/i)).toBeInTheDocument();
     });
+
+    it('should not show huge durations for accidental 1970 timestamps', () => {
+      render(
+        <RealTimeStatusBar
+          pmRunning={true}
+          directorRunning={false}
+          pmStartedAt={1771594}
+          directorStartedAt={null}
+          pmIteration={null}
+        />
+      );
+
+      expect(screen.getByText('Active')).toBeInTheDocument();
+      expect(screen.queryByText(/493/)).not.toBeInTheDocument();
+    });
   });
 
   describe('LLM Status Display', () => {
@@ -239,7 +254,7 @@ describe('RealTimeStatusBar', () => {
       );
 
       expect(screen.getByText(/LLM/i)).toBeInTheDocument();
-      expect(screen.getByText(/Blocked/i)).toBeInTheDocument();
+      expect(screen.getByText(/阻塞/i)).toBeInTheDocument();
     });
 
     it('should display LLM unknown status', () => {
@@ -287,7 +302,7 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.getByText(/Code Search DB/i)).toBeInTheDocument();
+      expect(screen.getByText(/经籍库/i)).toBeInTheDocument();
       expect(screen.getByText(/就绪/i)).toBeInTheDocument();
     });
 
@@ -303,7 +318,7 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.getByText(/Code Search DB/i)).toBeInTheDocument();
+      expect(screen.getByText(/经籍库/i)).toBeInTheDocument();
       expect(screen.getByText(/离线/i)).toBeInTheDocument();
     });
 
@@ -318,7 +333,41 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.queryByText(/Code Search DB/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/经籍库/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('File Edit Status Display', () => {
+    it('should display latest runtime file edit evidence', () => {
+      render(
+        <RealTimeStatusBar
+          pmRunning={false}
+          directorRunning={true}
+          pmStartedAt={null}
+          directorStartedAt={null}
+          pmIteration={null}
+          fileEditEvents={[
+            {
+              id: 'older',
+              filePath: 'src/old.ts',
+              operation: 'create',
+              contentSize: 12,
+              timestamp: '2026-04-16T09:59:00.000Z',
+            },
+            {
+              id: 'newer',
+              filePath: 'src/new.ts',
+              operation: 'modify',
+              contentSize: 42,
+              timestamp: '2026-04-16T10:00:00.000Z',
+            },
+          ]}
+        />
+      );
+
+      expect(screen.getByTestId('runtime-file-edit-status')).toHaveTextContent('文件变更');
+      expect(screen.getByTestId('runtime-file-edit-status')).toHaveTextContent('modify src/new.ts');
+      expect(screen.queryByText(/src\/old.ts/)).not.toBeInTheDocument();
     });
   });
 
@@ -334,7 +383,7 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      expect(screen.getByText(/System Time/i)).toBeInTheDocument();
+      expect(screen.getByText(/漏刻时辰/i)).toBeInTheDocument();
     });
 
     it('should update time every second', () => {
@@ -394,7 +443,7 @@ describe('RealTimeStatusBar', () => {
       // LLM ready
       expect(screen.getByText(/LLM/i)).toBeInTheDocument();
       // Database ready
-      expect(screen.getByText(/Code Search DB/i)).toBeInTheDocument();
+      expect(screen.getByText(/经籍库/i)).toBeInTheDocument();
     });
 
     it('should handle mixed running states', () => {

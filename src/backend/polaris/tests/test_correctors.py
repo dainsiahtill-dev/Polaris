@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 from polaris.kernelone.llm.robust_parser.correctors import (
     CorrectionPrompt,
@@ -12,6 +14,8 @@ from pydantic import BaseModel
 
 class TestSchema(BaseModel):
     """Test schema for validation tests."""
+
+    __test__: ClassVar[bool] = False
 
     name: str
     value: int

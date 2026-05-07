@@ -429,8 +429,11 @@ class TokenBudgetManager:
             requested_output_tokens=requested_output_tokens,
             max_context_tokens=max_context_tokens,
         )
-        # Claude Code formula: safety_margin = max(2048, 0.05C)
-        safety_margin_tokens = max(2048, int(max_context_tokens * 0.05))
+        # Keep a large safety margin for capable models, but never let the
+        # margin consume the prompt budget on small/local models.
+        preferred_safety_margin = max(2048, int(max_context_tokens * 0.05))
+        max_safe_margin = max(0, max_context_tokens - reserve_output_tokens - self.min_prompt_budget_tokens)
+        safety_margin_tokens = min(preferred_safety_margin, max_safe_margin)
         hard_available = max_context_tokens - reserve_output_tokens - safety_margin_tokens
         allowed_prompt_tokens = max(1, min(hard_available, max_context_tokens - reserve_output_tokens))
 

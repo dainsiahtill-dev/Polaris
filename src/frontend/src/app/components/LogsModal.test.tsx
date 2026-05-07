@@ -1,4 +1,5 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import type React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LogsModal } from './LogsModal';
 
@@ -56,6 +57,17 @@ const defaultProps = {
   workspace: '/test/workspace',
 };
 
+async function renderOpenLogsModal(
+  props: Partial<React.ComponentProps<typeof LogsModal>> = {}
+) {
+  const result = render(<LogsModal {...defaultProps} {...props} />);
+  await waitFor(() => {
+    expect(mockApiFetch).toHaveBeenCalled();
+  });
+  await act(async () => { });
+  return result;
+}
+
 describe('LogsModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -71,8 +83,8 @@ describe('LogsModal', () => {
   });
 
   describe('Basic Rendering', () => {
-    it('renders modal when isOpen is true', () => {
-      render(<LogsModal {...defaultProps} />);
+    it('renders modal when isOpen is true', async () => {
+      await renderOpenLogsModal();
       expect(screen.getByText('运行日志')).toBeInTheDocument();
     });
 
@@ -83,50 +95,46 @@ describe('LogsModal', () => {
   });
 
   describe('Source Selection', () => {
-    it('renders source tabs', () => {
-      render(<LogsModal {...defaultProps} />);
+    it('renders source tabs', async () => {
+      await renderOpenLogsModal();
       expect(screen.getByText('PM 子进程')).toBeInTheDocument();
       expect(screen.getByText('PM 禀报')).toBeInTheDocument();
-      expect(screen.getByText('Director subprocess')).toBeInTheDocument();
+      expect(screen.getByText('Director 子进程')).toBeInTheDocument();
     });
 
-    it('respects initialSourceId prop', () => {
-      render(<LogsModal {...defaultProps} initialSourceId="director" />);
-      expect(screen.getByText('Director subprocess')).toBeInTheDocument();
+    it('respects initialSourceId prop', async () => {
+      await renderOpenLogsModal({ initialSourceId: 'director' });
+      expect(screen.getByText('Director 子进程')).toBeInTheDocument();
     });
   });
 
   describe('Banner Display', () => {
-    it('shows banner when provided', () => {
-      render(<LogsModal {...defaultProps} banner="Important message" />);
+    it('shows banner when provided', async () => {
+      await renderOpenLogsModal({ banner: 'Important message' });
       expect(screen.getByText('Important message')).toBeInTheDocument();
     });
 
-    it('shows dismiss button when onDismissBanner provided', () => {
+    it('shows dismiss button when onDismissBanner provided', async () => {
       const onDismissBanner = vi.fn();
-      render(
-        <LogsModal {...defaultProps} banner="Important" onDismissBanner={onDismissBanner} />
-      );
+      await renderOpenLogsModal({ banner: 'Important', onDismissBanner });
       expect(screen.getByLabelText('关闭提示')).toBeInTheDocument();
     });
 
-    it('calls onDismissBanner when dismiss button clicked', () => {
+    it('calls onDismissBanner when dismiss button clicked', async () => {
       const onDismissBanner = vi.fn();
-      render(
-        <LogsModal {...defaultProps} banner="Important" onDismissBanner={onDismissBanner} />
-      );
+      await renderOpenLogsModal({ banner: 'Important', onDismissBanner });
       fireEvent.click(screen.getByLabelText('关闭提示'));
       expect(onDismissBanner).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('Multiple Sources', () => {
-    it('shows all default sources', () => {
-      render(<LogsModal {...defaultProps} />);
+    it('shows all default sources', async () => {
+      await renderOpenLogsModal();
       expect(screen.getByText('PM 子进程')).toBeInTheDocument();
       expect(screen.getByText('PM 禀报')).toBeInTheDocument();
       expect(screen.getByText('PM 纪要（jsonl）')).toBeInTheDocument();
-      expect(screen.getByText('Director subprocess')).toBeInTheDocument();
+      expect(screen.getByText('Director 子进程')).toBeInTheDocument();
       expect(screen.getByText('谋划稿')).toBeInTheDocument();
       expect(screen.getByText('Ollama')).toBeInTheDocument();
       expect(screen.getByText('审校')).toBeInTheDocument();

@@ -54,7 +54,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
       const lancedb = lancedbRes.ok ? await lancedbRes.json() : { ok: false, error: 'Failed to check' };
 
       // Check LLM status
-      const llmRes = await apiFetch('/llm/status');
+      const llmRes = await apiFetch('/v2/llm/status');
       const llm = llmRes.ok ? await llmRes.json() : { state: 'unknown' };
 
       // Check workspace status

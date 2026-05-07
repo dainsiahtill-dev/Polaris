@@ -26,7 +26,9 @@ import { devLogger } from './devLogger';
 /**
  * Enable detailed validation logging in development
  */
-const ENABLE_VALIDATION_LOGGING = process.env.NODE_ENV === 'development' || true;
+const DEFAULT_VALIDATION_LOGGING_ENABLED =
+  (import.meta.env.DEV && import.meta.env.MODE !== 'test') ||
+  import.meta.env.VITE_API_VALIDATION_LOGGING === '1';
 
 /**
  * List of endpoints that require payload validation
@@ -73,7 +75,7 @@ export function validateApiPayload<T extends keyof InterviewApiEndpoints>(
   
   const rules = interviewValidationRules[endpoint];
   if (!rules) {
-    if (ENABLE_VALIDATION_LOGGING) {
+    if (isValidationLoggingEnabled()) {
       devLogger.warn(`[API Validation] No validation rules for endpoint: ${endpoint}`);
     }
     return { valid: true, errors, warnings };
@@ -105,7 +107,7 @@ export function validateApiPayload<T extends keyof InterviewApiEndpoints>(
     warnings.push(`[${endpoint}] Unexpected fields: ${extraFields.join(', ')}`);
   }
   
-  if (ENABLE_VALIDATION_LOGGING && errors.length > 0) {
+  if (isValidationLoggingEnabled() && errors.length > 0) {
     devLogger.error('[API Validation Failed]', {
       endpoint,
       errors,
@@ -258,7 +260,7 @@ export function setValidationLogging(enabled: boolean): void {
  */
 export function isValidationLoggingEnabled(): boolean {
   const global = globalThis as Record<string, unknown>;
-  return (global.__API_VALIDATION_LOGGING__ as boolean | undefined) ?? ENABLE_VALIDATION_LOGGING;
+  return (global.__API_VALIDATION_LOGGING__ as boolean | undefined) ?? DEFAULT_VALIDATION_LOGGING_ENABLED;
 }
 
 /**

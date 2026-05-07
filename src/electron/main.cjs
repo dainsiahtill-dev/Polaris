@@ -27,6 +27,7 @@ const os = require("os");
 const {
   getDesktopBackendInfoPath,
   getGlobalSettingsPath,
+  isDirectoryPath,
   isTruthyEnv,
   selectStartupWorkspaceOverride,
   shouldEnableSelfUpgradeMode,
@@ -129,12 +130,18 @@ function resolveStartupWorkspaceOverride() {
   const selection = selectStartupWorkspaceOverride({
     env: process.env,
     persistedWorkspace,
+    validateDirectory: true,
   });
 
   console.log(`[workspace] Resolving startup workspace:`);
   console.log(`[workspace]   KERNELONE_WORKSPACE: ${envWorkspace || "(not set)"}`);
   console.log(`[workspace]   Persisted workspace: ${persistedWorkspace || "(not set)"}`);
   console.log(`[workspace]   Selected source: ${selection.source}`);
+  if (selection.invalidWorkspace) {
+    console.warn(
+      `[workspace] Ignoring invalid ${String(selection.source).replace(/_missing$/, "")} workspace: ${selection.invalidWorkspace}`,
+    );
+  }
 
   if (selection.source === "env_forced") {
     console.log("[workspace] Applying FORCED workspace override from KERNELONE_WORKSPACE_FORCE");
@@ -142,6 +149,8 @@ function resolveStartupWorkspaceOverride() {
     console.log(`[workspace] Using persisted workspace: ${selection.workspace}`);
   } else if (selection.source === "env") {
     console.log(`[workspace] Using env workspace: ${selection.workspace}`);
+  } else if (!selection.workspace && envWorkspace && !isDirectoryPath(envWorkspace)) {
+    console.warn(`[workspace] Ignoring invalid env workspace: ${envWorkspace}`);
   }
 
   return selection.workspace;
@@ -821,11 +830,22 @@ async function startBackend(options = {}) {
     args.push("--self-upgrade-mode");
   }
 
+  const backendEnv = { ...process.env, PYTHONUNBUFFERED: "1" };
+  if (backendEnv.KERNELONE_E2E_USE_REAL_SETTINGS === "1" && backendEnv.KERNELONE_HOME) {
+    backendEnv.KERNELONE_RUNTIME_ROOT = backendEnv.KERNELONE_RUNTIME_ROOT || path.join(backendEnv.KERNELONE_HOME, "runtime-cache");
+    backendEnv.KERNELONE_STATE_TO_RAMDISK = "0";
+  }
+
   console.log(`[backend] spawn #${startBackendCallCount}: ${python} ${args.join(" ")}`);
+  if (backendEnv.KERNELONE_E2E === "1") {
+    console.log(
+      `[backend] e2e env: home=${backendEnv.KERNELONE_HOME || ""} runtime_root=${backendEnv.KERNELONE_RUNTIME_ROOT || ""} state_to_ramdisk=${backendEnv.KERNELONE_STATE_TO_RAMDISK || ""}`,
+    );
+  }
 
   const spawned = spawn(python, args, {
     cwd: repoRoot,
-    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    env: backendEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   backendProcess = spawned;

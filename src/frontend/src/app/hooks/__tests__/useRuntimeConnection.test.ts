@@ -1,4 +1,4 @@
-/**
+﻿/**
  * useRuntimeConnection Hook Tests
  *
  * 测试运行时连接状态管理 Hook 的核心功能：
@@ -208,7 +208,7 @@ describe('useRuntimeConnection', () => {
 
       const subscriptions = mockSubscribeChannels.mock.calls[0]?.[0] ?? [];
       const channels = subscriptions.map((item: { channel: string }) => item.channel);
-      expect(channels).toEqual(['system', 'process', 'llm', 'dialogue', 'runtime_events']);
+      expect(channels).toEqual(['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit']);
       expect(channels).not.toContain('roles:pm,director,qa');
     });
 
@@ -290,7 +290,7 @@ describe('useRuntimeConnection', () => {
         protocol: 'runtime.v2',
         roles: ['director', 'qa'],
         tail: 100,
-        channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events'],
+        channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit'],
         cursor: 128,
       });
     });
@@ -346,7 +346,7 @@ describe('useRuntimeConnection', () => {
         protocol: 'runtime.v2',
         roles: ['director'],
         tail: 100,
-        channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events'],
+        channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit'],
         cursor: 0,
       });
     });
@@ -378,7 +378,7 @@ describe('useRuntimeConnection', () => {
           protocol: 'runtime.v2',
           roles: ['qa'],
           tail: 100,
-          channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events'],
+          channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit'],
           cursor: 0,
         });
       });

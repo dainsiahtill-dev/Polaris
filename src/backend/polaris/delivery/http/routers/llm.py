@@ -106,12 +106,19 @@ def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]
     if not isinstance(config_payload, dict):
         raise StructuredHTTPException(status_code=400, code="INVALID_CONFIG", message="invalid config payload")
 
-    config = llm_config.save_llm_config(
-        str(state.settings.workspace),
-        cache_root,
-        config_payload,
-        settings=state.settings,
-    )
+    try:
+        config = llm_config.save_llm_config(
+            str(state.settings.workspace),
+            cache_root,
+            config_payload,
+            settings=state.settings,
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_LLM_CONFIG",
+            message=str(exc),
+        ) from exc
     reconcile_llm_test_index(state.settings, config)
     sync_settings_from_llm(state.settings, config)
     save_persisted_settings(state.settings)

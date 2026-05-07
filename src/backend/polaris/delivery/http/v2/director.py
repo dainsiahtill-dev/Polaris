@@ -22,6 +22,7 @@ from polaris.cells.roles.kernel.public.service import (
     get_global_emitter,
     get_global_token_budget,
 )
+from polaris.cells.runtime.projection.public.role_contracts import RoleTaskContractV1
 from polaris.cells.runtime.projection.public.service import (
     RuntimeProjectionService,
     build_cache_root,
@@ -148,6 +149,229 @@ def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
     return fallback_rows
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        text = _text_or_none(value)
+        if text:
+            return text
+    return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if not isinstance(value, (list, tuple, set)):
+        scalar_text = _text_or_none(value)
+        return [scalar_text] if scalar_text else []
+
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if isinstance(item, dict):
+            item_text = _first_text(
+                item.get("description"),
+                item.get("title"),
+                item.get("name"),
+                item.get("path"),
+                item.get("id"),
+            )
+        else:
+            item_text = _text_or_none(item)
+        if item_text and item_text not in seen:
+            seen.add(item_text)
+            items.append(item_text)
+    return items
+
+
+def _first_string_list(*values: Any) -> list[str]:
+    for value in values:
+        items = _string_list(value)
+        if items:
+            return items
+    return []
+
+
+def _normalize_task_status_token(value: Any) -> str:
+    token = str(value or "").strip().upper().replace("-", "_")
+    aliases = {
+        "": "PENDING",
+        "TODO": "PENDING",
+        "TO_DO": "PENDING",
+        "QUEUED": "PENDING",
+        "READY": "PENDING",
+        "PENDING": "PENDING",
+        "CLAIMED": "CLAIMED",
+        "IN_PROGRESS": "RUNNING",
+        "RUNNING": "RUNNING",
+        "EXECUTING": "RUNNING",
+        "ACTIVE": "RUNNING",
+        "BLOCKED": "BLOCKED",
+        "FAILED": "FAILED",
+        "ERROR": "FAILED",
+        "TIMEOUT": "FAILED",
+        "TIMED_OUT": "FAILED",
+        "COMPLETED": "COMPLETED",
+        "DONE": "COMPLETED",
+        "SUCCESS": "COMPLETED",
+        "CANCELLED": "CANCELLED",
+        "CANCELED": "CANCELLED",
+    }
+    return aliases.get(token, token or "PENDING")
+
+
+def _task_row_from_object(task: Any) -> dict[str, Any]:
+    result = getattr(task, "result", None)
+    result_payload = result.to_dict() if result and hasattr(result, "to_dict") else result
+    metadata = getattr(task, "metadata", None)
+    status_value = getattr(getattr(task, "status", None), "name", None) or getattr(task, "status", None)
+    priority_value = getattr(getattr(task, "priority", None), "name", None) or getattr(task, "priority", None)
+    return {
+        "id": str(getattr(task, "id", "")),
+        "subject": getattr(task, "subject", ""),
+        "description": getattr(task, "description", ""),
+        "status": status_value,
+        "priority": priority_value,
+        "claimed_by": getattr(task, "claimed_by", None),
+        "result": result_payload if isinstance(result_payload, dict) else None,
+        "metadata": metadata if isinstance(metadata, dict) else {},
+    }
+
+
+def _task_details(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = _as_dict(row.get("metadata"))
+    runtime_execution = _as_dict(metadata.get("runtime_execution"))
+    result = _as_dict(row.get("result"))
+    status_token = _normalize_task_status_token(
+        row.get("status") or runtime_execution.get("effective_status") or runtime_execution.get("status")
+    )
+    worker = _first_text(
+        row.get("worker"),
+        row.get("claimed_by"),
+        row.get("assignee"),
+        metadata.get("worker"),
+        metadata.get("worker_id"),
+        metadata.get("assigned_worker"),
+        metadata.get("claimed_by"),
+        metadata.get("last_claimed_by"),
+        runtime_execution.get("worker_id"),
+        runtime_execution.get("claimed_by"),
+    )
+    error = _first_text(
+        row.get("error"),
+        row.get("error_message"),
+        row.get("last_error"),
+        metadata.get("error"),
+        metadata.get("last_error"),
+        metadata.get("last_execution_error"),
+        runtime_execution.get("last_error"),
+        result.get("error"),
+        result.get("stderr"),
+    )
+    if status_token == "FAILED":
+        error = error or _first_text(result.get("summary"), row.get("result_summary"))
+
+    return {
+        "status": status_token,
+        "goal": _first_text(row.get("goal"), metadata.get("goal"), metadata.get("task_goal"), row.get("description"))
+        or "",
+        "acceptance": _first_string_list(
+            row.get("acceptance"),
+            row.get("acceptance_criteria"),
+            metadata.get("acceptance"),
+            metadata.get("acceptance_criteria"),
+            _as_dict(metadata.get("qa_contract")).get("acceptance_criteria"),
+        ),
+        "target_files": _first_string_list(
+            row.get("target_files"),
+            metadata.get("target_files"),
+            metadata.get("scope_paths"),
+        ),
+        "dependencies": _first_string_list(
+            row.get("dependencies"),
+            row.get("depends_on"),
+            row.get("blocked_by"),
+            row.get("blockedBy"),
+            metadata.get("dependencies"),
+            metadata.get("depends_on"),
+            metadata.get("blocked_by"),
+        ),
+        "current_file": _first_text(
+            row.get("current_file"),
+            metadata.get("current_file"),
+            metadata.get("current_file_path"),
+            runtime_execution.get("current_file"),
+        ),
+        "error": error,
+        "worker": worker,
+        "pm_task_id": _first_text(
+            row.get("pm_task_id"),
+            metadata.get("pm_task_id"),
+            metadata.get("external_task_id"),
+            metadata.get("source_task_id"),
+        ),
+        "blueprint_id": _first_text(
+            row.get("blueprint_id"),
+            row.get("blueprintId"),
+            metadata.get("blueprint_id"),
+            metadata.get("blueprintId"),
+        ),
+        "blueprint_path": _first_text(
+            row.get("blueprint_path"),
+            row.get("runtime_blueprint_path"),
+            row.get("blueprintPath"),
+            metadata.get("blueprint_path"),
+            metadata.get("runtime_blueprint_path"),
+            metadata.get("blueprintPath"),
+        ),
+        "runtime_blueprint_path": _first_text(
+            row.get("runtime_blueprint_path"),
+            metadata.get("runtime_blueprint_path"),
+            row.get("blueprint_path"),
+            metadata.get("blueprint_path"),
+        ),
+    }
+
+
+def _task_response_from_row(row: dict[str, Any]) -> TaskResponse:
+    details = _task_details(row)
+    result = row.get("result")
+    return TaskResponse(
+        id=str(row.get("id") or row.get("task_id") or ""),
+        subject=str(row.get("subject") or row.get("title") or row.get("id") or "").strip(),
+        description=str(row.get("description") or "").strip(),
+        status=details["status"],
+        priority=str(row.get("priority") or "MEDIUM").strip() or "MEDIUM",
+        claimed_by=details["worker"],
+        result=result if isinstance(result, dict) else None,
+        metadata=_as_dict(row.get("metadata")),
+        goal=details["goal"],
+        acceptance=details["acceptance"],
+        target_files=details["target_files"],
+        dependencies=details["dependencies"],
+        current_file=details["current_file"],
+        error=details["error"],
+        worker=details["worker"],
+        pm_task_id=details["pm_task_id"],
+        blueprint_id=details["blueprint_id"],
+        blueprint_path=details["blueprint_path"],
+        runtime_blueprint_path=details["runtime_blueprint_path"],
+    )
+
+
 def _get_workflow_snapshot_sync(
     workspace: str,
     *,
@@ -208,6 +432,7 @@ class DirectorRunOrchestrationRequest(BaseModel):
 
     workspace: str = Field(default=".", description="工作区路径")
     task_filter: str | None = Field(default=None, description="任务过滤条件")
+    task_id: str | None = Field(default=None, description="指定单个任务 ID")
     max_workers: int = Field(default=DEFAULT_DIRECTOR_MAX_PARALLELISM, description="最大并行工作者数")
     execution_mode: str = Field(default="parallel", description="执行模式: serial, parallel")
 
@@ -232,20 +457,13 @@ class TaskCreateRequest(BaseModel):
     description: str = ""
     command: str | None = None
     priority: str = "MEDIUM"
-    blocked_by: list[str] = []
+    blocked_by: list[str] = Field(default_factory=list)
     timeout_seconds: int = DEFAULT_OPERATION_TIMEOUT_SECONDS
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class TaskResponse(BaseModel):
-    id: str
-    subject: str
-    description: str
-    status: str
-    priority: str
-    claimed_by: str | None
-    result: dict | None
-    metadata: dict[str, Any] = {}
+class TaskResponse(RoleTaskContractV1):
+    """Director task response bound to the shared role task contract."""
 
 
 class DirectorStatusResponse(BaseModel):
@@ -326,16 +544,7 @@ async def create_task(
         metadata=request.metadata,
     )
 
-    return TaskResponse(
-        id=str(task.id),
-        subject=task.subject,
-        description=task.description,
-        status=task.status.name,
-        priority=task.priority.name,
-        claimed_by=task.claimed_by,
-        result=task.result.to_dict() if task.result else None,
-        metadata=task.metadata,
-    )
+    return _task_response_from_row(_task_row_from_object(task))
 
 
 @router.get("/tasks", dependencies=[Depends(require_auth)])
@@ -352,16 +561,14 @@ async def list_tasks(
     - local: use local service tasks
     - auto: prefer workflow, fallback to local live tasks
     """
-    from polaris.domain.entities import TaskStatus
-
-    task_status = TaskStatus[status] if status else None
+    requested_status = _normalize_task_status_token(status) if status else None
     start = time.perf_counter()
     tasks: list[dict[str, Any]] = []
     used_projection = False
 
     try:
         if source == "local":
-            tasks = await service.list_tasks(status=task_status)
+            tasks = await service.list_tasks(status=None)
         else:
             # Use RuntimeProjectionService for workflow/auto selection only.
             # Keep local-only path fast for high-frequency observers and stress tracer.
@@ -373,30 +580,18 @@ async def list_tasks(
 
             tasks = _projection_task_rows(projection)
 
-        if task_status is not None and tasks:
-            selected = str(task_status.name or "").strip().upper()
-            tasks = [item for item in tasks if str(item.get("status") or "").strip().upper() == selected]
+        responses = [_task_response_from_row(t) for t in tasks]
+        if requested_status is not None:
+            responses = [item for item in responses if item.status == requested_status]
 
-        return [
-            TaskResponse(
-                id=str(t["id"]),
-                subject=t["subject"],
-                description=t.get("description", ""),
-                status=t["status"],
-                priority=t["priority"],
-                claimed_by=t.get("claimed_by"),
-                result=t.get("result"),
-                metadata=t.get("metadata", {}),
-            )
-            for t in tasks
-        ]
+        return responses
     finally:
         _append_debug(
             "api.director.list_tasks",
             {
                 "duration_ms": round((time.perf_counter() - start) * 1000, 2),
                 "source": source,
-                "status_filter": str(task_status.name) if task_status else "",
+                "status_filter": requested_status or "",
                 "task_count": len(tasks),
                 "used_projection": used_projection,
             },
@@ -413,16 +608,7 @@ async def get_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    return TaskResponse(
-        id=str(task.id),
-        subject=task.subject,
-        description=task.description,
-        status=task.status.name,
-        priority=task.priority.name,
-        claimed_by=task.claimed_by,
-        result=task.result.to_dict() if task.result else None,
-        metadata=task.metadata,
-    )
+    return _task_response_from_row(_task_row_from_object(task))
 
 
 @router.post("/tasks/{task_id}/cancel", dependencies=[Depends(require_auth)])
@@ -577,7 +763,8 @@ async def director_run_orchestration(
             workspace=payload.workspace,
             tasks=[],
             options={
-                "task_filter": payload.task_filter,
+                "task_filter": payload.task_filter or payload.task_id,
+                "task_id": payload.task_id,
                 "max_workers": payload.max_workers,
                 "execution_mode": payload.execution_mode,
             },

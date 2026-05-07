@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse, urlunparse
 
 from polaris.infrastructure.messaging.nats.nats_types import JetStreamConstants
 from polaris.kernelone import _runtime_config
@@ -34,6 +35,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 nats = SimpleNamespace(connect=None)
 NATSTimeoutError = TimeoutError
+
+
+def _sanitize_server_url(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if not parsed.scheme or not parsed.netloc:
+        return text
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port else host
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 def _ensure_nats_imported() -> None:
@@ -629,7 +644,7 @@ class NATSClient:
             return None
 
         return {
-            "server_url": self._nc.connected_url,
+            "server_url": _sanitize_server_url(self._nc.connected_url),
             "client_id": self._nc.client_id,
             "max_payload": self._nc.max_payload,
             "connected": self.is_connected,
@@ -745,6 +760,30 @@ async def close_default_client() -> None:
             _default_client = None
 
 
+def get_default_client_snapshot() -> dict[str, Any]:
+    """Return current default NATS client state without opening a connection."""
+
+    client = _default_client
+    server_info = client.get_server_info() if client is not None else None
+    last_failure_age = (
+        max(0.0, time.monotonic() - _last_connect_failure_at)
+        if _last_connect_failure_at and _last_connect_failure_error is not None
+        else None
+    )
+    return {
+        "default_client_exists": client is not None,
+        "state": client.state if client is not None else ConnectionState.DISCONNECTED,
+        "is_connected": bool(client is not None and client.is_connected),
+        "server_info": server_info,
+        "last_connect_failure": {
+            "error_type": type(_last_connect_failure_error).__name__ if _last_connect_failure_error else None,
+            "message": str(_last_connect_failure_error) if _last_connect_failure_error else None,
+            "age_seconds": round(last_failure_age, 3) if last_failure_age is not None else None,
+            "cooldown_seconds": _connect_failure_cooldown_sec,
+        },
+    }
+
+
 __all__ = [
     "ConnectionState",
     "NATSClient",
@@ -752,4 +791,5 @@ __all__ = [
     "close_default_client",
     "create_nats_client",
     "get_default_client",
+    "get_default_client_snapshot",
 ]

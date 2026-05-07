@@ -45,6 +45,33 @@ interface TaskRealtimeTelemetryAccumulator {
   phaseTotal?: number;
 }
 
+export function resolveTaskExecutionStatus(params: {
+  rawStatus: string;
+  done: boolean;
+  completed: boolean;
+  directorRunning: boolean;
+  isCurrent: boolean;
+}): 'pending' | 'running' | 'completed' | 'failed' | 'blocked' {
+  const normalized = String(params.rawStatus || '').trim().toLowerCase();
+  const completed = params.done || params.completed || ['completed', 'done', 'success'].includes(normalized);
+  if (completed) {
+    return 'completed';
+  }
+  if (['failed', 'error'].includes(normalized)) {
+    return 'failed';
+  }
+  if (['blocked', 'cancelled', 'canceled'].includes(normalized)) {
+    return 'blocked';
+  }
+  if (['running', 'in_progress', 'claimed'].includes(normalized)) {
+    return 'running';
+  }
+  if (params.directorRunning && params.isCurrent) {
+    return 'running';
+  }
+  return 'pending';
+}
+
 function readTaskMetadata(task: PmTask): Record<string, unknown> {
   return task.metadata && typeof task.metadata === 'object'
     ? task.metadata
@@ -65,6 +92,39 @@ function readTaskString(task: PmTask, keys: string[]): string {
   return '';
 }
 
+function readStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item.trim();
+      }
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        return String(record.description || record.title || record.name || record.path || record.id || '').trim();
+      }
+      return String(item || '').trim();
+    })
+    .filter((item) => item.length > 0);
+}
+
+function readTaskStringList(task: PmTask, keys: string[]): string[] {
+  const metadata = readTaskMetadata(task);
+  for (const key of keys) {
+    const directList = readStringList((task as unknown as Record<string, unknown>)[key]);
+    if (directList.length > 0) {
+      return directList;
+    }
+    const metadataList = readStringList(metadata[key]);
+    if (metadataList.length > 0) {
+      return metadataList;
+    }
+  }
+  return [];
+}
+
 function toTaskToken(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
@@ -76,13 +136,17 @@ function toNonNegativeInt(value: unknown): number {
 
 export function resolveTaskIdentityCandidates(task: PmTask): string[] {
   const metadata = readTaskMetadata(task);
+  const rawTask = task as unknown as Record<string, unknown>;
   const candidates = [
     task.id,
     task.title,
+    rawTask.subject,
+    rawTask.pm_task_id,
     task.goal,
     readTaskString(task, ['pm_task_id', 'task_id', 'id']),
     metadata.pm_task_id,
     metadata.task_id,
+    metadata.subject,
     metadata.id,
   ];
   const normalized: string[] = [];
@@ -175,6 +239,13 @@ export function buildTaskRealtimeTelemetry(
     for (const token of candidates) {
       tokenToTaskId.set(token, taskId);
     }
+    const rawTask = task as unknown as Record<string, unknown>;
+    for (const aliasKey of ['subject', 'pm_task_id', 'task_id', 'backlog_ref']) {
+      const aliasToken = toTaskToken(rawTask[aliasKey] ?? readTaskMetadata(task)[aliasKey]);
+      if (aliasToken) {
+        tokenToTaskId.set(aliasToken, taskId);
+      }
+    }
   }
 
   const accumulators = new Map<string, TaskRealtimeTelemetryAccumulator>();
@@ -185,7 +256,25 @@ export function buildTaskRealtimeTelemetry(
     if (!rawTaskId) {
       continue;
     }
-    const mappedTaskId = tokenToTaskId.get(toTaskToken(rawTaskId)) || rawTaskId;
+    const rawTaskToken = toTaskToken(rawTaskId);
+    let mappedTaskId = tokenToTaskId.get(rawTaskToken) || '';
+    if (!mappedTaskId) {
+      for (const task of tasks) {
+        const taskId = String(task.id || '').trim();
+        if (!taskId) {
+          continue;
+        }
+        const aliases = [
+          ...resolveTaskIdentityCandidates(task),
+          ...readTaskStringList(task, ['target_task_ids', 'related_task_ids']),
+        ];
+        if (aliases.some((alias) => toTaskToken(alias) === rawTaskToken)) {
+          mappedTaskId = taskId;
+          break;
+        }
+      }
+    }
+    mappedTaskId = mappedTaskId || rawTaskId;
     if (!taskIdSet.has(mappedTaskId)) {
       continue;
     }

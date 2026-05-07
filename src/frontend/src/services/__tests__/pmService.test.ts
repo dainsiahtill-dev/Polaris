@@ -267,7 +267,7 @@ describe('pmService', () => {
 
       const result = await pmService.startDirector();
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/start', 'Failed to start Chief Engineer');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/start', 'Failed to start Director');
       expect(result.ok).toBe(true);
     });
   });
@@ -278,8 +278,35 @@ describe('pmService', () => {
 
       const result = await pmService.stopDirector();
 
-      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/stop', 'Failed to stop Chief Engineer');
+      expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/stop', 'Failed to stop Director');
       expect(result.ok).toBe(true);
+    });
+  });
+
+  describe('runDirector', () => {
+    it('should call task-scoped director orchestration endpoint', async () => {
+      const payload = {
+        workspace: 'C:/Temp/Product',
+        task_id: 'PM-42',
+        task_filter: 'PM-42',
+        execution_mode: 'parallel' as const,
+      };
+      mockApiPost.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          run_id: 'director-run-1',
+          status: 'queued',
+          workspace: payload.workspace,
+          tasks_queued: 1,
+          message: 'queued',
+        },
+      });
+
+      const result = await pmService.runDirector(payload);
+
+      expect(mockApiPost).toHaveBeenCalledWith('/v2/director/run', payload, 'Failed to run Director');
+      expect(result.ok).toBe(true);
+      expect(result.data?.run_id).toBe('director-run-1');
     });
   });
 

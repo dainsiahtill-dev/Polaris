@@ -76,6 +76,7 @@ from polaris.delivery.cli.pm.orchestration_core import (
     load_state_and_context,
     update_consecutive_counters,
 )
+from polaris.delivery.cli.pm.orchestration.docs_pipeline import _sync_plan_to_runtime
 from polaris.delivery.cli.pm.report_utils import (
     append_pm_report,
     format_chief_engineer_for_report,
@@ -251,6 +252,27 @@ def _apply_requirements_fallback_for_empty_tasks(
     return recovered_exit_code, fallback_payload, fallback_tasks, bool(fallback_tasks)
 
 
+def _downgrade_recovered_pm_invoke_error(
+    *,
+    pm_state: dict[str, Any],
+    pm_state_full: str,
+    timestamp: str,
+) -> bool:
+    """Clear fatal PM invoke state after a deterministic fallback fully recovers it."""
+    error_code = str(pm_state.get("last_pm_error_code") or "").strip()
+    if error_code != "PM_LLM_INVOKE_FAILED":
+        return False
+
+    error_detail = str(pm_state.get("last_pm_error_detail") or "").strip()
+    pm_state["last_pm_warning_code"] = "PM_LLM_FALLBACK_APPLIED"
+    pm_state["last_pm_warning_detail"] = error_detail
+    pm_state["last_pm_error_code"] = ""
+    pm_state["last_pm_error_detail"] = ""
+    pm_state["last_updated_ts"] = timestamp
+    write_json_atomic(pm_state_full, pm_state)
+    return True
+
+
 def _resolve_orchestration_runtime(args: argparse.Namespace) -> str:
     """Resolve orchestration runtime from args and environment."""
     runtime = resolve_workflow_orchestration_runtime(
@@ -302,6 +324,7 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
             "KERNELONE_STATE_TO_RAMDISK is enabled but no ramdisk cache root is available. "
             "Set KERNELONE_RAMDISK_ROOT (e.g. X:\\) or disable KERNELONE_STATE_TO_RAMDISK."
         )
+    _sync_plan_to_runtime(workspace_full, cache_root_full)
 
     pm_report_full = resolve_artifact_path(workspace_full, cache_root_full, args.pm_report)
     pm_state_full = resolve_artifact_path(workspace_full, cache_root_full, args.state_path)
@@ -592,6 +615,27 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
                     "task_count": len(normalized_tasks),
                 },
             )
+            if original_exit_code != 0 and exit_code == 0:
+                downgraded_pm_invoke_error = _downgrade_recovered_pm_invoke_error(
+                    pm_state=pm_state,
+                    pm_state_full=pm_state_full,
+                    timestamp=start_timestamp,
+                )
+                if downgraded_pm_invoke_error:
+                    emit_event(
+                        run_events,
+                        kind="status",
+                        actor="PM",
+                        name="pm_invoke_error_downgraded_after_fallback",
+                        refs={"run_id": run_id, "phase": "planning"},
+                        summary="Recovered PM invoke error downgraded after deterministic fallback",
+                        ok=True,
+                        output={
+                            "previous_error_code": "PM_LLM_INVOKE_FAILED",
+                            "warning_code": "PM_LLM_FALLBACK_APPLIED",
+                            "task_count": len(normalized_tasks),
+                        },
+                    )
         if len(normalized_tasks) == 0:
             exit_code = 1
             warning = (

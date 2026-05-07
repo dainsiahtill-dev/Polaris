@@ -26,6 +26,18 @@ class TestComputeLlMConfigSyncUpdates:
         updates = compute_llm_config_sync_updates(config)
         assert updates.get("pm_backend") == "auto"
         assert updates.get("pm_model") == "gpt-4"
+        assert updates.get("model") == "gpt-4"
+
+    def test_maps_legacy_model_from_pm_role_to_prevent_stale_fallback(self):
+        config = {
+            "roles": {
+                "pm": {"model": "MiniMax-M2.7-highspeed"},
+            },
+        }
+
+        updates = compute_llm_config_sync_updates(config)
+
+        assert updates["model"] == "MiniMax-M2.7-highspeed"
 
     def test_maps_director_model(self):
         config = {
@@ -143,6 +155,7 @@ class TestSyncSettingsFromLlM:
         sync_settings_from_llm(settings, config)
         assert settings.pm_backend == "auto"
         assert settings.pm_model == "gpt-5"
+        assert settings.model == "gpt-5"
 
     def test_does_not_raise_on_non_dict_roles(self):
         class MockSettings:

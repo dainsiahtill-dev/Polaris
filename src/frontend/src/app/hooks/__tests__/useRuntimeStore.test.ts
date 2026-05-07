@@ -598,6 +598,8 @@ describe('useRuntimeStore', () => {
         operation: 'modify' as const,
         contentSize: 1024,
         timestamp: new Date().toISOString(),
+        schemaVersion: 'runtime.v2',
+        sourceChannel: 'event.file_edit',
       };
 
       act(() => {
@@ -605,6 +607,33 @@ describe('useRuntimeStore', () => {
       });
 
       expect(result.current.fileEditEvents).toHaveLength(1);
+      expect(result.current.fileEditEvents[0]?.schemaVersion).toBe('runtime.v2');
+      expect(result.current.fileEditEvents[0]?.sourceChannel).toBe('event.file_edit');
+    });
+
+    it('should replace duplicate file edit events by id', () => {
+      const { result } = renderHook(createStoreHook());
+
+      act(() => {
+        useRuntimeStore.getState().appendFileEditEvent({
+          id: 'edit-1',
+          filePath: 'src/test.ts',
+          operation: 'create',
+          contentSize: 10,
+          timestamp: '2026-05-07T01:00:00.000Z',
+        });
+        useRuntimeStore.getState().appendFileEditEvent({
+          id: 'edit-1',
+          filePath: 'src/test.ts',
+          operation: 'modify',
+          contentSize: 20,
+          timestamp: '2026-05-07T01:00:01.000Z',
+        });
+      });
+
+      expect(result.current.fileEditEvents).toHaveLength(1);
+      expect(result.current.fileEditEvents[0]?.operation).toBe('modify');
+      expect(result.current.fileEditEvents[0]?.contentSize).toBe(20);
     });
 
     it('should limit file edit events to 50', () => {

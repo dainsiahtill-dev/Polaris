@@ -60,23 +60,31 @@ class CellAIExecutor:
         self.workspace = workspace
         self._adapter = AppLLMRuntimeAdapter()
 
+    def _build_context(self, request: CellAIRequest) -> dict[str, Any]:
+        context = dict(request.context or {})
+        context.setdefault("workspace", self.workspace)
+        return context
+
     async def invoke(self, request: CellAIRequest) -> CellAIResponse:
         """Invoke the LLM (non-streaming)."""
         try:
             from polaris.kernelone.llm import KernelLLM
 
             kernel = KernelLLM(self._adapter)
-            result = await kernel.invoke(  # type: ignore[attr-defined]
+            result = await kernel.invoke(
                 task_type=request.task_type.value,
                 role=request.role,
                 prompt=request.input,
                 options=request.options,
-                context=request.context,
+                context=self._build_context(request),
             )
+            metadata = result if isinstance(result, dict) else {}
+            ok = bool(metadata.get("ok", True))
             return CellAIResponse(
-                ok=True,
-                output=str(result.get("output", "") if isinstance(result, dict) else result),
-                metadata=result if isinstance(result, dict) else {},
+                ok=ok,
+                output=str(metadata.get("output", "") if metadata else result),
+                error=str(metadata.get("error", "") or ""),
+                metadata=metadata,
             )
         except (RuntimeError, ValueError) as exc:
             logger.warning("[CellAIExecutor] invoke failed: %s", exc)
@@ -91,12 +99,12 @@ class CellAIExecutor:
             from polaris.kernelone.llm import KernelLLM
 
             kernel = KernelLLM(self._adapter)
-            async for event in kernel.invoke_stream(  # type: ignore[attr-defined]
+            async for event in kernel.invoke_stream(
                 task_type=request.task_type.value,
                 role=request.role,
                 prompt=request.input,
                 options=request.options,
-                context=request.context,
+                context=self._build_context(request),
             ):
                 # Convert kernelone event to cell-defined event
                 event_type = getattr(event, "type", None)

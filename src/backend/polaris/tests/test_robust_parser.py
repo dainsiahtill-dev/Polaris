@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import ClassVar
 
 import pytest
 from polaris.kernelone.llm.robust_parser import (
@@ -16,6 +17,8 @@ from pydantic import BaseModel
 
 class TestSchema(BaseModel):
     """Test schema for parsing tests."""
+
+    __test__: ClassVar[bool] = False
 
     name: str
     value: int

@@ -320,7 +320,9 @@ async def test_director_list_tasks_with_status_filter(client: AsyncClient) -> No
                     "status": "PENDING",
                     "priority": "HIGH",
                     "claimed_by": None,
-                    "metadata": {},
+                    "blueprint_id": "bp-1",
+                    "runtime_blueprint_path": "runtime/contracts/bp-1.json",
+                    "metadata": {"pm_task_id": "PM-1"},
                 },
             ],
         ),
@@ -339,6 +341,9 @@ async def test_director_list_tasks_with_status_filter(client: AsyncClient) -> No
         data = response.json()
         assert len(data) == 1
         assert data[0]["status"] == "PENDING"
+        assert data[0]["blueprint_id"] == "bp-1"
+        assert data[0]["runtime_blueprint_path"] == "runtime/contracts/bp-1.json"
+        assert data[0]["metadata"]["pm_task_id"] == "PM-1"
 
 
 @pytest.mark.asyncio
@@ -726,6 +731,45 @@ async def test_director_run_orchestration_serial_mode(client: AsyncClient) -> No
         data = response.json()
         assert data["run_id"] == "run-abc"
         assert "serial" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_director_run_orchestration_accepts_task_id(client: AsyncClient) -> None:
+    """Director run orchestration should forward selected task id into options."""
+    mock_result = MagicMock()
+    mock_result.run_id = "run-task"
+    mock_result.status = "running"
+    mock_result.message = "Director started for selected task"
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.director.get_orchestration_service",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.cells.roles.adapters.public.service.register_all_adapters",
+        ),
+    ):
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(return_value=mock_result)
+        mock_service_cls.return_value = mock_service
+
+        response = await client.post(
+            "/v2/director/run",
+            json={
+                "workspace": ".",
+                "execution_mode": "parallel",
+                "task_id": "PM-42",
+            },
+        )
+
+        assert response.status_code == 200
+        _, kwargs = mock_service.execute_director_run.await_args
+        assert kwargs["options"]["task_id"] == "PM-42"
+        assert kwargs["options"]["task_filter"] == "PM-42"
 
 
 @pytest.mark.asyncio

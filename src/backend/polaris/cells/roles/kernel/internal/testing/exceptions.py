@@ -6,11 +6,13 @@ UTF-8 encoding verified: All text uses UTF-8
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 
 class TestingInfrastructureError(Exception):
     """Base exception for testing infrastructure errors."""
 
-    pass
+    __test__: ClassVar[bool] = False
 
 
 class FakeLLMExhaustedError(TestingInfrastructureError):

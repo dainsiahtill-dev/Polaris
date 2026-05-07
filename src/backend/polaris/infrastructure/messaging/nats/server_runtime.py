@@ -12,7 +12,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from polaris.kernelone.fs.text_ops import open_text_log_append
 from polaris.kernelone.storage.layout import kernelone_home
@@ -38,6 +38,17 @@ def _parse_local_nats_endpoint(url: str) -> tuple[str, int] | None:
     if host in {"127.0.0.1", "localhost", "::1"}:
         return host, port
     return None
+
+
+def _sanitize_nats_url(raw: str) -> str:
+    parsed = urlparse(_first_nats_server_url(raw))
+    if not parsed.scheme or not parsed.netloc:
+        return _first_nats_server_url(raw)
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port else host
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 def should_manage_local_nats(url: str) -> bool:
@@ -210,8 +221,40 @@ async def shutdown_local_nats_runtime() -> None:
         await server.stop()
 
 
+def get_managed_nats_runtime_snapshot(nats_url: str) -> dict[str, Any]:
+    """Return a side-effect-free snapshot of managed local NATS runtime state."""
+
+    configured_url = _sanitize_nats_url(nats_url)
+    endpoint = _parse_local_nats_endpoint(nats_url)
+    executable = resolve_nats_server_executable()
+    storage_root = resolve_managed_nats_storage_root()
+    logs_root = storage_root.parent
+    server = _managed_server
+    process = server.process if server is not None else None
+    process_running = bool(process is not None and process.poll() is None)
+    host = endpoint[0] if endpoint else ""
+    port = endpoint[1] if endpoint else 0
+    tcp_reachable = _can_accept_tcp(host, port) if endpoint else False
+
+    return {
+        "configured_url": configured_url,
+        "managed": endpoint is not None,
+        "host": host,
+        "port": port,
+        "tcp_reachable": tcp_reachable,
+        "executable_found": executable is not None,
+        "executable_path": str(executable) if executable is not None else None,
+        "storage_root": str(storage_root),
+        "stdout_log_path": str(server.stdout_log_path if server else logs_root / "nats-server.stdout.log"),
+        "stderr_log_path": str(server.stderr_log_path if server else logs_root / "nats-server.stderr.log"),
+        "process_pid": process.pid if process is not None else None,
+        "process_running": process_running,
+    }
+
+
 __all__ = [
     "ensure_local_nats_runtime",
+    "get_managed_nats_runtime_snapshot",
     "resolve_managed_nats_storage_root",
     "resolve_nats_server_executable",
     "should_manage_local_nats",

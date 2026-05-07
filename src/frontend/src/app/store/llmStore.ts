@@ -224,7 +224,7 @@ export const useLLMStore = create<LLMState & LLMActions>()(
       loadLLMConfig: async () => {
         set((state) => { state.llmLoading = true; state.llmError = null; });
         try {
-          const res = await apiFetch('/llm/config');
+          const res = await apiFetch('/v2/llm/config');
           if (!res.ok) throw new Error('读取 LLM 配置失败');
           const data = await res.json() as LLMConfig;
           llmConfigRef = data;
@@ -246,7 +246,7 @@ export const useLLMStore = create<LLMState & LLMActions>()(
 
       loadLLMStatus: async (onChange) => {
         try {
-          const res = await apiFetch('/llm/status');
+          const res = await apiFetch('/v2/llm/status');
           if (!res.ok) throw new Error('读取 LLM 状态失败');
           const data = await res.json() as LLMStatus;
           set((state) => { state.llmStatus = data; });
@@ -272,7 +272,7 @@ export const useLLMStore = create<LLMState & LLMActions>()(
             const configToSave = llmSavePendingRef;
             llmSavePendingRef = null;
             try {
-              const res = await apiFetch('/llm/config', {
+              const res = await apiFetch('/v2/llm/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(configToSave),
@@ -335,7 +335,7 @@ export const useLLMStore = create<LLMState & LLMActions>()(
         if (!providerCfg) return;
 
         const apiKey = await resolveApiKey(providerId, providerCfg);
-        const res = await apiFetch(`/llm/providers/${providerId}/models`, {
+        const res = await apiFetch(`/v2/llm/providers/${providerId}/models`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ api_key: apiKey }),

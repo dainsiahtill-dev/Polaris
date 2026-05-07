@@ -2,6 +2,7 @@
  * TaskDependencyGraph 组件测试
  */
 
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { TaskDependencyGraph } from '../TaskDependencyGraph';
@@ -10,8 +11,15 @@ import { TaskStatus } from '@/types/task';
 
 // Mock @xyflow/react
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: vi.fn(({ children, nodes, onNodeClick, fitView, ...props }) => (
-    <div data-testid="react-flow" data-nodes={nodes.length} {...props}>
+  ReactFlow: vi.fn(({
+    children,
+    nodes = [],
+    onNodeClick,
+    fitView,
+    className,
+    style,
+  }) => (
+    <div data-testid="react-flow" data-nodes={nodes.length} className={className} style={style}>
       {nodes.map((node: { id: string; data: { label: string } }) => (
         <button
           key={node.id}

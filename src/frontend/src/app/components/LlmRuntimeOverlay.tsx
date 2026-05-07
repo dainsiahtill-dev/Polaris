@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  FileCode,
   GitBranch,
   Loader2,
   Radar,
@@ -18,12 +19,19 @@ import { StatusBadge } from '@/app/components/ui/badge';
 import { cn } from '@/app/components/ui/utils';
 import { filterExecutionActivityLogs } from '@/app/utils/appRuntime';
 import type { LogEntry, QualityGateData } from '@/app/components/pm';
+import type { FileEditEvent } from '@/app/hooks/useRuntime';
 
-type ActiveView = 'main' | 'pm' | 'director' | 'factory' | 'agi';
+type ActiveView = 'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics';
 
 function viewLabel(activeView: ActiveView): string {
   if (activeView === 'agi') {
     return 'AGI';
+  }
+  if (activeView === 'chief_engineer') {
+    return 'CE';
+  }
+  if (activeView === 'diagnostics') {
+    return 'DIAG';
   }
   return activeView.toUpperCase();
 }
@@ -44,6 +52,7 @@ interface LlmRuntimeOverlayProps {
   executionLogs: LogEntry[];
   llmStreamEvents: LogEntry[];
   processStreamEvents: LogEntry[];
+  fileEditEvents?: FileEditEvent[];
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -71,6 +80,11 @@ function normalizeStateToken(value: string): 'ready' | 'blocked' | 'unknown' {
   return 'unknown';
 }
 
+function isActiveRuntimePhase(value: string): boolean {
+  const token = String(value || '').trim().toLowerCase();
+  return Boolean(token && !['idle', 'unknown', 'none'].includes(token));
+}
+
 function toRelativeTime(value?: string | null): string {
   if (!value) return '未更新';
   const epoch = Date.parse(value);
@@ -90,10 +104,34 @@ function toEpoch(value?: string | null): number {
 
 function isLowSignalLog(log: LogEntry): boolean {
   const text = `${log.source} ${log.message} ${log.details || ''}`.toLowerCase();
+  if (isStructuredRuntimeFragment(log)) return true;
   if (text.includes('initialized docs via onboarding wizard')) return true;
   if (/\[history\]\s*archived round/.test(text)) return true;
   if (/\[runtime\]\s*workspace=/.test(text)) return true;
   return false;
+}
+
+function isStructuredRuntimeFragment(log: LogEntry): boolean {
+  const source = String(log.source || '').trim().toLowerCase();
+  if (!/(engine|runtime|system)/.test(source)) return false;
+
+  const message = String(log.message || '').trim();
+  if (!message) return true;
+  if (/^[{}\[\],]+$/.test(message)) return true;
+  if (/^["']?[}\]],?$/.test(message)) return true;
+  if (/^:\d{2}(?:\.\d+)?z["']?,?$/i.test(message)) return true;
+
+  return /^["']?[a-z0-9_.-]+["']?\s*:\s*(?:$|["'{\[\]\d]|true\b|false\b|null\b)/i.test(message);
+}
+
+function isStructuredRuntimeText(value?: string): boolean {
+  return isStructuredRuntimeFragment({
+    id: 'inline',
+    timestamp: new Date(0).toISOString(),
+    source: 'Engine',
+    level: 'info',
+    message: value || '',
+  });
 }
 
 function logPriority(log: LogEntry): number {
@@ -221,10 +259,13 @@ export function LlmRuntimeOverlay({
   executionLogs,
   llmStreamEvents,
   processStreamEvents,
+  fileEditEvents = [],
 }: LlmRuntimeOverlayProps) {
   const [expanded, setExpanded] = useState(false);
   const running = pmRunning || directorRunning;
   const llmStateToken = normalizeStateToken(llmState);
+  const runtimeActive = running || isActiveRuntimePhase(currentPhase);
+  const isLlmBlocked = runtimeActive && llmStateToken === 'blocked';
   const phaseLabel = (
     PHASE_LABELS[currentPhase] ||
     (pmRunning && !directorRunning ? 'PM Running' : '') ||
@@ -234,10 +275,10 @@ export function LlmRuntimeOverlay({
   );
 
   useEffect(() => {
-    if (running || websocketReconnecting || llmStateToken === 'blocked') {
+    if (running || websocketReconnecting || isLlmBlocked) {
       setExpanded(true);
     }
-  }, [running, websocketReconnecting, llmStateToken]);
+  }, [running, websocketReconnecting, isLlmBlocked]);
 
   const recentSteps = useMemo(() => {
     const now = Date.now();
@@ -255,7 +296,8 @@ export function LlmRuntimeOverlay({
 
     const candidates = fresh.length > 0 ? fresh : running ? [] : ordered.slice(-32);
     const filtered = candidates.filter((entry) => !isLowSignalLog(entry));
-    const pool = filtered.length > 0 ? filtered : candidates;
+    const hasStructuredFragments = candidates.some(isStructuredRuntimeFragment);
+    const pool = filtered.length > 0 || hasStructuredFragments ? filtered : candidates;
 
     const ranked = [...pool].sort((a, b) => {
       const tsDiff = toEpoch(b.timestamp) - toEpoch(a.timestamp);
@@ -275,12 +317,22 @@ export function LlmRuntimeOverlay({
     return deduped;
   }, [executionLogs, llmStreamEvents, processStreamEvents, running]);
 
+  const latestFileEdit = useMemo(() => {
+    return [...fileEditEvents]
+      .filter((event) => Boolean(event.filePath))
+      .sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp))[0] || null;
+  }, [fileEditEvents]);
+
   const latestStep = recentSteps[0] ?? null;
   const headline = pickHeadline(running, latestStep, currentPhase);
   const effectiveUpdateTime = latestStep?.timestamp || llmLastUpdated || null;
+  const visibleRequiredRoles = running || isLlmBlocked ? llmRequiredRoles : [];
+  const visibleBlockedRoles = isLlmBlocked ? llmBlockedRoles : [];
 
   const llmBadgeColor =
-    llmStateToken === 'ready' ? 'success' : llmStateToken === 'blocked' ? 'error' : 'warning';
+    llmStateToken === 'ready' ? 'success' : isLlmBlocked ? 'error' : running ? 'warning' : 'default';
+  const llmBadgeLabel =
+    llmStateToken === 'ready' ? 'LLM READY' : isLlmBlocked ? 'LLM BLOCKED' : running ? 'LLM WAIT' : 'LLM IDLE';
   const socketBadgeColor = websocketLive ? 'success' : websocketReconnecting ? 'warning' : 'error';
 
   return (
@@ -311,7 +363,7 @@ export function LlmRuntimeOverlay({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold tracking-wider text-amber-200">⚔ LLM Runtime</span>
+              <span className="text-xs font-bold tracking-wider text-amber-200">LLM Runtime</span>
               <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-100/80">
                 {viewLabel(activeView)}
               </span>
@@ -347,17 +399,17 @@ export function LlmRuntimeOverlay({
               {/* Status badges row - Cyberpunk style */}
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <StatusBadge color={pmRunning ? 'success' : 'default'} variant="dot" pulse={pmRunning}>
-                  <span className="font-mono text-[10px]">{pmRunning ? '▸ PM RUN' : '○ PM IDLE'}</span>
+                  <span className="font-mono text-[10px]">{pmRunning ? 'PM RUN' : 'PM IDLE'}</span>
                 </StatusBadge>
                 <StatusBadge color={directorRunning ? 'info' : 'default'} variant="dot" pulse={directorRunning}>
-                  <span className="font-mono text-[10px]">{directorRunning ? '▸ DIR RUN' : '○ DIR IDLE'}</span>
+                  <span className="font-mono text-[10px]">{directorRunning ? 'DIR RUN' : 'DIR IDLE'}</span>
                 </StatusBadge>
                 <StatusBadge color={llmBadgeColor} variant="dot" pulse={llmStateToken === 'ready'}>
-                  <span className="font-mono text-[10px]">{llmStateToken === 'ready' ? '▸ LLM READY' : '○ LLM WAIT'}</span>
+                  <span className="font-mono text-[10px]">{llmBadgeLabel}</span>
                 </StatusBadge>
                 <StatusBadge color={socketBadgeColor} variant="dot" pulse={websocketLive}>
                   <span className="font-mono text-[9px]">
-                    {websocketLive ? '◉ WS' : websocketReconnecting ? '◐ RECON' : '○ OFFLINE'}
+                    {websocketLive ? 'WS LIVE' : websocketReconnecting ? 'WS RECONNECT' : 'WS OFFLINE'}
                   </span>
                 </StatusBadge>
               </div>
@@ -366,7 +418,7 @@ export function LlmRuntimeOverlay({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Radar className="size-4 text-amber-400" />
-                    <span className="text-xs font-bold tracking-wider text-amber-200">◈ 当前阶段</span>
+                    <span className="text-xs font-bold tracking-wider text-amber-200">当前阶段</span>
                   </div>
                   <span className="rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-100">
                     {phaseLabel}
@@ -393,17 +445,30 @@ export function LlmRuntimeOverlay({
                     </span>
                   </div>
                 )}
+                {latestFileEdit && (
+                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px]" data-testid="llm-runtime-file-edit">
+                    <span className="flex min-w-0 items-center gap-1 text-white/60">
+                      <FileCode className="size-3 text-emerald-300" />
+                      <span className="truncate">{latestFileEdit.filePath}</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-emerald-300">
+                      {latestFileEdit.operation}
+                    </span>
+                  </div>
+                )}
               </div>
 
-              <div className="mb-2 flex items-center gap-2 text-[10px] text-white/50">
-                <Bot className="size-3.5 text-cyan-300" />
-                <span className="truncate">
-                  required: {llmRequiredRoles.length ? llmRequiredRoles.join(', ') : 'none'}
-                </span>
-              </div>
-              {llmBlockedRoles.length > 0 && (
+              {visibleRequiredRoles.length > 0 && (
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-white/50">
+                  <Bot className="size-3.5 text-cyan-300" />
+                  <span className="truncate">
+                    required: {visibleRequiredRoles.join(', ')}
+                  </span>
+                </div>
+              )}
+              {visibleBlockedRoles.length > 0 && (
                 <div className="mb-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-200">
-                  blocked: {llmBlockedRoles.join(', ')}
+                  blocked: {visibleBlockedRoles.join(', ')}
                 </div>
               )}
 
@@ -411,7 +476,7 @@ export function LlmRuntimeOverlay({
                 <div className="mb-2 flex items-center justify-between text-[11px] text-white/70">
                   <span className="flex items-center gap-1.5">
                     {websocketLive ? <Wifi className="size-3.5 text-emerald-300" /> : <WifiOff className="size-3.5 text-amber-300" />}
-                    ═══ 实时推理流 ═══
+                    实时推理流
                   </span>
                   <span className="text-white/40">{recentSteps.length} events</span>
                 </div>
@@ -420,7 +485,7 @@ export function LlmRuntimeOverlay({
                 <div className="space-y-1.5">
                   {recentSteps.length === 0 && (
                     <div className="rounded-lg border border-white/5 bg-white/[0.02] px-2 py-1.5 text-[10px] text-white/35 italic">
-                      ▸ 等待 LLM 事件流...
+                      等待 LLM 事件流...
                     </div>
                   )}
                   {recentSteps.map((step, idx) => {
@@ -465,7 +530,7 @@ export function LlmRuntimeOverlay({
                           <span className="shrink-0 text-[9px] text-white/35">{toRelativeTime(step.timestamp)}</span>
                         </div>
                         <TypingMessage text={step.message} animate={isTypingStreamEvent(step)} />
-                        {step.details && (
+                        {step.details && !isStructuredRuntimeText(step.details) && (
                           <div className="mt-0.5 font-mono text-[9px] text-white/45">{step.details}</div>
                         )}
                       </div>

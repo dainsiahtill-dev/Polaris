@@ -73,3 +73,9 @@ class ConnectionState:
         self.tail_state: dict[str, dict[str, Any]] = {}
         self.last_sizes: dict[str, int] = {}
         self.want_status: bool = False
+        self.active_connections: int = 0
+        self.total_connections: int = 0
+        self.last_connection_id: str = ""
+        self.last_event: str = ""
+        self.last_error: str = ""
+        self.last_updated_at: float = 0.0

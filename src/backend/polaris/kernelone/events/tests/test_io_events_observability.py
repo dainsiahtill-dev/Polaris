@@ -109,3 +109,24 @@ def test_io_events_dispatch_empty_path_is_noop() -> None:
             timestamp="",
         )
     mock_pub.assert_not_called()
+
+
+def test_message_bus_sync_publish_without_loop_skips_without_warning(caplog) -> None:
+    """Synchronous CLI mode without an event loop must not pollute stderr."""
+    from polaris.kernelone.events import io_events
+    from polaris.kernelone.events.message_bus import Message, MessageType
+
+    msg = Message(
+        type=MessageType.RUNTIME_EVENT,
+        sender="test",
+        payload={"ok": True},
+    )
+
+    with (
+        patch("polaris.kernelone.events.io_events.asyncio.get_running_loop", side_effect=RuntimeError("no loop")),
+        patch("polaris.kernelone.events.io_events.asyncio.get_event_loop", side_effect=RuntimeError("no loop")),
+        caplog.at_level(logging.WARNING, logger="polaris.kernelone.events.io_events"),
+    ):
+        io_events._safe_publish_sync(object(), msg)
+
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]

@@ -10,7 +10,11 @@ import {
   Clock,
   AlertCircle,
   ArrowUpDown,
-  Plus,
+  FileCode,
+  GitBranch,
+  ListChecks,
+  ShieldCheck,
+  Target,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -31,6 +35,70 @@ interface PMTaskPanelProps {
 
 type TaskFilter = 'all' | 'pending' | 'running' | 'completed' | 'blocked';
 type TaskSort = 'priority' | 'status' | 'created' | 'name';
+
+function taskRecord(task: PmTask): PmTask & Record<string, unknown> {
+  return task as PmTask & Record<string, unknown>;
+}
+
+function metadataOf(task: PmTask): Record<string, unknown> {
+  const metadata = taskRecord(task).metadata;
+  return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {};
+}
+
+function readTaskValue(task: PmTask, keys: string[]): unknown {
+  const direct = taskRecord(task);
+  const metadata = metadataOf(task);
+  for (const key of keys) {
+    const directValue = direct[key];
+    if (directValue !== undefined && directValue !== null) return directValue;
+    const metadataValue = metadata[key];
+    if (metadataValue !== undefined && metadataValue !== null) return metadataValue;
+  }
+  return undefined;
+}
+
+function readTaskString(task: PmTask, keys: string[]): string {
+  const value = readTaskValue(task, keys);
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    const token = typeof value === 'string' ? value.trim() : '';
+    return token ? [token] : [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        return String(record.description || record.title || record.name || record.path || record.id || '').trim();
+      }
+      return String(item || '').trim();
+    })
+    .filter(Boolean);
+}
+
+function readTaskStringList(task: PmTask, keys: string[]): string[] {
+  const values: string[] = [];
+  for (const key of keys) {
+    values.push(...toStringList(taskRecord(task)[key]));
+    values.push(...toStringList(metadataOf(task)[key]));
+  }
+  return values.filter((item, index, all) => item.length > 0 && all.indexOf(item) === index);
+}
+
+function readAcceptanceCriteria(task: PmTask): string[] {
+  const qaContract = readTaskValue(task, ['qa_contract']);
+  const qaCriteria = qaContract && typeof qaContract === 'object'
+    ? toStringList((qaContract as Record<string, unknown>).acceptance_criteria)
+    : [];
+  return [
+    ...toStringList(task.acceptance),
+    ...readTaskStringList(task, ['acceptance_criteria', 'acceptanceCriteria', 'acceptance']),
+    ...qaCriteria,
+  ].filter((item, index, all) => item.length > 0 && all.indexOf(item) === index);
+}
 
 export function PMTaskPanel({
   tasks,
@@ -161,14 +229,9 @@ export function PMTaskPanel({
               {sort === 'priority' ? '优先级' : sort === 'status' ? '状态' : '名称'}
             </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-            >
-              <Plus className="w-3.5 h-3.5 mr-1.5" />
-              新建
-            </Button>
+            <span className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">
+              来源: PM 合同
+            </span>
           </div>
         </div>
 
@@ -364,6 +427,16 @@ interface TaskDetailPanelProps {
 }
 
 function TaskDetailPanel({ task, onClose, taskTraceMap }: TaskDetailPanelProps) {
+  const blueprintId = readTaskString(task, ['blueprint_id', 'blueprintId']);
+  const blueprintPath = readTaskString(task, ['blueprint_path', 'blueprintPath', 'runtime_blueprint_path']);
+  const owner = readTaskString(task, ['assignee', 'assigned_to', 'assignedTo', 'assigned_worker', 'worker_id']);
+  const source = readTaskString(task, ['source', 'director_task_source']) || 'pm_contract';
+  const executionSteps = readTaskStringList(task, ['execution_checklist', 'execution_steps', 'executionSteps', 'steps', 'checklist']);
+  const acceptanceCriteria = readAcceptanceCriteria(task);
+  const targetFiles = readTaskStringList(task, ['target_files', 'targetFiles', 'scope_paths', 'files']);
+  const dependencies = readTaskStringList(task, ['dependencies', 'blocked_by', 'blockedBy']);
+  const qaContract = readTaskValue(task, ['qa_contract']);
+
   return (
     <div className="w-96 flex flex-col border-l border-white/10 bg-slate-950/30"
     >
@@ -420,6 +493,44 @@ function TaskDetailPanel({ task, onClose, taskTraceMap }: TaskDetailPanelProps) 
           </div>
         )}
 
+        <div
+          className="rounded-lg border border-white/10 bg-white/[0.035] p-3"
+          data-testid="pm-task-detail-provenance"
+        >
+          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-200">
+            <Target className="h-3.5 w-3.5 text-amber-300" />
+            合同来源
+          </div>
+          <div className="flex flex-wrap gap-1.5 text-[10px] text-slate-300">
+            <DetailChip label="PM" value={task.id} />
+            <DetailChip label="Source" value={source} />
+            <DetailChip label="Owner" value={owner || '未分配'} />
+            <DetailChip label="Blueprint" value={blueprintId || blueprintPath || '未绑定'} />
+          </div>
+          {blueprintPath ? (
+            <div className="mt-2 truncate rounded-md border border-cyan-400/20 bg-cyan-500/5 px-2 py-1 text-[11px] text-cyan-100" title={blueprintPath}>
+              {blueprintPath}
+            </div>
+          ) : null}
+        </div>
+
+        <TaskContractSection icon={<ListChecks className="h-3.5 w-3.5 text-blue-300" />} title="执行步骤" items={executionSteps} emptyText="PM 合同未提供执行步骤" />
+        <TaskContractSection icon={<ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />} title="验收标准" items={acceptanceCriteria} emptyText="PM 合同未提供验收标准" />
+        <TaskContractSection icon={<FileCode className="h-3.5 w-3.5 text-cyan-300" />} title="目标文件/作用域" items={targetFiles} emptyText="PM 合同未声明目标文件" />
+        <TaskContractSection icon={<GitBranch className="h-3.5 w-3.5 text-amber-300" />} title="依赖/阻塞" items={dependencies} emptyText="无依赖或阻塞声明" />
+
+        {qaContract && typeof qaContract === 'object' && Object.keys(qaContract).length > 0 ? (
+          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+            <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-200">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />
+              QA 合同
+            </div>
+            <pre className="max-h-40 overflow-auto rounded-md border border-white/10 bg-slate-950/70 p-2 text-[10px] text-slate-400">
+              {JSON.stringify(qaContract, null, 2)}
+            </pre>
+          </div>
+        ) : null}
+
         {/* 执行步骤追踪 */}
         {taskTraceMap?.has(task.id) && (
           <div className="pt-4 border-t border-white/10">
@@ -441,6 +552,49 @@ function TaskDetailPanel({ task, onClose, taskTraceMap }: TaskDetailPanelProps) 
         </div>
       </div>
     </div>
+  );
+}
+
+function TaskContractSection({
+  icon,
+  title,
+  items,
+  emptyText,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  items: string[];
+  emptyText: string;
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-200">
+        {icon}
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <div className="text-[11px] text-slate-500">{emptyText}</div>
+      ) : (
+        <ul className="space-y-1.5">
+          {items.map((item, index) => (
+            <li key={`${title}-${index}`} className="flex gap-2 text-[11px] leading-5 text-slate-300">
+              <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-amber-400" />
+              <span className="break-words">{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function DetailChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="max-w-full truncate rounded-md border border-white/10 bg-slate-950/55 px-2 py-1" title={`${label}: ${value}`}>
+      <span className="text-slate-500">{label}</span>
+      <span className="mx-1 text-slate-600">·</span>
+      <span>{value}</span>
+    </span>
   );
 }
 

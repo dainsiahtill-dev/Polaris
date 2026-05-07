@@ -10,6 +10,18 @@ function expandPath(rawPath) {
   return path.resolve(path.normalize(value));
 }
 
+function isDirectoryPath(rawPath) {
+  const expanded = expandPath(rawPath);
+  if (!expanded) {
+    return false;
+  }
+  try {
+    return fs.statSync(expanded).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function resolveUserHome(env = process.env, platform = process.platform) {
   if (platform === "win32") {
     const userProfile = String(env.USERPROFILE || "").trim();
@@ -90,17 +102,47 @@ function getDesktopBackendInfoPath(env = process.env, platform = process.platfor
 
 function selectStartupWorkspaceOverride(options = {}) {
   const env = options.env || process.env;
+  const validateDirectory = Boolean(options.validateDirectory);
   const persistedWorkspace = expandPath(options.persistedWorkspace || "");
   const envWorkspace = expandPath(env.KERNELONE_WORKSPACE || "");
+  const skipped = [];
+
+  function candidate(workspace, source) {
+    if (!workspace) {
+      return null;
+    }
+    if (!validateDirectory || isDirectoryPath(workspace)) {
+      return { workspace, source };
+    }
+    skipped.push({ workspace, source });
+    return null;
+  }
 
   if (envWorkspace && isTruthyEnv(env.KERNELONE_WORKSPACE_FORCE)) {
-    return { workspace: envWorkspace, source: "env_forced" };
+    const selected = candidate(envWorkspace, "env_forced");
+    if (selected) {
+      return selected;
+    }
   }
   if (persistedWorkspace) {
-    return { workspace: persistedWorkspace, source: "persisted" };
+    const selected = candidate(persistedWorkspace, "persisted");
+    if (selected) {
+      return selected;
+    }
   }
   if (envWorkspace) {
-    return { workspace: envWorkspace, source: "env" };
+    const selected = candidate(envWorkspace, "env");
+    if (selected) {
+      return selected;
+    }
+  }
+  if (skipped.length > 0) {
+    const first = skipped[0];
+    return {
+      workspace: "",
+      source: `${first.source}_missing`,
+      invalidWorkspace: first.workspace,
+    };
   }
   return { workspace: "", source: "none" };
 }
@@ -147,6 +189,7 @@ function shouldEnableSelfUpgradeMode(options = {}) {
 
 module.exports = {
   getDesktopBackendInfoPath,
+  isDirectoryPath,
   isTruthyEnv,
   isPathInside,
   resolvepolarisRoot,

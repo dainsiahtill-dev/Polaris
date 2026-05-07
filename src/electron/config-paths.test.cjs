@@ -1,10 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("path");
 
 const {
   getDesktopBackendInfoPath,
   getGlobalSettingsPath,
+  isDirectoryPath,
   isPathInside,
   isTruthyEnv,
   resolvepolarisHome,
@@ -98,6 +101,47 @@ test("selectStartupWorkspaceOverride respects forced env override", () => {
   assert.equal(isTruthyEnv("true"), true);
   assert.equal(result.source, "env_forced");
   assert.equal(result.workspace, path.resolve("C:\\Users\\dains\\Documents\\GitLab\\polaris"));
+});
+
+test("selectStartupWorkspaceOverride skips missing persisted workspace when directory validation is enabled", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polaris-workspace-select-"));
+  const envWorkspace = path.join(tempRoot, "env-workspace");
+  fs.mkdirSync(envWorkspace, { recursive: true });
+
+  try {
+    const result = selectStartupWorkspaceOverride({
+      env: {
+        KERNELONE_WORKSPACE: envWorkspace,
+      },
+      persistedWorkspace: path.join(tempRoot, "missing-workspace"),
+      validateDirectory: true,
+    });
+
+    assert.equal(result.source, "env");
+    assert.equal(result.workspace, path.resolve(envWorkspace));
+    assert.equal(isDirectoryPath(result.workspace), true);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("selectStartupWorkspaceOverride reports missing workspace when no validated fallback exists", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polaris-workspace-missing-"));
+  const missingWorkspace = path.join(tempRoot, "missing-workspace");
+
+  try {
+    const result = selectStartupWorkspaceOverride({
+      env: {},
+      persistedWorkspace: missingWorkspace,
+      validateDirectory: true,
+    });
+
+    assert.equal(result.source, "persisted_missing");
+    assert.equal(result.workspace, "");
+    assert.equal(result.invalidWorkspace, path.resolve(missingWorkspace));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("isPathInside detects nested paths", () => {

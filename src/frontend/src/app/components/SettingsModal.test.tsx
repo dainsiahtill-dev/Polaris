@@ -21,24 +21,10 @@ Object.defineProperty(window, 'polaris', {
 
 // Mock lazy components
 vi.mock('react', async () => {
-  const actual = await vi.importActual('react');
+  const actual = await vi.importActual<typeof import('react')>('react');
   return {
     ...actual,
-    lazy: (fn: () => Promise<{ default: React.ComponentType }>) => {
-      // Return a component that renders loading state
-      return () => {
-        const [loading, setLoading] = actual.useState(true);
-        actual.useEffect(() => {
-          fn().then((module) => {
-            setLoading(false);
-          });
-        }, []);
-        if (loading) {
-          return <div data-testid="lazy-loading">Loading...</div>;
-        }
-        return null;
-      };
-    },
+    lazy: () => () => null,
   };
 });
 
@@ -109,10 +95,7 @@ describe('SettingsModal', () => {
     vi.clearAllMocks();
     mockApiFetch.mockReset();
     // Default successful responses
-    mockApiFetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ providers: {}, roles: {} }),
-    });
+    mockApiFetch.mockImplementation(() => new Promise(() => { }));
     (window.polaris.secrets.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, value: 'test-key' });
     (window.polaris.secrets.set as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
   });
@@ -187,6 +170,45 @@ describe('SettingsModal', () => {
       await waitFor(() => {
         expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
       });
+    });
+
+    it('shows structured backend LLM save validation details', async () => {
+      mockApiFetch.mockReset();
+      mockApiFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            providers: { slow: { type: 'minimax', timeout: 9999 } },
+            roles: { pm: { provider_id: 'slow' } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ state: 'READY', providers: {}, roles: {} }),
+        })
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 'INVALID_LLM_CONFIG',
+                message: 'Invalid LLM configuration: provider timeout too high',
+              },
+            }),
+            { status: 400 }
+          )
+        );
+
+      render(<SettingsModal {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(mockApiFetch).toHaveBeenCalledTimes(2);
+      });
+      fireEvent.click(screen.getByText('保存配置'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Invalid LLM configuration: provider timeout too high')).toBeInTheDocument();
+      });
+      expect(defaultProps.onSave).not.toHaveBeenCalled();
     });
   });
 

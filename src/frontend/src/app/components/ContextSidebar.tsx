@@ -102,7 +102,7 @@ export function ContextSidebar({
                         active={activeTab === 'memory'}
                         onClick={() => setActiveTab('memory')}
                         icon={showCognition ? <Brain className="size-5" /> : <Database className="size-5" />}
-                        label="Memory"
+                        label="忆库"
                     />
                 )}
                 <TabButton
@@ -185,20 +185,20 @@ export function ContextSidebar({
                             <div className="flex-none p-2 border-b border-white/5 flex items-center justify-between bg-white/5 backdrop-blur-md">
                                 <div className="flex items-center gap-2">
                                     {showCognition ? <Brain className="size-4 text-purple-400" /> : <Database className="size-4 text-blue-400" />}
-                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">Memory</span>
+                                    <span className="text-xs font-bold text-text-main uppercase tracking-widest">忆库</span>
                                 </div>
                                 <div className="flex bg-black/30 p-0.5 rounded-lg border border-white/5">
                                     <button
                                         onClick={() => setShowCognition(true)}
                                         className={`px-2 py-1 text-[10px] rounded transition-all ${showCognition ? 'bg-purple-500/20 text-purple-300' : 'text-gray-500 hover:text-gray-300'}`}
                                     >
-                                        Cognition
+                                        认知
                                     </button>
                                     <button
                                         onClick={() => setShowCognition(false)}
                                         className={`px-2 py-1 text-[10px] rounded transition-all ${!showCognition ? 'bg-blue-500/20 text-blue-300' : 'text-gray-500 hover:text-gray-300'}`}
                                     >
-                                        Raw
+                                        原始
                                     </button>
                                 </div>
                             </div>

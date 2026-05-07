@@ -16,6 +16,7 @@ import type {
   LLMStatus,
   RoleConfig,
 } from '@/app/components/llm/types';
+import { isCLIProviderType } from '@/app/components/llm/types';
 import type { TestEvent, TestResult } from '@/app/components/llm/test/types';
 import type {
   InteractiveInterviewAnswer,
@@ -93,7 +94,7 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
     setLlmLoading(true);
     setLlmError(null);
     try {
-      const res = await apiFetch('/llm/config');
+      const res = await apiFetch('/v2/llm/config');
       if (!res.ok) {
         throw new Error('读取 LLM 配置失败');
       }
@@ -110,7 +111,7 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
   // Load LLM status
   const loadLLMStatus = useCallback(async () => {
     try {
-      const res = await apiFetch('/llm/status');
+      const res = await apiFetch('/v2/llm/status');
       if (!res.ok) {
         throw new Error('读取 LLM 状态失败');
       }
@@ -141,7 +142,7 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
         const configToSave = llmSavePendingRef.current;
         llmSavePendingRef.current = null;
         try {
-          const res = await apiFetch('/llm/config', {
+          const res = await apiFetch('/v2/llm/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(configToSave),
@@ -262,7 +263,7 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
   const handleTestProvider = useCallback(
     async (provider: SimpleProvider, onEvent?: (event: TestEvent) => void): Promise<TestResult | null> => {
       try {
-        const res = await apiFetch('/llm/test', {
+        const res = await apiFetch('/v2/llm/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -354,7 +355,7 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
       context?: Array<{ question: string; answer: string }>;
     }): Promise<InteractiveInterviewAnswer | null> => {
       try {
-        const res = await apiFetch('/llm/interview/ask', {
+        const res = await apiFetch('/v2/llm/interview/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -382,7 +383,7 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
       report: InteractiveInterviewReport;
     }): Promise<{ saved: boolean; report_path?: string } | null> => {
       try {
-        const res = await apiFetch('/llm/interview/save', {
+        const res = await apiFetch('/v2/llm/interview/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -404,15 +405,34 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
   // Resolve provider env overrides
   const handleResolveEnvOverrides = useCallback(
     async (providerId: string): Promise<Record<string, string> | null> => {
-      try {
-        const res = await apiFetch(`/llm/providers/${providerId}/env`);
-        if (!res.ok) {
-          return null;
-        }
-        return (await res.json()) as Record<string, string>;
-      } catch {
+      const cfg = llmConfigRef.current?.providers?.[providerId];
+      if (!cfg || !isCLIProviderType(String(cfg.type || ''))) {
         return null;
       }
+
+      const env = cfg.env && typeof cfg.env === 'object' ? cfg.env : {};
+      const resolved: Record<string, string> = {};
+      for (const [key, value] of Object.entries(env)) {
+        if (value === undefined || value === null) {
+          continue;
+        }
+        const raw = String(value).trim();
+        const match = raw.match(/^\$?\{?keychain:([^}]+)\}?$/i);
+        if (match && window.polaris?.secrets?.get) {
+          try {
+            const result = await window.polaris.secrets.get(match[1]);
+            if (result?.ok && result.value) {
+              resolved[key] = String(result.value);
+            }
+          } catch {
+            // Keep env resolution best-effort; the test request still carries non-secret overrides.
+          }
+        } else {
+          resolved[key] = raw;
+        }
+      }
+
+      return Object.keys(resolved).length > 0 ? resolved : null;
     },
     []
   );

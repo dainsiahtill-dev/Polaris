@@ -28,9 +28,11 @@ import { PMDocumentPanel } from './PMDocumentPanel';
 import { PMAIDialoguePanel } from './PMAIDialoguePanel';
 import { PMStatusBar } from './PMStatusBar';
 import { PMDiagnosticsPanel } from './PMDiagnosticsPanel';
+import { QualityGateCard, type QualityGateData } from './QualityGateCard';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
+import type { TaskTraceMap } from '@/app/types/taskTrace';
 
 // 阶段到视图的映射
 const PHASE_TO_VIEW: Record<string, { view: 'tasks' | 'activity' | 'documents'; icon: React.ReactNode; label: string; color: string }> = {
@@ -59,6 +61,9 @@ interface PMWorkspaceProps {
   processStreamEvents?: LogEntry[];
   currentPhase?: string;
   factoryMode?: boolean;
+  qualityGate?: QualityGateData | null;
+  taskTraceMap?: TaskTraceMap;
+  onOpenSettings?: () => void;
 }
 
 type PMActiveView = 'tasks' | 'activity' | 'documents' | 'history' | 'analytics';
@@ -77,6 +82,9 @@ export function PMWorkspace({
   processStreamEvents = [],
   currentPhase = 'idle',
   factoryMode = false,
+  qualityGate = null,
+  taskTraceMap,
+  onOpenSettings,
 }: PMWorkspaceProps) {
   const [activeView, setActiveView] = useState<PMActiveView>('tasks');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -313,7 +321,10 @@ export function PMWorkspace({
           <Button
             variant="ghost"
             size="icon"
+            onClick={onOpenSettings}
+            disabled={!onOpenSettings}
             className="text-slate-400 hover:text-slate-100"
+            title="系统配置"
           >
             <Settings className="w-4 h-4" />
           </Button>
@@ -352,7 +363,7 @@ export function PMWorkspace({
             icon={<BarChart3 className="w-4 h-4" />}
             label="统计"
             active={activeView === 'analytics'}
-            onClick={() => setActiveView('analytics')}
+            onClick={() => handleViewChange('analytics')}
           />
         </nav>
 
@@ -361,12 +372,22 @@ export function PMWorkspace({
           <Panel defaultSize={showAIDialogue ? 65 : 85} minSize={40}>
             <div className="h-full overflow-hidden">
               {activeView === 'tasks' && (
-                <PMTaskPanel
-                  tasks={tasks}
-                  selectedTaskId={selectedTaskId}
-                  onTaskSelect={handleTaskSelect}
-                  pmRunning={pmRunning}
-                />
+                <div className="flex h-full min-h-0 flex-col">
+                  {qualityGate ? (
+                    <div className="shrink-0 border-b border-white/10 bg-slate-950/35 p-3">
+                      <QualityGateCard data={qualityGate} className="rounded-lg" />
+                    </div>
+                  ) : null}
+                  <div className="min-h-0 flex-1">
+                    <PMTaskPanel
+                      tasks={tasks}
+                      selectedTaskId={selectedTaskId}
+                      onTaskSelect={handleTaskSelect}
+                      pmRunning={pmRunning}
+                      taskTraceMap={taskTraceMap}
+                    />
+                  </div>
+                </div>
               )}
               {activeView === 'activity' && (
                 <RealtimeActivityPanel
@@ -452,15 +473,23 @@ function NavButton({ icon, label, active, onClick }: NavButtonProps) {
   );
 }
 
-// Placeholder Components (will be implemented in separate files)
 function PMHistoryPanel({ pmState }: { pmState: Record<string, unknown> | null }) {
   return (
     <div className="h-full flex flex-col p-6">
       <h2 className="text-lg font-semibold text-slate-100 mb-4">执行历史</h2>
-      <div className="flex-1 rounded-xl border border-white/10 bg-white/5 p-4 overflow-auto">
-        <pre className="text-xs text-slate-400 font-mono">
-          {JSON.stringify(pmState, null, 2) || '暂无历史记录'}
-        </pre>
+      <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+        当前版本仅展示后端 PM 状态快照。没有历史归档证据时不会伪造时间线。
+      </div>
+      <div className="flex-1 overflow-auto rounded-xl border border-white/10 bg-white/5 p-4">
+        {pmState ? (
+          <pre className="font-mono text-xs text-slate-400">
+            {JSON.stringify(pmState, null, 2)}
+          </pre>
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-slate-500">
+            暂无 PM 状态快照
+          </div>
+        )}
       </div>
     </div>
   );
@@ -476,17 +505,23 @@ function PMAnalyticsPanel({ tasks }: { tasks: PmTask[] }) {
   return (
     <div className="h-full flex flex-col p-6">
       <h2 className="text-lg font-semibold text-slate-100 mb-4">任务统计</h2>
-      <div className="grid grid-cols-2 gap-4">
-        {Object.entries(statusCounts).map(([status, count]) => (
-          <div
-            key={status}
-            className="p-4 rounded-xl border border-white/10 bg-white/5"
-          >
-            <p className="text-xs text-slate-500 uppercase">{status}</p>
-            <p className="text-2xl font-bold text-amber-400">{count}</p>
-          </div>
-        ))}
-      </div>
+      {tasks.length > 0 ? (
+        <div className="grid grid-cols-2 gap-4">
+          {Object.entries(statusCounts).map(([status, count]) => (
+            <div
+              key={status}
+              className="rounded-xl border border-white/10 bg-white/5 p-4"
+            >
+              <p className="text-xs uppercase text-slate-500">{status}</p>
+              <p className="text-2xl font-bold text-amber-400">{count}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-1 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-sm text-slate-500">
+          暂无任务数据，统计面板不会使用示例数据。
+        </div>
+      )}
     </div>
   );
 }

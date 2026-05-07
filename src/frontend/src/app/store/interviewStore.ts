@@ -175,7 +175,7 @@ export const useInterviewStore = create<InterviewState & InterviewActions>()(
         const controller = new AbortController();
         interviewAbortRef = controller;
         try {
-          const res = await apiFetch('/llm/test', {
+          const res = await apiFetch('/v2/llm/test', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -213,7 +213,7 @@ export const useInterviewStore = create<InterviewState & InterviewActions>()(
         if (!payload.llmConfig) return null;
         const providerCfg = payload.llmConfig.providers?.[payload.providerId];
         if (!providerCfg) throw new Error('提供商未配置');
-        const res = await apiFetch('/llm/interview/ask', {
+        const res = await apiFetch('/v2/llm/interview/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -245,7 +245,7 @@ export const useInterviewStore = create<InterviewState & InterviewActions>()(
 
       saveInteractiveInterview: async (payload) => {
         if (!payload.model) throw new Error('Model is required');
-        const res = await apiFetch('/llm/interview/save', {
+        const res = await apiFetch('/v2/llm/interview/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ role: payload.roleId, provider_id: payload.providerId, model: payload.model, report: payload.report }),

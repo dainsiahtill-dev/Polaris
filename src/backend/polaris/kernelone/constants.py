@@ -16,6 +16,11 @@ from enum import StrEnum
 #: Default timeout for LLM and network operations (seconds)
 DEFAULT_OPERATION_TIMEOUT_SECONDS: int = 300
 
+#: Maximum allowed timeout for a configured LLM provider (seconds).
+#: Provider calls can legitimately exceed the default operation timeout for
+#: large planning/code-generation requests, but must still be bounded.
+MAX_LLM_PROVIDER_TIMEOUT_SECONDS: int = 3600
+
 #: Default timeout for Director role LLM calls (seconds)
 #: 660 seconds = 11 minutes, larger buffer for code generation workloads
 DIRECTOR_TIMEOUT_SECONDS: float = 660.0
@@ -534,6 +539,7 @@ __all__ = [
     # File Sizes
     "MAX_FILE_SIZE_BYTES",
     "MAX_LINE_CHARS",
+    "MAX_LLM_PROVIDER_TIMEOUT_SECONDS",
     "MAX_METADATA_ITEMS",
     "MAX_METRIC_POINTS",
     "MAX_SEARCH_FILE_SIZE_BYTES",

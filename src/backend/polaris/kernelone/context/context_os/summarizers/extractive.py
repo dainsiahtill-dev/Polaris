@@ -20,9 +20,6 @@ from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummarizationError,
     SummaryStrategy,
 )
-from sumy.nlp.tokenizers import Tokenizer
-from sumy.parsers.plaintext import PlaintextParser
-from sumy.summarizers.text_rank import TextRankSummarizer
 
 if TYPE_CHECKING:
     pass
@@ -90,14 +87,27 @@ class SumySummarizer:
         self.language = language
         self._summarizer: Any | None = None
         self._parser_class: Any | None = None
+        self._summarizer_class: Any | None = None
+        self._tokenizer_class: Any | None = None
 
     def _ensure_dependencies(self) -> None:
         """Ensure sumy classes are assigned for summarization."""
         if self._summarizer is not None:
             return
+        try:
+            from sumy.nlp.tokenizers import Tokenizer
+            from sumy.parsers.plaintext import PlaintextParser
+            from sumy.summarizers.text_rank import TextRankSummarizer
+        except ImportError as exc:
+            raise SummarizationError(
+                "sumy not installed. Run: pip install sumy",
+                strategy=self.strategy,
+            ) from exc
+
         self._parser_class = PlaintextParser
         self._tokenizer_class = Tokenizer
         self._summarizer_class = TextRankSummarizer
+        self._summarizer = TextRankSummarizer()
 
     def summarize(
         self,
@@ -131,7 +141,11 @@ class SumySummarizer:
 
         try:
             # 解析文本
-            assert self._parser_class is not None and self._tokenizer_class is not None
+            assert (
+                self._parser_class is not None
+                and self._summarizer_class is not None
+                and self._tokenizer_class is not None
+            )
             parser = self._parser_class.from_string(
                 content,
                 self._tokenizer_class(self.language),
@@ -253,6 +267,10 @@ class SumySummarizer:
     def is_available(self) -> bool:
         """检查 sumy 是否已安装"""
         try:
+            from sumy.nlp.tokenizers import Tokenizer  # noqa: F401
+            from sumy.parsers.plaintext import PlaintextParser  # noqa: F401
+            from sumy.summarizers.text_rank import TextRankSummarizer  # noqa: F401
+
             return True
         except ImportError:
             return False

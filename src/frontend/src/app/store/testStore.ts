@@ -192,7 +192,7 @@ export const useTestStore = create<TestState & TestActions>()(
         if (!model) return null;
         set((s) => { s.llmTesting[role] = true; });
         try {
-          const res = await apiFetch('/llm/test', {
+          const res = await apiFetch('/v2/llm/test', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

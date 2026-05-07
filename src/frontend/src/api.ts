@@ -83,9 +83,15 @@ export async function apiFetch(
   path: string,
   init: RequestInit & { timeout?: number } = {}
 ): Promise<Response> {
-  const { timeout = DEFAULT_TIMEOUT_MS, ...fetchOptions } = init;
+  const { timeout = DEFAULT_TIMEOUT_MS, signal: externalSignal, ...fetchOptions } = init;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
+  const abortFromExternalSignal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) {
+    abortFromExternalSignal();
+  } else {
+    externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
+  }
 
   const doFetch = async (info: BackendInfo): Promise<Response> => {
     const headers = new Headers(fetchOptions.headers || {});
@@ -112,6 +118,7 @@ export async function apiFetch(
       return await doFetch(info);
     }
   } finally {
+    externalSignal?.removeEventListener('abort', abortFromExternalSignal);
     clearTimeout(timeoutId);
   }
 }
