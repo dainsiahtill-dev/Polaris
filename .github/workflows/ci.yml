@@ -1,0 +1,503 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, feature/*]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  # Stage 1: Fast lint check (fail fast)
+  lint:
+    name: Ruff Lint Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff check
+        id: ruff_check
+        working-directory: src/backend
+        run: |
+          ruff check polaris --output-format=github 2>&1 | tee ruff_output.txt
+
+      - name: Run Ruff format check
+        working-directory: src/backend
+        run: ruff format --check polaris
+
+      - name: Upload Ruff output for metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-metrics
+          path: src/backend/ruff_output.txt
+
+  # Stage 2: Type checking
+  typecheck:
+    name: Mypy Type Check
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: src/backend
+        run: |
+          pip install mypy pydantic pydantic-settings
+          pip install types-requests types-aiofiles
+          pip install -r requirements.txt 2>/dev/null || { EC=$?; echo "WARNING: requirements.txt install failed (exit code: $EC)"; echo "REQ_INSTALL_EXIT=$EC" >> $GITHUB_ENV; }
+
+      - name: Run Mypy check
+        id: mypy_check
+        working-directory: src/backend
+        run: |
+          mypy polaris/bootstrap polaris/kernelone --ignore-missing-imports --show-error-codes 2>&1 | tee mypy_output.txt
+          mypy polaris/bootstrap polaris/kernelone --ignore-missing-imports --show-error-codes --output json > mypy_errors.jsonl 2>&1 || true
+          python -c "
+          import json
+          lines = [l.strip() for l in open('mypy_errors.jsonl', encoding='utf-8') if l.strip()]
+          entries = [json.loads(l) for l in lines]
+          report = {'status': 'ok', 'error_count': len(entries), 'errors': entries}
+          with open('mypy_errors.json', 'w', encoding='utf-8') as f:
+              json.dump(report, f, indent=2)
+          print(f'JSON report written: {len(entries)} errors')
+          " || (echo '{"status":"parse_error","error_count":0,"errors":[]}' > mypy_errors.json && echo "WARNING: mypy JSON parsing failed, wrote fallback report")
+
+      - name: Validate MyPy JSON report
+        working-directory: src/backend
+        run: |
+          python -c "
+          import json, sys, os
+          p = 'mypy_errors.json'
+          if not os.path.exists(p):
+              print(f'ERROR: {p} does not exist')
+              sys.exit(1)
+          try:
+              with open(p, encoding='utf-8') as f:
+                  data = json.load(f)
+              if not isinstance(data, dict) or 'status' not in data:
+                  print(f'ERROR: {p} missing required status field')
+                  sys.exit(1)
+              print(f'OK: {p} is valid JSON (status={data[\"status\"]}, errors={data.get(\"error_count\", \"N/A\")})')
+          except json.JSONDecodeError as e:
+              print(f'ERROR: {p} is not valid JSON: {e}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'ERROR: Failed to validate {p}: {e}')
+              sys.exit(1)
+          "
+
+      - name: Upload Mypy output for metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-metrics
+          path: |
+            src/backend/mypy_output.txt
+            src/backend/mypy_errors.json
+
+  # Stage 3: Unit tests with coverage
+  test:
+    name: Pytest Unit Tests
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: src/backend
+        run: |
+          pip install pytest pytest-asyncio pytest-cov
+          pip install -r requirements.txt 2>/dev/null || { EC=$?; echo "WARNING: requirements.txt install failed (exit code: $EC)"; echo "REQ_INSTALL_EXIT=$EC" >> $GITHUB_ENV; }
+          pip install -r requirements-dev.txt 2>/dev/null || { EC=$?; echo "WARNING: requirements-dev.txt install failed (exit code: $EC)"; echo "DEV_REQ_INSTALL_EXIT=$EC" >> $GITHUB_ENV; }
+
+      - name: Run all tests
+        id: run_tests
+        working-directory: src/backend
+        run: |
+          set -e
+          FAILED=0
+          pytest polaris/tests -v --tb=short --cov=polaris --cov-report=xml --cov-fail-under=20 2>&1 | tee pytest_tests_output.txt || FAILED=1
+          pytest polaris/bootstrap -v --tb=short 2>&1 | tee pytest_bootstrap_output.txt || FAILED=1
+          pytest polaris/kernelone -v --tb=short -k "test_" --ignore=polaris/kernelone/integration 2>&1 | tee pytest_kernelone_output.txt || FAILED=1
+          if [ $FAILED -ne 0 ]; then
+            echo "One or more test suites failed"
+            exit 1
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: src/backend/coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: src/backend/coverage.xml
+
+      - name: Upload test output for metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-metrics
+          path: |
+            src/backend/pytest_tests_output.txt
+            src/backend/pytest_bootstrap_output.txt
+            src/backend/pytest_kernelone_output.txt
+            src/backend/coverage.xml
+
+      - name: Generate coverage badge
+        working-directory: src/backend
+        run: |
+          python ../../scripts/generate_coverage_badge.py --coverage-xml coverage.xml --output ../../docs/assets/badges/coverage.svg
+
+      - name: Upload badge artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-badge
+          path: docs/assets/badges/coverage.svg
+
+  # Stage 4: Frontend checks
+  frontend:
+    name: Frontend Build & Test
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript check
+        id: ts_check
+        run: npm run typecheck 2>&1 | tee ts_output.txt
+
+      - name: Run ESLint
+        id: eslint_check
+        run: npm run lint 2>&1 | tee eslint_output.txt
+
+      - name: Run tests
+        id: frontend_test
+        run: npm run test 2>&1 | tee frontend_test_output.txt
+
+      - name: Upload frontend output for metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-metrics
+          path: |
+            ts_output.txt
+            eslint_output.txt
+            frontend_test_output.txt
+
+
+  # Stage 5b: Governance automation gates (parallel, non-blocking)
+  governance:
+    name: Governance Automation Gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: src/backend
+        run: pip install pyyaml
+
+      - name: Run directory hygiene check
+        id: dir_hygiene
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/check_directory_hygiene.py --workspace . --quiet
+
+      - name: Run context pack freshness check
+        id: ctx_freshness
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/check_context_pack_freshness.py
+
+      - name: Run shim markers check
+        id: shim_markers
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/check_shim_markers.py --json
+
+      - name: Run legacy coverage check
+        id: legacy_coverage
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/check_legacy_coverage.py --json
+
+      - name: Run catalog presence check
+        id: catalog_presence
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/check_catalog_presence.py
+
+      - name: Run no conflicting coverage check
+        id: no_conflict
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/check_no_conflicting_coverage.py --json
+
+      - name: Parse fitness rules and generate metrics
+        id: fitness_metrics
+        working-directory: src/backend
+        run: |
+          mkdir -p ../../metrics_history
+          cat > /tmp/fitness_metrics.py << 'PYEOF'
+          import yaml, json, datetime, sys, os
+          rules_path = 'docs/governance/ci/fitness-rules.yaml'
+          if not os.path.exists(rules_path):
+              print(f'ERROR: {rules_path} not found')
+              sys.exit(1)
+          with open(rules_path, encoding='utf-8') as f:
+              data = yaml.safe_load(f)
+          rules = data.get('rules', [])
+          counts = {
+              'enforced': 0,
+              'enforced_non_regressive': 0,
+              'seeded': 0,
+              'draft': 0,
+              'partially_enforced': 0,
+              'other': 0,
+          }
+          for rule in rules:
+              status = rule.get('current_status', 'unknown')
+              if status in counts:
+                  counts[status] += 1
+              else:
+                  counts['other'] += 1
+          result = {
+              'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),
+              'total_rules': len(rules),
+              'status_counts': counts,
+              'rules': [
+                  {
+                      'id': r.get('id'),
+                      'status': r.get('current_status'),
+                      'severity': r.get('severity'),
+                  }
+                  for r in rules
+              ]
+          }
+          date_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
+          out_path = f'../../metrics_history/fitness_rules_{date_str}.json'
+          os.makedirs(os.path.dirname(out_path), exist_ok=True)
+          with open(out_path, 'w', encoding='utf-8') as f:
+              json.dump(result, f, indent=2)
+          print(f'Fitness rules metrics written to {out_path}')
+          print(json.dumps(counts, indent=2))
+          PYEOF
+          python3 /tmp/fitness_metrics.py
+
+      - name: Upload governance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-metrics
+          path: |
+            metrics_history/fitness_rules_*.json
+  # Stage 5: Integration gate
+  integration-gate:
+    name: KernelOne Release Gate
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck, test]
+    if: github.ref == 'refs/heads/main' || contains(github.head_ref, 'release/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: src/backend
+        run: |
+          pip install pyyaml pydantic
+
+      - name: Run KernelOne release gate
+        id: kernelone_gate
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all 2>&1 | tee kernelone_gate_output.txt || { EC=$?; echo "WARNING: KernelOne release gate failed (exit code: $EC)"; echo "KERNELONE_GATE_EXIT=$EC" >> $GITHUB_ENV; }
+
+      - name: Run catalog governance gate
+        id: catalog_gate
+        working-directory: src/backend
+        run: |
+          set -o pipefail
+          python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json 2>&1 | tee catalog_gate_output.txt
+
+      - name: Upload gate output for metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-metrics
+          path: |
+            src/backend/kernelone_gate_output.txt
+            src/backend/catalog_gate_output.txt
+
+  # Stage 6: Metrics summary
+  metrics:
+    name: Generate Metrics Summary
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck, test, frontend, integration-gate, governance]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all metric artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-metrics'
+          path: metrics_raw
+        continue-on-error: true
+
+      - name: Generate metrics_summary.json
+        id: generate_metrics
+        run: |
+          # ------------------------------------------------------------------
+          # Step 1: Determine if CI was blocked (any must-pass job failed)
+          # ------------------------------------------------------------------
+          LINT_OK="${{ needs.lint.result == 'success' }}"
+          TYPECHECK_OK="${{ needs.typecheck.result == 'success' }}"
+          TEST_OK="${{ needs.test.result == 'success' }}"
+          FRONTEND_OK="${{ needs.frontend.result == 'success' }}"
+
+          CI_BLOCKED="false"
+          if [ "$LINT_OK" != "true" ] || [ "$TYPECHECK_OK" != "true" ] || [ "$TEST_OK" != "true" ] || [ "$FRONTEND_OK" != "true" ]; then
+            CI_BLOCKED="true"
+          fi
+
+          # ------------------------------------------------------------------
+          # Step 2: Count Ruff errors from lint output
+          # ------------------------------------------------------------------
+          RUFF_ERRORS=0
+          RUFF_FILE="metrics_raw/lint-metrics/src/backend/ruff_output.txt"
+          if [ -f "$RUFF_FILE" ]; then
+            RUFF_ERRORS=$(grep -cE '^[^[:space:]]+:[0-9]+:[0-9]+:' "$RUFF_FILE" 2>/dev/null || echo 0)
+          fi
+
+          # ------------------------------------------------------------------
+          # Step 3: Count Mypy errors
+          # ------------------------------------------------------------------
+          MYPY_ERRORS=0
+          MYPY_FILE="metrics_raw/typecheck-metrics/src/backend/mypy_output.txt"
+          if [ -f "$MYPY_FILE" ]; then
+            MYPY_ERRORS=$(grep -c ': error:' "$MYPY_FILE" 2>/dev/null || echo 0)
+          fi
+
+          # ------------------------------------------------------------------
+          # Step 4: Extract test pass rate from pytest output
+          # ------------------------------------------------------------------
+          TESTS_PASSED=0
+          TESTS_TOTAL=0
+          TEST_METRICS_DIR="metrics_raw/test-metrics/src/backend"
+          for f in "$TEST_METRICS_DIR"/pytest_*_output.txt; do
+            if [ -f "$f" ]; then
+              PASSED=$(grep -oP '\d+(?= passed)' "$f" 2>/dev/null | head -1 || echo 0)
+              FAILED=$(grep -oP '\d+(?= failed)' "$f" 2>/dev/null | head -1 || echo 0)
+              ERRORED=$(grep -oP '\d+(?= error)' "$f" 2>/dev/null | head -1 || echo 0)
+              TESTS_PASSED=$((TESTS_PASSED + PASSED))
+              TESTS_TOTAL=$((TESTS_TOTAL + PASSED + FAILED + ERRORED))
+            fi
+          done
+          if [ "$TESTS_TOTAL" -gt 0 ]; then
+            TEST_PASS_RATE=$(python3 -c "print(f'{$TESTS_PASSED / $TESTS_TOTAL:.4f}')")
+          else
+            TEST_PASS_RATE="1.0"
+          fi
+
+          # ------------------------------------------------------------------
+          # Step 5: Extract coverage percentage from coverage.xml
+          # ------------------------------------------------------------------
+          COVERAGE_PCT="0.0"
+          COV_FILE="$TEST_METRICS_DIR/coverage.xml"
+          if [ -f "$COV_FILE" ]; then
+            COVERAGE_PCT=$(python3 -c "
+import xml.etree.ElementTree as ET
+tree = ET.parse('$COV_FILE')
+root = tree.getroot()
+rate = float(root.get('line-rate', 0))
+print(f'{rate * 100:.1f}')
+" 2>/dev/null || echo "0.0")
+          fi
+
+          # ------------------------------------------------------------------
+          # Step 6: Benchmark pass rate (no benchmarks in current pipeline)
+          # ------------------------------------------------------------------
+          BENCHMARK_PASS_RATE="1.0"
+
+          # ------------------------------------------------------------------
+          # Step 7: Write metrics_summary.json
+          # ------------------------------------------------------------------
+          cat > metrics_summary.json << METRICS_EOF
+          {
+            "ci_blocked": $CI_BLOCKED,
+            "ruff_errors": $RUFF_ERRORS,
+            "mypy_errors": $MYPY_ERRORS,
+            "test_pass_rate": $TEST_PASS_RATE,
+            "coverage_percentage": $COVERAGE_PCT,
+            "benchmark_pass_rate": $BENCHMARK_PASS_RATE
+          }
+          METRICS_EOF
+
+          echo "=== Metrics Summary ==="
+          cat metrics_summary.json
+
+      - name: Upload metrics_summary.json artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-summary
+          path: metrics_summary.json

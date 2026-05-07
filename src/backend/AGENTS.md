@@ -329,20 +329,20 @@ Cell 是最小自治边界。
 
 ---
 
-## 15. 当前架构现实快照（2026-05-06）
+## 15. 当前架构现实快照（2026-05-07）
 
 本节记录当前事实，不得与目标态混写。修改须同步 `CLAUDE.md` 与 `GEMINI.md`。
 
 ### 15.1 Graph 图谱现状
 
 - `docs/graph/catalog/cells.yaml` — `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
-- cells.yaml 声明的 Cell：**63 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-05-06）
-- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**64 / 63**
+- cells.yaml 声明的 Cell：**62 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-05-07）
+- `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**63 / 62**
 - `docs/graph/subgraphs/` 当前仅有：
   - `execution_governance_pipeline.yaml`
   - `storage_archive_pipeline.yaml`
 
-### 15.2 polaris/ 结构现状（`*.py` 快照，2026-05-06）
+### 15.2 polaris/ 结构现状（`*.py` 快照，2026-05-07）
 
 统计命令：`find polaris -name "*.py" | awk -F/ '{print $2}' | sort | uniq -c`
 
@@ -359,16 +359,17 @@ Cell 是最小自治边界。
 
 ### 15.3 测试与收集现状
 
-- `pytest --collect-only -q`（2026-05-06）结果：**28677 collected / 0 errors**
+- `pytest --collect-only -q`（2026-05-07）结果：**28677 collected / 0 errors**
 - 真实覆盖率（2026-04-24）：**23.3%**（69360/297487 lines，`pytest --cov=polaris`）
 - 0% 覆盖率模块：390 个（delivery: 155, cells: 103, kernelone: 103, infrastructure: 20, bootstrap: 7, application: 1, domain: 1）
 
 ### 15.4 当前主要 gap
 
-1. Descriptor 覆盖已提升至 **64 / 63**
-2. 部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 中 26 个 high 级别遗留、9 个 blocker）
-3. `fitness-rules.yaml` blocker 尚未全量自动化执行
+1. Descriptor 覆盖已提升至 **63 / 62**
+2. ~~部分历史 Cell 仍未完成 `depends_on` 对齐（catalog gate 中 26 个 high 级别遗留、9 个 blocker）~~ 已于 2026-05-07 清零（catalog governance gate 现 issue_count=0 / blocker_count=0 / high_count=0）
+3. ~~`fitness-rules.yaml` blocker 尚未全量自动化执行~~ 已于 2026-05-07 启动 Stage 1 接入（`.github/workflows/governance-gates.yml` audit-only），Stage 2-5 待后续 wave 启用（详见 `docs/governance/ci/STAGED_ROLLOUT_PLAN.md`）
 4. `KERNELONE_` 与 `KERNELONE_` 仍混用
+5. ~~`.gitignore` 字面 `.github` 规则导致所有 GHA workflow 文件未被 git 跟踪（GHA 实际从未运行过任何 workflow）~~ 已于 2026-05-07 修复（删除 `.gitignore` 第 97 行 `.github` 字面规则；stage 仓库根 4 个 workflow；删除错位的 `src/backend/.github/workflows/performance.yml`）
 
 ### 15.5 未登记 Cell（已清零）
 
@@ -380,7 +381,7 @@ Cell 是最小自治边界。
 - ~~`director.planning`~~
 - ~~`director.tasking`~~
 
-### 15.6 环境变量前缀现状（2026-05-06）
+### 15.6 环境变量前缀现状（2026-05-07）
 
 - `KERNELONE_`: **1825 处 / 375 文件**
 - `KERNELONE_`: **225 处 / 43 文件**

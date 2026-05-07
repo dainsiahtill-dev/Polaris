@@ -1,0 +1,36 @@
+# Squad B Wave 1 coverage baseline (mirrors top-level pyproject.toml).
+#
+# This file exists so that running `pytest --cov=polaris` from src/backend
+# (the canonical Makefile entry point) picks up the same source/omit
+# configuration as running it from the repo root. Without it, coverage.py
+# only finds <cwd>/.coveragerc and falls back to source=None, which is what
+# caused polaris.delivery (279 files) to be invisible in cov_report.txt.
+#
+# Keep this file in sync with [tool.coverage.*] in /pyproject.toml.
+
+[run]
+source_pkgs = polaris
+relative_files = True
+omit =
+    */tests/*
+    *\tests\*
+    */test_*.py
+    *\test_*.py
+    **/conftest.py
+    **/_archived/**
+    **/_archived*
+    polaris/cells/llm/evaluation/fixtures/**
+
+[paths]
+polaris =
+    polaris
+    src/backend/polaris
+    */src/backend/polaris
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:

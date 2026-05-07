@@ -607,3 +607,166 @@ units:
     delete_when:
       - "All 41 Cells have generated/descriptor.pack.json"
       - "Catalog governance gate passes with 0 errors"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Wave 4: Legacy cleanup (2026-05-07)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: mig-compatibility-cell-removal
+    title: polaris.compatibility cell removal (legacy placeholder cleanup)
+    wave: 4
+    category: cells
+    scope: cell_unit
+    status: retired
+    current_impl_state: legacy_removed
+    owner: governance-engineer
+    legacy_policy: no_new_shim
+    depends_on: []
+    blockers: []
+    notes:
+      - "2026-05-07 Squad C: removed empty placeholder cell with zero external dependencies"
+      - "Verified: 0 polaris.cells.compatibility imports, 0 depends_on entries, 0 subgraph references"
+      - "Catalog governance gate passed: exit_code=0, issue_count=0, blocker_count=0"
+    target:
+      cell: polaris.compatibility
+      catalog_status: removed
+      target_assets_status: absent
+      root_dirs: []
+      target_paths: []
+      actual_impl_paths: []
+      subgraphs: []
+    source_refs:
+      - path: polaris/cells/compatibility/
+        kind: directory
+        coverage: full
+        note: Entire directory removed
+    verification:
+      checks:
+        - "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only"
+        - "grep -c '^  - id:' docs/graph/catalog/cells.yaml  (expect 62)"
+        - "find polaris/cells -name 'descriptor.pack.json' | wc -l  (expect 63)"
+      required_tests: []
+      docs_updates:
+        - "AGENTS.md §15.1 cell count update"
+        - "CLAUDE.md §6.1 cell count update"
+        - "GEMINI.md §6.1 cell count update"
+      graph_updates:
+        - "docs/graph/catalog/cells.yaml (polaris.compatibility cell block removed)"
+    delete_when:
+      - "Already retired"
+
+  - id: mig-structural-pollution-cleanup
+    title: Backend root structural pollution cleanup
+    wave: 4
+    category: cleanup
+    scope: file_family
+    status: retired
+    current_impl_state: legacy_removed
+    owner: governance-engineer
+    legacy_policy: no_new_shim
+    depends_on: []
+    blockers: []
+    notes:
+      - "2026-05-07 Squad A: deleted untracked structural pollution at backend root"
+      - "Files removed: None (audit log spew), tmp_write.py (one-shot), tmp_writer.py (broken stub), src/ (empty mirror tree)"
+      - "All deleted files were untracked and had 0 inbound references"
+      - "Annotated migration shims with MIGRATION-SHIM marker: server.py, director_interface.py"
+    target:
+      cell: ""
+      catalog_status: actual
+      target_assets_status: absent
+      root_dirs: []
+      target_paths: []
+      actual_impl_paths: []
+      subgraphs: []
+    source_refs:
+      - path: src/backend/None
+        kind: file
+        coverage: full
+        note: Audit log spew (untracked)
+      - path: src/backend/tmp_write.py
+        kind: file
+        coverage: full
+        note: One-shot script (untracked)
+      - path: src/backend/tmp_writer.py
+        kind: file
+        coverage: full
+        note: Broken bootstrap stub (untracked)
+      - path: src/backend/src/
+        kind: directory
+        coverage: full
+        note: Empty mirror tree (untracked)
+    verification:
+      checks:
+        - "ls src/backend/None src/backend/tmp_write.py src/backend/tmp_writer.py src/backend/src/  (expect: all not found)"
+        - "grep -l 'MIGRATION-SHIM' src/backend/server.py src/backend/director_interface.py  (expect: both)"
+      required_tests: []
+      docs_updates: []
+      graph_updates: []
+    delete_when:
+      - "Already retired"
+
+  - id: mig-gitignore-and-stale-workflow-cleanup
+    title: .gitignore .github exclusion fix and stale GHA workflow removal
+    wave: 4
+    category: cleanup
+    scope: governance_infrastructure
+    status: retired
+    current_impl_state: legacy_removed
+    owner: governance-engineer
+    legacy_policy: no_new_shim
+    depends_on:
+      - mig-structural-pollution-cleanup
+    blockers: []
+    notes:
+      - "2026-05-07 Director audit: discovered .gitignore line 97 had literal '.github' rule"
+      - "Effect: ALL .github/workflows/*.yml were untracked at every directory level (top-level + src/backend/)"
+      - "Squad F's governance-gates.yml could not be committed without this fix"
+      - "Fix: replaced '.github' line with comment explaining .github MUST be versioned (workflows/ISSUE_TEMPLATE/etc)"
+      - "Staged 4 root workflows: ci.yml, kernel_quality.yml, quality-gates.yml, governance-gates.yml (new)"
+      - "Removed src/backend/.github/workflows/performance.yml: location wrong (GHA only scans repo-root .github/workflows/), content fully deprecated (actions/checkout@v2, setup-python@v2, python-version 3.9 vs project requires-python>=3.12, missing pip install -e ., no working-directory)"
+      - "polaris/tests/performance/ test directory PRESERVED (real tests still exist; future Wave 2 may add a properly-positioned performance workflow at repo root)"
+    target:
+      cell: ""
+      catalog_status: actual
+      target_assets_status: active_impl
+      root_dirs:
+        - .github/workflows/
+      target_paths:
+        - .github/workflows/governance-gates.yml
+        - .github/workflows/ci.yml
+        - .github/workflows/kernel_quality.yml
+        - .github/workflows/quality-gates.yml
+      actual_impl_paths:
+        - .github/workflows/
+      subgraphs: []
+    source_refs:
+      - path: .gitignore
+        kind: file
+        coverage: partial
+        note: Removed line 97 '.github' literal rule
+      - path: src/backend/.github/workflows/performance.yml
+        kind: file
+        coverage: full
+        note: Deleted - misplaced (GHA does not scan this path) and fully deprecated content
+      - path: src/backend/.github/workflows/
+        kind: directory
+        coverage: full
+        note: Deleted (empty after performance.yml removal)
+      - path: src/backend/.github/
+        kind: directory
+        coverage: full
+        note: Deleted (empty after workflows/ removal)
+    verification:
+      checks:
+        - "git check-ignore -v .github/workflows/governance-gates.yml  (expect: no output, not ignored)"
+        - "git ls-files .github/workflows/  (expect: 4 files after staging)"
+        - "ls src/backend/.github  (expect: not found)"
+        - "ls polaris/tests/performance/test_tool_performance.py  (expect: still present)"
+      required_tests: []
+      docs_updates:
+        - "AGENTS.md §15.4 gap on .gitignore .github exclusion"
+        - "CLAUDE.md §6.4 gap mirror"
+        - "GEMINI.md §6.4 gap mirror"
+      graph_updates: []
+    delete_when:
+      - "Already retired"

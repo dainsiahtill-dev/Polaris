@@ -1,0 +1,405 @@
+# Governance Gates - Staged Rollout (5 Stages)
+#
+# Owner: Squad F (CI Governance)
+# Created: 2026-05-07
+# Authority: src/backend/docs/governance/ci/pipeline.template.yaml
+#            src/backend/docs/governance/ci/STAGED_ROLLOUT_PLAN.md
+#
+# Design notes
+# ------------
+# Polaris ACGA 2.0 governance defines 15 stages in pipeline.template.yaml.
+# Historically the only Actions-level driver was ad-hoc invocations inside
+# ci.yml. This workflow is the canonical, staged rollout vehicle:
+#
+#   Stage 1 - Audit            : enabled by default, non-blocking (continue-on-error)
+#   Stage 2 - Fail-on-new      : designed but disabled (manual trigger only)
+#   Stage 3 - Release Quality  : designed but disabled
+#   Stage 4 - Structural Gov.  : designed but disabled
+#   Stage 5 - Hard-fail        : designed but disabled (cleaned domains only)
+#
+# Stages 2-5 are gated behind workflow_dispatch.inputs.stage so PR / push
+# events never inadvertently trip them. To activate any stage, dispatch
+# manually with stage=N (or stage=all). Removing the `if:` guard converts
+# a stage from designed to live blocking.
+#
+# YAML loaded as UTF-8 (PYTHONUTF8=1 / PYTHONIOENCODING=utf-8 enforced
+# inside scripts). All gate scripts are run with working-directory:
+# src/backend because they assume the backend root as CWD.
+
+name: Governance Gates
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Which stage to run (1=audit-only default; 2/3/4/5=designed; all=run every stage)"
+        required: false
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+          - "all"
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 1 - Audit (DEFAULT ENABLED, non-blocking)
+  # ---------------------------------------------------------------------------
+  stage1-audit:
+    name: "Stage 1 - Audit (non-blocking)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Minimal install: governance gates only need yaml + jsonschema.
+          # Avoid pulling the full dev extras here to keep audit fast.
+          pip install pyyaml jsonschema referencing
+
+      - name: Prepare report directory
+        working-directory: src/backend
+        run: mkdir -p workspace/meta/governance_reports
+
+      - name: Catalog Governance (audit-only)
+        id: catalog_audit
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/run_catalog_governance_gate.py \
+            --workspace . \
+            --mode audit-only \
+            --report workspace/meta/governance_reports/catalog_governance_gate.audit.json
+
+      - name: Directory Hygiene (audit)
+        id: directory_hygiene
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/check_directory_hygiene.py --workspace .
+
+      # NOTE 2026-05-07: pipeline.template.yaml lists
+      #   `run_kernelone_release_gate.py --mode utf8-audit`
+      # but the script today only supports modes (collect|tests|all).
+      # Squad F dry-run flagged this gap. The UTF-8 audit step is wired
+      # but disabled until the script grows that mode (Wave 2 scope).
+      - name: UTF-8 Text I/O Audit (DISABLED - script lacks utf8-audit mode)
+        if: false
+        working-directory: src/backend
+        continue-on-error: true
+        run: |
+          python docs/governance/ci/scripts/run_kernelone_release_gate.py \
+            --mode utf8-audit \
+            --report workspace/meta/governance_reports/utf8_io_gate.json
+
+      - name: Upload Stage 1 reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-stage1-reports
+          path: |
+            src/backend/workspace/meta/governance_reports/catalog_governance_gate.audit.json
+            src/backend/workspace/meta/governance_reports/utf8_io_gate.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Stage 1 Summary
+        if: always()
+        run: |
+          echo "## Stage 1 - Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Gate | Outcome |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| catalog_governance_audit | ${{ steps.catalog_audit.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| directory_hygiene_gate | ${{ steps.directory_hygiene.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| explicit_utf8_text_io_gate | skipped (script gap, see Wave 2) |" >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  # Stage 2 - Fail-on-new (DESIGNED, disabled by default)
+  # ---------------------------------------------------------------------------
+  stage2-fail-on-new:
+    name: "Stage 2 - Fail-on-new (designed, manual)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [stage1-audit]
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.stage == '2' || github.event.inputs.stage == 'all')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Prepare report directory
+        working-directory: src/backend
+        run: mkdir -p workspace/meta/governance_reports
+
+      - name: Catalog Governance (fail-on-new)
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_catalog_governance_gate.py \
+            --workspace . \
+            --mode fail-on-new \
+            --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json \
+            --report workspace/meta/governance_reports/catalog_governance_gate.fail_on_new.json
+
+      - name: Manifest <-> Catalog reconciliation
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_catalog_governance_gate.py \
+            --workspace . \
+            --mode fail-on-new \
+            --mismatch-baseline tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl \
+            --report workspace/meta/governance_reports/manifest_catalog_reconciliation.json
+          python -m pytest -q tests/test_governance_cell_manifests.py
+
+      - name: Cell internal fence (fail-on-new)
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/check_cell_internal_fence.py \
+            --workspace . \
+            --mode fail-on-new \
+            --baseline tests/architecture/allowlists/cell_internal_fence.baseline.json \
+            --output workspace/meta/governance_reports/cell_internal_fence_gate.fail_on_new.json
+
+      - name: Upload Stage 2 reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-stage2-reports
+          path: |
+            src/backend/workspace/meta/governance_reports/catalog_governance_gate.fail_on_new.json
+            src/backend/workspace/meta/governance_reports/manifest_catalog_reconciliation.json
+            src/backend/workspace/meta/governance_reports/cell_internal_fence_gate.fail_on_new.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Stage 3 - Release Quality (DESIGNED, disabled by default)
+  # ---------------------------------------------------------------------------
+  stage3-release-quality:
+    name: "Stage 3 - Release Quality (designed, manual)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [stage1-audit]
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.stage == '3' || github.event.inputs.stage == 'all')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Prepare report directory
+        working-directory: src/backend
+        run: mkdir -p workspace/meta/governance_reports
+
+      - name: KernelOne release gate (collect)
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_kernelone_release_gate.py \
+            --mode collect \
+            --report workspace/meta/governance_reports/kernelone_release_gate.collect.json
+          python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+
+      - name: KernelOne release gate (tests)
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_kernelone_release_gate.py \
+            --mode tests \
+            --report workspace/meta/governance_reports/kernelone_release_gate.tests.json
+
+      - name: Delivery CLI hygiene
+        working-directory: src/backend
+        run: |
+          python -m pytest -q tests/architecture/test_delivery_cli_import_hygiene.py
+
+      - name: OpenCode convergence
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_opencode_convergence_gate.py \
+            --workspace . \
+            --mode hard-fail \
+            --report workspace/meta/governance_reports/opencode_convergence_gate.json
+          python -m pytest -q tests/architecture/test_opencode_convergence_gate.py
+
+      - name: Upload Stage 3 reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-stage3-reports
+          path: |
+            src/backend/workspace/meta/governance_reports/kernelone_release_gate.*.json
+            src/backend/workspace/meta/governance_reports/opencode_convergence_gate.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Stage 4 - Structural Governance (DESIGNED, disabled by default)
+  # ---------------------------------------------------------------------------
+  stage4-structural:
+    name: "Stage 4 - Structural Governance (designed, manual)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [stage1-audit]
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.stage == '4' || github.event.inputs.stage == 'all')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Prepare report directory
+        working-directory: src/backend
+        run: mkdir -p workspace/meta/governance_reports
+
+      - name: Structural bug governance
+        working-directory: src/backend
+        run: |
+          python -m pytest -q tests/architecture/test_structural_bug_governance_assets.py
+          python -m pytest -q tests/architecture/test_kernelone_llm_contract_reexports.py
+          python -m pytest -q polaris/cells/roles/kernel/tests/test_turn_engine_semantic_stages.py
+
+      - name: ContextOS governance
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_contextos_governance_gate.py \
+            --workspace . \
+            --mode hard-fail \
+            --report workspace/meta/governance_reports/contextos_governance_gate.json
+          python -m pytest -q polaris/tests/contextos/
+
+      - name: Tool calling canonical (director role)
+        working-directory: src/backend
+        run: |
+          python -m polaris.delivery.cli agentic-eval \
+            --workspace . \
+            --suite tool_calling_matrix \
+            --role director \
+            --matrix-transport both \
+            --provider-id runtime_binding \
+            --model runtime_binding \
+            --format json
+          python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py \
+            --workspace . \
+            --role director \
+            --mode hard-fail \
+            --report workspace/meta/governance_reports/tool_calling_canonical_gate.json
+
+      - name: Upload Stage 4 reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-stage4-reports
+          path: |
+            src/backend/workspace/meta/governance_reports/contextos_governance_gate.json
+            src/backend/workspace/meta/governance_reports/tool_calling_canonical_gate.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Stage 5 - Hard-fail (DESIGNED, disabled by default)
+  # ---------------------------------------------------------------------------
+  stage5-hard-fail:
+    name: "Stage 5 - Hard-fail (designed, manual, cleaned domains only)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [stage1-audit]
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.stage == '5' || github.event.inputs.stage == 'all')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Prepare report directory
+        working-directory: src/backend
+        run: mkdir -p workspace/meta/governance_reports
+
+      - name: Catalog Governance (hard-fail)
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/run_catalog_governance_gate.py \
+            --workspace . \
+            --mode hard-fail \
+            --report workspace/meta/governance_reports/catalog_governance_gate.hard_fail.json
+
+      - name: Migration preflight
+        working-directory: src/backend
+        run: |
+          python docs/governance/ci/scripts/check_catalog_presence.py --workspace . --mode preflight
+          python -m pytest -q tests/architecture/test_catalog_governance_gate.py -k "migration"
+
+      - name: Upload Stage 5 reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-stage5-reports
+          path: |
+            src/backend/workspace/meta/governance_reports/catalog_governance_gate.hard_fail.json
+          retention-days: 30
+          if-no-files-found: warn

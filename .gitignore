@@ -94,7 +94,7 @@ src/electron/out/
 .opencode
 .qoder
 .roo
-.github
+# .github is intentionally NOT ignored — workflows/, ISSUE_TEMPLATE/, etc. must be versioned.
 
 # Local agent runtime directories
 .agent/

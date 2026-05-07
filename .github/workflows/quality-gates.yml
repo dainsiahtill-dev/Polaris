@@ -1,0 +1,181 @@
+# Task #4: Mandatory Quality Gates CI/CD
+# This workflow enforces code quality standards that block PR merges on failure
+
+name: Quality Gates
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/backend/polaris/**/*.py'
+      - 'tests/**/*.py'
+      - 'pyproject.toml'
+      - 'ruff.toml'
+      - '.pre-commit-config.yaml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/backend/polaris/**/*.py'
+      - 'tests/**/*.py'
+      - 'pyproject.toml'
+      - 'ruff.toml'
+      - '.pre-commit-config.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Gate 1: Ruff Linting (Blocks merge on failure)
+  ruff-lint:
+    name: Ruff Lint Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ruff
+        run: pip install ruff>=0.6.0
+
+      - name: Run Ruff Check
+        run: |
+          ruff check src/backend/polaris --output-format=github
+        # Exit code non-zero on failure = blocks merge
+
+  # Gate 2: Ruff Formatting (Blocks merge on failure)
+  ruff-format:
+    name: Ruff Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ruff
+        run: pip install ruff>=0.6.0
+
+      - name: Check Formatting
+        run: |
+          ruff format --check src/backend/polaris
+        # Exit code non-zero on failure = blocks merge
+
+  # Gate 3: MyPy Type Checking (Blocks merge on failure)
+  mypy-check:
+    name: MyPy Type Check (Strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install mypy>=1.11.0
+          pip install pydantic>=2.5.0 pydantic-settings>=2.0.0
+          pip install types-requests types-aiofiles
+
+      - name: Run MyPy (Strict Mode)
+        run: |
+          mypy src/backend/polaris/kernelone --strict --ignore-missing-imports
+        # Strict mode + exit code non-zero on failure = blocks merge
+
+      - name: Run MyPy (Delivery)
+        run: |
+          mypy src/backend/polaris/delivery --ignore-missing-imports
+        # Non-strict mypy for delivery layer; exit code non-zero on failure blocks merge
+
+      - name: Generate MyPy JSON report
+        working-directory: src/backend
+        run: |
+          mypy polaris/kernelone --ignore-missing-imports --show-error-codes --output json > mypy_errors.jsonl 2>&1 || true
+          python -c "
+          import json
+          lines = [l.strip() for l in open('mypy_errors.jsonl', encoding='utf-8') if l.strip()]
+          entries = [json.loads(l) for l in lines]
+          report = {'status': 'ok', 'error_count': len(entries), 'errors': entries}
+          with open('mypy_errors.json', 'w', encoding='utf-8') as f:
+              json.dump(report, f, indent=2)
+          print(f'JSON report written: {len(entries)} errors')
+          " || (echo '{"status":"parse_error","error_count":0,"errors":[]}' > mypy_errors.json && echo "WARNING: mypy JSON parsing failed, wrote fallback report")
+
+      - name: Validate MyPy JSON report
+        working-directory: src/backend
+        run: |
+          python -c "
+          import json, sys, os
+          p = 'mypy_errors.json'
+          if not os.path.exists(p):
+              print(f'ERROR: {p} does not exist')
+              sys.exit(1)
+          try:
+              with open(p, encoding='utf-8') as f:
+                  data = json.load(f)
+              if not isinstance(data, dict) or 'status' not in data:
+                  print(f'ERROR: {p} missing required status field')
+                  sys.exit(1)
+              print(f'OK: {p} is valid JSON (status={data[\"status\"]}, errors={data.get(\"error_count\", \"N/A\")})')
+          except json.JSONDecodeError as e:
+              print(f'ERROR: {p} is not valid JSON: {e}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'ERROR: Failed to validate {p}: {e}')
+              sys.exit(1)
+          "
+
+  # Gate 4: Pre-commit Hooks (Blocks merge on failure)
+  pre-commit:
+    name: Pre-commit Hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pre-commit
+          pip install ruff>=0.6.0 mypy>=1.8.0
+          pip install pydantic>=2.5.0 pydantic-settings>=2.0.0
+          pip install types-requests types-aiofiles
+
+      - name: Run Pre-commit
+        run: |
+          pre-commit run --all-files --show-diff-on-failure
+        # Exit code non-zero on failure = blocks merge
+
+  # Summary Gate (Required for merge)
+  quality-gates-summary:
+    name: Quality Gates Summary
+    runs-on: ubuntu-latest
+    needs: [ruff-lint, ruff-format, mypy-check, pre-commit]
+    if: always()
+    steps:
+      - name: Check All Gates Passed
+        run: |
+          echo "Ruff Lint: ${{ needs.ruff-lint.result }}"
+          echo "Ruff Format: ${{ needs.ruff-format.result }}"
+          echo "MyPy Check: ${{ needs.mypy-check.result }}"
+          echo "Pre-commit: ${{ needs.pre-commit.result }}"
+
+          if [[ "${{ needs.ruff-lint.result }}" != "success" ]] || \
+             [[ "${{ needs.ruff-format.result }}" != "success" ]] || \
+             [[ "${{ needs.mypy-check.result }}" != "success" ]] || \
+             [[ "${{ needs.pre-commit.result }}" != "success" ]]; then
+            echo "ERROR: One or more quality gates failed!"
+            exit 1
+          fi
+
+          echo "SUCCESS: All quality gates passed!"
