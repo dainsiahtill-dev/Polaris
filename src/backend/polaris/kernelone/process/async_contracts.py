@@ -743,9 +743,11 @@ class PopenAsyncHandle:
         "_proc_alive",
         "_started_at",
         "_status",
+        "_stderr_lines",
         "_stderr_queue",
         "_stdin_lines",
         "_stdin_used",
+        "_stdout_lines",
         "_stdout_queue",
         "_stream_done",
         "_timeout_seconds",
@@ -769,6 +771,8 @@ class PopenAsyncHandle:
         # subprocess stderr/stdout in broker logs.
         self._stdout_queue: queue.Queue[str] = queue.Queue(maxsize=500)
         self._stderr_queue: queue.Queue[str] = queue.Queue(maxsize=500)
+        self._stdout_lines: list[str] = []
+        self._stderr_lines: list[str] = []
         self._stream_done = False
         self._proc_alive = True
         self._stdin_used = False
@@ -793,8 +797,10 @@ class PopenAsyncHandle:
         def pump_stdout() -> None:
             try:
                 for line in self._proc.stdout or []:
+                    normalized = line.rstrip("\n\r")
+                    self._stdout_lines.append(normalized)
                     try:
-                        self._stdout_queue.put_nowait(line.rstrip("\n\r"))
+                        self._stdout_queue.put_nowait(normalized)
                     except queue.Full:
                         break
             except (RuntimeError, ValueError) as exc:
@@ -810,8 +816,10 @@ class PopenAsyncHandle:
         def pump_stderr() -> None:
             try:
                 for line in self._proc.stderr or []:
+                    normalized = line.rstrip("\n\r")
+                    self._stderr_lines.append(normalized)
                     try:
-                        self._stderr_queue.put_nowait(line.rstrip("\n\r"))
+                        self._stderr_queue.put_nowait(normalized)
                     except queue.Full:
                         break
             except (RuntimeError, ValueError) as exc:
@@ -1024,8 +1032,8 @@ class PopenAsyncHandle:
             pid=self.pid,
             exit_code=exit_code,
             status=self._status,
-            stdout_lines=(),
-            stderr_lines=(),
+            stdout_lines=tuple(self._stdout_lines),
+            stderr_lines=tuple(self._stderr_lines),
             timed_out=(self._status == ProcessStatus.TIMED_OUT),
             timeout_seconds=self._timeout_seconds,
             started_at=self._started_at,

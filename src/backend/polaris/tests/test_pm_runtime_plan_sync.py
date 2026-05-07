@@ -74,6 +74,17 @@ def _build_args(workspace: Path) -> SimpleNamespace:
     )
 
 
+def test_pm_canonical_director_script_path_resolves_repo_relative_default() -> None:
+    """Workflow metadata must not carry cwd-sensitive Director paths."""
+    resolved = Path(
+        orchestration_engine._canonical_director_script_path("src/backend/polaris/delivery/cli/loop-director.py")
+    )
+
+    assert resolved.is_absolute()
+    assert resolved.name == "loop-director.py"
+    assert resolved.is_file()
+
+
 def test_pm_run_once_syncs_persistent_docs_plan_to_runtime_contract(
     tmp_path: Path,
     monkeypatch: Any,

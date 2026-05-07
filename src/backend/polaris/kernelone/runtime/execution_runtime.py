@@ -201,6 +201,28 @@ class ExecutionHandle:
             yield chunk
 
 
+def _summarize_process_failure(result: Any) -> str:
+    """Return a compact stderr/stdout tail for failed subprocess snapshots."""
+    stderr_lines = getattr(result, "stderr_lines", ())
+    stdout_lines = getattr(result, "stdout_lines", ())
+    if isinstance(result, dict):
+        stderr_lines = result.get("stderr_lines", stderr_lines)
+        stdout_lines = result.get("stdout_lines", stdout_lines)
+
+    def normalize(lines: Any) -> list[str]:
+        if not isinstance(lines, (list, tuple)):
+            return []
+        return [str(line) for line in lines if str(line).strip()]
+
+    stderr_tail = normalize(stderr_lines)[-8:]
+    stdout_tail = normalize(stdout_lines)[-4:]
+    if stderr_tail:
+        return "\n".join(stderr_tail)
+    if stdout_tail:
+        return "\n".join(stdout_tail)
+    return "subprocess exited with non-zero status"
+
+
 class ExecutionRuntime:
     """Unified execution runtime with lane-based concurrency control."""
 
@@ -790,6 +812,11 @@ class ExecutionRuntime:
 
                 with contextlib.suppress(RuntimeError):
                     state.result = await handle.result()
+
+                if state.status == ExecutionStatus.FAILED and not state.error:
+                    state.error = _summarize_process_failure(state.result)
+                    if state.error:
+                        span.set_tag("error", state.error)
 
             except subprocess.TimeoutExpired:
                 state.status = ExecutionStatus.TIMED_OUT

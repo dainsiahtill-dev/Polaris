@@ -78,6 +78,11 @@ def _bootstrap_backend_import_path():
 logger = logging.getLogger(__name__)
 
 
+def _default_director_path() -> str:
+    """Return the canonical Director script path for direct PM CLI execution."""
+    return str(Path(__file__).resolve().parents[1] / "loop-director.py")
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser for loop-pm."""
     parser = argparse.ArgumentParser(
@@ -157,7 +162,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-iterations", type=int, default=0)
     parser.add_argument("--resume", action="store_true", default=False)
     parser.add_argument("--run-director", action="store_true", default=False)
-    parser.add_argument("--director-path", default="src/backend/polaris/delivery/cli/loop-director.py")
+    parser.add_argument("--director-path", default=_default_director_path())
     parser.add_argument("--director-type", default="auto")
     parser.add_argument("--director-model", default="")
     parser.add_argument("--director-timeout", type=int, default=3600)

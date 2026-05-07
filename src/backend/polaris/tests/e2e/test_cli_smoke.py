@@ -68,7 +68,7 @@ def _build_env() -> dict[str, str]:
     packages such as *fastapi* are discoverable) **and** have
     ``src/backend`` prepended so that the ``polaris`` package is found.
     """
-    backend_dir = Path(__file__).resolve().parents[2]  # …/src/backend
+    backend_dir = Path(__file__).resolve().parents[3]  # .../src/backend
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
     separator = os.pathsep
@@ -105,3 +105,26 @@ def test_cli_help_smoke(entry: CliEntry) -> None:
         f"{entry.module!r}.\n"
         f"combined output:\n{combined}"
     )
+
+
+def test_loop_director_script_help_bootstraps_from_non_repo_cwd(tmp_path: Path) -> None:
+    """Direct script execution must bootstrap backend imports before polaris imports."""
+    backend_dir = Path(__file__).resolve().parents[3]
+    script_path = backend_dir / "polaris" / "delivery" / "cli" / "loop-director.py"
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [sys.executable, str(script_path), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+        encoding="utf-8",
+        timeout=30,
+    )
+
+    assert result.returncode == 0, (
+        f"loop-director.py --help exited with {result.returncode}.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "Polaris Director" in f"{result.stdout}\n{result.stderr}"

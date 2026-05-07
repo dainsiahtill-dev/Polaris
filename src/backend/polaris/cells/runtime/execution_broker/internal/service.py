@@ -113,6 +113,29 @@ def _format_args_for_log(args: Iterable[str]) -> str:
     return shlex.join(sanitized)
 
 
+def _iter_result_output_lines(result: Any) -> list[str]:
+    """Return captured subprocess output lines for fallback diagnostics."""
+    stdout_lines = getattr(result, "stdout_lines", ())
+    stderr_lines = getattr(result, "stderr_lines", ())
+    if isinstance(result, dict):
+        stdout_lines = result.get("stdout_lines", stdout_lines)
+        stderr_lines = result.get("stderr_lines", stderr_lines)
+
+    lines: list[str] = []
+    for raw_lines in (stdout_lines, stderr_lines):
+        if not isinstance(raw_lines, (list, tuple)):
+            continue
+        for raw_line in raw_lines:
+            line = str(raw_line)
+            if line:
+                lines.append(line)
+    return lines
+
+
+def _format_error_for_log(error: str) -> str:
+    return str(error or "").replace("\r", " ").replace("\n", " | ")
+
+
 async def _wait_for_terminal_snapshot(handle: ExecutionHandle, *, timeout_seconds: float = 10.0) -> ExecutionSnapshot:
     with contextlib.suppress(TimeoutError):
         await handle.wait(timeout=max(timeout_seconds, 0.0))
@@ -502,6 +525,7 @@ class ExecutionBrokerService:
         deadline = loop.time() + max_seconds if max_seconds is not None else None
         terminal_idle_started_at: float | None = None
         execution_id = handle.execution_id
+        emitted_process_lines = 0
 
         try:
             start_snapshot = handle.snapshot()
@@ -556,6 +580,7 @@ class ExecutionBrokerService:
                 if not chunk.line:
                     continue
                 terminal_idle_started_at = None
+                emitted_process_lines += 1
                 log_file.write(chunk.line + "\n")
             log_file.flush()
         except asyncio.CancelledError:
@@ -574,13 +599,16 @@ class ExecutionBrokerService:
         finally:
             with contextlib.suppress(Exception):
                 snapshot = await _wait_for_terminal_snapshot(handle)
+                if emitted_process_lines == 0:
+                    for line in _iter_result_output_lines(snapshot.result):
+                        log_file.write(line + "\n")
                 log_file.write(
                     "[execution_broker] terminal "
                     f"execution_id={execution_id} "
                     f"pid={snapshot.pid} "
                     f"status={snapshot.status.value} "
                     f"exit_code={_extract_exit_code(snapshot)} "
-                    f"error={snapshot.error or ''}\n"
+                    f"error={_format_error_for_log(snapshot.error)}\n"
                 )
                 log_file.flush()
             with contextlib.suppress(Exception):

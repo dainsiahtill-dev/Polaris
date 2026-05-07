@@ -152,9 +152,12 @@ async function requestJson<T>(
     async ({ baseUrl, token, apiPath, method, body }) => {
       const response = await fetch(`${baseUrl}${apiPath}`, {
         method,
+        cache: "no-store",
         headers: {
           authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
         },
         body: body ? JSON.stringify(body) : undefined,
       });
@@ -744,10 +747,11 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     expect(project.metrics.configFileCount).toBeGreaterThanOrEqual(3);
     expect(project.metrics.testFileCount).toBeGreaterThanOrEqual(2);
 
-    await requestJson<SettingsPayload>(window, "/settings", {
+    const updatedSettings = await requestJson<SettingsPayload>(window, "/settings", {
       method: "POST",
       body: { workspace: project.workspace, pm_runs_director: true },
     });
+    expect(String(updatedSettings.workspace || "").toLowerCase()).toBe(project.workspace.toLowerCase());
     await expect.poll(async () => String((await requestJson<SettingsPayload>(window, "/settings")).workspace || "").toLowerCase(), {
       timeout: 90_000,
       intervals: [500, 1000, 2000, 3000],

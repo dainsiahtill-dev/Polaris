@@ -64,6 +64,14 @@ def _serialize_context(context: PhaseContext) -> dict[str, Any]:
     }
 
 
+def _resolve_repo_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "src" / "backend" / "polaris" / "delivery" / "cli" / "loop-director.py").is_file():
+            return parent
+    return current.parent
+
+
 def _build_context(payload: dict[str, Any], contract: TaskContract) -> PhaseContext:
     current = _normalize_dict(payload.get("context"))
     metadata = _normalize_dict(current.get("metadata"))
@@ -131,7 +139,7 @@ def _run_director_execution(
 ) -> tuple[bool, str, list[str], dict[str, Any]]:
     from polaris.delivery.cli.pm.director_interface_core import DirectorTask, create_director
 
-    project_root = Path(__file__).resolve().parents[5]
+    project_root = _resolve_repo_root()
     cache_root = str(runtime_metadata.get("cache_root_full") or "").strip()
     if cache_root:
         task_root = os.path.join(

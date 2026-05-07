@@ -66,6 +66,45 @@ async def test_launch_process_wait_and_log(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_process_preserves_stderr_in_log_and_status(tmp_path: Path) -> None:
+    runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
+    broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))
+    log_path = tmp_path / "failed-process.log"
+
+    command = LaunchExecutionProcessCommandV1(
+        name="stderr-test",
+        args=(
+            sys.executable,
+            "-c",
+            "import sys; print('broker-stdout'); print('broker-stderr', file=sys.stderr); sys.exit(7)",
+        ),
+        workspace=str(tmp_path),
+        timeout_seconds=5.0,
+        log_path=str(log_path),
+        metadata={"test_case": "failed_process_preserves_stderr"},
+    )
+
+    try:
+        launch = await broker.launch_process(command)
+        assert launch.success is True
+        assert launch.handle is not None
+
+        wait_result = await broker.wait_process(launch.handle, timeout_seconds=5.0)
+        assert wait_result.success is False
+        assert wait_result.status == ExecutionProcessStatusV1.FAILED
+        assert wait_result.exit_code == 7
+        assert "broker-stderr" in str(wait_result.error_message)
+
+        content = log_path.read_text(encoding="utf-8")
+        assert "broker-stdout" in content
+        assert "broker-stderr" in content
+        assert "exit_code=7" in content
+        assert "error=broker-stderr" in content
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_terminate_long_running_process() -> None:
     runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
     broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))

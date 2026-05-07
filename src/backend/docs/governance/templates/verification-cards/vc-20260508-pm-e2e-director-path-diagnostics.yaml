@@ -1,0 +1,48 @@
+id: vc-20260508-pm-e2e-director-path-diagnostics
+title: PM E2E Director path and subprocess diagnostics
+date: 2026-05-08
+classification: structural
+scope:
+  - src/backend/polaris/cells/orchestration/pm_planning/service.py
+  - src/backend/polaris/delivery/cli/pm/cli.py
+  - src/backend/polaris/delivery/cli/pm/orchestration_engine.py
+  - src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py
+  - src/backend/polaris/delivery/cli/loop-director.py
+  - src/backend/polaris/kernelone/process/async_contracts.py
+  - src/backend/polaris/kernelone/runtime/execution_runtime.py
+  - src/backend/polaris/cells/runtime/execution_broker/internal/service.py
+assumptions:
+  - id: a1
+    statement: PMService subprocess cwd is the selected target workspace.
+    evidence: src/backend/polaris/cells/orchestration/pm_planning/service.py
+    status: confirmed
+  - id: a2
+    statement: Relative Director paths cross multiple layers with incompatible root assumptions.
+    evidence: PMService command, PM CLI default, workflow Director activity project_root calculation
+    status: confirmed
+  - id: a3
+    statement: Empty execution broker stderr prevents root-cause diagnosis.
+    evidence: pm.process.log terminal lines with exit_code=1 error=
+    status: confirmed
+pre_mortem:
+  - risk: Normalizing paths may accidentally reject explicit custom relative Director scripts.
+    mitigation: Keep explicit relative paths supported by resolving repo-root first, then current cwd.
+  - risk: Capturing subprocess stderr may duplicate log lines.
+    mitigation: Only fallback-write captured result lines when no stream lines were emitted.
+verification_plan:
+  - command: python -m ruff check <changed-python-files>
+    expected: no issues
+  - command: python -m ruff format <changed-python-files>
+    expected: formatted
+  - command: python -m mypy <changed-python-files>
+    expected: success
+  - command: python -m pytest <targeted-tests> -q
+    expected: pass
+  - command: npm run test:e2e:real-flow
+    expected: PM and Director artifacts are produced with no PM workspace idle failure
+rollback:
+  method: git revert changed files from this verification card
+  watch_points:
+    - PMService launch command
+    - pm.process.log stderr visibility
+    - runtime/results/director.result.json generation

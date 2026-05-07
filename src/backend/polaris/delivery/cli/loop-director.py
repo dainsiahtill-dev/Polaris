@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# noqa: N999 - CLI script with hyphenated name (convention for CLI tools)
+# ruff: noqa: E402,N999
+
 """Polaris Director v2 Integration - Full Architecture Integration.
 
 This module integrates Polaris PM with Director v2 service architecture,
@@ -20,18 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Polaris execution/runtime services
-from polaris.cells.director.execution.public.service import (
-    DirectorConfig,
-    DirectorService,
-)
-
-# Polaris domain entities
-from polaris.domain.entities import TaskPriority, TaskStatus
-from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_OPERATION_TIMEOUT_SECONDS
-
-logger = logging.getLogger(__name__)
-
 
 def _bootstrap_backend_import_path() -> None:
     """Ensure backend package path when running file directly."""
@@ -44,6 +33,18 @@ def _bootstrap_backend_import_path() -> None:
 
 
 _bootstrap_backend_import_path()
+
+# Polaris execution/runtime services
+from polaris.cells.director.execution.public.service import (
+    DirectorConfig,
+    DirectorService,
+)
+
+# Polaris domain entities
+from polaris.domain.entities import TaskPriority, TaskStatus
+from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_OPERATION_TIMEOUT_SECONDS
+
+logger = logging.getLogger(__name__)
 
 # Polaris infrastructure
 

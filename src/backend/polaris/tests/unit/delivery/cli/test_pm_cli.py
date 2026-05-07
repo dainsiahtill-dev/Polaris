@@ -321,6 +321,17 @@ class TestPmLoopCli:
         assert args.iterations == 1
         assert args.agent == "pm"
 
+    def test_loop_pm_parser_default_director_path_is_absolute(
+        self,
+        pm_loop_parser: argparse.ArgumentParser,
+    ) -> None:
+        """loop-pm must not inherit a cwd-sensitive Director script path."""
+        args = pm_loop_parser.parse_args([])
+        director_path = Path(args.director_path)
+        assert director_path.is_absolute()
+        assert director_path.name == "loop-director.py"
+        assert director_path.is_file()
+
     def test_loop_pm_parser_accepts_pm_service_contract(self, pm_loop_parser: argparse.ArgumentParser) -> None:
         """loop-pm parser must accept the command emitted by PMService."""
         args = pm_loop_parser.parse_args(

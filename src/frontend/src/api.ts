@@ -99,7 +99,12 @@ export async function apiFetch(
       headers.set("Authorization", `Bearer ${info.token}`);
     }
     const url = (isViteDevMode && !info.baseUrl) ? path : `${info.baseUrl}${path}`;
-    return fetch(url, { ...fetchOptions, headers, signal: controller.signal });
+    return fetch(url, {
+      ...fetchOptions,
+      cache: fetchOptions.cache ?? 'no-store',
+      headers,
+      signal: controller.signal,
+    });
   };
 
   try {

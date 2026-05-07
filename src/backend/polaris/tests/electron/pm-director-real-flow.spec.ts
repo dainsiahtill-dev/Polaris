@@ -68,8 +68,11 @@ async function fetchJson<T>(window: Page, endpoint: string): Promise<T> {
   return window.evaluate(
     async ({ baseUrl, token, path }) => {
       const response = await fetch(`${baseUrl}${path}`, {
+        cache: "no-store",
         headers: {
           authorization: `Bearer ${token}`,
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
         },
       });
       if (!response.ok) {
