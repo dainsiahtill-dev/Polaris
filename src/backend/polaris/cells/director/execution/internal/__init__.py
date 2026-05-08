@@ -78,9 +78,11 @@ from polaris.cells.director.execution.internal.existence_gate import (
     is_any_missing,
     is_pure_create,
 )
-from polaris.cells.director.execution.internal.file_apply_service import (
-    FileApplyService,
-)
+
+with contextlib.suppress(ImportError):
+    from polaris.cells.director.execution.internal.file_apply_service import (
+        FileApplyService,
+    )
 from polaris.cells.director.execution.internal.patch_apply_engine import (
     ApplyIntegrity,
     ApplyResult,

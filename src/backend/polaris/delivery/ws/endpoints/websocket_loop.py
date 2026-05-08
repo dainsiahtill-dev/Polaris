@@ -159,6 +159,9 @@ async def run_main_loop(
                             workspace=resolved_workspace,
                         )
                         sent_any = sent_any or court_ok
+                    previous_status_sig = status_sig
+                    status_sig, _ = await send_status_func(force=False, last_sig=status_sig)
+                    sent_any = sent_any or status_sig != previous_status_sig
                     sent_any = sent_any or await send_incrementals_func()
 
             if realtime_task is not None and realtime_task in done:

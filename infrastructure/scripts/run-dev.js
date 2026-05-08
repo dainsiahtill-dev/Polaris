@@ -1,11 +1,12 @@
 const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const net = require("net");
+const os = require("os");
 const path = require("path");
 const { formatLogLine } = require("./log-pretty");
 
 const repoRoot = path.join(__dirname, "..", "..");
-const runtimeDir = path.join(repoRoot, ".polaris", "runtime");
+const runtimeDir = path.join(process.env.KERNELONE_HOME || path.join(os.homedir(), ".polaris"), "runtime");
 const devStatePath = path.join(runtimeDir, "dev-runner-state.json");
 const preferredPortRaw = Number(process.env.KERNELONE_RENDERER_PORT || "5173");
 const preferredPort = Number.isFinite(preferredPortRaw) && preferredPortRaw > 0 ? preferredPortRaw : 5173;
@@ -300,6 +301,7 @@ async function main() {
     KERNELONE_DEV_SERVER_URL: rendererUrl,
     KERNELONE_CORS_ORIGINS: corsOrigins,
     KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK: process.env.KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK || "1",
+    KERNELONE_DIRECTOR_RUNTIME_CODEGEN: process.env.KERNELONE_DIRECTOR_RUNTIME_CODEGEN || "1",
   };
   const skipElectron = isTruthyEnv(env.KERNELONE_DEV_SKIP_ELECTRON);
 

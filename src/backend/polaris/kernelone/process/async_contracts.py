@@ -746,6 +746,7 @@ class PopenAsyncHandle:
         "_stderr_lines",
         "_stderr_queue",
         "_stdin_lines",
+        "_stdin_lock",
         "_stdin_used",
         "_stdout_lines",
         "_stdout_queue",
@@ -775,6 +776,7 @@ class PopenAsyncHandle:
         self._stderr_lines: list[str] = []
         self._stream_done = False
         self._proc_alive = True
+        self._stdin_lock = asyncio.Lock()
         self._stdin_used = False
 
     @property
@@ -852,18 +854,7 @@ class PopenAsyncHandle:
             self._start_pumps()
             self._stream_done = True
 
-        # Write stdin first if lines were provided.
-        if self._stdin_lines is not None and not self._stdin_used:
-            self._stdin_used = True
-            loop = asyncio.get_running_loop()
-            try:
-                await loop.run_in_executor(None, self._write_stdin_sync)
-            except (RuntimeError, ValueError) as exc:
-                _logger.warning(
-                    "kernelone.process.async_contracts.stream.write_stdin failed: %s",
-                    exc,
-                    exc_info=True,
-                )
+        await self._write_stdin_once("stream")
 
         pid = self.pid
         stdout_eof = False
@@ -917,9 +908,31 @@ class PopenAsyncHandle:
                 exc_info=True,
             )
 
+    async def _write_stdin_once(self, caller: str) -> None:
+        """Deliver prepared stdin exactly once, independent of stream usage."""
+        if self._stdin_lines is None:
+            return
+
+        async with self._stdin_lock:
+            if self._stdin_used:
+                return
+            self._stdin_used = True
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(None, self._write_stdin_sync)
+            except (RuntimeError, ValueError) as exc:
+                _logger.warning(
+                    "kernelone.process.async_contracts.%s.write_stdin failed: %s",
+                    caller,
+                    exc,
+                    exc_info=True,
+                )
+
     async def wait(self, timeout: float | None = None) -> ProcessStatus:
         if self._status not in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
             return self._status
+
+        await self._write_stdin_once("wait")
 
         effective_timeout = timeout if timeout is not None else self._timeout_seconds
         loop = asyncio.get_running_loop()

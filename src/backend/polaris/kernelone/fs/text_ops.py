@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from typing import Any, TextIO
 
 from polaris.kernelone.constants import BAD_CHAR_THRESHOLD, DEFAULT_LOCK_TIMEOUT_SECONDS
@@ -15,6 +16,8 @@ from .fsync_mode import is_fsync_enabled
 from .jsonl.locking import acquire_lock_fd, release_lock_fd
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS_REPLACE_RETRY_DELAYS_SECONDS = (0.025, 0.05, 0.1, 0.2)
 
 
 def _require_utf8_encoding(value: str) -> str:
@@ -87,7 +90,15 @@ def write_text_atomic(
             handle.flush()
             if _fsync_enabled():
                 os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
+        replace_attempts = len(_WINDOWS_REPLACE_RETRY_DELAYS_SECONDS) + 1
+        for attempt in range(replace_attempts):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError:
+                if os.name != "nt" or attempt >= replace_attempts - 1:
+                    raise
+                time.sleep(_WINDOWS_REPLACE_RETRY_DELAYS_SECONDS[attempt])
         _fsync_parent_dir(path)
     finally:
         if tmp_path and os.path.exists(tmp_path):

@@ -48,6 +48,24 @@ function readJsonSeed(base64EnvName, jsonEnvName) {
   return null;
 }
 
+function stripUtf8Bom(raw) {
+  const text = String(raw || "");
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+function parseJsonText(raw, label) {
+  try {
+    return JSON.parse(stripUtf8Bom(raw));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label}: ${message}`);
+  }
+}
+
+function readJsonFile(filePath, label) {
+  return parseJsonText(fs.readFileSync(filePath, "utf-8"), label);
+}
+
 function readSettingsSeed() {
   return readJsonSeed("KERNELONE_E2E_SETTINGS_JSON_BASE64", "KERNELONE_E2E_SETTINGS_JSON");
 }
@@ -64,16 +82,60 @@ function isSeededSettingsBootstrap(settingsBootstrap) {
   return String(settingsBootstrap?.source || "").startsWith("env:KERNELONE_E2E_SETTINGS_JSON");
 }
 
+function isPathInside(basePath, candidatePath) {
+  const base = path.resolve(basePath);
+  const candidate = path.resolve(candidatePath);
+  const normalizedBase = process.platform === "win32" ? base.toLowerCase() : base;
+  const normalizedCandidate = process.platform === "win32" ? candidate.toLowerCase() : candidate;
+  if (normalizedCandidate === normalizedBase) {
+    return true;
+  }
+  const relative = path.relative(normalizedBase, normalizedCandidate);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function assertOutsideRepo(candidatePath, label) {
+  const resolved = path.resolve(candidatePath);
+  if (isPathInside(repoRoot, resolved)) {
+    throw new Error(`${label} must not be inside the Polaris meta-project repository.`);
+  }
+  return resolved;
+}
+
+function defaultE2EHome() {
+  return path.join(os.tmpdir(), "Polaris", "e2e-real-flow-home", `seeded-${process.pid}`);
+}
+
 function resolveSeededHome() {
-  return path.resolve(
+  return assertOutsideRepo(
     process.env.KERNELONE_E2E_HOME ||
       process.env.KERNELONE_HOME ||
-      path.join(repoRoot, ".polaris", "e2e-real-home"),
+      defaultE2EHome(),
+    "KERNELONE_E2E_HOME",
+  );
+}
+
+function defaultRuntimeRoot() {
+  if (process.platform === "win32") {
+    const xDrive = "X:\\";
+    if (fs.existsSync(xDrive)) {
+      return path.join(xDrive, "Polaris", "runtime", `e2e-real-flow-${process.pid}`);
+    }
+  }
+  return path.join(os.tmpdir(), "Polaris", "runtime", `e2e-real-flow-${process.pid}`);
+}
+
+function resolveRuntimeRoot() {
+  return assertOutsideRepo(
+    process.env.KERNELONE_E2E_RUNTIME_ROOT ||
+      process.env.KERNELONE_RUNTIME_ROOT ||
+      defaultRuntimeRoot(),
+    "KERNELONE_RUNTIME_ROOT",
   );
 }
 
 function writeSeededSettings(seed) {
-  const parsed = JSON.parse(seed.raw);
+  const parsed = parseJsonText(seed.raw, "Invalid seeded settings JSON");
   const home = resolveSeededHome();
   const configDir = path.join(home, "config");
   const settingsPath = path.join(configDir, "settings.json");
@@ -91,7 +153,7 @@ function writeSeededLlmConfig(home, seed) {
     return null;
   }
 
-  const parsed = JSON.parse(seed.raw);
+  const parsed = parseJsonText(seed.raw, "Invalid seeded LLM config JSON");
   const requiredReadyRoles = extractRequiredReadyRoles(parsed);
   const configDir = path.join(home, "config", "llm");
   const configPath = path.join(configDir, "llm_config.json");
@@ -109,7 +171,7 @@ function writeSeededLlmTestIndex(home, seed) {
     return null;
   }
 
-  const parsed = JSON.parse(seed.raw);
+  const parsed = parseJsonText(seed.raw, "Invalid seeded LLM test index JSON");
   const configDir = path.join(home, "config", "llm");
   const indexPath = path.join(configDir, "llm_test_index.json");
   fs.mkdirSync(configDir, { recursive: true });
@@ -131,7 +193,7 @@ function readJsonFileSeed(filePath, source) {
   }
   return {
     source,
-    raw: fs.readFileSync(resolved, "utf-8"),
+    raw: stripUtf8Bom(fs.readFileSync(resolved, "utf-8")),
   };
 }
 
@@ -180,6 +242,40 @@ function readExistingLlmTestIndexSeed(seededHome) {
   return null;
 }
 
+function readExistingLlmConfigBootstrap(settingsBootstrap) {
+  const home = String(settingsBootstrap?.home || "").trim();
+  if (!home) {
+    return null;
+  }
+  const configPath = path.join(path.resolve(home), "config", "llm", "llm_config.json");
+  if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
+    return null;
+  }
+  const parsed = readJsonFile(configPath, "Failed to parse existing llm_config.json");
+  return {
+    source: `${settingsBootstrap.source}:llm_config`,
+    configPath,
+    requiredReadyRoles: extractRequiredReadyRoles(parsed),
+  };
+}
+
+function readExistingLlmTestIndexBootstrap(settingsBootstrap) {
+  const home = String(settingsBootstrap?.home || "").trim();
+  if (!home) {
+    return null;
+  }
+  const indexPath = path.join(path.resolve(home), "config", "llm", "llm_test_index.json");
+  if (!fs.existsSync(indexPath) || !fs.statSync(indexPath).isFile()) {
+    return null;
+  }
+  const parsed = readJsonFile(indexPath, "Failed to parse existing llm_test_index.json");
+  return {
+    source: `${settingsBootstrap.source}:llm_test_index`,
+    indexPath,
+    missingReadyRoles: rolesMissingReadiness(parsed),
+  };
+}
+
 function extractRequiredReadyRoles(config) {
   const policies = config?.policies;
   const required = policies && typeof policies === "object" ? policies.required_ready_roles : [];
@@ -207,6 +303,51 @@ function rolesMissingReadiness(indexPayload, requiredRoles = null) {
   });
 }
 
+function roleReadinessBindingIssues(configPayload, indexPayload, requiredRoles) {
+  const rolesCfg = configPayload?.roles && typeof configPayload.roles === "object" ? configPayload.roles : {};
+  const rolesIndex = indexPayload?.roles && typeof indexPayload.roles === "object" ? indexPayload.roles : {};
+  const providerIndex =
+    indexPayload?.providers && typeof indexPayload.providers === "object" ? indexPayload.providers : {};
+  const issues = [];
+
+  for (const role of requiredRoles) {
+    const roleCfg = rolesCfg[role] && typeof rolesCfg[role] === "object" ? rolesCfg[role] : {};
+    const roleInfo = rolesIndex[role] && typeof rolesIndex[role] === "object" ? rolesIndex[role] : {};
+    const providerId = String(roleCfg.provider_id || "").trim();
+    const model = String(roleCfg.model || "").trim();
+    const providerInfo =
+      providerId && providerIndex[providerId] && typeof providerIndex[providerId] === "object"
+        ? providerIndex[providerId]
+        : {};
+    const testedProviderId = String(roleInfo.provider_id || (providerInfo.model ? providerId : "") || "").trim();
+    const testedModel = String(roleInfo.model || providerInfo.model || "").trim();
+
+    let reason = "";
+    if (!providerId || !model) {
+      reason = "role_binding_missing";
+    } else if (testedProviderId && testedProviderId !== providerId) {
+      reason = "provider_mismatch";
+    } else if (!testedModel) {
+      reason = "tested_model_missing";
+    } else if (testedModel !== model) {
+      reason = "model_mismatch";
+    }
+
+    if (reason) {
+      issues.push({
+        role,
+        reason,
+        provider_id: providerId,
+        model,
+        tested_provider_id: testedProviderId,
+        tested_model: testedModel,
+      });
+    }
+  }
+
+  return issues;
+}
+
 function validateSeededLlmReadiness(llmConfigBootstrap, llmTestIndexBootstrap) {
   const requiredRoles = llmConfigBootstrap?.requiredReadyRoles || [];
   if (requiredRoles.length === 0) {
@@ -214,6 +355,7 @@ function validateSeededLlmReadiness(llmConfigBootstrap, llmTestIndexBootstrap) {
       ok: true,
       requiredRoles,
       missingReadyRoles: [],
+      bindingIssues: [],
       message: "",
     };
   }
@@ -223,6 +365,7 @@ function validateSeededLlmReadiness(llmConfigBootstrap, llmTestIndexBootstrap) {
       ok: false,
       requiredRoles,
       missingReadyRoles: requiredRoles,
+      bindingIssues: [],
       message:
         "Seeded real-flow LLM config declares required ready roles but no llm_test_index seed was available. " +
         "Provide KERNELONE_E2E_LLM_TEST_INDEX_JSON_BASE64, KERNELONE_E2E_LLM_TEST_INDEX_JSON, " +
@@ -231,25 +374,33 @@ function validateSeededLlmReadiness(llmConfigBootstrap, llmTestIndexBootstrap) {
   }
 
   let indexPayload = null;
+  let configPayload = null;
   try {
-    indexPayload = JSON.parse(fs.readFileSync(llmTestIndexBootstrap.indexPath, "utf-8"));
+    indexPayload = readJsonFile(llmTestIndexBootstrap.indexPath, "Failed to parse seeded llm_test_index.json");
+    configPayload = readJsonFile(llmConfigBootstrap.configPath, "Failed to parse seeded llm_config.json");
   } catch (error) {
     return {
       ok: false,
       requiredRoles,
       missingReadyRoles: requiredRoles,
+      bindingIssues: [],
       message: `Failed to parse seeded llm_test_index.json: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 
   const missingReadyRoles = rolesMissingReadiness(indexPayload, requiredRoles);
+  const bindingIssues = roleReadinessBindingIssues(configPayload, indexPayload, requiredRoles);
+  const issueSummary = bindingIssues.map((issue) => `${issue.role}:${issue.reason}`).join(", ");
   return {
-    ok: missingReadyRoles.length === 0,
+    ok: missingReadyRoles.length === 0 && bindingIssues.length === 0,
     requiredRoles,
     missingReadyRoles,
+    bindingIssues,
     message:
       missingReadyRoles.length > 0
         ? `Seeded llm_test_index.json is missing ready=true for required roles: ${missingReadyRoles.join(", ")}.`
+        : bindingIssues.length > 0
+          ? `Seeded llm_test_index.json has stale provider/model readiness bindings: ${issueSummary}.`
         : "",
   };
 }
@@ -260,13 +411,14 @@ function existingKerneloneHomeSettings() {
     if (!home) {
       continue;
     }
-    const settingsPath = path.join(path.resolve(home), "config", "settings.json");
+    const resolvedHome = assertOutsideRepo(home, envName);
+    const settingsPath = path.join(resolvedHome, "config", "settings.json");
     if (!fs.existsSync(settingsPath)) {
       continue;
     }
     return {
       source: `env:${envName}`,
-      home: path.resolve(home),
+      home: resolvedHome,
       settingsPath,
     };
   }
@@ -395,6 +547,7 @@ let llmReadinessSeedValidation = {
   ok: true,
   requiredRoles: [],
   missingReadyRoles: [],
+  bindingIssues: [],
   message: "",
 };
 
@@ -405,6 +558,8 @@ try {
     llmConfigBootstrap = writeSeededLlmConfig(settingsBootstrap.home, llmConfigSeed);
   } else if (llmConfigSeed) {
     throw new Error("LLM config seed requires KERNELONE_E2E_SETTINGS_JSON_BASE64 or KERNELONE_E2E_SETTINGS_JSON.");
+  } else {
+    llmConfigBootstrap = readExistingLlmConfigBootstrap(settingsBootstrap);
   }
 
   const explicitLlmTestIndexSeed = readLlmTestIndexSeed();
@@ -417,6 +572,8 @@ try {
     if (existingSeed) {
       llmTestIndexBootstrap = writeSeededLlmTestIndex(settingsBootstrap.home, existingSeed);
     }
+  } else {
+    llmTestIndexBootstrap = readExistingLlmTestIndexBootstrap(settingsBootstrap);
   }
 
   llmReadinessSeedValidation = validateSeededLlmReadiness(llmConfigBootstrap, llmTestIndexBootstrap);
@@ -432,11 +589,12 @@ const { command, args } = buildSpawnCommand(playwrightArgs);
 const childEnv = {
   ...process.env,
   KERNELONE_E2E_USE_REAL_SETTINGS: "1",
+  KERNELONE_DIRECTOR_RUNTIME_CODEGEN: process.env.KERNELONE_DIRECTOR_RUNTIME_CODEGEN || "1",
 };
 
 if (settingsBootstrap?.home) {
   childEnv.KERNELONE_HOME = settingsBootstrap.home;
-  childEnv.KERNELONE_RUNTIME_ROOT = path.join(settingsBootstrap.home, "runtime-cache");
+  childEnv.KERNELONE_RUNTIME_ROOT = resolveRuntimeRoot();
   childEnv.KERNELONE_STATE_TO_RAMDISK = "0";
 }
 
@@ -454,6 +612,7 @@ if (options.dryRun) {
         llm_required_ready_roles: llmReadinessSeedValidation.requiredRoles,
         llm_readiness_seed_ok: llmReadinessSeedValidation.ok,
         llm_readiness_missing_roles: llmReadinessSeedValidation.missingReadyRoles,
+        llm_readiness_binding_issues: llmReadinessSeedValidation.bindingIssues,
         ci_host_fallback_allowed: !isCiEnvironment(),
         spawn_command: command,
         spawn_args: args,

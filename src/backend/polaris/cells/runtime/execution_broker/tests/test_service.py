@@ -66,6 +66,34 @@ async def test_launch_process_wait_and_log(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_launch_process_wait_delivers_stdin_without_streaming(tmp_path: Path) -> None:
+    """wait_process must deliver stdin even when no caller consumes process streams."""
+    runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
+    broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))
+
+    command = LaunchExecutionProcessCommandV1(
+        name="stdin-wait-test",
+        args=(sys.executable, "-c", "import json, sys; payload=json.load(sys.stdin); print(payload['message'])"),
+        workspace=str(tmp_path),
+        timeout_seconds=5.0,
+        stdin_input='{"message": "broker-stdin-ok"}',
+        metadata={"test_case": "launch_process_wait_delivers_stdin_without_streaming"},
+    )
+
+    try:
+        launch = await broker.launch_process(command)
+        assert launch.success is True
+        assert launch.handle is not None
+
+        wait_result = await broker.wait_process(launch.handle, timeout_seconds=5.0)
+        assert wait_result.success is True
+        assert wait_result.status == ExecutionProcessStatusV1.SUCCESS
+        assert wait_result.exit_code == 0
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_failed_process_preserves_stderr_in_log_and_status(tmp_path: Path) -> None:
     runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
     broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))

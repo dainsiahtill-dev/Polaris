@@ -209,21 +209,47 @@ class EvaluationRunner:
         """
         results: list[EvaluationResult] = []
         suite_total = 1
-        suite_passed = 1 if result_data.get("ok") else 0
+        suite_ok = bool(result_data.get("ok"))
+        suite_passed = 1 if suite_ok else 0
 
         # If suite has detailed cases, parse each one
-        if "details" in result_data and "cases" in result_data["details"]:
-            for case_data in result_data["details"]["cases"]:
+        details = result_data.get("details")
+        cases = details.get("cases") if isinstance(details, dict) else None
+        if isinstance(cases, list) and cases:
+            for case_data in cases:
+                if not isinstance(case_data, dict):
+                    continue
                 results.append(
                     EvaluationResult(
-                        case_id=case_data.get("id", "unknown"),
-                        passed=case_data.get("passed", False),
-                        output=case_data.get("output", ""),
-                        score=case_data.get("score", 1.0 if case_data.get("passed") else 0.0),
+                        case_id=str(case_data.get("id") or case_data.get("case_id") or "unknown"),
+                        passed=bool(case_data.get("passed")),
+                        output=str(case_data.get("output") or ""),
+                        score=float(case_data.get("score", 1.0 if case_data.get("passed") else 0.0) or 0.0),
+                        error=str(case_data.get("error") or ""),
+                        latency_ms=int(case_data.get("latency_ms") or 0),
                     )
                 )
             suite_total = len(results)
             suite_passed = sum(1 for r in results if r.passed)
+        else:
+            error = str(
+                result_data.get("error")
+                or result_data.get("reason")
+                or ("" if suite_ok else "suite returned ok=false without case details")
+            )
+            output = str(result_data.get("output") or "")
+            if not output and isinstance(details, dict):
+                output = str(details.get("output") or details.get("output_preview") or "")
+            results.append(
+                EvaluationResult(
+                    case_id=suite_name,
+                    passed=suite_ok,
+                    output=output,
+                    score=float(result_data.get("score", 1.0 if suite_ok else 0.0) or 0.0),
+                    error=error,
+                    latency_ms=int(result_data.get("latency_ms") or 0),
+                )
+            )
 
         return EvaluationSuiteResult(
             suite_name=suite_name,
@@ -231,6 +257,7 @@ class EvaluationRunner:
             total_cases=suite_total,
             passed_cases=suite_passed,
             failed_cases=suite_total - suite_passed,
+            total_latency_ms=sum(r.latency_ms for r in results),
         )
 
     def normalize_suites(
@@ -387,40 +414,11 @@ class EvaluationRunner:
             else:
                 result_data = timeout_result.result
 
-            # 转换为 EvaluationSuiteResult
-            results: list[EvaluationResult] = []
-            suite_total = 1
-            suite_passed = 1 if result_data.get("ok") else 0
-
-            # 如果套件有详细 cases，逐个记录
-            details = result_data.get("details")
-            if isinstance(details, dict) and "cases" in details:
-                cases = details.get("cases")
-                if isinstance(cases, list):
-                    for case_data in cases:
-                        results.append(
-                            EvaluationResult(
-                                case_id=case_data.get("id", "unknown"),
-                                passed=case_data.get("passed", False),
-                                output=case_data.get("output", ""),
-                                score=case_data.get("score", 1.0 if case_data.get("passed") else 0.0),
-                            )
-                        )
-            if results:
-                suite_total = len(results)
-                suite_passed = sum(1 for r in results if r.passed)
-
-            suite_result = EvaluationSuiteResult(
-                suite_name=suite_name,
-                results=results,
-                total_cases=suite_total,
-                passed_cases=suite_passed,
-                failed_cases=suite_total - suite_passed,
-            )
+            suite_result = self._convert_suite_result(suite_name, result_data)
             suite_results.append(suite_result)
 
-            total_cases += suite_total
-            passed_cases += suite_passed
+            total_cases += suite_result.total_cases
+            passed_cases += suite_result.passed_cases
 
         # 生成报告
         pass_rate = passed_cases / total_cases if total_cases > 0 else 0.0
@@ -506,32 +504,7 @@ class EvaluationRunner:
                 result_data = {"ok": False, "error": str(e)}
                 yield AIStreamEvent.chunk_event(f"  Error: {e}\n")
 
-            # 转换为结果对象
-            results: list[EvaluationResult] = []
-            suite_total = 1
-            suite_passed = 1 if result_data.get("ok") else 0
-
-            if "details" in result_data and "cases" in result_data["details"]:
-                for case_data in result_data["details"]["cases"]:
-                    results.append(
-                        EvaluationResult(
-                            case_id=case_data.get("id", "unknown"),
-                            passed=case_data.get("passed", False),
-                            output=case_data.get("output", ""),
-                            score=case_data.get("score", 1.0 if case_data.get("passed") else 0.0),
-                        )
-                    )
-                suite_total = len(results)
-                suite_passed = sum(1 for r in results if r.passed)
-
-            suite_result = EvaluationSuiteResult(
-                suite_name=suite_name,
-                results=results,
-                total_cases=suite_total,
-                passed_cases=suite_passed,
-                failed_cases=suite_total - suite_passed,
-            )
-            suite_results.append(suite_result)
+            suite_results.append(self._convert_suite_result(suite_name, result_data))
 
         # 计算汇总
         total_cases = sum(s.total_cases for s in suite_results)

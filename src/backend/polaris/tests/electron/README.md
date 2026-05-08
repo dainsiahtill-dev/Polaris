@@ -51,7 +51,8 @@
 - `KERNELONE_REAL_FLOW_AUTOFIX_SKIP_BUILD=1`: skip `npm run build` in the real-flow repair loop
 - `KERNELONE_E2E_SETTINGS_JSON_BASE64`: UTF-8 JSON settings seed for `test:e2e:real-flow`
 - `KERNELONE_E2E_SETTINGS_JSON`: raw JSON settings seed for `test:e2e:real-flow`
-- `KERNELONE_E2E_HOME`: home directory where the real-flow runner writes seeded `config/settings.json`
+- `KERNELONE_E2E_HOME`: optional external home directory where the real-flow runner writes seeded `config/settings.json`; it must not be inside the Polaris repository
+- `KERNELONE_E2E_RUNTIME_ROOT`: optional external runtime root for real-flow runs; defaults to `X:/Polaris/runtime/...` on Windows when available, otherwise the system temp directory
 - `KERNELONE_E2E_ALLOW_HOST_SETTINGS=1`: allow the real-flow runner to use the host Polaris settings instead of a deterministic seed
 - `KERNELONE_CLAUDE_MODEL`: optional model override passed to `claude --model`
 - `KERNELONE_CLAUDE_PERMISSION_MODE`: optional permission mode override (default `bypassPermissions`)
@@ -80,8 +81,8 @@ npm run test:e2e:panel
 - Gate order in `panel-task.spec.ts`: `terminal -> console -> panel`.
 - One-line task resolution dictionary: `infrastructure/e2e/panel-locators.json`.
 - Suggested AGENTS snippet path: `docs/templates/AGENTS.electron-playwright.md`.
-- Auto-fix runner writes a UTF-8 log to `.polaris/logs/autofix_panel_*.log`.
-- Real-flow auto-fix writes UTF-8 prompt/output/audit files to `.polaris/logs/autofix_real_flow_*`.
+- Auto-fix runner writes UTF-8 logs to `~/.polaris/logs/autofix_panel_*.log` by default.
+- Real-flow auto-fix writes UTF-8 prompt/output/audit files to `~/.polaris/logs/autofix_real_flow_*` by default.
 - Real-flow nightly CI is defined in `.github/workflows/electron-real-flow-nightly.yml` and intentionally fails when the real settings secret is missing.
 - Auto-fix requires local Codex CLI auth (`codex login`) before execution.
 - Real-flow auto-fix requires local Claude CLI auth (`claude`) and real Polaris settings because it forces `KERNELONE_E2E_USE_REAL_SETTINGS=1`.

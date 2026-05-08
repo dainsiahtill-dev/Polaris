@@ -9,6 +9,7 @@ from pathlib import Path
 PANEL_TASK_SPEC = "src/backend/polaris/tests/electron/panel-task.spec.ts"
 REAL_FLOW_SPEC = "src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts"
 FULL_CHAIN_AUDIT_SPEC = "src/backend/polaris/tests/electron/full-chain-audit.spec.ts"
+ELECTRON_FIXTURES = "src/backend/polaris/tests/electron/fixtures.ts"
 ACCEPTANCE_RUNNER = "infrastructure/scripts/run-electron-acceptance-e2e.mjs"
 REAL_FLOW_RUNNER = "infrastructure/scripts/run-electron-real-flow-e2e.mjs"
 BACKEND_PYTEST_SHARD_RUNNER = "infrastructure/scripts/run-backend-pytest-shard.py"
@@ -23,6 +24,14 @@ def _repo_root() -> Path:
 
 
 REPO_ROOT = _repo_root()
+
+
+def _is_relative_to(candidate: Path, base: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(base.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def _node_executable() -> str:
@@ -60,6 +69,15 @@ def _run_node_raw(args: list[str], *, env: dict[str, str] | None = None) -> subp
 def test_electron_runner_spec_paths_exist() -> None:
     for relative_path in [PANEL_TASK_SPEC, REAL_FLOW_SPEC, FULL_CHAIN_AUDIT_SPEC]:
         assert (REPO_ROOT / relative_path).is_file(), f"Missing Electron runner spec: {relative_path}"
+
+
+def test_electron_fixtures_do_not_default_persistence_or_workspace_inside_repo() -> None:
+    fixtures = (REPO_ROOT / ELECTRON_FIXTURES).read_text(encoding="utf-8")
+
+    assert 'path.join(repoRoot, ".polaris", "tmp")' not in fixtures
+    assert "env.KERNELONE_WORKSPACE = repoRoot" not in fixtures
+    assert "assertOutsideRepo" in fixtures
+    assert 'path.join(os.tmpdir(), "Polaris", "electron-e2e-workspace")' in fixtures
 
 
 def test_panel_task_runner_dry_run_uses_existing_spec(tmp_path: Path) -> None:
@@ -167,6 +185,7 @@ def test_real_flow_runner_dry_run_seeds_utf8_settings_and_uses_existing_specs(tm
     assert payload["specs"] == [FULL_CHAIN_AUDIT_SPEC, REAL_FLOW_SPEC]
     assert FULL_CHAIN_AUDIT_SPEC in payload["spawn_args"]
     assert REAL_FLOW_SPEC in payload["spawn_args"]
+    assert not _is_relative_to(Path(payload["runtime_root"]), REPO_ROOT)
     assert json.loads(settings_path.read_text(encoding="utf-8")) == settings
     assert str(settings_path) not in result.stdout
     if os.name == "nt":
@@ -241,10 +260,12 @@ def test_real_flow_runner_dry_run_seeds_llm_test_index_for_required_roles(tmp_pa
     llm_test_index = {
         "version": "2.0",
         "roles": {
-            "pm": {"ready": True, "grade": "PASS"},
-            "director": {"ready": True, "grade": "PASS"},
+            "pm": {"ready": True, "grade": "PASS", "provider_id": "codex_sdk", "model": "gpt-5.4"},
+            "director": {"ready": True, "grade": "PASS", "provider_id": "codex_sdk", "model": "gpt-5.4"},
         },
-        "providers": {},
+        "providers": {
+            "codex_sdk": {"ready": True, "grade": "PASS", "model": "gpt-5.4"},
+        },
     }
     settings_seed = base64.b64encode(json.dumps(settings, ensure_ascii=False).encode("utf-8")).decode("ascii")
     llm_seed = base64.b64encode(json.dumps(llm_config, ensure_ascii=False).encode("utf-8")).decode("ascii")
@@ -275,6 +296,91 @@ def test_real_flow_runner_dry_run_seeds_llm_test_index_for_required_roles(tmp_pa
     assert payload["llm_readiness_missing_roles"] == []
     assert json.loads(llm_test_index_path.read_text(encoding="utf-8")) == llm_test_index
     assert str(llm_test_index_path) not in result.stdout
+
+
+def test_real_flow_runner_accepts_bom_prefixed_real_home_json(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config_dir = home / "config"
+    llm_dir = config_dir / "llm"
+    llm_dir.mkdir(parents=True)
+    settings = {"workspace": str(tmp_path / "workspace")}
+    llm_config = {
+        "schema_version": 2,
+        "providers": {"codex_sdk": {"type": "codex_sdk", "name": "Codex SDK"}},
+        "roles": {"pm": {"provider_id": "codex_sdk", "model": "gpt-5.4"}},
+        "policies": {"required_ready_roles": ["pm"]},
+    }
+    llm_test_index = {
+        "version": "2.0",
+        "roles": {"pm": {"ready": True, "grade": "PASS", "provider_id": "codex_sdk", "model": "gpt-5.4"}},
+        "providers": {"codex_sdk": {"ready": True, "grade": "PASS", "model": "gpt-5.4"}},
+    }
+    (config_dir / "settings.json").write_text("\ufeff" + json.dumps(settings), encoding="utf-8")
+    (llm_dir / "llm_config.json").write_text("\ufeff" + json.dumps(llm_config), encoding="utf-8")
+    (llm_dir / "llm_test_index.json").write_text("\ufeff" + json.dumps(llm_test_index), encoding="utf-8")
+
+    result = _run_node(
+        [
+            REAL_FLOW_RUNNER,
+            "--dry-run",
+        ],
+        env={
+            "KERNELONE_HOME": str(home),
+            "KERNELONE_E2E_USE_REAL_SETTINGS": "1",
+        },
+    )
+
+    payload = json.loads(result.stdout)
+
+    assert payload["status"] == "DRY_RUN"
+    assert payload["settings_source"] == "env:KERNELONE_HOME"
+    assert payload["llm_config_seeded"] is True
+    assert payload["llm_test_index_seeded"] is True
+    assert payload["llm_readiness_seed_ok"] is True
+
+
+def test_real_flow_runner_rejects_stale_llm_test_index_model_for_required_roles(tmp_path: Path) -> None:
+    settings = {
+        "workspace": str(tmp_path / "workspace"),
+        "llm_provider": "minimax",
+        "llm_model": "MiniMax-M2.7-highspeed",
+    }
+    llm_config = {
+        "schema_version": 2,
+        "providers": {"minimax-1": {"type": "minimax", "name": "MiniMax"}},
+        "roles": {
+            "pm": {"provider_id": "minimax-1", "model": "MiniMax-M2.7-highspeed"},
+        },
+        "policies": {"required_ready_roles": ["pm"]},
+    }
+    llm_test_index = {
+        "version": "2.0",
+        "roles": {
+            "pm": {"ready": True, "grade": "PASS", "provider_id": "minimax-1", "model": "MiniMax-M2.5"},
+        },
+        "providers": {
+            "minimax-1": {"ready": True, "grade": "PASS", "model": "MiniMax-M2.5", "role": "pm"},
+        },
+    }
+    settings_seed = base64.b64encode(json.dumps(settings, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    llm_seed = base64.b64encode(json.dumps(llm_config, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    index_seed = base64.b64encode(json.dumps(llm_test_index, ensure_ascii=False).encode("utf-8")).decode("ascii")
+
+    result = _run_node_raw(
+        [
+            REAL_FLOW_RUNNER,
+        ],
+        env={
+            "KERNELONE_E2E_SETTINGS_JSON_BASE64": settings_seed,
+            "KERNELONE_E2E_LLM_CONFIG_JSON_BASE64": llm_seed,
+            "KERNELONE_E2E_LLM_TEST_INDEX_JSON_BASE64": index_seed,
+            "KERNELONE_E2E_HOME": str(tmp_path / "home"),
+        },
+    )
+
+    assert result.returncode == 2
+    assert "invalid LLM readiness seed" in result.stderr
+    assert "model_mismatch" in result.stderr
 
 
 def test_real_flow_runner_rejects_missing_llm_test_index_for_required_roles(tmp_path: Path) -> None:
@@ -343,6 +449,31 @@ def test_real_flow_runner_dry_run_reports_missing_settings_without_silent_skip()
     assert payload["specs"] == [FULL_CHAIN_AUDIT_SPEC, REAL_FLOW_SPEC]
 
 
+def test_real_flow_runner_rejects_repo_local_e2e_home(tmp_path: Path) -> None:
+    settings = {
+        "workspace": str(tmp_path / "workspace"),
+        "llm_provider": "codex_sdk",
+        "llm_model": "gpt-5.4",
+    }
+    settings_seed = base64.b64encode(json.dumps(settings, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    repo_local_home = REPO_ROOT / ".polaris" / "e2e-real-home"
+
+    result = _run_node_raw(
+        [
+            REAL_FLOW_RUNNER,
+            "--dry-run",
+        ],
+        env={
+            "KERNELONE_E2E_SETTINGS_JSON_BASE64": settings_seed,
+            "KERNELONE_E2E_HOME": str(repo_local_home),
+        },
+    )
+
+    assert result.returncode == 2
+    assert "must not be inside the Polaris meta-project repository" in result.stderr
+    assert str(repo_local_home) not in result.stderr
+
+
 def test_real_flow_runner_dry_run_uses_existing_e2e_home_settings(tmp_path: Path) -> None:
     home = tmp_path / "e2e-home"
     settings_path = home / "config" / "settings.json"
@@ -368,7 +499,9 @@ def test_real_flow_runner_dry_run_uses_existing_e2e_home_settings(tmp_path: Path
     payload = json.loads(result.stdout)
     assert payload["status"] == "DRY_RUN"
     assert payload["settings_source"] == "env:KERNELONE_E2E_HOME"
-    assert payload["runtime_root"].endswith("runtime-cache")
+    assert payload["runtime_root"]
+    assert not _is_relative_to(Path(payload["runtime_root"]), REPO_ROOT)
+    assert not _is_relative_to(Path(payload["runtime_root"]), home)
     assert str(settings_path) not in result.stdout
 
 

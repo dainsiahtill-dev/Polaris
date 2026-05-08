@@ -265,7 +265,12 @@ export function LlmRuntimeOverlay({
   const running = pmRunning || directorRunning;
   const llmStateToken = normalizeStateToken(llmState);
   const runtimeActive = running || isActiveRuntimePhase(currentPhase);
-  const isLlmBlocked = runtimeActive && llmStateToken === 'blocked';
+  const blockedRoleForView =
+    (activeView === 'pm' && llmBlockedRoles.includes('pm')) ||
+    (activeView === 'director' && llmBlockedRoles.includes('director')) ||
+    (activeView === 'chief_engineer' && llmBlockedRoles.includes('chief_engineer')) ||
+    (activeView === 'factory' && llmBlockedRoles.some((role) => ['pm', 'director', 'qa'].includes(role)));
+  const isLlmBlocked = llmStateToken === 'blocked' && (runtimeActive || blockedRoleForView);
   const phaseLabel = (
     PHASE_LABELS[currentPhase] ||
     (pmRunning && !directorRunning ? 'PM Running' : '') ||

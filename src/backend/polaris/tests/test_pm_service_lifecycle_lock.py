@@ -81,6 +81,7 @@ async def test_pm_run_once_is_single_flight_under_concurrency(tmp_path) -> None:
             log_handle=None,
             log_path=log_path,
             started_at=time.time(),
+            execution_id=f"exec-{spawn_count}",
         )
 
     service._check_backend_available = _fake_check_backend_available  # type: ignore[method-assign]
@@ -101,6 +102,11 @@ async def test_pm_run_once_is_single_flight_under_concurrency(tmp_path) -> None:
     assert len(success) == 1
     assert len(failures) == 1
     assert spawn_count == 1
+    response = success[0]
+    assert response["execution_id"] == "exec-1"
+    assert response["mode"] == "run_once"
+    assert response["log_path"].endswith("pm.process.log")
+    assert Path(response["contract_path"]).name == "pm_tasks.contract.json"
 
 
 @pytest.mark.parametrize(

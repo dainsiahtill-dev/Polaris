@@ -6,15 +6,39 @@ import { expect, test } from "./fixtures";
 type BackendInfo = { baseUrl?: string; token?: string };
 type SettingsPayload = { workspace?: string; pm_runs_director?: boolean };
 type RuntimeLayoutPayload = { runtime_root?: string; workspace?: string };
-type PmStatusPayload = { running?: boolean };
+type PmStatusPayload = {
+  running?: boolean;
+  status?: string | null;
+  terminal?: boolean;
+  ok?: boolean | null;
+  exit_code?: number | null;
+  error?: string;
+  execution_id?: string | null;
+  log_path?: string | null;
+  contract_path?: string | null;
+  contract_exists?: boolean;
+};
 type SnapshotPayload = { tasks?: unknown[]; pm_state?: Record<string, unknown> | null };
 type DirectorStatusPayload = { state?: string };
 type DirectorTaskPayload = { status?: string; metadata?: { pm_task_id?: string } };
-type IntegrationQaArtifact = { reason?: string; passed?: boolean | null };
-type DirectorResultArtifact = { status?: string; successes?: number; total?: number };
+type IntegrationQaArtifact = { reason?: string; passed?: boolean | null; failed?: number };
+type DirectorResultArtifact = {
+  status?: string;
+  successes?: number;
+  total?: number;
+  failures?: number;
+  blocked?: number;
+  error?: string;
+};
 type PmContractPayload = {
   quality_gate?: { score?: number; critical_issue_count?: number; summary?: string };
+  notes?: string;
+  schema_warnings?: unknown[];
+  terminal_error_code?: string;
+  terminal_error?: string;
   tasks?: Array<{
+    id?: string;
+    title?: string;
     goal?: string;
     scope_paths?: unknown[];
     execution_checklist?: unknown[];
@@ -106,6 +130,15 @@ async function readJsonLines<T>(filePath: string): Promise<T[]> {
   }
 }
 
+async function readTextTail(filePath: string, maxChars = 4000): Promise<string> {
+  try {
+    const text = await fs.readFile(filePath, "utf-8");
+    return text.length <= maxChars ? text : text.slice(text.length - maxChars);
+  } catch {
+    return "";
+  }
+}
+
 async function listFilesRecursive(root: string): Promise<string[]> {
   const result: string[] = [];
   const stack = [root];
@@ -192,6 +225,7 @@ async function waitForRuntimeArtifact(
   let lastArtifactPath = "";
   let lastPmStatus = "";
   let lastDirectorStatus = "";
+  let lastDiagnostics = "";
 
   while (Date.now() < deadline) {
     const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
@@ -209,6 +243,17 @@ async function waitForRuntimeArtifact(
       ]);
       lastPmStatus = JSON.stringify(pmStatus);
       lastDirectorStatus = JSON.stringify(directorStatus);
+      if (lastRuntimeRoot) {
+        const latestEventsPath = (await findLatestEventsPath(lastRuntimeRoot)) || "";
+        const engineStatusPath = path.join(lastRuntimeRoot, "status", "engine.status.json");
+        const pmProcessLogPath = path.join(lastRuntimeRoot, "logs", "pm.process.log");
+        lastDiagnostics = JSON.stringify({
+          engine_status: await readJsonFile<Record<string, unknown>>(engineStatusPath),
+          pm_process_log_tail: await readTextTail(pmProcessLogPath, 2000),
+          latest_events_path: latestEventsPath,
+          latest_events_tail: latestEventsPath ? await readTextTail(latestEventsPath, 2000) : "",
+        });
+      }
     }
     await sleep(1000);
   }
@@ -218,7 +263,8 @@ async function waitForRuntimeArtifact(
     + `last_runtime_root=${lastRuntimeRoot || "(empty)"} `
     + `last_path=${lastArtifactPath || "(empty)"} `
     + `last_pm_status=${lastPmStatus || "(unavailable)"} `
-    + `last_director_status=${lastDirectorStatus || "(unavailable)"}`,
+    + `last_director_status=${lastDirectorStatus || "(unavailable)"} `
+    + `diagnostics=${lastDiagnostics || "(unavailable)"}`,
   );
 }
 
@@ -655,7 +701,7 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await directorMenuItem.click();
 }
 
-async function runPmRound(window: Page): Promise<void> {
+async function runPmRound(window: Page): Promise<PmStatusPayload> {
   await window.getByTestId("pm-workspace-run-once").click();
   await expect.poll(async () => Boolean((await requestJson<PmStatusPayload>(window, "/v2/pm/status")).running), {
     timeout: 90_000,
@@ -665,6 +711,7 @@ async function runPmRound(window: Page): Promise<void> {
     timeout: 25 * 60 * 1000,
     intervals: [1000, 2000, 5000, 10_000],
   }).toBe(false);
+  return await requestJson<PmStatusPayload>(window, "/v2/pm/status");
 }
 
 async function observeDirectorAfterPmOrchestration(
@@ -693,13 +740,52 @@ async function observeDirectorAfterPmOrchestration(
   return { linkedTaskCount, uiTaskCount, state: String(status.state || "").trim().toUpperCase() };
 }
 
+function detectPmFallbackFailure(pmContract: PmContractPayload | null): string {
+  if (!pmContract || typeof pmContract !== "object") {
+    return "";
+  }
+  const serialized = JSON.stringify(pmContract || {}).toLowerCase();
+  if (String(pmContract.terminal_error_code || "").trim()) {
+    return String(pmContract.terminal_error_code || "pm_terminal_error").trim();
+  }
+  if (
+    serialized.includes("pm_llm_fallback_applied")
+    || serialized.includes("original pm failure/context")
+    || serialized.includes("fallback_from_failure")
+    || serialized.includes("pm_llm_invoke_failed")
+  ) {
+    return "pm_llm_failure_masked_by_fallback";
+  }
+  return "";
+}
+
+function directorFailureReason(directorResult: DirectorResultArtifact | null): string {
+  const status = String(directorResult?.status || "").trim().toLowerCase();
+  const total = Number(directorResult?.total || 0);
+  const successes = Number(directorResult?.successes || 0);
+  const failures = Number(directorResult?.failures || 0);
+  const blocked = Number(directorResult?.blocked || 0);
+  if (status !== "success") {
+    return `director_status_${status || "missing"}`;
+  }
+  if (total <= 0) {
+    return "director_total_zero";
+  }
+  if (failures > 0 || blocked > 0) {
+    return `director_failures_${failures}_blocked_${blocked}`;
+  }
+  if (successes < total) {
+    return `director_incomplete_${successes}_of_${total}`;
+  }
+  return "";
+}
+
 test.setTimeout(70 * 60 * 1000);
 
 test("unattended full-chain audit with strong JSON evidence package", async ({ window, testEnv }, testInfo) => {
   test.skip(!testEnv.useRealSettings, "Set KERNELONE_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
 
-  const repoRoot = resolveRepoRoot(__dirname);
-  const logsRoot = path.join(repoRoot, ".polaris", "logs");
+  const logsRoot = testInfo.outputPath("audit");
   const startEpochSeconds = Date.now() / 1000;
   const auditPath = path.join(logsRoot, `full_chain_audit_${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
 
@@ -801,7 +887,16 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       await dismissEngineFailureDialog(window);
       await enterPmWorkspace(window);
       await expect(window.getByTestId("pm-workspace")).toBeVisible();
-      await runPmRound(window);
+      const pmTerminalStatus = await runPmRound(window);
+      if (pmTerminalStatus.log_path) audit.evidence_paths.logs.push(toPosixPath(pmTerminalStatus.log_path));
+      if (pmTerminalStatus.exit_code && pmTerminalStatus.exit_code !== 0) {
+        audit.issues_fixed.push({
+          issue: `round_${round}_pm_exit_${pmTerminalStatus.exit_code}`,
+          root_cause: "pm_process",
+          fix: `captured PM terminal status execution_id=${pmTerminalStatus.execution_id || "unknown"} error=${pmTerminalStatus.error || ""}`,
+          verified: false,
+        });
+      }
 
       const directorResultArtifact = await waitForRuntimeArtifact(
         window,
@@ -812,6 +907,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       const directorResultPath = directorResultArtifact.artifactPath;
       const directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
       audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
+      const downstreamDirectorFailure = directorFailureReason(directorResult);
 
       const snapshot = await requestJson<SnapshotPayload>(window, "/state/snapshot");
       const snapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.snapshot.json`);
@@ -829,9 +925,11 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       runtimeRoot = pmContractArtifact.runtimeRoot;
       const pmContractPath = pmContractArtifact.artifactPath;
       const pmContract = await readJsonFile<PmContractPayload>(pmContractPath);
+      audit.evidence_paths.logs.push(toPosixPath(pmContractPath));
       const score = Number(pmContract?.quality_gate?.score || 0);
       const critical = Number(pmContract?.quality_gate?.critical_issue_count || 0);
       const summary = String(pmContract?.quality_gate?.summary || "").trim();
+      const pmFallbackFailure = detectPmFallbackFailure(pmContract);
 
       const tasks = Array.isArray(pmContract?.tasks) ? pmContract.tasks : [];
       const invalidTasks = tasks.filter((task) => {
@@ -855,6 +953,19 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       ];
       if (leakage.length > 0) audit.leakage_findings.push(...leakage);
 
+      if (pmFallbackFailure) {
+        audit.issues_fixed.push({
+          issue: `round_${round}_pm_fallback_failure_${pmFallbackFailure}`,
+          root_cause: "pm_llm_runtime",
+          fix: `fail-fast instead of dispatching fallback PM tasks (evidence: ${toPosixPath(pmContractPath)})`,
+          verified: false,
+        });
+        throw new Error(
+          `PM phase failed closed because the contract contains fallback/error evidence: ${pmFallbackFailure}; `
+          + `contract=${toPosixPath(pmContractPath)}`,
+        );
+      }
+
       if (pmSnapshotGate && score >= 80 && critical === 0 && invalidTasks === 0) {
         audit.acceptance_results.pm_phase = "PASS";
       }
@@ -874,6 +985,19 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       await window.screenshot({ path: dirShot, fullPage: true });
       audit.evidence_paths.screenshots.push(toPosixPath(dirShot));
 
+      if (downstreamDirectorFailure) {
+        audit.issues_fixed.push({
+          issue: `round_${round}_${downstreamDirectorFailure}`,
+          root_cause: "director_execution",
+          fix: `fail-fast on Director terminal failure instead of returning to PM (evidence: ${toPosixPath(directorResultPath)})`,
+          verified: false,
+        });
+        throw new Error(
+          `Director phase failed closed: ${downstreamDirectorFailure}; `
+          + `result=${toPosixPath(directorResultPath)} screenshot=${toPosixPath(dirShot)}`,
+        );
+      }
+
       await window.getByTestId("director-workspace-back").click();
       await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
 
@@ -889,9 +1013,19 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         audit.issues_fixed.push({
           issue: `round_${round}_qa_reason_${latestQaReason || "unknown"}`,
           root_cause: latestQaReason.includes("pending") ? "director_execution" : "qa_baseline",
-          fix: `rerun PM + Director (evidence: ${toPosixPath(qaPath)})`,
+          fix: `fail-fast on QA terminal failure instead of rerunning PM (evidence: ${toPosixPath(qaPath)})`,
           verified: false,
         });
+        const failureSignature = JSON.stringify({
+          qa_reason: latestQaReason || "unknown",
+          director_status: directorStatus || "unknown",
+          director_error: String(directorResult?.error || "").trim(),
+          director_successes: directorSuccesses,
+          director_failures: Number(directorResult?.failures || 0),
+          director_total: Number(directorResult?.total || 0),
+        });
+        audit.next_risks.push(`Downstream QA failure signature: ${failureSignature}`);
+        throw new Error(`QA phase failed closed: ${failureSignature}`);
       }
 
       latestEventsPath = (await findLatestEventsPath(runtimeRoot)) || "";

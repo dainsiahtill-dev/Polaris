@@ -157,7 +157,7 @@ class PMService:
                 handle = await self._spawn_process(cmd, log_path)
                 self._handle = handle
                 self._handle.mode = "run_once"
-                return {"ok": True, "pid": handle.pid}
+                return self._build_start_response(handle, mode=self._handle.mode)
             except (RuntimeError, ValueError) as exc:
                 raise ProcessError("Failed to start PM process", process_name="pm", cause=exc) from exc
 
@@ -183,12 +183,9 @@ class PMService:
                 handle = await self._spawn_process(cmd, log_path)
                 self._handle = handle
                 self._handle.mode = "loop_resume" if resume else "loop"
-                return {
-                    "ok": True,
-                    "pid": handle.pid,
-                    "mode": self._handle.mode,
-                    "resume": resume,
-                }
+                response = self._build_start_response(handle, mode=self._handle.mode)
+                response["resume"] = resume
+                return response
             except (RuntimeError, ValueError) as exc:
                 raise ProcessError("Failed to start PM loop", process_name="pm", cause=exc) from exc
 
@@ -332,7 +329,7 @@ class PMService:
         try:
             broker = get_execution_broker_service()
             return broker.get_process_snapshot(execution_id)
-        except (KeyError, RuntimeError, ValueError) as exc:
+        except (AttributeError, KeyError, RuntimeError, ValueError) as exc:
             logger.debug("Failed to resolve PM execution broker snapshot for %s: %s", execution_id, exc)
             return None
 
@@ -392,6 +389,19 @@ class PMService:
             "contract_path": str(contract_path),
             "contract_exists": contract_exists,
             "contract_size": contract_size,
+        }
+
+    def _build_start_response(self, handle: ProcessHandle, *, mode: str) -> dict[str, Any]:
+        contract_path = self._resolve_contract_path()
+        return {
+            "ok": True,
+            "pid": handle.pid,
+            "mode": mode,
+            "execution_id": handle.execution_id,
+            "log_path": handle.log_path,
+            "started_at": handle.started_at,
+            "contract_path": str(contract_path),
+            "contract_exists": contract_path.exists(),
         }
 
     async def _check_backend_available(self) -> str | None:

@@ -170,6 +170,30 @@ class TestFileApplyService:
         assert applied == []
         assert "no_changes" in errors
 
+    def test_apply_response_operations_accepts_fenced_file_block(self, tmp_path: Path) -> None:
+        """Regression: Director proposal bridge emits ```file: path fences."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        service = FileApplyService(workspace=str(tmp_path))
+        applied, errors = service.apply_response_operations(
+            "```file: src/health.ts\n"
+            "export function health(): string {\n"
+            "  return 'ok';\n"
+            "}\n"
+            "```"
+        )
+
+        assert errors == []
+        assert applied == [
+            {
+                "path": "src/health.ts",
+                "content": "export function health(): string {\n  return 'ok';\n}\n",
+            }
+        ]
+        assert (tmp_path / "src" / "health.ts").read_text(encoding="utf-8").strip() == (
+            "export function health(): string {\n  return 'ok';\n}"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

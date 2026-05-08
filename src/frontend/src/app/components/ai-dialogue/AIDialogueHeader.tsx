@@ -78,7 +78,9 @@ export function AIDialogueHeader({
               ? `${configuredProviderLabel} · ${configuredModelLabel}`
               : statusKind === 'unconfigured'
                 ? `${roleName} 未配置`
-                : `${roleName} 状态获取失败`}
+                : statusKind === 'blocked'
+                  ? `${roleName} 已阻塞`
+                  : `${roleName} 状态获取失败`}
           </p>
         </div>
       </div>
@@ -130,6 +132,13 @@ export function getStatusWarningMessage(
   roleName: string,
   error?: string
 ): { title: string; detail: string } {
+  if (statusKind === 'blocked') {
+    return {
+      title: `${roleName} 当前被阻塞`,
+      detail: error || '当前角色运行门禁未通过，请先解除阻塞后再继续。',
+    };
+  }
+
   if (statusKind === 'unconfigured') {
     return {
       title: `${roleName} LLM 未配置`,

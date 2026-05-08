@@ -397,6 +397,9 @@ class TestSuiteResultConversion:
         assert suite_result.suite_name == "connectivity"
         assert suite_result.total_cases == 1
         assert suite_result.passed_cases == 1
+        assert len(suite_result.results) == 1
+        assert suite_result.results[0].case_id == "connectivity"
+        assert suite_result.results[0].passed is True
 
     def test_convert_failed_result(self, runner) -> None:
         """Test converting failed result."""
@@ -406,6 +409,9 @@ class TestSuiteResultConversion:
         assert suite_result.total_cases == 1
         assert suite_result.passed_cases == 0
         assert suite_result.failed_cases == 1
+        assert len(suite_result.results) == 1
+        assert suite_result.results[0].case_id == "connectivity"
+        assert suite_result.results[0].error == "connection failed"
 
     def test_convert_result_with_cases(self, runner) -> None:
         """Test converting result with detailed cases."""
@@ -414,7 +420,7 @@ class TestSuiteResultConversion:
             "details": {
                 "cases": [
                     {"id": "case1", "passed": True, "output": "ok", "score": 1.0},
-                    {"id": "case2", "passed": False, "output": "fail", "score": 0.0},
+                    {"id": "case2", "passed": False, "output": "fail", "score": 0.0, "error": "bad json"},
                     {"id": "case3", "passed": True, "output": "ok", "score": 1.0},
                 ]
             },
@@ -425,6 +431,7 @@ class TestSuiteResultConversion:
         assert suite_result.passed_cases == 2
         assert suite_result.failed_cases == 1
         assert len(suite_result.results) == 3
+        assert suite_result.results[1].error == "bad json"
 
     def test_convert_timeout_result(self, runner) -> None:
         """Test converting timeout result."""
@@ -437,6 +444,7 @@ class TestSuiteResultConversion:
 
         assert suite_result.total_cases == 1
         assert suite_result.passed_cases == 0
+        assert suite_result.results[0].error == "Suite connectivity timed out after 5.0s"
 
 
 # =============================================================================

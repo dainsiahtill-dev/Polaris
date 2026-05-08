@@ -51,6 +51,9 @@ interface PMWorkspaceProps {
   tasks: PmTask[];
   pmState: Record<string, unknown> | null;
   pmRunning: boolean;
+  pmTerminalStatus?: PMTerminalStatus | null;
+  pmStartBlockedReason?: string;
+  runtimeIssue?: PMRuntimeIssue | null;
   isStarting?: boolean;
   onBackToMain: () => void;
   onTogglePm: () => void;
@@ -66,12 +69,100 @@ interface PMWorkspaceProps {
   onOpenSettings?: () => void;
 }
 
+interface PMRuntimeIssue {
+  code: string;
+  title: string;
+  detail: string;
+}
+
+interface PMTerminalStatus {
+  status?: unknown;
+  terminal?: boolean;
+  ok?: boolean | null;
+  exit_code?: number | null;
+  error?: string | null;
+  log_path?: string | null;
+  contract_path?: string | null;
+}
+
+interface PMRuntimeBanner {
+  title: string;
+  detail: string;
+  severity: 'error' | 'warning';
+  refs: string[];
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolvePMRuntimeBanner({
+  pmRunning,
+  pmStartBlockedReason,
+  runtimeIssue,
+  pmTerminalStatus,
+}: {
+  pmRunning: boolean;
+  pmStartBlockedReason?: string;
+  runtimeIssue?: PMRuntimeIssue | null;
+  pmTerminalStatus?: PMTerminalStatus | null;
+}): PMRuntimeBanner | null {
+  if (!pmRunning && pmStartBlockedReason) {
+    return {
+      title: 'PM 启动被阻止',
+      detail: pmStartBlockedReason,
+      severity: 'warning',
+      refs: [],
+    };
+  }
+
+  if (runtimeIssue && !pmRunning) {
+    return {
+      title: runtimeIssue.title || 'PM 运行已终止',
+      detail: runtimeIssue.detail || runtimeIssue.code || 'PM 运行失败，请查看运行日志。',
+      severity: 'error',
+      refs: [],
+    };
+  }
+
+  if (!pmTerminalStatus || pmRunning) return null;
+
+  const status = stringValue(pmTerminalStatus.status).toLowerCase();
+  const exitCode = typeof pmTerminalStatus.exit_code === 'number' ? pmTerminalStatus.exit_code : null;
+  const error = stringValue(pmTerminalStatus.error);
+  const failed = (
+    (exitCode !== null && exitCode !== 0)
+    || pmTerminalStatus.ok === false
+    || (pmTerminalStatus.terminal === true && status === 'failed')
+    || Boolean(error)
+  );
+  if (!failed) return null;
+
+  const detailParts = [
+    exitCode !== null ? `退出码: ${exitCode}` : '',
+    error || '',
+  ].filter(Boolean);
+
+  return {
+    title: 'PM 运行已终止',
+    detail: detailParts.join('\n') || 'PM 进程已进入失败终态，请查看运行日志和任务合同。',
+    severity: 'error',
+    refs: [
+      stringValue(pmTerminalStatus.contract_path),
+      stringValue(pmTerminalStatus.log_path),
+    ].filter(Boolean),
+  };
+}
+
 type PMActiveView = 'tasks' | 'activity' | 'documents' | 'history' | 'analytics';
 
 export function PMWorkspace({
   tasks,
   pmState,
   pmRunning,
+  pmTerminalStatus = null,
+  pmStartBlockedReason = '',
+  runtimeIssue = null,
   isStarting,
   onBackToMain,
   onTogglePm,
@@ -148,6 +239,13 @@ export function PMWorkspace({
   
   // 获取当前正在执行的任务
   const currentTask = tasks.find((task) => task.status === 'in_progress' || String(task.status) === 'running') ?? null;
+  const pmStartBlocked = Boolean(pmStartBlockedReason && !pmRunning);
+  const pmRuntimeBanner = resolvePMRuntimeBanner({
+    pmRunning,
+    pmStartBlockedReason,
+    runtimeIssue,
+    pmTerminalStatus,
+  });
 
   return (
     <div data-testid="pm-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
@@ -268,8 +366,8 @@ export function PMWorkspace({
             size="sm"
             onClick={onRunPmOnce}
             data-testid="pm-workspace-run-once"
-            disabled={pmRunning || isStarting || factoryMode}
-            title={factoryMode ? "工厂模式下无法使用此功能" : undefined}
+            disabled={pmRunning || isStarting || factoryMode || pmStartBlocked}
+            title={factoryMode ? "工厂模式下无法使用此功能" : pmStartBlocked ? pmStartBlockedReason : undefined}
             className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/20"
           >
             {isStarting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
@@ -281,8 +379,8 @@ export function PMWorkspace({
             size="sm"
             onClick={onTogglePm}
             data-testid="pm-workspace-toggle"
-            disabled={isStarting || factoryMode}
-            title={factoryMode ? "工厂模式下无法使用此功能" : undefined}
+            disabled={isStarting || factoryMode || pmStartBlocked}
+            title={factoryMode ? "工厂模式下无法使用此功能" : pmStartBlocked ? pmStartBlockedReason : undefined}
             className={cn(
               pmRunning
                 ? 'bg-amber-600 hover:bg-amber-700 text-white'
@@ -330,6 +428,47 @@ export function PMWorkspace({
           </Button>
         </div>
       </header>
+
+      {pmRuntimeBanner && (
+        <div
+          data-testid="pm-runtime-terminal-banner"
+          className={cn(
+            "mx-4 mt-3 rounded-lg border px-3 py-2.5 text-sm shadow-lg",
+            pmRuntimeBanner.severity === 'error'
+              ? "border-red-500/30 bg-red-950/40 text-red-100"
+              : "border-amber-500/30 bg-amber-950/35 text-amber-100",
+          )}
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className={cn(
+              "mt-0.5 size-4 shrink-0",
+              pmRuntimeBanner.severity === 'error' ? "text-red-300" : "text-amber-300",
+            )} />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">{pmRuntimeBanner.title}</div>
+              <div className="mt-1 whitespace-pre-line text-xs opacity-85">{pmRuntimeBanner.detail}</div>
+              {pmRuntimeBanner.refs.length > 0 && (
+                <div className="mt-1.5 space-y-0.5 font-mono text-[10px] opacity-65">
+                  {pmRuntimeBanner.refs.map((ref) => (
+                    <div key={ref} className="truncate" title={ref}>{ref}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {pmStartBlocked && onOpenSettings && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onOpenSettings}
+                className="shrink-0 border-amber-400/30 text-amber-100 hover:bg-amber-500/10"
+              >
+                <Settings className="mr-1.5 size-3.5" />
+                LLM 设置
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
@@ -423,6 +562,7 @@ export function PMWorkspace({
                   pmRunning={pmRunning}
                   workspace={workspace}
                   taskCount={totalTasks}
+                  interactionBlockedReason={pmRuntimeBanner?.detail || pmStartBlockedReason}
                 />
               </Panel>
             </>

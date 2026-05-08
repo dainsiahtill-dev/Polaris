@@ -830,7 +830,11 @@ async function startBackend(options = {}) {
     args.push("--self-upgrade-mode");
   }
 
-  const backendEnv = { ...process.env, PYTHONUNBUFFERED: "1" };
+  const backendEnv = {
+    ...process.env,
+    PYTHONUNBUFFERED: "1",
+    KERNELONE_DIRECTOR_RUNTIME_CODEGEN: process.env.KERNELONE_DIRECTOR_RUNTIME_CODEGEN || "1",
+  };
   if (backendEnv.KERNELONE_E2E_USE_REAL_SETTINGS === "1" && backendEnv.KERNELONE_HOME) {
     backendEnv.KERNELONE_RUNTIME_ROOT = backendEnv.KERNELONE_RUNTIME_ROOT || path.join(backendEnv.KERNELONE_HOME, "runtime-cache");
     backendEnv.KERNELONE_STATE_TO_RAMDISK = "0";

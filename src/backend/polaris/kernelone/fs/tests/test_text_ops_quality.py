@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -111,6 +112,31 @@ def test_write_text_atomic_empty_path_is_noop() -> None:
 def test_write_text_atomic_creates_parent_dirs(tmp_path: Path) -> None:
     target = str(tmp_path / "nested" / "deep" / "file.txt")
     write_text_atomic(target, "content")
+    assert Path(target).read_text(encoding="utf-8") == "content"
+
+
+def test_write_text_atomic_retries_transient_windows_replace_permission_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = str(tmp_path / "locked-once.txt")
+    original_replace = os.replace
+    calls = 0
+
+    def flaky_replace(src: str, dst: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError(5, "access denied", src)
+        original_replace(src, dst)
+
+    monkeypatch.setattr("polaris.kernelone.fs.text_ops.os.name", "nt")
+    monkeypatch.setattr("polaris.kernelone.fs.text_ops.os.replace", flaky_replace)
+    monkeypatch.setattr("polaris.kernelone.fs.text_ops.time.sleep", lambda _seconds: None)
+
+    write_text_atomic(target, "content", lock_timeout_sec=None)
+
+    assert calls == 2
     assert Path(target).read_text(encoding="utf-8") == "content"
 
 

@@ -1,17 +1,16 @@
-"""Policy-guarded code generation engine.
+"""Director runtime code generation bridge.
 
-WARNING - ABSOLUTE PROHIBITION:
-This module MUST NOT generate code, template code, fallback code, or bootstrap
-code for any LLM/AI/Agent workflow.
-
-If any caller attempts to use this module for code writing, the call is blocked
-fail-closed with explicit error/warning signals.
+Legacy deterministic code generation, template fallback, and emergency bootstrap
+helpers remain forbidden. Real code writing is only allowed through the Director
+role runtime when explicitly enabled by environment, so writes go through the
+same LLM/tool policy and workspace guards as the interactive Director role.
 
 All text operations MUST explicitly use UTF-8 encoding.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -21,10 +20,22 @@ from typing import Any, NoReturn
 logger = logging.getLogger(__name__)
 
 CODE_WRITING_FORBIDDEN_WARNING = (
-    "SECURITY POLICY VIOLATION: LLM/AI/Agent code-writing and fallback "
-    "generation are strictly forbidden in "
+    "SECURITY POLICY VIOLATION: deterministic/fallback code generation "
+    "is strictly forbidden in "
     "polaris.cells.director.execution.internal.code_generation_engine."
 )
+_RUNTIME_CODEGEN_ENV = "KERNELONE_DIRECTOR_RUNTIME_CODEGEN"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = str(os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
 
 
 class CodeGenerationPolicyViolationError(RuntimeError):
@@ -183,7 +194,150 @@ class CodeGenerationEngine:
         if repeat_count >= limit:
             raise RuntimeError(f"WORKER_SPIN_GUARD[{scope}] repeated identical prompt+output x{repeat_count}")
 
-    # === Blocked code-writing entry points ===
+    # === Runtime Director bridge ===
+
+    def runtime_codegen_enabled(self) -> bool:
+        """Return whether real Director runtime code writing is explicitly enabled."""
+        return _env_flag(_RUNTIME_CODEGEN_ENV, default=False)
+
+    async def _invoke_director_role_response(
+        self,
+        *,
+        task: Any,
+        prompt: str,
+        timeout: int,
+        round_label: str,
+        round_files: list[str] | None,
+    ) -> dict[str, Any]:
+        """Invoke the canonical Director role runtime for one generation round."""
+        from polaris.bootstrap import config as backend_config
+        from polaris.cells.llm.dialogue.public.service import generate_role_response
+
+        try:
+            settings = backend_config.get_settings()
+        except AttributeError:
+            settings = None
+
+        task_id = str(getattr(task, "id", "") or "").strip()
+        context = {
+            "task_id": task_id,
+            "round_label": str(round_label or "").strip(),
+            "target_files": list(round_files or []),
+            "llm_call_timeout_seconds": timeout,
+            "director_runtime_codegen": True,
+            "director_runtime_codegen_mode": "proposal_then_apply",
+            "delivery_mode": "propose_patch",
+            "disable_internal_tool_rounds": True,
+        }
+        target_hint = ", ".join(path for path in (round_files or []) if str(path or "").strip())
+        if not target_hint:
+            target_hint = "the listed target files"
+        user_message = (
+            "[mode:propose] Non-interactive batch worker. Return only fenced "
+            f"file sections for: {target_hint}. The first non-whitespace text "
+            "must be ```file:. No progress notes. Do not call tools."
+        )
+        appendix = (
+            "Polaris Director proposal-to-apply bridge. The user message is "
+            "intentionally in PROPOSE mode because this bridge validates and "
+            "applies the returned file blocks through FileApplyService. Return "
+            "only PATCH_FILE blocks or fenced file sections for the target files; "
+            "do not ask follow-up questions, do not narrate phases/progress, and "
+            "do not return placeholder content. The response must contain at "
+            "least one parsable file operation."
+            "\n\n"
+            f"{prompt}"
+        )
+        return await asyncio.wait_for(
+            generate_role_response(
+                workspace=self.workspace,
+                settings=settings,
+                role="director",
+                message=user_message,
+                context=context,
+                validate_output=False,
+                max_retries=1,
+                prompt_appendix=appendix,
+                enable_cognitive=False,
+            ),
+            timeout=max(1.0, float(timeout)),
+        )
+
+    @staticmethod
+    def _extract_response_text(response: dict[str, Any]) -> str:
+        return str(response.get("response") or response.get("content") or response.get("reply") or "").strip()
+
+    @staticmethod
+    def _normalize_tool_results(response: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_results = response.get("tool_results")
+        if not isinstance(raw_results, list):
+            raw_results = response.get("tool_calls")
+        if not isinstance(raw_results, list):
+            return []
+        return [dict(item) for item in raw_results if isinstance(item, dict)]
+
+    @staticmethod
+    def _extract_written_files_from_tool_results(tool_results: list[dict[str, Any]]) -> list[dict[str, str]]:
+        files: list[dict[str, str]] = []
+        seen: set[str] = set()
+        write_tools = {"write_file", "edit_file", "patch_apply", "append_to_file", "search_replace"}
+        for item in tool_results:
+            tool_name = str(item.get("tool") or item.get("name") or "").strip().lower()
+            if tool_name not in write_tools or not bool(item.get("success")):
+                continue
+            result = item.get("result")
+            candidates: list[Any] = []
+            if isinstance(result, dict):
+                candidates.extend(
+                    [
+                        result.get("file"),
+                        result.get("path"),
+                        result.get("file_path"),
+                    ]
+                )
+                changed_files = result.get("changed_files")
+                if isinstance(changed_files, list):
+                    candidates.extend(changed_files)
+            for candidate in candidates:
+                path = str(candidate or "").strip()
+                if path and path not in seen:
+                    seen.add(path)
+                    files.append({"path": path, "content": ""})
+        return files
+
+    def _collect_existing_round_files(self, round_files: list[str] | None) -> list[dict[str, str]]:
+        files: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for raw_path in round_files or []:
+            path = str(raw_path or "").strip()
+            if not path or path in seen:
+                continue
+            full_path = os.path.join(self.workspace, path)
+            if os.path.isfile(full_path):
+                seen.add(path)
+                files.append({"path": path, "content": ""})
+        return files
+
+    def _apply_response_operations(
+        self,
+        *,
+        response_text: str,
+        task_id: str,
+        llm_metadata: dict[str, Any],
+    ) -> tuple[list[dict], list[str]]:
+        apply_func = getattr(self._executor, "_apply_response_operations", None)
+        if not callable(apply_func):
+            return [], ["director executor cannot apply response operations"]
+        applied_files, errors = apply_func(
+            response_text,
+            task_id=task_id,
+            llm_metadata=llm_metadata,
+        )
+        normalized_files = [dict(item) for item in applied_files if isinstance(item, dict)]
+        normalized_errors = [str(item) for item in errors if str(item or "").strip()]
+        return normalized_files, normalized_errors
+
+    # === Blocked legacy entry points ===
 
     def invoke_runtime_provider(
         self,
@@ -230,25 +384,89 @@ class CodeGenerationEngine:
         round_files: list[str] | None,
         spin_tracker: dict[str, dict[str, Any]],
     ) -> tuple[list[dict], list[str]]:
-        """Blocked: all code generation attempts are forbidden.
+        """Generate code through the Director role runtime when explicitly enabled."""
+        _ = model
+        if not self.runtime_codegen_enabled():
+            warning = (
+                f"{CODE_WRITING_FORBIDDEN_WARNING} "
+                f"blocked_action=invoke_generation_with_retries; enable {_RUNTIME_CODEGEN_ENV}=1 "
+                "to use the audited Director runtime bridge"
+            )
+            logger.error(warning)
+            return [], [warning]
 
-        Returns:
-            Empty file list and one blocking warning, so callers can degrade
-            gracefully without implicit code generation.
-        """
-        _ = (
-            task,
-            prompt,
-            model,
-            per_call_timeout,
-            deadline_ts,
-            round_label,
-            round_files,
-            spin_tracker,
-        )
-        warning = f"{CODE_WRITING_FORBIDDEN_WARNING} blocked_action=invoke_generation_with_retries"
-        logger.error(warning)
-        return [], [warning]
+        warnings: list[str] = []
+        task_id = str(getattr(task, "id", "") or "").strip()
+        attempts = self.resolve_patch_retry_attempts()
+        current_prompt = prompt
+
+        for attempt in range(1, attempts + 1):
+            remaining = self.remaining_timeout(deadline_ts)
+            if remaining <= 0:
+                warnings.append("director_runtime_codegen_deadline_exhausted")
+                break
+            timeout = min(max(int(per_call_timeout or 0), 15), remaining)
+            try:
+                response = await self._invoke_director_role_response(
+                    task=task,
+                    prompt=current_prompt,
+                    timeout=timeout,
+                    round_label=f"{round_label}:attempt-{attempt}",
+                    round_files=round_files,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                warnings.append(f"director_runtime_codegen_timeout:{timeout}s")
+                break
+            except (
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                warnings.append(f"director_runtime_codegen_invoke_failed:{exc}")
+                continue
+
+            response_text = self._extract_response_text(response)
+            try:
+                self.register_spin_guard(
+                    spin_tracker,
+                    scope=f"{task_id or 'task'}:{round_label}",
+                    prompt=current_prompt,
+                    output=response_text,
+                )
+            except RuntimeError as exc:
+                warnings.append(str(exc))
+                break
+
+            tool_files = self._extract_written_files_from_tool_results(self._normalize_tool_results(response))
+            if tool_files:
+                return tool_files, warnings
+
+            if response_text:
+                applied_files, apply_errors = self._apply_response_operations(
+                    response_text=response_text,
+                    task_id=task_id,
+                    llm_metadata={
+                        "provider": response.get("provider"),
+                        "model": response.get("model"),
+                        "attempt": attempt,
+                        "round_label": round_label,
+                    },
+                )
+                if applied_files:
+                    return applied_files, [*warnings, *apply_errors]
+                warnings.extend(apply_errors)
+            else:
+                warnings.append("director_runtime_codegen_empty_response")
+
+            current_prompt = (
+                f"{prompt}\n\nPrevious attempt {attempt} produced no workspace changes. "
+                "Return valid PATCH_FILE blocks or fenced file sections for the listed target files."
+            )
+
+        if not warnings:
+            warnings.append("director_runtime_codegen_no_files_created")
+        return [], warnings
 
 
 def generate_fallback_code_content(path: str, language: str, task_subject: str) -> NoReturn:

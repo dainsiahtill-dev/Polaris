@@ -40,20 +40,31 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
     for role, role_cfg in roles_cfg.items():
         if not isinstance(role_cfg, dict):
             continue
-        provider_id = role_cfg.get("provider_id")
+        provider_id = str(role_cfg.get("provider_id") or "").strip()
+        model = str(role_cfg.get("model") or "").strip()
         provider_cfg = providers_cfg.get(provider_id, {}) if isinstance(providers_cfg, dict) else {}
         test_info = (index.get("roles") or {}).get(role) if isinstance(index, dict) else None
+        provider_test_info = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
         runtime_supported = _runtime_supported(role, provider_id, provider_cfg)
+        binding_readiness = _binding_readiness(
+            provider_id=provider_id,
+            model=model,
+            test_info=test_info if isinstance(test_info, dict) else None,
+            provider_test_info=provider_test_info if isinstance(provider_test_info, dict) else None,
+        )
         roles_status[role] = {
             "provider_id": provider_id,
-            "model": role_cfg.get("model"),
+            "model": model,
             "profile": role_cfg.get("profile"),
-            "ready": bool(test_info.get("ready")) if isinstance(test_info, dict) else False,
+            "ready": binding_readiness["ready"],
             "grade": test_info.get("grade") if isinstance(test_info, dict) else "UNKNOWN",
             "last_run_id": test_info.get("last_run_id") if isinstance(test_info, dict) else None,
             "timestamp": test_info.get("timestamp") if isinstance(test_info, dict) else None,
             "suites": test_info.get("suites") if isinstance(test_info, dict) else None,
             "runtime_supported": runtime_supported,
+            "readiness_issue": binding_readiness["issue"],
+            "tested_provider_id": binding_readiness["tested_provider_id"],
+            "tested_model": binding_readiness["tested_model"],
         }
 
     for provider_id, provider_cfg in providers_cfg.items():
@@ -107,3 +118,39 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
 
 def _runtime_supported(role: str, provider_id: str | None, provider_cfg: dict[str, Any]) -> bool:
     return is_role_runtime_supported(role, provider_id, provider_cfg)
+
+
+def _binding_readiness(
+    *,
+    provider_id: str,
+    model: str,
+    test_info: dict[str, Any] | None,
+    provider_test_info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    role_ready = bool(test_info.get("ready")) if isinstance(test_info, dict) else False
+    tested_provider_id = str((test_info or {}).get("provider_id") or "").strip()
+    tested_model = str((test_info or {}).get("model") or "").strip()
+
+    if not tested_provider_id and isinstance(provider_test_info, dict):
+        tested_provider_id = provider_id if provider_test_info else ""
+    if not tested_model and isinstance(provider_test_info, dict):
+        tested_model = str(provider_test_info.get("model") or "").strip()
+
+    issue = ""
+    if not role_ready:
+        issue = "role_readiness_missing"
+    elif not provider_id or not model:
+        issue = "role_binding_missing"
+    elif tested_provider_id and tested_provider_id != provider_id:
+        issue = "provider_mismatch"
+    elif not tested_model:
+        issue = "tested_model_missing"
+    elif tested_model != model:
+        issue = "model_mismatch"
+
+    return {
+        "ready": role_ready and issue == "",
+        "issue": issue,
+        "tested_provider_id": tested_provider_id,
+        "tested_model": tested_model,
+    }

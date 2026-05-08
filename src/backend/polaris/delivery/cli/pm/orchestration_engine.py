@@ -288,19 +288,31 @@ def _downgrade_recovered_pm_invoke_error(
     pm_state_full: str,
     timestamp: str,
 ) -> bool:
-    """Clear fatal PM invoke state after a deterministic fallback fully recovers it."""
+    """Deprecated guard: PM invoke failures must remain visible after fallback attempts.
+
+    A deterministic requirements fallback can be useful when the PM response is
+    empty or malformed, but it is not evidence that the configured runtime
+    provider is usable. Clearing ``PM_LLM_INVOKE_FAILED`` caused real provider
+    failures to appear as healthy fallback task generation in the UI.
+    """
     error_code = str(pm_state.get("last_pm_error_code") or "").strip()
     if error_code != "PM_LLM_INVOKE_FAILED":
         return False
 
-    error_detail = str(pm_state.get("last_pm_error_detail") or "").strip()
-    pm_state["last_pm_warning_code"] = "PM_LLM_FALLBACK_APPLIED"
-    pm_state["last_pm_warning_detail"] = error_detail
-    pm_state["last_pm_error_code"] = ""
-    pm_state["last_pm_error_detail"] = ""
-    pm_state["last_updated_ts"] = timestamp
-    write_json_atomic(pm_state_full, pm_state)
-    return True
+    _ = (pm_state_full, timestamp)
+    return False
+
+
+def _pm_invoke_failed(pm_state: dict[str, Any], normalized: dict[str, Any]) -> bool:
+    """Return True when zero-task recovery would mask a PM provider failure."""
+    state_code = str(pm_state.get("last_pm_error_code") or "").strip()
+    if state_code == "PM_LLM_INVOKE_FAILED":
+        return True
+    notes = str(normalized.get("notes") or "").strip().lower()
+    warnings = normalized.get("schema_warnings")
+    warning_text = "\n".join(str(item) for item in warnings) if isinstance(warnings, list) else ""
+    combined = f"{notes}\n{warning_text}".lower()
+    return "pm invoke failed" in combined or "provider invocation failed" in combined
 
 
 def _resolve_orchestration_runtime(args: argparse.Namespace) -> str:
@@ -611,23 +623,56 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
 
     if has_requirements and len(normalized_tasks) == 0:
         original_exit_code = exit_code
-        (
-            exit_code,
-            normalized,
-            normalized_tasks,
-            fallback_applied,
-        ) = _apply_requirements_fallback_for_empty_tasks(
-            exit_code=exit_code,
-            normalized=normalized,
-            normalized_tasks=normalized_tasks,
-            requirements=requirements,
-            iteration=iteration,
-            timestamp=start_timestamp,
-            plan_text=plan_text,
-            docs_stage=docs_stage,
-            run_id=run_id,
-            workspace_files=_collect_workspace_file_candidates(workspace_full),
-        )
+        fatal_pm_invoke_failure = original_exit_code != 0 and _pm_invoke_failed(pm_state, normalized)
+        fallback_applied = False
+        if fatal_pm_invoke_failure:
+            warning = (
+                "PM LLM provider invocation failed; deterministic requirements fallback was suppressed "
+                "to avoid dispatching tasks that were not produced by the configured PM role."
+            )
+            raw_warnings = normalized.get("schema_warnings")
+            invoke_schema_warnings = (
+                [str(item) for item in raw_warnings if str(item).strip()] if isinstance(raw_warnings, list) else []
+            )
+            invoke_schema_warnings.append(warning)
+            normalized["schema_warnings"] = invoke_schema_warnings
+            normalized["schema_warning_count"] = len(invoke_schema_warnings)
+            normalized["terminal_error_code"] = "PM_LLM_INVOKE_FAILED"
+            normalized["terminal_error"] = str(pm_state.get("last_pm_error_detail") or normalized.get("notes") or "")
+            emit_event(
+                run_events,
+                kind="status",
+                actor="PM",
+                name="pm_zero_tasks_fallback_suppressed",
+                refs={"run_id": run_id, "phase": "planning"},
+                summary="PM zero-task fallback suppressed after provider invoke failure",
+                ok=False,
+                output={
+                    "requirements_non_empty": True,
+                    "original_exit_code": original_exit_code,
+                    "task_count": 0,
+                    "error_code": "PM_LLM_INVOKE_FAILED",
+                },
+                error="PM_LLM_INVOKE_FAILED",
+            )
+        else:
+            (
+                exit_code,
+                normalized,
+                normalized_tasks,
+                fallback_applied,
+            ) = _apply_requirements_fallback_for_empty_tasks(
+                exit_code=exit_code,
+                normalized=normalized,
+                normalized_tasks=normalized_tasks,
+                requirements=requirements,
+                iteration=iteration,
+                timestamp=start_timestamp,
+                plan_text=plan_text,
+                docs_stage=docs_stage,
+                run_id=run_id,
+                workspace_files=_collect_workspace_file_candidates(workspace_full),
+            )
 
         if fallback_applied:
             emit_event(
@@ -1929,6 +1974,26 @@ def _run_dispatch_pipeline_with_workflow(
             docs_stage=docs_stage,
         )
 
+    qa_failure_reasons = {
+        "director_failures_present",
+        "integration_qa_failed",
+        "integration_qa_error",
+        "integration_qa_runtime_error",
+    }
+    qa_reason = (
+        str(integration_qa_result.get("reason") or "").strip() if isinstance(integration_qa_result, dict) else ""
+    )
+    if isinstance(integration_qa_result, dict) and (
+        integration_qa_result.get("passed") is False or qa_reason in qa_failure_reasons
+    ):
+        workflow_exit_code = 1
+        engine.update_role_status(
+            "QA",
+            status="failed",
+            running=False,
+            detail=qa_reason or "Integration QA failed",
+        )
+
     # Persist results
     write_json_atomic(run_director_result, director_result)
     runtime_director_result = resolve_artifact_path(
@@ -1937,6 +2002,21 @@ def _run_dispatch_pipeline_with_workflow(
         "runtime/results/director.result.json",
     )
     write_json_atomic(runtime_director_result, director_result)
+
+    if workflow_exit_code != 0:
+        terminal_error = (
+            str(director_result.get("error") or "").strip()
+            or str(director_result.get("summary") or "").strip()
+            or "DIRECTOR_WORKFLOW_FAILED"
+        )
+        engine.update_role_status(
+            "PM",
+            status="failed",
+            running=False,
+            detail="PM iteration failed during downstream workflow execution",
+        )
+        if hasattr(engine, "set_phase"):
+            engine.set_phase("failed", running=False, error=terminal_error)
 
     # Update normalized with execution info
     normalized["engine_execution"] = {

@@ -52,6 +52,8 @@ export interface AIDialoguePanelProps {
   capabilityProfile?: Record<string, unknown> | string[];
   /** 会话状态变化回调 */
   onSessionChange?: (sessionId: string | null) => void;
+  /** 外部运行门禁阻塞原因 */
+  interactionBlockedReason?: string;
 }
 
 const DEFAULT_THEMES: Record<DialogueRole, NonNullable<AIDialoguePanelProps['roleTheme']>> = {
@@ -68,6 +70,15 @@ function getStatusDisplay(
   statusKind: string,
   theme: NonNullable<AIDialoguePanelProps['roleTheme']>
 ): React.ReactNode {
+  if (statusKind === 'blocked') {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-amber-500/10 border border-amber-500/20">
+        <AlertCircle className="w-3 h-3 text-amber-400" />
+        <span className="text-[10px] text-amber-400">阻塞</span>
+      </div>
+    );
+  }
+
   if (statusKind === 'loading') {
     return (
       <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-slate-500/10 border border-slate-500/20">
@@ -125,10 +136,13 @@ export function AIDialoguePanel({
   attachmentMode = 'isolated',
   capabilityProfile,
   onSessionChange,
+  interactionBlockedReason,
 }: AIDialoguePanelProps) {
   const theme = roleTheme || DEFAULT_THEMES[dialogueRole];
   const defaultWelcome = `${roleDisplayName} 已就绪。您可以开始对话。`;
   const welcomeMessage = welcomeMessageProp || defaultWelcome;
+  const blockedReason = String(interactionBlockedReason || '').trim();
+  const isInteractionBlocked = Boolean(blockedReason);
 
   const {
     messages,
@@ -168,7 +182,9 @@ export function AIDialoguePanel({
 
   if (!visible) return null;
 
-  const statusDisplay = getStatusDisplay(statusKind, theme);
+  const effectiveStatusKind = isInteractionBlocked ? 'blocked' : statusKind;
+  const effectiveIsChatReady = isChatReady && !isInteractionBlocked;
+  const statusDisplay = getStatusDisplay(effectiveStatusKind, theme);
 
   return (
     <div className="h-full flex flex-col bg-slate-950/50 border-l border-white/10">
@@ -180,17 +196,17 @@ export function AIDialoguePanel({
         configuredModelLabel={configuredModelLabel}
         hasConversation={!!conversationId}
         showHistory={showHistory}
-        isChatReady={isChatReady}
-        statusKind={statusKind}
+        isChatReady={effectiveIsChatReady}
+        statusKind={effectiveStatusKind}
         onLoadHistory={handleToggleHistory}
         onClear={handleClear}
         onToggleHistory={handleToggleHistory}
       />
 
       <AIStatusBar
-        statusKind={statusKind}
+        statusKind={effectiveStatusKind}
         roleName={roleDisplayName}
-        error={chatStatus?.error}
+        error={blockedReason || chatStatus?.error}
         debug={chatStatus?.debug}
         theme={theme}
         onRetry={checkStatus}
@@ -220,8 +236,9 @@ export function AIDialoguePanel({
         onKeyDown={handleKeyDown}
         onSend={handleSend}
         isLoading={isLoading}
-        isChatReady={isChatReady}
+        isChatReady={effectiveIsChatReady}
         isExplicitlyUnconfigured={isExplicitlyUnconfigured}
+        blockedReason={blockedReason}
         roleName={roleDisplayName}
         theme={theme}
       />

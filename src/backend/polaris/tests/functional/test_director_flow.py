@@ -8,11 +8,10 @@ from types import SimpleNamespace
 
 
 def _load_loop_director():
-    repo_root = Path(__file__).resolve().parents[2]
-    backend_root = repo_root / "src" / "backend"
+    backend_root = Path(__file__).resolve().parents[3]
     if str(backend_root) not in sys.path:
         sys.path.insert(0, str(backend_root))
-    module_path = backend_root / "scripts" / "loop-director.py"
+    module_path = backend_root / "polaris" / "delivery" / "cli" / "loop-director.py"
     spec = importlib.util.spec_from_file_location("loop_director", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Failed to load loop-director.py")
@@ -51,7 +50,7 @@ def test_director_async_main_writes_result_json(tmp_path, monkeypatch):
     result_path = workspace / "runtime" / "results" / "director.result.json"
 
     class _FakeRunner:
-        def __init__(self, *_args, **_kwargs):
+        def __init__(self, *_args, **_kwargs) -> None:
             pass
 
         async def run(self, **_kwargs):
@@ -90,3 +89,60 @@ def test_director_async_main_writes_result_json(tmp_path, monkeypatch):
     assert payload["status"] == "success"
     assert payload["tasks_executed"] == 1
     assert "src/example.py" in payload["changed_files"]
+
+
+def test_director_runner_initializes_service_before_executing_tasks(tmp_path, monkeypatch):
+    loop_director = _load_loop_director()
+
+    pm_task_path = tmp_path / "pm_tasks.contract.json"
+    pm_task_path.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "PM-INIT-1",
+                        "title": "Initialize Director",
+                        "goal": "Director runner must initialize its service before executing tasks.",
+                        "priority": 1,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    class _FakeDirector:
+        async def stop(self):
+            calls.append("stop")
+
+    async def _fake_initialize(self):
+        calls.append("initialize")
+        self.director = _FakeDirector()
+
+    async def _fake_execute_task(self, task_data, timeout):
+        calls.append(("execute", task_data["task_id"], timeout))
+        task_data["_runtime_task_id"] = f"runtime-{task_data['task_id']}"
+        self.results["tasks_executed"] += 1
+        return True
+
+    monkeypatch.setattr(loop_director.DirectorV2Runner, "initialize", _fake_initialize)
+    monkeypatch.setattr(loop_director.DirectorV2Runner, "execute_task", _fake_execute_task)
+
+    config = loop_director.DirectorConfig(workspace=str(tmp_path))
+    runner = loop_director.DirectorV2Runner(str(tmp_path), config)
+
+    result = loop_director.asyncio.run(
+        runner.run(
+            pm_task_path=str(pm_task_path),
+            iterations=1,
+            timeout=30,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["errors"] == []
+    assert calls == ["initialize", ("execute", "PM-INIT-1", 30), "stop"]

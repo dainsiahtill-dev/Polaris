@@ -10,9 +10,37 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+_FENCED_FILE_BLOCK_RE = re.compile(
+    r"```file:\s*([^\r\n`]+)\r?\n(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _normalize_fenced_file_blocks(response: str) -> str:
+    """Convert ```file: path fences into protocol FILE blocks.
+
+    The Director proposal bridge asks models for fenced file sections because
+    several providers reliably produce that shape. The protocol apply kernel
+    remains the single validation/apply path, so we normalize into its native
+    FILE/END FILE syntax instead of writing these blocks directly.
+    """
+
+    text = str(response or "")
+    if "```file:" not in text.lower():
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        path = match.group(1).strip()
+        content = match.group(2).strip("\r\n")
+        return f"FILE: {path}\n{content}\nEND FILE"
+
+    return _FENCED_FILE_BLOCK_RE.sub(_replace, text)
 
 
 class FileApplyService:
@@ -152,12 +180,14 @@ class FileApplyService:
         # Import here to avoid circular dependencies
         from polaris.kernelone.llm.toolkit import apply_protocol_output
 
+        normalized_response = _normalize_fenced_file_blocks(response)
+
         # Phase 1: Pre-apply integrity validation
         if llm_metadata:
             # Import from public contract (execution.public.service re-exports it)
             from polaris.cells.director.execution.public.service import validate_before_apply
 
-            integrity = validate_before_apply(response, llm_metadata)
+            integrity = validate_before_apply(normalized_response, llm_metadata)
 
             if not integrity.is_valid:
                 if integrity.can_continue:
@@ -169,7 +199,7 @@ class FileApplyService:
 
         # Phase 2: Parse and apply (strict mode, no fallback)
         report = apply_protocol_output(
-            response,
+            normalized_response,
             self.workspace,
             strict=True,  # 严格模式
             allow_fuzzy_match=False,  # 禁用模糊匹配

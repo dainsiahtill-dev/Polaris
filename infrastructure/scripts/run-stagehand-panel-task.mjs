@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
@@ -6,7 +7,7 @@ import { fileURLToPath } from "url";
 const currentFile = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFile);
 const repoRoot = path.resolve(scriptDir, "..", "..");
-const logsRoot = path.join(repoRoot, ".polaris", "logs");
+const logsRoot = path.join(os.homedir(), ".polaris", "logs");
 
 function nowIso() {
   return new Date().toISOString();

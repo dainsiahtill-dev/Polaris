@@ -1,6 +1,7 @@
 import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
 import fs from "fs";
 import http from "http";
+import os from "os";
 import path from "path";
 
 export type MainProcessLogs = {
@@ -11,6 +12,7 @@ export type MainProcessLogs = {
 export type TestEnvironment = {
   isolatedE2EHome: string;
   isolatedRuntimeRoot: string;
+  isolatedWorkspace: string;
   useRealSettings: boolean;
 };
 
@@ -39,17 +41,60 @@ function resolveRepoRoot(startDir: string): string {
 }
 
 const repoRoot = resolveRepoRoot(__dirname);
-const e2eHomeRoot = path.join(repoRoot, ".polaris", "tmp");
+const e2eHomeRoot = path.join(os.tmpdir(), "Polaris", "electron-e2e-home");
+
+function isPathInside(basePath: string, candidatePath: string): boolean {
+  const base = path.resolve(basePath);
+  const candidate = path.resolve(candidatePath);
+  const normalizedBase = process.platform === "win32" ? base.toLowerCase() : base;
+  const normalizedCandidate = process.platform === "win32" ? candidate.toLowerCase() : candidate;
+  if (normalizedCandidate === normalizedBase) {
+    return true;
+  }
+  const relative = path.relative(normalizedBase, normalizedCandidate);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function assertOutsideRepo(candidatePath: string, label: string): string {
+  const resolved = path.resolve(candidatePath);
+  if (isPathInside(repoRoot, resolved)) {
+    throw new Error(`[fixtures] ${label} must not be inside the Polaris meta-project repository.`);
+  }
+  return resolved;
+}
 
 function createIsolatedE2EHome(): string {
   fs.mkdirSync(e2eHomeRoot, { recursive: true });
-  return fs.mkdtempSync(path.join(e2eHomeRoot, "electron-e2e-home-"));
+  return assertOutsideRepo(fs.mkdtempSync(path.join(e2eHomeRoot, "home-")), "KERNELONE_HOME");
 }
 
-function createIsolatedRuntimeRoot(isolatedE2EHome: string): string {
-  const runtimeRoot = path.join(isolatedE2EHome, "runtime-cache");
-  fs.mkdirSync(runtimeRoot, { recursive: true });
-  return runtimeRoot;
+function defaultRuntimeBase(): string {
+  if (process.platform === "win32") {
+    const xDrive = "X:\\";
+    if (fs.existsSync(xDrive)) {
+      return path.join(xDrive, "Polaris", "runtime", "electron-e2e");
+    }
+  }
+  return path.join(os.tmpdir(), "Polaris", "runtime", "electron-e2e");
+}
+
+function createIsolatedRuntimeRoot(): string {
+  const runtimeBase = assertOutsideRepo(defaultRuntimeBase(), "KERNELONE_RUNTIME_ROOT");
+  fs.mkdirSync(runtimeBase, { recursive: true });
+  return assertOutsideRepo(fs.mkdtempSync(path.join(runtimeBase, "runtime-")), "KERNELONE_RUNTIME_ROOT");
+}
+
+function createIsolatedWorkspace(): string {
+  const workspaceBase = assertOutsideRepo(path.join(os.tmpdir(), "Polaris", "electron-e2e-workspace"), "KERNELONE_WORKSPACE");
+  fs.mkdirSync(workspaceBase, { recursive: true });
+  const workspace = assertOutsideRepo(fs.mkdtempSync(path.join(workspaceBase, "workspace-")), "KERNELONE_WORKSPACE");
+  fs.mkdirSync(path.join(workspace, "docs"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspace, "docs", "README.md"),
+    "# Electron E2E Workspace\n\nThis temporary workspace is created outside the Polaris meta-project.\n",
+    { encoding: "utf8" },
+  );
+  return workspace;
 }
 
 function cleanupIsolatedE2EHome(target: string): void {
@@ -273,17 +318,21 @@ export const test = base.extend<Fixtures>({
   },
   testEnv: async ({ }, use) => {
     const isolatedE2EHome = createIsolatedE2EHome();
-    const isolatedRuntimeRoot = createIsolatedRuntimeRoot(isolatedE2EHome);
+    const isolatedRuntimeRoot = createIsolatedRuntimeRoot();
+    const isolatedWorkspace = createIsolatedWorkspace();
     const useRealSettings = process.env.KERNELONE_E2E_USE_REAL_SETTINGS === "1";
 
     try {
       await use({
         isolatedE2EHome,
         isolatedRuntimeRoot,
+        isolatedWorkspace,
         useRealSettings,
       });
     } finally {
       cleanupIsolatedE2EHome(isolatedE2EHome);
+      cleanupIsolatedE2EHome(isolatedRuntimeRoot);
+      cleanupIsolatedE2EHome(isolatedWorkspace);
     }
   },
   electronApp: async ({ mainProcessLogs, testEnv }, use, testInfo) => {
@@ -302,8 +351,11 @@ export const test = base.extend<Fixtures>({
     } else {
       const realSettingsHome = String(env.KERNELONE_E2E_HOME || env.KERNELONE_HOME || "").trim();
       if (realSettingsHome) {
-        env.KERNELONE_HOME = path.resolve(realSettingsHome);
-        env.KERNELONE_RUNTIME_ROOT = env.KERNELONE_RUNTIME_ROOT || path.join(env.KERNELONE_HOME, "runtime-cache");
+        env.KERNELONE_HOME = assertOutsideRepo(realSettingsHome, "KERNELONE_HOME");
+        env.KERNELONE_RUNTIME_ROOT = assertOutsideRepo(
+          env.KERNELONE_RUNTIME_ROOT || createIsolatedRuntimeRoot(),
+          "KERNELONE_RUNTIME_ROOT",
+        );
       }
       env.KERNELONE_STATE_TO_RAMDISK = "0";
     }
@@ -313,8 +365,11 @@ export const test = base.extend<Fixtures>({
       env.KERNELONE_PYTHON = venvPython;
     }
     if (!testEnv.useRealSettings && !env.KERNELONE_WORKSPACE) {
-      env.KERNELONE_WORKSPACE = repoRoot;
-      env.KERNELONE_SELF_UPGRADE_MODE = "1";
+      env.KERNELONE_WORKSPACE = testEnv.isolatedWorkspace;
+      delete env.KERNELONE_SELF_UPGRADE_MODE;
+    }
+    if (env.KERNELONE_WORKSPACE) {
+      env.KERNELONE_WORKSPACE = assertOutsideRepo(env.KERNELONE_WORKSPACE, "KERNELONE_WORKSPACE");
     }
 
     const devUrl = await resolveDevUrl();
@@ -374,6 +429,9 @@ export const test = base.extend<Fixtures>({
     const page = await electronApp.firstWindow();
     await page.waitForLoadState("domcontentloaded");
     const capturedDialogTexts = new Set<string>();
+    const rendererConsole: string[] = [];
+    const rendererPageErrors: string[] = [];
+    const requestFailures: string[] = [];
     let dialogEvidenceCounter = 0;
 
     const captureDialogEvidence = async (label: string, message: string): Promise<void> => {
@@ -434,6 +492,36 @@ export const test = base.extend<Fixtures>({
       await captureDialogEvidence("native-dialog", dialog.message());
       await dialog.dismiss();
     });
+    page.on("console", (message) => {
+      rendererConsole.push(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          type: message.type(),
+          text: message.text(),
+          location: message.location(),
+        }),
+      );
+    });
+    page.on("pageerror", (error) => {
+      rendererPageErrors.push(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          name: error.name,
+          message: error.message,
+          stack: error.stack || "",
+        }),
+      );
+    });
+    page.on("requestfailed", (request) => {
+      requestFailures.push(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          method: request.method(),
+          url: request.url(),
+          failure: request.failure()?.errorText || "",
+        }),
+      );
+    });
 
     // Initial dismiss attempt
     await dismissDialog();
@@ -441,10 +529,29 @@ export const test = base.extend<Fixtures>({
     // Set up interval to keep dismissing if dialog reappears
     const dialogInterval = setInterval(dismissDialog, 2000);
 
-    await use(page);
-
-    // Cleanup
-    clearInterval(dialogInterval);
+    try {
+      await use(page);
+    } finally {
+      clearInterval(dialogInterval);
+      const consolePath = testInfo.outputPath("renderer-console.jsonl");
+      const pageErrorPath = testInfo.outputPath("renderer-pageerror.jsonl");
+      const requestFailedPath = testInfo.outputPath("renderer-requestfailed.jsonl");
+      fs.writeFileSync(consolePath, `${rendererConsole.join("\n")}\n`, { encoding: "utf8" });
+      fs.writeFileSync(pageErrorPath, `${rendererPageErrors.join("\n")}\n`, { encoding: "utf8" });
+      fs.writeFileSync(requestFailedPath, `${requestFailures.join("\n")}\n`, { encoding: "utf8" });
+      await testInfo.attach("renderer-console", {
+        path: consolePath,
+        contentType: "application/jsonlines",
+      });
+      await testInfo.attach("renderer-pageerror", {
+        path: pageErrorPath,
+        contentType: "application/jsonlines",
+      });
+      await testInfo.attach("renderer-requestfailed", {
+        path: requestFailedPath,
+        contentType: "application/jsonlines",
+      });
+    }
   },
 });
 

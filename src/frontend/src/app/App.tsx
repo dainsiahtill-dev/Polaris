@@ -45,7 +45,7 @@ import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
 // Lazy load pages
 
 import type { PmTask } from '@/types/task';
-import type { RuntimeIssue, SnapshotPayload } from '@/app/types/appContracts';
+import type { BackendStatus, RuntimeIssue, SnapshotPayload } from '@/app/types/appContracts';
 import { resolveRunning } from '@/types/app';
 
 const ProcessMonitorSidebar = lazy(() =>
@@ -159,6 +159,45 @@ function shouldKeepRicherSnapshot(
 function isActiveRuntimePhase(value: string): boolean {
   const token = String(value || '').trim().toLowerCase();
   return Boolean(token && !['idle', 'unknown', 'none'].includes(token));
+}
+
+function isPmTerminalFailure(status: BackendStatus | null): boolean {
+  if (!status) return false;
+  const statusToken = String(status.status || '').trim().toLowerCase();
+  const exitCode = typeof status.exit_code === 'number' ? status.exit_code : null;
+  const error = String(status.error || '').trim();
+  return (
+    (exitCode !== null && exitCode !== 0)
+    || status.ok === false
+    || (status.terminal === true && statusToken === 'failed')
+    || Boolean(error)
+  );
+}
+
+function isPmRuntimeIssue(issue: RuntimeIssue | null): boolean {
+  if (!issue) return false;
+  const token = `${issue.code || ''} ${issue.title || ''}`.toUpperCase();
+  return (
+    token.includes('PM')
+    || token.includes('ENGINE_RUNTIME_FAILED')
+    || token.includes('POLARIS 引擎执行失败')
+  );
+}
+
+function resolveEffectivePmRunning(status: BackendStatus | null, issue: RuntimeIssue | null): boolean {
+  if (isPmTerminalFailure(status) || isPmRuntimeIssue(issue)) {
+    return false;
+  }
+  return Boolean(status?.running);
+}
+
+function resolveEffectivePhase(currentPhase: string, pmRunning: boolean, issue: RuntimeIssue | null): string {
+  if (isPmRuntimeIssue(issue)) return 'error';
+  const token = String(currentPhase || '').trim().toLowerCase();
+  if (!pmRunning && ['planning', 'analyzing', 'llm_calling'].includes(token)) {
+    return 'idle';
+  }
+  return currentPhase;
 }
 
 function AppContent() {
@@ -502,6 +541,17 @@ function AppContent() {
   const agentsDraftReady = Boolean(snapshot?.agents_review?.draft_path);
   const agentsDraftFailed = agentsReview.draftFailed;
   const llmDirectorBlocked = Boolean(llmDirectorBlockedReason);
+  const rawPmRunning = Boolean(pmStatus?.running);
+  const effectivePmRunning = resolveEffectivePmRunning(pmStatus, activeRuntimeIssue);
+  const effectiveCurrentPhase = resolveEffectivePhase(currentPhase, effectivePmRunning, activeRuntimeIssue);
+  const llmPmBlocked = (
+    llmRuntimeState.state === 'BLOCKED'
+    && llmRuntimeState.requiredRoles.includes('pm')
+    && llmRuntimeState.blockedRoles.includes('pm')
+  );
+  const pmStartBlockedReason = llmPmBlocked
+    ? 'LLM 就绪检查未通过：PM 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。'
+    : '';
 
   const applyLlmStatusPayload = useCallback((payload: {
     state?: unknown;
@@ -592,7 +642,7 @@ function AppContent() {
     };
   }, [workspace, live, llmStatus, applyLlmStatusPayload]);
 
-  const runtimeLlmGateActive = Boolean(pmStatus?.running) || directorRunning || isActiveRuntimePhase(currentPhase);
+  const runtimeLlmGateActive = effectivePmRunning || directorRunning || isActiveRuntimePhase(effectiveCurrentPhase);
   const llmStatusForBar = llmRuntimeState.state === 'READY'
     ? 'ready'
     : llmRuntimeState.state === 'BLOCKED' && runtimeLlmGateActive
@@ -762,13 +812,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          pmRunning={Boolean(pmStatus?.running)}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           llmState={llmRuntimeState.state}
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
@@ -804,7 +854,7 @@ function AppContent() {
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           taskProgressMap={taskProgressMap}
         />
         <LlmRuntimeOverlay
@@ -812,13 +862,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          pmRunning={Boolean(pmStatus?.running)}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           llmState={llmRuntimeState.state}
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
@@ -839,16 +889,19 @@ function AppContent() {
         <PMWorkspace
           tasks={pmTasks}
           pmState={snapshot?.pm_state ?? null}
-          pmRunning={!!pmStatus?.running}
+          pmRunning={effectivePmRunning}
+          pmTerminalStatus={pmStatus}
+          pmStartBlockedReason={pmStartBlockedReason}
+          runtimeIssue={activeRuntimeIssue}
           isStarting={isStartingPM}
           onBackToMain={handleBackToMain}
-          onTogglePm={() => togglePm(!!pmStatus?.running)}
+          onTogglePm={() => togglePm(rawPmRunning)}
           onRunPmOnce={runPmOnce}
           workspace={workspace}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={processStreamEvents}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           taskTraceMap={taskTraceMap}
           onOpenSettings={() => uiActions.openSettings()}
@@ -858,13 +911,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          pmRunning={Boolean(pmStatus?.running)}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           llmState={llmRuntimeState.state}
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
@@ -908,13 +961,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          pmRunning={Boolean(pmStatus?.running)}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           llmState={llmRuntimeState.state}
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
@@ -941,13 +994,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          pmRunning={Boolean(pmStatus?.running)}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           llmState={llmRuntimeState.state}
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
@@ -978,13 +1031,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          pmRunning={Boolean(pmStatus?.running)}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           llmState={llmRuntimeState.state}
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
@@ -1010,9 +1063,9 @@ function AppContent() {
 
         <ControlPanel
           workspace={workspace}
-          pmRunning={!!pmStatus?.running}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
-          pmToggleDisabled={(lancedbBlocked || docsMissing) && !pmStatus?.running}
+          pmToggleDisabled={(lancedbBlocked || docsMissing || llmPmBlocked) && !rawPmRunning}
           directorToggleDisabled={
             ((lancedbBlocked || docsMissing) && !directorRunning) ||
             (agentsRequired && !directorRunning) ||
@@ -1027,10 +1080,10 @@ function AppContent() {
                   ? llmDirectorBlockedReason
                   : ''
           }
-          runOnceDisabled={!!pmStatus?.running || directorRunning}
+          runOnceDisabled={rawPmRunning || directorRunning || llmPmBlocked}
           onOpenSettings={() => uiActions.openSettings()}
           onPickWorkspace={handlePickWorkspace}
-          onTogglePm={() => togglePm(!!pmStatus?.running)}
+          onTogglePm={() => togglePm(rawPmRunning)}
           onRunPmOnce={runPmOnce}
           onResumePm={() => { }}
           onToggleDirector={() => toggleDirector(directorRunning, {
@@ -1061,14 +1114,14 @@ function AppContent() {
           onEnterAGIWorkspace={handleEnterAGIWorkspace}
           onEnterRuntimeDiagnostics={handleEnterRuntimeDiagnostics}
           // 新增：即时反馈状态
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           currentTask={engineStatus?.roles?.Director?.task_title ?? undefined}
           isExecutingTool={Boolean(latestProcessActivity)}
           currentToolName={latestProcessActivity?.message}
         />
 
         <RealTimeStatusBar
-          pmRunning={!!pmStatus?.running}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           pmStartedAt={normalizeStartedAtSeconds(pmStatus?.started_at)}
           directorStartedAt={normalizeStartedAtSeconds(directorStatus?.started_at)}
@@ -1083,13 +1136,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          pmRunning={Boolean(pmStatus?.running)}
+          pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
           llmState={llmRuntimeState.state}
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={currentPhase}
+          currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
@@ -1150,14 +1203,14 @@ function AppContent() {
                       planText={displaySnapshot?.plan_text ?? null}
                       planMtime={displaySnapshot?.plan_mtime ?? null}
                       planTextNormalized={displaySnapshot?.plan_text_normalized ?? false}
-                      pmRunning={!!pmStatus?.running}
+                      pmRunning={effectivePmRunning}
                       engineStatus={engineStatus}
                       onOpenDocsPanel={() => uiActions.openDocsInit()}
                       className="h-full"
                       // 新增：详细状态
                       qualityGate={qualityGate}
                       executionLogs={executionLogs}
-                      currentPhase={currentPhase}
+                      currentPhase={effectiveCurrentPhase}
                     />
                   </div>
                 </div>

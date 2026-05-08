@@ -368,6 +368,7 @@ class DirectorV2Runner:
                 description=task_data["description"],
                 priority=task_data["priority"],
                 blocked_by=runtime_blocked_by,
+                timeout_seconds=timeout,
                 metadata=task_data.get("metadata", {}),
             )
             task_data["_runtime_task_id"] = task.id
@@ -447,12 +448,13 @@ class DirectorV2Runner:
 
     async def run(self, pm_task_path: str, iterations: int, timeout: int) -> dict:
         """Run Director v2 with PM tasks."""
-        if self.director is None:
-            self.results["errors"].append("Director service not initialized")
-            return self.results
         try:
             # Initialize
-            await self.initialize()
+            if self.director is None:
+                await self.initialize()
+            if self.director is None:
+                self.results["errors"].append("Director service not initialized")
+                return self.results
 
             # Load PM tasks
             pm_contract = load_pm_task_contract(pm_task_path)

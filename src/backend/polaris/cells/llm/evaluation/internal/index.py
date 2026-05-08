@@ -494,6 +494,8 @@ def update_index_with_report(
             index["roles"][role] = {
                 "ready": ready,
                 "grade": grade,
+                "provider_id": provider_id,
+                "model": model,
                 "last_run_id": run_id,
                 "timestamp": report.get("timestamp"),
                 "suites": suite_summary,

@@ -129,6 +129,32 @@ class TestMiniMaxProviderHappyPath:
         assert result.error is None
         assert result.latency_ms >= 0
 
+    def test_health_detects_base_resp_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        minimax_config: dict[str, Any],
+    ) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/json; charset=utf-8"}
+        mock_resp.json.return_value = {
+            "base_resp": {"status_code": 2061, "status_msg": "your current token plan not support model"},
+            "choices": None,
+        }
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.minimax_provider._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_resp,
+        )
+
+        provider = MiniMaxProvider()
+        result = provider.health(minimax_config)
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "2061" in result.error
+        assert "token plan" in result.error
+
     def test_list_models(self, minimax_config: dict[str, Any]) -> None:
         provider = MiniMaxProvider()
         result = provider.list_models(minimax_config)
@@ -428,6 +454,32 @@ class TestMiniMaxProviderExceptions:
         assert "1001" in result.error
         assert "Invalid parameter" in result.error
 
+    def test_invoke_streaming_sse_base_resp_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        minimax_config: dict[str, Any],
+    ) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+        mock_resp.iter_lines.return_value = [
+            b'data: {"choices": null, "base_resp": {"status_code": 2061, "status_msg": "your current token plan not support model"}}',
+            b"data: [DONE]",
+        ]
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.minimax_provider._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_resp,
+        )
+
+        provider = MiniMaxProvider()
+        result = provider.invoke("Hello", "MiniMax-M2.7-highspeed", {**minimax_config, "streaming": True})
+
+        assert result.ok is False
+        assert result.error is not None
+        assert "2061" in result.error
+        assert "token plan" in result.error
+
     def test_invoke_missing_base_resp_not_treated_as_error(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -471,7 +523,7 @@ class TestMiniMaxProviderExceptions:
         monkeypatch: pytest.MonkeyPatch,
         minimax_config: dict[str, Any],
     ) -> None:
-        from tests.integration.llm.providers.conftest import _make_mock_stream_session
+        from polaris.tests.integration.llm.providers.conftest import _make_mock_stream_session
 
         async def _mock_get_stream_session(*_args: Any, **_kwargs: Any) -> Any:
             return _make_mock_stream_session(

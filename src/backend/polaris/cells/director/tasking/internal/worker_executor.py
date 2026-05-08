@@ -19,6 +19,7 @@ import contextlib
 import logging
 import os
 import re
+import sys
 import time
 import typing
 from dataclasses import dataclass, field
@@ -72,6 +73,8 @@ else:
     if _CGE is None:
         with contextlib.suppress(ImportError):
             _CGE = _importlib.import_module("polaris.cells.director.execution.internal.code_generation_engine")
+    if _CGE is None:
+        _CGE = sys.modules.get("polaris.cells.director.execution.internal.code_generation_engine")
 
     if _FAS is None:
         with contextlib.suppress(ImportError):

@@ -103,6 +103,23 @@ def _redact_for_debug(value: Any, key_hint: str = "") -> Any:
     return value
 
 
+def _base_resp_error(data: Any) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    base_resp = data.get("base_resp")
+    if not isinstance(base_resp, dict):
+        return None
+    status_code = base_resp.get("status_code")
+    try:
+        normalized_status = int(str(status_code))
+    except (TypeError, ValueError):
+        normalized_status = -1
+    if normalized_status == 0:
+        return None
+    status_msg = str(base_resp.get("status_msg") or "Unknown error")
+    return f"MiniMax API Error {status_code}: {status_msg}"
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -296,6 +313,16 @@ class MiniMaxProvider(BaseProvider):
                     ok=False, latency_ms=latency_ms, error=f"HTTP {response.status_code}: {response.text[:100]}"
                 )
 
+            content_type = str(getattr(response, "headers", {}).get("Content-Type", "") or "").lower()
+            if "application/json" in content_type:
+                try:
+                    data = response.json()
+                except (RuntimeError, ValueError) as exc:
+                    return HealthResult(ok=False, latency_ms=latency_ms, error=f"JSON parse error: {exc!s}")
+                api_error = _base_resp_error(data)
+                if api_error:
+                    return HealthResult(ok=False, latency_ms=latency_ms, error=api_error)
+
             return HealthResult(ok=True, latency_ms=latency_ms)
 
         except requests.exceptions.ConnectionError:
@@ -466,6 +493,17 @@ class MiniMaxProvider(BaseProvider):
                                     json.dumps(_redact_for_debug(json_data), ensure_ascii=False)[:500],
                                 )
 
+                            api_error = _base_resp_error(json_data)
+                            if api_error:
+                                circuit_breaker.on_failure()
+                                return InvokeResult(
+                                    ok=False,
+                                    output="",
+                                    latency_ms=latency_ms,
+                                    usage=estimate_usage(prompt, ""),
+                                    error=api_error,
+                                )
+
                             choices = json_data.get("choices", [])
                             if choices:
                                 message = choices[0].get("message", {})
@@ -509,6 +547,17 @@ class MiniMaxProvider(BaseProvider):
                                 try:
                                     chunk_data = json.loads(data_str)
                                     full_response.append(chunk_data)
+
+                                    api_error = _base_resp_error(chunk_data)
+                                    if api_error:
+                                        circuit_breaker.on_failure()
+                                        return InvokeResult(
+                                            ok=False,
+                                            output="",
+                                            latency_ms=latency_ms,
+                                            usage=estimate_usage(prompt, ""),
+                                            error=api_error,
+                                        )
 
                                     choices = chunk_data.get("choices", [])
                                     if choices:
@@ -637,14 +686,14 @@ class MiniMaxProvider(BaseProvider):
                 if debug_mode:
                     logger.debug("MiniMax invoke: response data=%s", json.dumps(data, ensure_ascii=False)[:500])
 
-                base_resp = data.get("base_resp")
-                if isinstance(base_resp, dict) and base_resp.get("status_code") != 0:
+                api_error = _base_resp_error(data)
+                if api_error:
                     return InvokeResult(
                         ok=False,
                         output="",
                         latency_ms=latency_ms,
                         usage=estimate_usage(prompt, ""),
-                        error=f"MiniMax API Error {base_resp.get('status_code')}: {base_resp.get('status_msg', 'Unknown error')}",
+                        error=api_error,
                     )
 
                 output = ""

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import json
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +14,7 @@ import pytest
 from polaris.cells.director.tasking.internal.worker_pool_service import (
     WorkerPoolConfig,
     WorkerService,
+    _task_result_from_process,
 )
 from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionProcessHandleV1,
@@ -17,10 +22,35 @@ from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionProcessWaitResultV1,
     LaunchExecutionProcessCommandV1,
 )
-from polaris.domain.entities import Task, TaskResult, TaskStatus
+from polaris.domain.entities import Task, TaskResult, TaskStatus, WorkerStatus
+from polaris.kernelone.runtime import ExecutionLane, ExecutionSnapshot, ExecutionStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _process_snapshot(
+    *,
+    stdout_lines: tuple[str, ...] = (),
+    stderr_lines: tuple[str, ...] = (),
+    status: ExecutionStatus = ExecutionStatus.SUCCESS,
+) -> ExecutionSnapshot:
+    """Build a minimal subprocess snapshot for result parsing tests."""
+    return ExecutionSnapshot(
+        execution_id="exec-test",
+        name="director-task-test",
+        lane=ExecutionLane.SUBPROCESS,
+        status=status,
+        submitted_at=datetime.now(timezone.utc),
+        timeout_seconds=60.0,
+        metadata={},
+        result={
+            "exit_code": 0,
+            "stdout_lines": stdout_lines,
+            "stderr_lines": stderr_lines,
+        },
+        pid=12345,
+    )
 
 
 @pytest.fixture
@@ -66,6 +96,50 @@ class TestWorkerServiceExecutionBroker:
 
         # Cleanup
         await worker_service.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_busy_worker_is_not_restarted_for_stale_loop_heartbeat(
+        self,
+        mock_task_service: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """An active task is bounded by task timeout, not the idle-loop heartbeat."""
+        service = WorkerService(
+            config=WorkerPoolConfig(min_workers=0, max_workers=1, heartbeat_timeout_seconds=1),
+            workspace=str(tmp_path),
+            task_service=mock_task_service,
+        )
+        worker = await service.spawn_worker()
+        assert worker is not None
+
+        worker.status = WorkerStatus.BUSY
+        worker.current_task_id = "task-active"
+        worker.health = worker.health.with_updates(
+            last_heartbeat=datetime.now(timezone.utc) - timedelta(seconds=120),
+        )
+
+        try:
+            assert await service.check_health() == [(worker.id, True, "")]
+            assert await service.handle_failed_workers() == []
+            assert await service.get_worker(worker.id) is worker
+        finally:
+            await service.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_destroy_worker_tolerates_already_cleaned_worker_task(
+        self,
+        worker_service: WorkerService,
+    ) -> None:
+        """Worker cleanup may race with explicit destruction; destruction stays idempotent."""
+        worker = await worker_service.spawn_worker()
+        assert worker is not None
+        task = worker_service._worker_tasks.pop(worker.id)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert await worker_service.destroy_worker(worker.id) is True
+        assert await worker_service.get_worker(worker.id) is None
 
     def test_execution_broker_imports(self) -> None:
         """Test that execution_broker imports are available."""
@@ -237,6 +311,71 @@ class TestWorkerServiceExecutionBroker:
 
         assert result.success is False
         assert result.error == "Execution timed out"
+
+    def test_task_result_from_process_preserves_stdout_business_failure(self) -> None:
+        """A clean subprocess exit can still carry a failed Director task result."""
+        wait_result = ExecutionProcessWaitResultV1(
+            handle=ExecutionProcessHandleV1(
+                execution_id="exec-business-failure",
+                pid=12345,
+                name="director-task-business-failure",
+                workspace=".",
+            ),
+            status=ExecutionProcessStatusV1.SUCCESS,
+            success=True,
+            exit_code=0,
+        )
+        runner_result = TaskResult(
+            success=False,
+            output="code generation refused",
+            exit_code=0,
+            duration_ms=42,
+            error="SECURITY POLICY VIOLATION",
+        )
+
+        result = _task_result_from_process(
+            wait_result,
+            _process_snapshot(
+                stdout_lines=(
+                    "runner booted",
+                    json.dumps(runner_result.to_dict(), ensure_ascii=False),
+                )
+            ),
+        )
+
+        assert result.success is False
+        assert result.output == "code generation refused"
+        assert result.duration_ms == 42
+        assert result.error == "SECURITY POLICY VIOLATION"
+
+    def test_task_result_from_process_falls_back_to_broker_failure(self) -> None:
+        """Missing TaskResult JSON still returns a concrete process failure."""
+        wait_result = ExecutionProcessWaitResultV1(
+            handle=ExecutionProcessHandleV1(
+                execution_id="exec-process-failure",
+                pid=12345,
+                name="director-task-process-failure",
+                workspace=".",
+            ),
+            status=ExecutionProcessStatusV1.FAILED,
+            success=False,
+            exit_code=1,
+            error_message=None,
+        )
+
+        result = _task_result_from_process(
+            wait_result,
+            _process_snapshot(
+                stdout_lines=("not json",),
+                stderr_lines=("Traceback omitted", "subprocess exploded"),
+                status=ExecutionStatus.FAILED,
+            ),
+        )
+
+        assert result.success is False
+        assert result.exit_code == 1
+        assert result.output == "not json"
+        assert result.error == "Traceback omitted\nsubprocess exploded"
 
 
 class TestWorkerPoolConfig:

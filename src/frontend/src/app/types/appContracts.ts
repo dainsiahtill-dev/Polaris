@@ -60,7 +60,15 @@ export interface BackendStatus {
   mode?: string;
   log_path?: string;
   source?: 'handle' | 'status_file' | 'none' | string;
-  status?: Record<string, unknown> | null;
+  status?: Record<string, unknown> | string | null;
+  execution_id?: string | null;
+  terminal?: boolean;
+  ok?: boolean | null;
+  exit_code?: number | null;
+  error?: string | null;
+  contract_path?: string | null;
+  contract_exists?: boolean;
+  contract_size?: number;
 }
 
 export interface MemoListResponse {

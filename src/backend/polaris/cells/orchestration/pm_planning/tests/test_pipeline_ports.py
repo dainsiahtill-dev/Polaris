@@ -517,3 +517,34 @@ def test_cell_pm_invoke_port_does_not_pass_stale_state_model_as_runtime_fallback
 
     assert output == '{"tasks": []}'
     assert captured["fallback_model"] == ""
+
+
+def test_cell_pm_invoke_port_generic_allows_explicit_ollama_provider_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
+        blocked_raw = kwargs.get("blocked_provider_types")
+        captured["blocked_provider_types"] = tuple(blocked_raw) if isinstance(blocked_raw, (list, set, tuple)) else ()
+        return SimpleNamespace(
+            attempted=True,
+            ok=True,
+            output='{"tasks": []}',
+            error="",
+            provider_type="ollama",
+            model="test-model",
+        )
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
+        fake_invoke_role_runtime_provider,
+    )
+
+    port = CellPmInvokePort()
+    output = port.invoke(NoopPmStatePort(), "prompt", "generic", SimpleNamespace(), None)
+
+    assert output == '{"tasks": []}'
+    blocked_provider_types = captured["blocked_provider_types"]
+    assert isinstance(blocked_provider_types, tuple)
+    assert "ollama" not in blocked_provider_types

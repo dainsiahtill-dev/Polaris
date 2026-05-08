@@ -30,8 +30,34 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
         raise HTTPException(status_code=409, detail=f"{role} LLM not ready; run tests first")
     role_cfg = (config.get("roles") or {}).get(role, {}) if isinstance(config.get("roles"), dict) else {}
     providers = config.get("providers") if isinstance(config.get("providers"), dict) else {}
-    provider_cfg = providers.get(role_cfg.get("provider_id"), {}) if isinstance(providers, dict) else {}
-    provider_id = role_cfg.get("provider_id") if isinstance(role_cfg, dict) else None
+    provider_id = str(role_cfg.get("provider_id") or "").strip() if isinstance(role_cfg, dict) else ""
+    model = str(role_cfg.get("model") or "").strip() if isinstance(role_cfg, dict) else ""
+    if not provider_id or not model:
+        raise HTTPException(status_code=409, detail=f"{role} LLM binding is incomplete")
+
+    provider_index = index.get("providers") if isinstance(index.get("providers"), dict) else {}
+    provider_status = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
+    tested_provider_id = str(role_status.get("provider_id") or "").strip()
+    if not tested_provider_id and isinstance(provider_status, dict) and provider_status.get("model"):
+        tested_provider_id = provider_id
+    tested_model = str(role_status.get("model") or "").strip()
+    if not tested_model and isinstance(provider_status, dict):
+        tested_model = str(provider_status.get("model") or "").strip()
+
+    if tested_provider_id and tested_provider_id != provider_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{role} LLM readiness was tested for provider {tested_provider_id}, not {provider_id}",
+        )
+    if not tested_model:
+        raise HTTPException(status_code=409, detail=f"{role} LLM readiness was not tested for the current model")
+    if tested_model != model:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{role} LLM readiness was tested for model {tested_model}, not {model}",
+        )
+
+    provider_cfg = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
     if not is_role_runtime_supported(role, provider_id, provider_cfg):
         raise HTTPException(
             status_code=409,

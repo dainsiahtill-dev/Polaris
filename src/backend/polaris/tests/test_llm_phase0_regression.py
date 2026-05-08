@@ -164,6 +164,71 @@ class TestRoleRuntimeSupportConsistency:
         assert response["roles"]["director"]["runtime_supported"] is True
         assert "director" not in response["unsupported_roles"]
 
+    def test_llm_status_blocks_stale_role_model_readiness(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "minimax-1": {"type": "minimax"},
+            },
+            "roles": {
+                "pm": {"provider_id": "minimax-1", "model": "MiniMax-M2.7-highspeed"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm"],
+            },
+        }
+        stale_index = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "minimax-1",
+                    "model": "MiniMax-M2.5",
+                },
+            },
+            "providers": {
+                "minimax-1": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "model": "MiniMax-M2.5",
+                    "role": "pm",
+                },
+            },
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=stale_index,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["roles"]["pm"]["ready"] is False
+        assert response["roles"]["pm"]["readiness_issue"] == "model_mismatch"
+        assert response["roles"]["pm"]["tested_model"] == "MiniMax-M2.5"
+        assert response["blocked_roles"] == ["pm"]
+        assert response["state"] == "BLOCKED"
+
     def test_director_gate_allows_codex_and_generic_provider(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
         from polaris.delivery.http.routers._shared import _ensure_llm_ready
@@ -175,7 +240,7 @@ class TestRoleRuntimeSupportConsistency:
 
         base_index = {
             "roles": {
-                "director": {"ready": True},
+                "director": {"ready": True, "provider_id": "codex_cli", "model": "gpt-5.2-codex"},
             }
         }
 
@@ -188,15 +253,24 @@ class TestRoleRuntimeSupportConsistency:
             "roles": {"director": {"provider_id": "openai_compat", "model": "gpt-4.1"}},
         }
 
-        with patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"):
-            with patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=base_index):
-                with patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=codex_cfg):
-                    _ensure_llm_ready(mock_state, "director")
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=base_index),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=codex_cfg),
+        ):
+            _ensure_llm_ready(mock_state, "director")
 
-                with patch(
-                    "polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=generic_cfg
-                ):
-                    _ensure_llm_ready(mock_state, "director")
+        generic_index = {
+            "roles": {
+                "director": {"ready": True, "provider_id": "openai_compat", "model": "gpt-4.1"},
+            }
+        }
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=generic_cfg),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=generic_index),
+        ):
+            _ensure_llm_ready(mock_state, "director")
 
     def test_pm_gate_allows_ready_role_without_provider_type_restriction(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -209,7 +283,7 @@ class TestRoleRuntimeSupportConsistency:
 
         base_index = {
             "roles": {
-                "pm": {"ready": True},
+                "pm": {"ready": True, "provider_id": "openai_compat", "model": "gpt-4.1"},
             }
         }
 
@@ -218,12 +292,12 @@ class TestRoleRuntimeSupportConsistency:
             "roles": {"pm": {"provider_id": "openai_compat", "model": "gpt-4.1"}},
         }
 
-        with patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"):
-            with patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=base_index):
-                with patch(
-                    "polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload
-                ):
-                    _ensure_llm_ready(mock_state, "pm")
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=base_index),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+        ):
+            _ensure_llm_ready(mock_state, "pm")
 
     def test_director_start_requires_all_required_roles(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -244,18 +318,23 @@ class TestRoleRuntimeSupportConsistency:
             },
             "policies": {"required_ready_roles": ["pm", "director", "qa"]},
         }
-        index_payload = {"roles": {"director": {"ready": True}, "qa": {"ready": True}}}
+        index_payload = {
+            "roles": {
+                "director": {"ready": True, "provider_id": "openai_compat", "model": "gpt-4.1"},
+                "qa": {"ready": True, "provider_id": "openai_compat", "model": "gpt-4.1"},
+            }
+        }
 
-        with patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"):
-            with patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload):
-                with patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload):
-                    with pytest.raises(HTTPException) as exc:
-                        ensure_required_roles_ready(
-                            mock_state, default_roles=["director", "qa"], force_first="director"
-                        )
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            pytest.raises(HTTPException) as exc,
+        ):
+            ensure_required_roles_ready(mock_state, default_roles=["director", "qa"], force_first="director")
 
         assert exc.value.status_code == 409
-        assert "pm" in exc.value.detail["missing_roles"]
+        assert "pm" in exc.value.detail["details"]["missing_roles"]
 
     def test_pm_start_requires_all_required_roles(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -276,16 +355,57 @@ class TestRoleRuntimeSupportConsistency:
             },
             "policies": {"required_ready_roles": ["pm", "director", "qa"]},
         }
-        index_payload = {"roles": {"pm": {"ready": True}, "director": {"ready": True}}}
+        index_payload = {
+            "roles": {
+                "pm": {"ready": True, "provider_id": "openai_compat", "model": "gpt-4.1"},
+                "director": {"ready": True, "provider_id": "openai_compat", "model": "gpt-4.1"},
+            }
+        }
 
-        with patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"):
-            with patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload):
-                with patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload):
-                    with pytest.raises(HTTPException) as exc:
-                        ensure_required_roles_ready(mock_state, default_roles=["pm", "director", "qa"])
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            pytest.raises(HTTPException) as exc,
+        ):
+            ensure_required_roles_ready(mock_state, default_roles=["pm", "director", "qa"])
 
         assert exc.value.status_code == 409
-        assert "qa" in exc.value.detail["missing_roles"]
+        assert "qa" in exc.value.detail["details"]["missing_roles"]
+
+    def test_pm_gate_blocks_stale_ready_model(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_state = AppState(settings=mock_settings)
+
+        config_payload = {
+            "providers": {"minimax-1": {"type": "minimax"}},
+            "roles": {"pm": {"provider_id": "minimax-1", "model": "MiniMax-M2.7-highspeed"}},
+        }
+        stale_index = {
+            "roles": {
+                "pm": {"ready": True, "provider_id": "minimax-1", "model": "MiniMax-M2.5"},
+            },
+            "providers": {
+                "minimax-1": {"ready": True, "model": "MiniMax-M2.5"},
+            },
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=stale_index),
+            pytest.raises(HTTPException) as exc,
+        ):
+            _ensure_llm_ready(mock_state, "pm")
+
+        assert exc.value.status_code == 409
+        assert "MiniMax-M2.5" in str(exc.value.detail)
+        assert "MiniMax-M2.7-highspeed" in str(exc.value.detail)
 
 
 class TestLLMConfigAtomicWrite:
@@ -449,7 +569,7 @@ class TestLLMConfigValidation:
         from polaris.kernelone.llm.config_store import build_default_config, validate_llm_config
 
         config = build_default_config()
-        is_valid, errors, warnings = validate_llm_config(config)
+        is_valid, errors, _warnings = validate_llm_config(config)
 
         assert is_valid, f"Valid config failed validation with errors: {errors}"
         assert len(errors) == 0, f"Expected no errors, got: {errors}"
@@ -460,7 +580,7 @@ class TestLLMConfigValidation:
 
         config = {"schema_version": 1, "providers": {"bad_provider": {"name": "Bad Provider"}}, "roles": {}}
 
-        is_valid, errors, warnings = validate_llm_config(config)
+        is_valid, errors, _warnings = validate_llm_config(config)
 
         assert not is_valid, "Config with missing provider type should fail validation"
         assert any("Field required" in str(e) or "missing 'type'" in str(e) for e in errors), (
@@ -477,7 +597,7 @@ class TestLLMConfigValidation:
             "roles": {"pm": {"provider_id": "nonexistent_provider", "model": "test-model"}},
         }
 
-        is_valid, errors, warnings = validate_llm_config(config)
+        is_valid, errors, _warnings = validate_llm_config(config)
 
         assert not is_valid, "Config with invalid provider reference should fail"
         assert any("non-existent provider" in e for e in errors), (
@@ -495,7 +615,7 @@ class TestLLMConfigValidation:
             "policies": {"required_ready_roles": ["director", "qa"]},
         }
 
-        is_valid, errors, warnings = validate_llm_config(config)
+        is_valid, errors, _warnings = validate_llm_config(config)
 
         assert not is_valid, "Config with missing required roles should fail"
         assert any("not defined in roles" in e for e in errors), (
@@ -506,7 +626,7 @@ class TestLLMConfigValidation:
         """Non-dict config should fail validation."""
         from polaris.kernelone.llm.config_store import validate_llm_config
 
-        is_valid, errors, warnings = validate_llm_config("not a dict")
+        is_valid, errors, _warnings = validate_llm_config("not a dict")
 
         assert not is_valid, "Non-dict config should fail validation"
         assert any("must be a dictionary" in e for e in errors), f"Expected error about dict type, got: {errors}"
@@ -818,10 +938,12 @@ class TestPmBackendRuntimeResolution:
             "roles": {"pm": {"provider_id": "openai_compat", "model": "gpt-4.1"}},
         }
 
-        with patch("polaris.kernelone.storage.io_paths.build_cache_root", return_value=""):
-            with patch("polaris.kernelone.llm.config_store.load_llm_config", return_value=llm_payload):
-                with patch("shutil.which", return_value=None):
-                    error = check_backend_available(settings)
+        with (
+            patch("polaris.kernelone.storage.io_paths.build_cache_root", return_value=""),
+            patch("polaris.kernelone.llm.config_store.load_llm_config", return_value=llm_payload),
+            patch("shutil.which", return_value=None),
+        ):
+            error = check_backend_available(settings)
 
         assert error is None
 

@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
@@ -7,7 +8,7 @@ const currentFile = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFile);
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const defaultConfigPath = path.join(repoRoot, "infrastructure", "e2e", "hybrid-automation.config.json");
-const defaultEvidenceRoot = path.join(repoRoot, ".polaris", "logs");
+const defaultEvidenceRoot = path.join(os.homedir(), ".polaris", "logs");
 
 function nowIso() {
   return new Date().toISOString();
@@ -379,7 +380,7 @@ function collectEvidencePaths(config) {
   const evidenceConfig = config.evidence && typeof config.evidence === "object" ? config.evidence : {};
   const includePaths = Array.isArray(evidenceConfig.include_paths)
     ? evidenceConfig.include_paths.map((item) => String(item || "").trim()).filter(Boolean)
-    : ["test-results/electron", "playwright-report", ".polaris/logs"];
+    : ["test-results/electron", "playwright-report", path.join(os.homedir(), ".polaris", "logs")];
   const maxFiles = parseIntArg(evidenceConfig.max_files, 80, "evidence.max_files");
   const depthLimit = parseIntArg(evidenceConfig.max_depth, 6, "evidence.max_depth");
 

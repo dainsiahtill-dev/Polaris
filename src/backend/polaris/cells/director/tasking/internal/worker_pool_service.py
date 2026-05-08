@@ -24,15 +24,19 @@ import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
 from polaris.cells.runtime.execution_broker.public.contracts import (
+    ExecutionProcessWaitResultV1,
     LaunchExecutionProcessCommandV1,
 )
 from polaris.cells.runtime.execution_broker.public.service import get_execution_broker_service
 from polaris.domain.entities import Task, TaskResult, Worker, WorkerCapabilities, WorkerStatus, WorkerType
+from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
+from polaris.kernelone.runtime import ExecutionSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,92 @@ _DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
 # Module-level cache for backwards compatibility with test patches.
 # Tests patch this variable to inject mock executors into worker loops.
 _WorkerExecutor = WorkerExecutor
+
+
+def _safe_path_token(value: object) -> str:
+    """Return a compact filename-safe token for task diagnostic artifacts."""
+    raw = str(value or "").strip()
+    token = "".join(char if char.isalnum() or char in {"-", "_", "."} else "-" for char in raw)
+    return token[:80] or "unknown"
+
+
+def _director_process_log_path(workspace: str, *, task_id: object, worker_id: str) -> str:
+    """Return the per-task subprocess log path under the target workspace metadata root."""
+    log_dir = (
+        Path(workspace).expanduser().resolve() / get_workspace_metadata_dir_name() / "runtime" / "logs" / "director"
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{_safe_path_token(task_id)}-{_safe_path_token(worker_id)}.process.log"
+    return str(log_dir / filename)
+
+
+def _extract_output_lines(snapshot: ExecutionSnapshot, stream_name: str) -> list[str]:
+    """Extract captured stdout/stderr lines from a process snapshot."""
+    result = snapshot.result
+    lines = getattr(result, stream_name, ())
+    if isinstance(result, dict):
+        lines = result.get(stream_name, lines)
+    if not isinstance(lines, (list, tuple)):
+        return []
+    return [str(line) for line in lines if str(line).strip()]
+
+
+def _parse_task_result_from_stdout(stdout_lines: list[str]) -> TaskResult | None:
+    """Parse the last TaskResult JSON object emitted by task_execution_runner."""
+    for raw_line in reversed(stdout_lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("success"), bool):
+            return TaskResult.from_dict(payload)
+    return None
+
+
+def _task_result_from_process(
+    wait_result: ExecutionProcessWaitResultV1,
+    snapshot: ExecutionSnapshot,
+) -> TaskResult:
+    """Convert execution broker output into the domain TaskResult contract.
+
+    The task runner serializes the authoritative TaskResult to stdout. The
+    subprocess exit code is only a transport signal, so a clean exit may still
+    carry a business failure that must not be masked.
+    """
+    stdout_lines = _extract_output_lines(snapshot, "stdout_lines")
+    stderr_lines = _extract_output_lines(snapshot, "stderr_lines")
+
+    parsed_result = _parse_task_result_from_stdout(stdout_lines)
+    if parsed_result is not None:
+        error = parsed_result.error
+        if not error and not wait_result.success:
+            error = wait_result.error_message
+        return TaskResult(
+            success=parsed_result.success,
+            output=parsed_result.output,
+            exit_code=wait_result.exit_code if wait_result.exit_code is not None else parsed_result.exit_code,
+            duration_ms=parsed_result.duration_ms,
+            evidence=parsed_result.evidence,
+            error=error,
+        )
+
+    stdout_tail = "\n".join(stdout_lines[-20:])
+    stderr_tail = "\n".join(stderr_lines[-8:])
+    error = wait_result.error_message
+    if not error and not wait_result.success and stderr_tail:
+        error = stderr_tail
+
+    return TaskResult(
+        success=wait_result.success,
+        output=stdout_tail or "<stdout did not contain TaskResult JSON>",
+        exit_code=wait_result.exit_code or 0,
+        duration_ms=0,
+        evidence=(),
+        error=error,
+    )
 
 
 @dataclass
@@ -148,15 +238,14 @@ class WorkerService:
                 return False
 
             worker.request_stop()
+            task = self._worker_tasks.pop(worker_id, None)
+            self._workers.pop(worker_id, None)
 
-            if worker_id in self._worker_tasks:
-                self._worker_tasks[worker_id].cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._worker_tasks[worker_id]
-                del self._worker_tasks[worker_id]
-
-            del self._workers[worker_id]
-            return True
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        return True
 
     async def get_available_worker(self, task: Task) -> Worker | None:
         """Find an available worker that can handle the task."""
@@ -194,6 +283,10 @@ class WorkerService:
         async with self._lock:
             results = []
             for worker in self._workers.values():
+                if worker.status == WorkerStatus.BUSY:
+                    results.append((worker.id, True, ""))
+                    continue
+
                 is_healthy = worker.health.is_healthy(self.config.heartbeat_timeout_seconds)
                 reason = ""
                 if not is_healthy:
@@ -352,6 +445,11 @@ class WorkerService:
                                             timeout_seconds=task.timeout_seconds or 300.0,
                                             env=dict(os.environ),
                                             stdin_input=json.dumps(task_input, ensure_ascii=False),
+                                            log_path=_director_process_log_path(
+                                                self.workspace,
+                                                task_id=task.id,
+                                                worker_id=worker.id,
+                                            ),
                                             metadata={
                                                 "cell": "director",
                                                 "task_id": str(task.id),
@@ -371,19 +469,8 @@ class WorkerService:
                                             timeout_seconds=task.timeout_seconds or 300.0,
                                         )
 
-                                        # TODO(BLOCKER): The subprocess writes TaskResult JSON to stdout but
-                                        # ExecutionProcessWaitResultV1 doesn't capture stdout. This means
-                                        # output, duration_ms, and evidence are always empty/zero.
-                                        # Fix: Extend ExecutionProcessWaitResultV1 to include stdout, capture
-                                        # it in wait_process, and parse JSON here to build proper TaskResult.
-                                        result = TaskResult(
-                                            success=wait_result.success,
-                                            output="<stdout not captured - see TODO>",
-                                            exit_code=wait_result.exit_code or 0,
-                                            duration_ms=0,
-                                            evidence=(),
-                                            error=wait_result.error_message,
-                                        )
+                                        snapshot = broker.get_process_snapshot(launch_result.handle)
+                                        result = _task_result_from_process(wait_result, snapshot)
 
                                         # Complete the task
                                         await self._task_service.on_task_completed(

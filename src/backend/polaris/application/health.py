@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def get_lancedb_status() -> dict[str, Any]:
     try:
         import lancedb  # type: ignore
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         return {
             "ok": False,
             "error": str(exc),
@@ -127,7 +127,7 @@ def _resolve_pm_runtime_binding(settings: Settings) -> dict[str, Any]:
                 "provider_id": provider_id,
                 "model": model,
             }
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         # BUG-006 fix: infrastructure / import errors were silently swallowed
         # at debug level, making the health endpoint always report "unconfigured"
         # in production where debug logging is off.  Promote to warning so the

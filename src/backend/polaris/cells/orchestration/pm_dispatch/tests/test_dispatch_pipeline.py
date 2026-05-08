@@ -682,6 +682,8 @@ class TestApplyPostDispatchSkipReason:
         )
         assert stop is True
         assert result["reason"] == "director_failures_present"
+        assert result["passed"] is False
+        assert "Director" in result["summary"]
 
     def test_all_done_continues(self) -> None:
         result: dict = {"enabled": True}
@@ -719,6 +721,6 @@ def test_build_post_dispatch_result() -> None:
     assert result["schema_version"] == 1
     assert result["enabled"] is True
     assert result["ran"] is False
-    assert result["passed"] == []
+    assert result["passed"] is None
     assert result["pm_iteration"] == 2
     assert result["docs_stage"]["enabled"] is False

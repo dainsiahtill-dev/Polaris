@@ -582,7 +582,6 @@ class CellPmInvokePort:
                     adapter=AppLLMRuntimeAdapter(),
                     blocked_provider_types={
                         "",
-                        "ollama",
                         "codex",
                         "codex_cli",
                         "codex_sdk",

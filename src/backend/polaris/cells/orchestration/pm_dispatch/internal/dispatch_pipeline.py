@@ -1661,6 +1661,8 @@ def _apply_post_dispatch_skip_reason(
         return True
     if int(status_summary.get("failed") or 0) > 0 or int(status_summary.get("blocked") or 0) > 0:
         result["reason"] = "director_failures_present"
+        result["passed"] = False
+        result["summary"] = "Integration QA cannot run because Director produced failed or blocked tasks."
         return True
     return False
 

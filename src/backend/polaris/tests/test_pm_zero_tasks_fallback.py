@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -14,6 +13,7 @@ from polaris.cells.orchestration.pm_planning.public.service import evaluate_pm_t
 from polaris.delivery.cli.pm.orchestration_engine import (  # noqa: E402
     _apply_requirements_fallback_for_empty_tasks,
     _downgrade_recovered_pm_invoke_error,
+    _pm_invoke_failed,
 )
 from polaris.delivery.cli.pm.tasks_utils import (  # noqa: E402
     _extract_requirement_file_candidates,
@@ -311,10 +311,10 @@ def test_build_requirements_fallback_payload_honors_docs_stage_without_synthetic
     assert "docs stage strict mode active" in notes
 
 
-def test_empty_tasks_fallback_recovers_failed_planning_iteration() -> None:
+def test_empty_tasks_fallback_recovers_empty_parse_output() -> None:
     normalized = {
         "tasks": [],
-        "notes": "provider invocation failed: model is not available",
+        "notes": "PM JSON parse failed.",
         "schema_warnings": ["upstream payload was empty"],
     }
 
@@ -348,7 +348,7 @@ def test_empty_tasks_fallback_recovers_failed_planning_iteration() -> None:
     assert "deterministic requirements fallback used" in joined_warnings
 
 
-def test_recovered_pm_invoke_error_is_downgraded_to_warning(tmp_path: Path) -> None:
+def test_recovered_pm_invoke_error_remains_fatal(tmp_path: Path) -> None:
     pm_state_path = tmp_path / "pm_state.json"
     pm_state = {
         "last_pm_error_code": "PM_LLM_INVOKE_FAILED",
@@ -362,15 +362,11 @@ def test_recovered_pm_invoke_error_is_downgraded_to_warning(tmp_path: Path) -> N
         timestamp="2026-05-07 08:00:00",
     )
 
-    assert downgraded is True
-    assert pm_state["last_pm_error_code"] == ""
-    assert pm_state["last_pm_error_detail"] == ""
-    assert pm_state["last_pm_warning_code"] == "PM_LLM_FALLBACK_APPLIED"
-    assert pm_state["last_pm_warning_detail"] == "provider model unsupported by token plan"
-    assert pm_state["last_updated_ts"] == "2026-05-07 08:00:00"
-
-    persisted = json.loads(pm_state_path.read_text(encoding="utf-8"))
-    assert persisted == pm_state
+    assert downgraded is False
+    assert pm_state["last_pm_error_code"] == "PM_LLM_INVOKE_FAILED"
+    assert pm_state["last_pm_error_detail"] == "provider model unsupported by token plan"
+    assert pm_state["last_updated_ts"] == "old"
+    assert not pm_state_path.exists()
 
 
 def test_recovered_pm_invoke_error_keeps_unrelated_pm_errors(tmp_path: Path) -> None:
@@ -389,3 +385,35 @@ def test_recovered_pm_invoke_error_keeps_unrelated_pm_errors(tmp_path: Path) -> 
     assert downgraded is False
     assert pm_state["last_pm_error_code"] == "PM_EMPTY_TASKS_WITH_REQUIREMENTS"
     assert not pm_state_path.exists()
+
+
+def test_pm_invoke_failed_detects_state_error() -> None:
+    pm_state = {
+        "last_pm_error_code": "PM_LLM_INVOKE_FAILED",
+        "last_pm_error_detail": "provider model unsupported by token plan",
+    }
+    normalized = {"tasks": [], "notes": ""}
+
+    assert _pm_invoke_failed(pm_state, normalized) is True
+
+
+def test_pm_invoke_failed_detects_pipeline_fallback_payload() -> None:
+    pm_state: dict[str, object] = {}
+    normalized = {
+        "tasks": [],
+        "notes": "provider invocation failed: model is not available",
+        "schema_warnings": ["PM invoke failed"],
+    }
+
+    assert _pm_invoke_failed(pm_state, normalized) is True
+
+
+def test_pm_invoke_failed_ignores_empty_parse_output() -> None:
+    pm_state: dict[str, object] = {}
+    normalized = {
+        "tasks": [],
+        "notes": "PM JSON parse failed.",
+        "schema_warnings": ["upstream payload was empty"],
+    }
+
+    assert _pm_invoke_failed(pm_state, normalized) is False

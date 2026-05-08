@@ -4,6 +4,7 @@ interface PMAIDialoguePanelProps {
   pmRunning: boolean;
   workspace?: string;
   taskCount?: number;
+  interactionBlockedReason?: string;
 }
 
 /**
@@ -16,7 +17,13 @@ export function PMAIDialoguePanel({
   pmRunning,
   workspace,
   taskCount,
+  interactionBlockedReason = '',
 }: PMAIDialoguePanelProps) {
+  const blockedReason = String(interactionBlockedReason || '').trim();
+  const welcomeMessage = blockedReason
+    ? `PM 当前不可用：${blockedReason}`
+    : 'PM 系统已就绪。您可以询问任务状态、请求生成新任务，或讨论项目规划。';
+
   return (
     <AIDialoguePanel
       dialogueRole="pm"
@@ -26,12 +33,14 @@ export function PMAIDialoguePanel({
         secondary: 'amber-400',
         gradient: 'from-amber-500 to-amber-700',
       }}
-      welcomeMessage="PM 系统已就绪。您可以询问任务状态、请求生成新任务，或讨论项目规划。"
+      welcomeMessage={welcomeMessage}
       context={{
         workspace,
         task_count: taskCount,
         pm_running: pmRunning,
+        blocked_reason: blockedReason,
       }}
+      interactionBlockedReason={blockedReason}
     />
   );
 }

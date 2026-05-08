@@ -433,7 +433,7 @@ class PolarisEngine:
                 continue
             try:
                 write_json_atomic(path, payload)
-            except (RuntimeError, ValueError) as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 logger.warning("Failed to write runtime status to %r: %s", path, exc)
                 continue
 

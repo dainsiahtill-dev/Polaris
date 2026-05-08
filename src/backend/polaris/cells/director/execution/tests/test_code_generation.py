@@ -182,6 +182,118 @@ class TestBlockedEntryPoints:
         )
         assert result[0] == []
 
+    @pytest.mark.asyncio
+    async def test_invoke_generation_with_runtime_codegen_applies_response(self, monkeypatch):
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        executor = Mock()
+        executor._apply_response_operations.return_value = (
+            [{"path": "src/app.py", "content": "print('ok')"}],
+            [],
+        )
+        engine = CodeGenerationEngine("/tmp", executor)
+
+        async def fake_invoke(**_: object) -> dict[str, object]:
+            return {
+                "response": "PATCH_FILE: src/app.py\n<<<<<<< SEARCH\n=======\nprint('ok')\n>>>>>>> REPLACE",
+                "provider": "test-provider",
+                "model": "test-model",
+            }
+
+        monkeypatch.setattr(engine, "_invoke_director_role_response", fake_invoke)
+
+        task = Mock()
+        task.id = "task-1"
+        files, warnings = await engine.invoke_generation_with_retries(
+            task=task,
+            prompt="implement",
+            model="ignored",
+            per_call_timeout=60,
+            deadline_ts=9999999999,
+            round_label="r1",
+            round_files=["src/app.py"],
+            spin_tracker={},
+        )
+
+        assert files == [{"path": "src/app.py", "content": "print('ok')"}]
+        assert warnings == []
+        executor._apply_response_operations.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_runtime_codegen_empty_response_does_not_count_existing_files(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        existing_file = tmp_path / "src" / "app.py"
+        existing_file.parent.mkdir()
+        existing_file.write_text("print('old')\n", encoding="utf-8")
+        executor = Mock()
+        executor._apply_response_operations.return_value = ([], ["no_changes"])
+        engine = CodeGenerationEngine(str(tmp_path), executor)
+
+        async def fake_invoke(**_: object) -> dict[str, object]:
+            return {
+                "response": "",
+                "provider": "test-provider",
+                "model": "test-model",
+            }
+
+        monkeypatch.setattr(engine, "_invoke_director_role_response", fake_invoke)
+
+        task = Mock()
+        task.id = "task-1"
+        files, warnings = await engine.invoke_generation_with_retries(
+            task=task,
+            prompt="implement",
+            model="ignored",
+            per_call_timeout=60,
+            deadline_ts=9999999999,
+            round_label="r1",
+            round_files=["src/app.py"],
+            spin_tracker={},
+        )
+
+        assert files == []
+        assert "director_runtime_codegen_empty_response" in warnings
+        executor._apply_response_operations.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_runtime_codegen_invokes_director_in_proposal_mode(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        async def fake_generate_role_response(**kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {
+                "response": "```file: src/app.py\nprint('ok')\n```",
+                "provider": "test-provider",
+                "model": "test-model",
+            }
+
+        monkeypatch.setattr(
+            "polaris.cells.llm.dialogue.public.service.generate_role_response",
+            fake_generate_role_response,
+        )
+
+        engine = CodeGenerationEngine("/tmp", Mock())
+        task = Mock()
+        task.id = "task-1"
+
+        result = await engine._invoke_director_role_response(
+            task=task,
+            prompt="Create src/app.py with a tiny Python app.",
+            timeout=15,
+            round_label="1/1",
+            round_files=["src/app.py"],
+        )
+
+        assert result["response"].startswith("```file: src/app.py")
+        assert str(captured["message"]).startswith("[mode:propose]")
+        assert "Create src/app.py" in str(captured["prompt_appendix"])
+        assert "write_file" not in str(captured["prompt_appendix"])
+        assert captured["validate_output"] is False
+        assert captured["enable_cognitive"] is False
+        context = captured["context"]
+        assert isinstance(context, dict)
+        assert context["delivery_mode"] == "propose_patch"
+        assert context["disable_internal_tool_rounds"] is True
+
 
 class TestBlockedModuleFunctions:
     def test_generate_fallback_code_content_blocked(self):

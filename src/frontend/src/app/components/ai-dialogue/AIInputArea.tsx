@@ -26,6 +26,8 @@ export interface AIInputAreaProps {
   isChatReady: boolean;
   /** 是否未配置 */
   isExplicitlyUnconfigured: boolean;
+  /** 外部阻塞原因 */
+  blockedReason?: string;
   /** 角色名称 */
   roleName: string;
   /** 主题 */
@@ -47,11 +49,13 @@ const AIInputAreaComponent = memo(function AIInputArea({
   isLoading,
   isChatReady,
   isExplicitlyUnconfigured,
+  blockedReason,
   roleName,
   theme,
 }: AIInputAreaProps) {
   // 获取占位符
   const getPlaceholder = (): string => {
+    if (blockedReason) return blockedReason;
     if (isChatReady) return '输入消息...';
     if (isExplicitlyUnconfigured) return `请先配置 ${roleName} LLM...`;
     return `${roleName} 状态异常，请先重试`;
@@ -89,6 +93,8 @@ const AIInputAreaComponent = memo(function AIInputArea({
       <p className="text-[10px] text-slate-600 mt-2 text-center">
         {isChatReady
           ? '按 Enter 发送，Shift + Enter 换行'
+          : blockedReason
+            ? '解除阻塞后即可开始对话'
           : isExplicitlyUnconfigured
             ? '配置 LLM 后即可开始对话'
             : '恢复角色状态接口后即可开始对话'}
