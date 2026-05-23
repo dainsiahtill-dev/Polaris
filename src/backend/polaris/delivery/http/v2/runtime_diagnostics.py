@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from polaris.delivery.http.middleware.rate_limit import get_rate_limit_diagnostics
-from polaris.delivery.http.routers._shared import get_state, require_auth
+from polaris.delivery.http.routers._shared import active_workspace_value, get_state, require_auth
 from polaris.infrastructure.messaging.nats.client import get_default_client_snapshot
 from polaris.infrastructure.messaging.nats.server_runtime import get_managed_nats_runtime_snapshot
 from pydantic import BaseModel, Field
@@ -158,7 +158,7 @@ async def get_runtime_diagnostics(request: Request) -> RuntimeDiagnosticsRespons
     server_snapshot = await asyncio.to_thread(get_managed_nats_runtime_snapshot, nats_url)
     return RuntimeDiagnosticsResponse(
         generated_at=_utc_now(),
-        workspace=str(getattr(state.settings, "workspace", "") or getattr(state.settings, "workspace_path", "") or ""),
+        workspace=active_workspace_value(state.settings),
         nats=_nats_section(nats_config, server_snapshot),
         websocket=_websocket_section(request),
         rate_limit=_rate_limit_section(),

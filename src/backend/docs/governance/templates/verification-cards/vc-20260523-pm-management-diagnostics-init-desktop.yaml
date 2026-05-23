@@ -1,0 +1,60 @@
+id: vc-20260523-pm-management-diagnostics-init-desktop
+title: PM management diagnostics init desktop
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/services/pmService.ts
+  - src/frontend/src/services/__tests__/pmService.test.ts
+  - src/frontend/src/app/components/pm/PMDiagnosticsPanel.tsx
+  - src/frontend/src/app/components/pm/PMDiagnosticsPanel.test.tsx
+related_blueprint: src/backend/docs/blueprints/PM_MANAGEMENT_DIAGNOSTICS_INIT_DESKTOP_20260523.md
+assumption_register:
+  - id: A1
+    statement: PM management status, health, and init routes already exist in the backend.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_management.py
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py
+    verified: true
+  - id: A2
+    statement: PM management status returns initialized=false instead of failing when PM is not initialized.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_management.py
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py
+    verified: true
+  - id: A3
+    statement: PM project health should only be queried after status reports initialized=true.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_management.py
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py
+    verified: true
+pre_mortem:
+  - risk: The diagnostics modal could call health while PM is uninitialized and show a noisy 400.
+    mitigation: Load health only after PM management status reports initialized=true.
+  - risk: Initialization could happen without visible audit evidence.
+    mitigation: Render explicit `POST /pm/v2/pm/init` evidence and reload status after success.
+  - risk: The new management route could be confused with the process status route.
+    mitigation: Name service wrappers `getPmManagement*` and show the `/pm/v2/pm/*` endpoint in UI.
+verification_plan:
+  - command: npm run test -- PMDiagnosticsPanel pmService
+    expected: PM diagnostics management status/health/init UI and service tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- PMDiagnosticsPanel pmService
+    result: PASS
+    evidence: 2 test files passed, 73 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: PASS
+    evidence: 16 test files passed, 142 tests passed.

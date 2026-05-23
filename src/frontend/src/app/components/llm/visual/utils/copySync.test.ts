@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { buildVisualGraph } from './configConverter';
 import { getRoleLabel, validateVisualGraph } from './validation';
 import type { VisualGraphConfig } from '../types/visual';

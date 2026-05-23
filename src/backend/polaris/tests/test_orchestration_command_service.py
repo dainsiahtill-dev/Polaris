@@ -203,7 +203,12 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
     )
 
     assert result.status == "pending"
+    assert result.metadata is not None
+    assert result.metadata["tasks_queued"] == 1
+    assert result.metadata["requested_task_ids"] == ["task-1"]
     assert stub.request is not None
     assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_reproject"
+    assert stub.request.role_entries[0].input == "Execute tasks: task-1"
+    assert stub.request.metadata["tasks"] == ["task-1"]
     assert stub.request.metadata["execution_backend"] == "projection_reproject"
     assert stub.request.metadata["projection"]["experiment_id"] == "exp-001"

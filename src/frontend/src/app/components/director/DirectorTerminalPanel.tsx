@@ -6,14 +6,22 @@ import { Button } from '@/app/components/ui/button';
 
 interface DirectorTerminalPanelProps {
   output: string;
+  onClear?: () => void;
 }
 
-export function DirectorTerminalPanel({ output }: DirectorTerminalPanelProps) {
+export function DirectorTerminalPanel({ output, onClear }: DirectorTerminalPanelProps) {
   return (
     <div className="h-full flex flex-col">
       <div className="h-12 flex items-center justify-between px-4 border-b border-white/5">
         <h2 className="text-sm font-medium text-slate-200">执行终端</h2>
-        <Button variant="ghost" size="sm" className="text-slate-400">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClear}
+          disabled={!output || !onClear}
+          data-testid="director-terminal-clear"
+          className="text-slate-400"
+        >
           <RotateCcw className="w-4 h-4 mr-1.5" />
           清空
         </Button>

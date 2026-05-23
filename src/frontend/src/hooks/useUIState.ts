@@ -41,6 +41,7 @@ const initialUIState: UIState = {
 };
 
 type UIAction =
+  | { type: 'SET_SHOW_COGNITION'; payload: boolean }
   | { type: 'TOGGLE_TERMINAL' }
   | { type: 'SET_SHOW_TERMINAL'; payload: boolean }
   | { type: 'TOGGLE_BRAIN' }
@@ -54,6 +55,7 @@ type UIAction =
   | { type: 'OPEN_HISTORY_DRAWER' }
   | { type: 'CLOSE_HISTORY_DRAWER' }
   | { type: 'OPEN_LOGS'; payload: { sourceId: string; banner?: unknown } }
+  | { type: 'DISMISS_LOGS_BANNER' }
   | { type: 'CLOSE_LOGS' }
   | { type: 'OPEN_AGENTS_DIALOG' }
   | { type: 'CLOSE_AGENTS_DIALOG' }
@@ -69,6 +71,8 @@ type UIAction =
 
 function uiReducer(state: UIState, action: UIAction): UIState {
   switch (action.type) {
+    case 'SET_SHOW_COGNITION':
+      return { ...state, showCognition: action.payload };
     case 'TOGGLE_TERMINAL':
       return { ...state, showTerminal: !state.showTerminal };
     case 'SET_SHOW_TERMINAL':
@@ -120,6 +124,8 @@ function uiReducer(state: UIState, action: UIAction): UIState {
       }
     case 'CLOSE_LOGS':
       return { ...state, isLogsOpen: false, logsBanner: null };
+    case 'DISMISS_LOGS_BANNER':
+      return { ...state, logsBanner: null };
     case 'OPEN_AGENTS_DIALOG':
       return { ...state, isAgentsDialogOpen: true };
     case 'CLOSE_AGENTS_DIALOG':
@@ -154,6 +160,7 @@ export function useUIState(initial?: Partial<UIState>) {
   });
 
   const actions = {
+    setShowCognition: useCallback((v: boolean) => dispatch({ type: 'SET_SHOW_COGNITION', payload: v }), []),
     toggleTerminal: useCallback(() => dispatch({ type: 'TOGGLE_TERMINAL' }), []),
     setShowTerminal: useCallback((v: boolean) => dispatch({ type: 'SET_SHOW_TERMINAL', payload: v }), []),
     toggleBrain: useCallback(() => dispatch({ type: 'TOGGLE_BRAIN' }), []),
@@ -167,6 +174,7 @@ export function useUIState(initial?: Partial<UIState>) {
     openHistoryDrawer: useCallback(() => dispatch({ type: 'OPEN_HISTORY_DRAWER' }), []),
     closeHistoryDrawer: useCallback(() => dispatch({ type: 'CLOSE_HISTORY_DRAWER' }), []),
     openLogs: useCallback((sourceId: string, banner?: unknown) => dispatch({ type: 'OPEN_LOGS', payload: { sourceId, banner } }), []),
+    dismissLogsBanner: useCallback(() => dispatch({ type: 'DISMISS_LOGS_BANNER' }), []),
     closeLogs: useCallback(() => dispatch({ type: 'CLOSE_LOGS' }), []),
     openAgentsDialog: useCallback(() => dispatch({ type: 'OPEN_AGENTS_DIALOG' }), []),
     closeAgentsDialog: useCallback(() => dispatch({ type: 'CLOSE_AGENTS_DIALOG' }), []),

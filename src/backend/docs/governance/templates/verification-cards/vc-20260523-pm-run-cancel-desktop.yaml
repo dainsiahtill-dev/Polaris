@@ -1,0 +1,81 @@
+id: vc-20260523-pm-run-cancel-desktop
+title: PM run cancel desktop
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/delivery/http/v2/pm.py
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py
+  - src/frontend/src/services/pmService.ts
+  - src/frontend/src/services/index.ts
+  - src/frontend/src/services/__tests__/pmService.test.ts
+  - src/frontend/src/app/components/pm/PMWorkbenchPanel.tsx
+  - src/frontend/src/app/components/pm/PMWorkbenchPanel.test.tsx
+related_blueprint: src/backend/docs/blueprints/PM_RUN_CANCEL_DESKTOP_20260523.md
+assumption_register:
+  - id: A1
+    statement: Existing PM orchestration run detail snapshots are sufficient for PM run cancel responses.
+    evidence:
+      - src/backend/polaris/delivery/http/v2/pm.py
+      - src/backend/polaris/cells/orchestration/workflow_runtime/public/service.py
+    verified: true
+  - id: A2
+    statement: Terminal PM run statuses must be returned unchanged instead of being cancelled again.
+    evidence:
+      - src/backend/polaris/delivery/http/v2/pm.py
+    verified: true
+  - id: A3
+    statement: PM workbench run evidence strip is the correct place for orchestration-run controls.
+    evidence:
+      - src/frontend/src/app/components/pm/PMWorkbenchPanel.tsx
+    verified: true
+pre_mortem:
+  - risk: Runtime could reject cancellation for settled runs.
+    mitigation: Route checks terminal status before calling cancel_run.
+  - risk: PM cancel response could use a different stage derivation than PM run detail.
+    mitigation: Share response construction between get and cancel routes.
+  - risk: Run ID encoding could break cancellation links.
+    mitigation: Service wrapper encodes run IDs with encodeURIComponent.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py --fix
+    expected: Python lint fixes complete with no remaining issues.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py
+    expected: Python formatting completes.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/pm.py
+    expected: PM router type check passes.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q
+    expected: PM router unit tests pass.
+  - command: npm run test -- PMWorkbenchPanel pmService
+    expected: PM workbench and typed service tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py --fix
+    result: PASS
+    evidence: All checks passed.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py
+    result: PASS
+    evidence: 2 files left unchanged.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/pm.py
+    result: PASS
+    evidence: "Success: no issues found in 1 source file."
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q
+    result: PASS
+    evidence: 26 tests passed, 1 known deprecation warning for /pm/start_loop.
+  - command: npm run test -- PMWorkbenchPanel pmService
+    result: PASS
+    evidence: 2 test files passed, 75 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: PASS
+    evidence: 16 test files passed, 148 tests passed.

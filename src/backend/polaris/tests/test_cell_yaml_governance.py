@@ -33,9 +33,10 @@ import yaml
 # Fixture paths
 # ---------------------------------------------------------------------------
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 CELLS_ROOT = BACKEND_ROOT / "polaris" / "cells"
+SUBGRAPHS_ROOT = BACKEND_ROOT / "docs" / "graph" / "subgraphs"
 
 # Cells that are intentionally designed to span kernelone/infrastructure
 # by ACGA architectural decision (e.g., KernelOne-tier cells).
@@ -81,6 +82,13 @@ def _load_cell_yaml(cell_id: str) -> dict[str, Any] | None:
     candidate = CELLS_ROOT.joinpath(*parts) / "cell.yaml"
     if not candidate.is_file():
         return None
+    with candidate.open(encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def _load_subgraph(subgraph_id: str) -> dict[str, Any]:
+    candidate = SUBGRAPHS_ROOT / f"{subgraph_id}.yaml"
+    assert candidate.is_file(), f"subgraph not found: {candidate}"
     with candidate.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
@@ -221,6 +229,64 @@ class TestCellYamlCatalogConsistency:
             )
 
 
+class TestChiefEngineerBlueprintGovernance:
+    """Chief Engineer desktop route ownership and runtime blueprint state invariants."""
+
+    def test_desktop_route_is_owned_by_chief_engineer_blueprint_cell(self) -> None:
+        """The Chief Engineer v2 desktop route must be graph-owned by the blueprint cell."""
+        data = _load_catalog()
+        cells = _catalog_cells(data)
+        catalog_entry = next((c for c in cells if c.get("id") == "chief_engineer.blueprint"), None)
+        assert catalog_entry is not None, "chief_engineer.blueprint not found in catalog"
+
+        route_module = "polaris.delivery.http.v2.chief_engineer"
+        route_path = "polaris/delivery/http/v2/chief_engineer.py"
+        assert route_module in (catalog_entry.get("current_modules") or [])
+        assert route_path in (catalog_entry.get("owned_paths") or [])
+
+        cell_yaml = _load_cell_yaml("chief_engineer.blueprint")
+        assert cell_yaml is not None, "chief_engineer.blueprint cell.yaml not found"
+        assert route_module in (cell_yaml.get("current_modules") or [])
+        assert route_path in (cell_yaml.get("owned_paths") or [])
+
+    def test_runtime_blueprints_are_declared_state_and_effects(self) -> None:
+        """The blueprint cell must declare the runtime/blueprints persistence it writes."""
+        cell_yaml = _load_cell_yaml("chief_engineer.blueprint")
+        assert cell_yaml is not None, "chief_engineer.blueprint cell.yaml not found"
+
+        assert "runtime/blueprints/*" in (cell_yaml.get("state_owners") or [])
+        assert "fs.write:runtime/blueprints/*" in (cell_yaml.get("effects_allowed") or [])
+
+
+class TestDirectorExecutionGovernance:
+    """Director execution graph dependency invariants."""
+
+    def test_declares_llm_dialogue_dependency_in_catalog_and_manifest(self) -> None:
+        """Director execution imports llm.dialogue public service and must declare it."""
+        data = _load_catalog()
+        cells = _catalog_cells(data)
+        catalog_entry = next((c for c in cells if c.get("id") == "director.execution"), None)
+        assert catalog_entry is not None, "director.execution not found in catalog"
+        assert "llm.dialogue" in (catalog_entry.get("depends_on") or [])
+
+        cell_yaml = _load_cell_yaml("director.execution")
+        assert cell_yaml is not None, "director.execution cell.yaml not found"
+        assert "llm.dialogue" in (cell_yaml.get("depends_on") or [])
+
+    def test_execution_governance_subgraph_tracks_llm_dialogue_edge(self) -> None:
+        """The execution governance subgraph must expose Director role dialogue calls."""
+        subgraph = _load_subgraph("execution_governance_pipeline")
+        assert "llm.dialogue" in (subgraph.get("cells") or [])
+
+        expected_relation = {
+            "from": "director.execution",
+            "to": "llm.dialogue",
+            "type": "commands",
+            "contract": "InvokeRoleDialogueCommandV1",
+        }
+        assert expected_relation in (subgraph.get("relations") or [])
+
+
 # ---------------------------------------------------------------------------
 # Catalog-wide structural invariants (allowlist-gated — must not grow)
 # ---------------------------------------------------------------------------
@@ -239,10 +305,15 @@ class TestCatalogWideInvariantsAllowlisted:
     _EXISTING_INFRA_PATH_VIOLATORS: frozenset[str] = frozenset(
         {
             "chief_engineer.blueprint",
+            "code_intelligence.engine",
             "director.execution",
+            "director.runtime",
+            "factory.cognitive_runtime",
             "policy.permission",
             "finops.budget_guard",
             "events.fact_stream",
+            "kernelone.core",
+            "kernelone.traceability",
             "orchestration.workflow_runtime",
             "storage.layout",
         }

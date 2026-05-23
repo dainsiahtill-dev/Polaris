@@ -19,14 +19,16 @@ class BlueprintPersistence:
     Writes are atomic (temp-file + replace) to avoid corruption.
     """
 
-    def __init__(self, workspace: str) -> None:
+    def __init__(self, workspace: str, *, ensure_directory: bool = True) -> None:
         """Initialize persistence for the given workspace.
 
         Args:
             workspace: Root workspace path.
+            ensure_directory: Create the blueprint directory immediately when true.
         """
         self._dir = Path(workspace) / "runtime" / "blueprints"
-        self._dir.mkdir(parents=True, exist_ok=True)
+        if ensure_directory:
+            self._dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, blueprint_id: str, data: dict[str, Any]) -> None:
         """Atomically persist a blueprint dictionary to disk.

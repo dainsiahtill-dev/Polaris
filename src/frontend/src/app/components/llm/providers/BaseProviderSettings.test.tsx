@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { BaseProviderSettings } from './BaseProviderSettings';
 import type { ProviderConfig } from '../types';
 

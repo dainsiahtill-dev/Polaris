@@ -203,6 +203,38 @@ def _build_task_filter_from_artifacts(artifacts: list[Any]) -> str:
     return directive[:200] if directive else "Execute ready tasks"
 
 
+def _workspace_value(settings: Any) -> str:
+    """Resolve active desktop workspace with legacy fallback."""
+    for attr in ("workspace_path", "workspace"):
+        value = getattr(settings, attr, "")
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _active_workspace(request: Request) -> str:
+    """Resolve active workspace from the request app state."""
+    return _workspace_value(get_state(request).settings)
+
+
+def _session_workspace(session: Any, request: Request) -> str:
+    """Prefer persisted session workspace before active settings fallback."""
+    workspace = str(getattr(session, "workspace", "") or "").strip()
+    return workspace or _active_workspace(request)
+
+
+def _workspace_path_for_session(session: Any, request: Request) -> Path:
+    """Return workspace path for session-scoped evidence services."""
+    return Path(_session_workspace(session, request))
+
+
+def _role_session_service(request: Request) -> RoleSessionService:
+    """Construct RoleSessionService bound to the active desktop workspace."""
+    workspace = _active_workspace(request)
+    return RoleSessionService(workspace=workspace or None)
+
+
 # ==================== Session Endpoints ====================
 
 
@@ -233,14 +265,12 @@ async def create_session(
             "session": {...}
         }
     """
-    state = get_state(request)
-
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.create_session(
                 role=payload.role,
                 host_kind=payload.host_kind,
-                workspace=payload.workspace or str(state.settings.workspace or ""),
+                workspace=payload.workspace or _active_workspace(request),
                 session_type=payload.session_type,
                 attachment_mode=payload.attachment_mode,
                 title=payload.title,
@@ -283,14 +313,12 @@ async def list_sessions(
             "total": 100
         }
     """
-    state: AppState = get_state(request)
-
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             sessions = service.get_sessions(
                 role=role,
                 host_kind=host_kind,
-                workspace=workspace or str(str(state.settings.workspace or "")),
+                workspace=workspace or _active_workspace(request),
                 session_type=session_type,
                 state=state_filter,
                 limit=limit,
@@ -327,7 +355,7 @@ async def get_session(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.get_session(session_id)
 
             if not session:
@@ -375,7 +403,7 @@ async def update_session(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.update_session(
                 session_id=session_id,
                 title=payload.title,
@@ -424,7 +452,7 @@ async def delete_session(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             success = service.delete_session(session_id, soft=soft)
 
             if not success:
@@ -470,7 +498,7 @@ async def get_messages(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.get_session(session_id)
             if not session:
                 raise StructuredHTTPException(
@@ -522,7 +550,7 @@ async def send_message(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.add_message(
                 session_id=session_id,
                 role=payload.role,
@@ -566,7 +594,7 @@ async def send_message_stream(
     state: AppState = get_state(request)
 
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.get_session(session_id)
             if not session:
                 raise StructuredHTTPException(
@@ -587,6 +615,7 @@ async def send_message_stream(
                 if str(message.role or "").strip() and str(message.content or "").strip()
             )
             context_config_raw = str(session.context_config or "").strip()
+            session_workspace = _session_workspace(session, request)
             try:
                 session_context = json.loads(context_config_raw) if context_config_raw else None
             except json.JSONDecodeError:
@@ -600,7 +629,7 @@ async def send_message_stream(
                 SessionContinuityRequest(
                     session_id=session_id,
                     role=session_role,
-                    workspace=str(str(state.settings.workspace or "")),
+                    workspace=session_workspace,
                     session_title=str(session.title or "").strip(),
                     messages=history_pairs_to_messages(history),
                     session_context_config=session_context,
@@ -630,7 +659,7 @@ async def send_message_stream(
                 output_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
                 producer_task = asyncio.create_task(
                     generate_role_response_streaming(
-                        workspace=str(str(state.settings.workspace or "")),
+                        workspace=session_workspace,
                         settings=state.settings,
                         role=session_role,
                         message=payload.content,
@@ -668,7 +697,7 @@ async def send_message_stream(
                             response = str(event_payload.get("content") or "") or "".join(response_parts)
                             thinking = str(event_payload.get("thinking") or "") or "".join(thinking_parts) or None
                             if response:
-                                with RoleSessionService() as save_service:
+                                with _role_session_service(request) as save_service:
                                     save_service.add_message(
                                         session_id=session_id,
                                         role="assistant",
@@ -685,7 +714,7 @@ async def send_message_stream(
 
                         if event_type == "done":
                             if response_parts and not assistant_saved:
-                                with RoleSessionService() as save_service:
+                                with _role_session_service(request) as save_service:
                                     save_service.add_message(
                                         session_id=session_id,
                                         role="assistant",
@@ -754,7 +783,7 @@ async def attach_session(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             attachment = service.attach_session(
                 session_id=session_id,
                 run_id=payload.run_id,
@@ -806,7 +835,7 @@ async def detach_session(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             success = service.detach_session(session_id)
 
             if not success:
@@ -854,10 +883,8 @@ async def get_artifacts(
             "artifacts": [...]
         }
     """
-    state = get_state(request)
-
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.get_session(session_id)
             if not session:
                 raise StructuredHTTPException(
@@ -867,7 +894,7 @@ async def get_artifacts(
                 )
 
         # Use artifact service to list artifacts
-        artifact_service = RoleSessionArtifactService(Path(str(state.settings.workspace or "")))
+        artifact_service = RoleSessionArtifactService(_workspace_path_for_session(session, request))
         artifacts = artifact_service.list_artifacts(session_id, artifact_type)
 
         return {
@@ -903,10 +930,8 @@ async def get_audit(
             "audit_events": [...]
         }
     """
-    state = get_state(request)
-
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.get_session(session_id)
             if not session:
                 raise StructuredHTTPException(
@@ -916,7 +941,7 @@ async def get_audit(
                 )
 
         # Use audit service to get events
-        audit_service = RoleSessionAuditService(Path(str(state.settings.workspace or "")))
+        audit_service = RoleSessionAuditService(_workspace_path_for_session(session, request))
         events = audit_service.get_events(session_id, event_type, limit, offset)
 
         return {
@@ -1138,7 +1163,7 @@ async def export_session(
         }
     """
     try:
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             export_data = service.export_session(
                 session_id,
                 include_messages=payload.include_messages,
@@ -1215,12 +1240,8 @@ async def export_to_workflow(
     state = get_state(request)
 
     try:
-        # Initialize services
-        artifact_service = RoleSessionArtifactService(Path(str(state.settings.workspace or "")))
-        audit_service = RoleSessionAuditService(Path(str(state.settings.workspace or "")))
-
         # Verify session exists
-        with RoleSessionService() as service:
+        with _role_session_service(request) as service:
             session = service.get_session(session_id)
             if not session:
                 raise StructuredHTTPException(
@@ -1228,6 +1249,10 @@ async def export_to_workflow(
                     code="SESSION_NOT_FOUND",
                     message=f"Session not found: {session_id}",
                 )
+
+        session_workspace = _session_workspace(session, request)
+        artifact_service = RoleSessionArtifactService(Path(session_workspace))
+        audit_service = RoleSessionAuditService(Path(session_workspace))
 
         # 1. Collect session content
         artifacts = artifact_service.list_artifacts(session_id)
@@ -1251,7 +1276,7 @@ async def export_to_workflow(
         from polaris.infrastructure.storage import LocalFileSystemAdapter
         from polaris.kernelone.fs import KernelFileSystem
 
-        workspace_root = Path(str(state.settings.workspace or "")).resolve()
+        workspace_root = Path(session_workspace).resolve()
         kernel_fs = KernelFileSystem(str(workspace_root), LocalFileSystemAdapter())
         export_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         export_filename = f"{session_id}_{export_timestamp}_export.json"
@@ -1274,7 +1299,7 @@ async def export_to_workflow(
             directive = _build_directive_from_artifacts(artifacts)
 
             result = await cmd_service.execute_pm_run(
-                workspace=str(str(state.settings.workspace or "")),
+                workspace=session_workspace,
                 run_type="full",
                 options={
                     "directive": directive,
@@ -1293,7 +1318,7 @@ async def export_to_workflow(
             task_filter = _build_task_filter_from_artifacts(artifacts)
 
             result = await cmd_service.execute_director_run(
-                workspace=str(str(state.settings.workspace or "")),
+                workspace=session_workspace,
                 options={
                     "task_filter": task_filter,
                     "max_workers": DEFAULT_DIRECTOR_MAX_PARALLELISM,
@@ -1308,7 +1333,7 @@ async def export_to_workflow(
             # Export to Factory via FactoryRunService
             from polaris.cells.factory.pipeline.public.service import FactoryConfig, FactoryRunService
 
-            factory_service = FactoryRunService(workspace=Path(str(state.settings.workspace or "")))
+            factory_service = FactoryRunService(workspace=Path(session_workspace))
             directive = _build_directive_from_artifacts(artifacts)
 
             config = FactoryConfig(

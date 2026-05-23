@@ -1,0 +1,83 @@
+card_id: "vc-20260523-director-v2-projection-active-workspace-path"
+bug_summary: >
+  Director v2 projection-backed status/task routes and Director service
+  dependency binding were not using the shared active desktop workspace
+  resolver, leaving PM/Director desktop routes with separate workspace-selection
+  implementations.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/v2/director.py"
+  method: "status / list_tasks projection / task detail projection fallback / get_director_service"
+  symptom: >
+    Director desktop status, task board, detail fallback, or service rebinding
+    can drift from the workspace resolution contract used by PM, Chief Engineer,
+    role sessions, runtime, and LLM provider routes.
+
+assumptions:
+  - id: "A1"
+    statement: "Director desktop status and task panels use v2 Director projection-backed routes."
+    status: verified_true
+    evidence: >
+      pmService.getDirectorStatus calls /v2/director/status?source=auto and
+      listDirectorTasks defaults to /v2/director/tasks?source=auto.
+
+  - id: "A2"
+    statement: "settings.workspace_path is the active Electron target workspace when populated."
+    status: verified_true
+    evidence: >
+      Existing PM, Chief Engineer, RoleChat, RoleSession, Runtime, and
+      LLM/provider active-workspace contracts now prefer workspace_path over
+      workspace.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only task listing would leave status and task detail fallback
+    reading a different projection workspace.
+  guardrail: >
+    Use the shared active_workspace_value helper and assert every projection
+    build in Director status/list/detail fallback receives workspace_path when
+    workspace is stale, and assert Director dependency rebinding does not use
+    the stale workspace.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/dependencies.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/dependencies.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/dependencies.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -v"
+    expected: "HTTP dependency and Director v2 router tests pass"
+  - command: "npm test -- src/frontend/src/app/components/director/__tests__/DirectorTaskPanel.test.tsx src/frontend/src/app/components/director/__tests__/DirectorWorkbenchPanel.test.tsx src/frontend/src/app/components/director/__tests__/DirectorWorkspace.capabilities.test.tsx"
+    expected: "Director desktop frontend tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    expected: "Electron role workspace visual surface passes"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/dependencies.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/dependencies.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    result: pass
+    evidence: "1 file reformatted, 5 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/dependencies.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    result: pass
+    evidence: "Success: no issues found in 6 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_http_dependencies_workspace.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -v"
+    result: pass
+    evidence: "39 passed in 11.35s."
+  - command: "npm test -- src/frontend/src/app/components/director/__tests__/DirectorTaskPanel.test.tsx src/frontend/src/app/components/director/__tests__/DirectorWorkbenchPanel.test.tsx src/frontend/src/app/components/director/__tests__/DirectorWorkspace.capabilities.test.tsx"
+    result: pass
+    evidence: "3 files passed; 22 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "1 passed; pretest renderer build completed."
+
+status: passed

@@ -103,6 +103,7 @@ export interface UseRuntimeResult {
   snapshot: SnapshotPayload | null;
   anthroState: AnthroState | null;
   dialogueEvents: DialogueEvent[];
+  setDialogueEvents: (events: DialogueEvent[]) => void;
   qualityGate: QualityGateData | null;
   executionLogs: LogEntry[];
   llmStreamEvents: LogEntry[];
@@ -1225,6 +1226,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     snapshot,
     anthroState,
     dialogueEvents,
+    setDialogueEvents,
     qualityGate,
     executionLogs,
     llmStreamEvents,

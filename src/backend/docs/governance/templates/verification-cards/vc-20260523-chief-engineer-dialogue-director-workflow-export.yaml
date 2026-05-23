@@ -1,0 +1,57 @@
+id: vc-20260523-chief-engineer-dialogue-director-workflow-export
+title: Chief Engineer dialogue Director workflow export
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx
+related_blueprint: src/backend/docs/blueprints/CHIEF_ENGINEER_DIALOGUE_DIRECTOR_WORKFLOW_EXPORT_20260523.md
+assumption_register:
+  - id: A1
+    statement: AIDialoguePanel supports workflow export when workflowExportTarget is provided.
+    evidence:
+      - src/frontend/src/app/components/ai-dialogue/AIDialoguePanel.tsx
+      - src/frontend/src/app/components/ai-dialogue/useAIDialogue.ts
+    verified: true
+  - id: A2
+    statement: RoleSession export backend already supports Director workflow target.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/role_session.py
+      - src/frontend/src/services/roleSessionService.ts
+    verified: true
+  - id: A3
+    statement: Chief Engineer dialogue is mounted through AIDialoguePanel in the desktop workspace.
+    evidence:
+      - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+    verified: true
+pre_mortem:
+  - risk: Export control could be ambiguous in the Chief Engineer UI.
+    mitigation: Use explicit `导出 Director` label.
+  - risk: Export could send the wrong target payload.
+    mitigation: Regression asserts request body uses `target: "director"`.
+  - risk: Enabling export could break existing session creation.
+    mitigation: Focused test renders ChiefEngineerWorkspace and waits for the created CE RoleSession.
+verification_plan:
+  - command: npm run test -- ChiefEngineerWorkspace roleSessionService AIDialoguePanel useAIDialogue
+    expected: Chief Engineer dialogue export and RoleSession panel regressions pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- ChiefEngineerWorkspace roleSessionService AIDialoguePanel useAIDialogue
+    result: PASS
+    evidence: 4 test files passed, 24 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: PASS
+    evidence: 16 test files passed, 150 tests passed.

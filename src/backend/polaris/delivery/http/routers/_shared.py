@@ -9,6 +9,7 @@ from polaris.cells.llm.provider_runtime.public.service import is_role_runtime_su
 from polaris.cells.runtime.state_owner.public.service import AppState
 from polaris.delivery.http.dependencies import require_auth as _canonical_require_auth
 from polaris.delivery.http.middleware.rbac import require_role as _require_role
+from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 from starlette.responses import JSONResponse
@@ -21,9 +22,14 @@ def get_state(request: Request) -> AppState:
     return request.app.state.app_state
 
 
+def _workspace_value(settings: Any) -> str:
+    return active_workspace_value(settings)
+
+
 def _ensure_llm_ready(state: AppState, role: str) -> None:
-    cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), str(state.settings.workspace))
-    config = llm_config.load_llm_config(str(state.settings.workspace), cache_root, settings=state.settings)
+    workspace = _workspace_value(state.settings)
+    cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), workspace)
+    config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     index = load_llm_test_index(state.settings)
     role_status = (index.get("roles") or {}).get(role) if isinstance(index, dict) else None
     if not isinstance(role_status, dict) or not role_status.get("ready"):
@@ -79,8 +85,9 @@ def required_ready_roles(
     list it is inserted at position 0 (used by the director router to
     guarantee "director" is always checked).
     """
-    cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), str(state.settings.workspace))
-    config = llm_config.load_llm_config(str(state.settings.workspace), cache_root, settings=state.settings)
+    workspace = _workspace_value(state.settings)
+    cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), workspace)
+    config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     policies = config.get("policies") if isinstance(config.get("policies"), dict) else {}
     configured = policies.get("required_ready_roles") if isinstance(policies, dict) else None
     roles: list[str] = []

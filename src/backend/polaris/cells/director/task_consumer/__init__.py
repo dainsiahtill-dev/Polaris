@@ -8,7 +8,7 @@ for PENDING_EXEC tasks and coordinates execution with Safe Parallel support.
 
 PR-05: Director consumer from PENDING_EXEC + Safe Parallel
 
-# TODO: remove after 2026-06-30
+# Deprecation removal target: 2026-06-30.
 """
 
 from __future__ import annotations

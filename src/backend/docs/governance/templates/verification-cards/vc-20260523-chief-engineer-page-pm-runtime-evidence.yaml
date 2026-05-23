@@ -1,0 +1,55 @@
+id: vc-20260523-chief-engineer-page-pm-runtime-evidence
+title: Chief Engineer page PM runtime evidence
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/App.tsx
+  - src/frontend/src/app/pages/ChiefEngineerPage.tsx
+  - src/frontend/src/app/pages/ChiefEngineerPage.test.tsx
+related_blueprint: src/backend/docs/blueprints/CHIEF_ENGINEER_PAGE_PM_RUNTIME_EVIDENCE_20260523.md
+assumption_register:
+  - id: A1
+    statement: App owns the authoritative PM running state for role desktop overlays.
+    evidence:
+      - src/frontend/src/app/App.tsx
+    verified: true
+  - id: A2
+    statement: ChiefEngineerPage currently owns the Chief Engineer runtime overlay composition.
+    evidence:
+      - src/frontend/src/app/pages/ChiefEngineerPage.tsx
+    verified: true
+  - id: A3
+    statement: The fix does not require backend route or Cell contract changes.
+    evidence:
+      - src/frontend/src/app/pages/ChiefEngineerPage.tsx
+      - src/frontend/src/app/components/LlmRuntimeOverlay.tsx
+    verified: true
+pre_mortem:
+  - risk: The page continues to hardcode PM as idle and hides live PM runtime evidence.
+    mitigation: Add explicit `pmRunning` prop and assert it reaches `LlmRuntimeOverlay`.
+  - risk: App forgets to pass the live PM running value to the page.
+    mitigation: Wire `effectivePmRunning` at the Chief Engineer route branch.
+verification_plan:
+  - command: npm run test -- ChiefEngineerPage
+    expected: Chief Engineer page tests pass, including PM runtime overlay evidence.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- ChiefEngineerPage
+    result: passed
+    evidence: 1 test file passed, 2 tests passed
+  - command: npm run typecheck
+    result: passed
+    evidence: tsc --noEmit completed with exit code 0
+  - command: npm run lint
+    result: passed
+    evidence: eslint completed with exit code 0
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: passed
+    evidence: 15 test files passed, 130 tests passed

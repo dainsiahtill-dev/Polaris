@@ -409,6 +409,50 @@ async def test_v2_provider_health_success(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_v2_provider_health_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Provider health should resolve provider config from the active desktop workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_settings.ramdisk_root = "R:/PolarisCache"
+    mock_context = MagicMock()
+    mock_context.provider_cfg = {"base_url": "https://api.openai.com"}
+    mock_context.provider_type = "openai_compat"
+    mock_context.api_key = "sk-test"
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.providers.build_cache_root",
+            return_value="C:/CacheRoot",
+        ) as mock_build_cache_root,
+        patch(
+            "polaris.delivery.http.routers.providers.resolve_provider_request_context",
+            return_value=mock_context,
+        ) as mock_resolve_context,
+        patch(
+            "polaris.delivery.http.routers.providers.run_provider_action",
+            return_value={"ok": True, "status": "healthy"},
+        ),
+    ):
+        response = await client.post(
+            "/v2/llm/providers/openai/health",
+            json={"api_key": "sk-test", "headers": {"X-Test": "1"}},
+        )
+        assert response.status_code == 200
+
+    mock_build_cache_root.assert_called_once_with("R:/PolarisCache", "C:/Temp/Product")
+    mock_resolve_context.assert_called_once_with(
+        workspace="C:/Temp/Product",
+        cache_root="C:/CacheRoot",
+        provider_id="openai",
+        api_key="sk-test",
+        headers={"X-Test": "1"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_v2_provider_health_provider_not_found(client: AsyncClient) -> None:
     """Provider health check should 404 when provider_id is not found in config."""
     from polaris.cells.llm.provider_config.public.contracts import ProviderNotFoundError
@@ -516,6 +560,50 @@ async def test_v2_provider_models_success(client: AsyncClient) -> None:
             provider_cfg={"base_url": "https://api.openai.com"},
             api_key="sk-test",
         )
+
+
+@pytest.mark.asyncio
+async def test_v2_provider_models_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Provider model listing should resolve config from the active desktop workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_settings.ramdisk_root = "R:/PolarisCache"
+    mock_context = MagicMock()
+    mock_context.provider_cfg = {"base_url": "https://api.openai.com"}
+    mock_context.provider_type = "openai_compat"
+    mock_context.api_key = "sk-test"
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.providers.build_cache_root",
+            return_value="C:/CacheRoot",
+        ) as mock_build_cache_root,
+        patch(
+            "polaris.delivery.http.routers.providers.resolve_provider_request_context",
+            return_value=mock_context,
+        ) as mock_resolve_context,
+        patch(
+            "polaris.delivery.http.routers.providers.run_provider_action",
+            return_value={"ok": True, "models": []},
+        ),
+    ):
+        response = await client.post(
+            "/v2/llm/providers/openai/models",
+            json={"api_key": "sk-test"},
+        )
+        assert response.status_code == 200
+
+    mock_build_cache_root.assert_called_once_with("R:/PolarisCache", "C:/Temp/Product")
+    mock_resolve_context.assert_called_once_with(
+        workspace="C:/Temp/Product",
+        cache_root="C:/CacheRoot",
+        provider_id="openai",
+        api_key="sk-test",
+        headers=None,
+    )
 
 
 @pytest.mark.asyncio

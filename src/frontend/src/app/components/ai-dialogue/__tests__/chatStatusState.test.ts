@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { resolveDialogueStatusKind } from '../chatStatusState';
 
 describe('resolveDialogueStatusKind', () => {

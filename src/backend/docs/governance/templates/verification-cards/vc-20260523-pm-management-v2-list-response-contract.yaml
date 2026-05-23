@@ -1,0 +1,72 @@
+card_id: "vc-20260523-pm-management-v2-list-response-contract"
+bug_summary: >
+  PM management v2 list routes are mounted for the desktop, but task and requirement
+  list responses expose only PM-internal collection names instead of the typed
+  desktop API shape declared in src/frontend/src/services/api.types.ts.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/pm_management.py"
+  method: "v2_list_tasks / v2_list_requirements"
+  symptom: "GET /v2/pm/tasks and GET /v2/pm/requirements lack items + total aliases expected by desktop services."
+
+assumptions:
+  - id: "A1"
+    statement: "The backend routes exist and the problem is response shape rather than routing."
+    status: verified_true
+    evidence: >
+      Current route table contains GET /v2/pm/tasks and GET /v2/pm/requirements.
+
+  - id: "A2"
+    statement: "Desktop typed services expect items + total for PM task and requirement lists."
+    status: verified_true
+    evidence: >
+      src/frontend/src/services/api.types.ts declares PmTaskListResponse and
+      PmRequirementListResponse with items and total fields.
+
+  - id: "A3"
+    statement: "Existing backend callers may still consume tasks or requirements keys."
+    status: verified_true
+    evidence: >
+      Existing pm_management router tests assert legacy response keys, so the fix
+      must preserve those keys and add desktop aliases.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Renaming tasks/requirements to items would satisfy new desktop types but break
+    existing PM management consumers and tests.
+  guardrail: >
+    Add aliases without removing existing keys; verify both legacy and desktop fields.
+
+verification_plan:
+  - command: "ruff check src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py --fix"
+    expected: "All checks passed"
+  - command: "ruff format src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    expected: "Formatting complete without changes or with formatted files"
+  - command: "mypy src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    expected: "Success: no issues found"
+  - command: "pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    expected: "All tests pass"
+  - command: "npm test -- api.pmTaskService.test.ts"
+    expected: "Frontend PM management service tests pass"
+
+verification_results:
+  - command: "ruff check src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py --fix"
+    result: "passed"
+  - command: "ruff format src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    result: "passed"
+  - command: "mypy src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    result: "passed"
+  - command: "pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    result: "35 passed"
+  - command: "npm test -- api.pmTaskService.test.ts"
+    result: "3 passed"
+  - command: "npx eslint src/frontend/src/services/__tests__/api.pmTaskService.test.ts src/frontend/src/services/api.ts"
+    result: "passed"
+  - command: "npm run typecheck"
+    result: "passed"
+  - command: "npm run test:e2e"
+    result: "7 passed, 3 skipped"
+
+status: verified

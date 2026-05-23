@@ -7,9 +7,17 @@ import type { ExecutionTask } from './hooks/useDirectorWorkspace';
 
 interface DirectorDebugPanelProps {
   tasks: ExecutionTask[];
+  cancellingTaskId?: string | null;
+  onInspectTask?: (taskId: string) => void;
+  onCancelTask?: (taskId: string) => void;
 }
 
-export function DirectorDebugPanel({ tasks }: DirectorDebugPanelProps) {
+export function DirectorDebugPanel({
+  tasks,
+  cancellingTaskId,
+  onInspectTask,
+  onCancelTask,
+}: DirectorDebugPanelProps) {
   return (
     <div className="h-full flex flex-col">
       <div className="h-12 flex items-center px-4 border-b border-white/5">
@@ -38,11 +46,25 @@ export function DirectorDebugPanel({ tasks }: DirectorDebugPanelProps) {
                   </pre>
                 )}
                 <div className="mt-3 flex gap-2">
-                  <Button size="sm" variant="outline" className="border-red-500/30 text-red-400">
-                    调试
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onInspectTask?.(task.id)}
+                    disabled={!onInspectTask}
+                    data-testid={`director-debug-inspect-${task.id}`}
+                    className="border-red-500/30 text-red-400"
+                  >
+                    定位
                   </Button>
-                  <Button size="sm" variant="ghost" className="text-slate-400">
-                    跳过
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => onCancelTask?.(task.id)}
+                    disabled={!onCancelTask || cancellingTaskId === task.id}
+                    data-testid={`director-debug-cancel-${task.id}`}
+                    className="text-slate-400"
+                  >
+                    {cancellingTaskId === task.id ? '取消中' : '取消'}
                   </Button>
                 </div>
               </div>

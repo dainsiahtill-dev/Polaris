@@ -10,7 +10,7 @@ import type { PmTask, TaskStatus } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntime';
 import type { TaskTraceMap } from '@/types/taskTrace';
-import { apiFetchFresh } from '@/api';
+import { listDirectorTaskFallbackRows } from '@/services';
 
 // ============================================================
 // 类型定义
@@ -409,14 +409,9 @@ export function useDirectorWorkspaceVM(
     
     const syncTasks = async () => {
       try {
-        const source = runtime.directorStatus?.running ? 'workflow' : 'auto';
-        const payload = await apiFetchFresh(`/v2/director/tasks?source=${source}`);
-        if (!Array.isArray(payload) || cancelled) return;
-        
-        const normalized = payload.filter((item): item is PmTask => 
-          Boolean(item && typeof item === 'object' && String((item as { id?: unknown }).id || '').trim())
-        );
-        setFallbackTasks(normalized);
+        const result = await listDirectorTaskFallbackRows(runtime.directorStatus?.running === true);
+        if (!result.ok || !Array.isArray(result.data) || cancelled) return;
+        setFallbackTasks(result.data as unknown as PmTask[]);
       } catch {
         // Ignore polling errors
       }

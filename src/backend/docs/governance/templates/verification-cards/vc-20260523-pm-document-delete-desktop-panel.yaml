@@ -1,0 +1,59 @@
+id: vc-20260523-pm-document-delete-desktop-panel
+title: PM document delete desktop panel
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/services/pmService.ts
+  - src/frontend/src/services/__tests__/pmService.test.ts
+  - src/frontend/src/app/components/pm/PMDocumentPanel.tsx
+  - src/frontend/src/app/components/pm/PMDocumentPanel.test.tsx
+related_blueprint: src/backend/docs/blueprints/PM_DOCUMENT_DELETE_DESKTOP_PANEL_20260523.md
+assumption_register:
+  - id: A1
+    statement: Backend PM document deletion already exists at DELETE /v2/pm/documents/{path}.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_management.py
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py
+    verified: true
+  - id: A2
+    statement: Backend delete_file=false preserves the backing file while removing PM document tracking metadata.
+    evidence:
+      - src/backend/polaris/delivery/cli/pm/document_manager.py
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py
+    verified: true
+  - id: A3
+    statement: PMDocumentPanel owns document tree refresh and can clear the selected deleted document.
+    evidence:
+      - src/frontend/src/app/components/pm/PMDocumentPanel.tsx
+    verified: true
+pre_mortem:
+  - risk: The UI could make accidental destructive file deletion too easy.
+    mitigation: Default delete_file to false and require an explicit checkbox for backing file deletion.
+  - risk: The deleted document could remain selected after the backend succeeds.
+    mitigation: Clear the selected document, content, versions, diff, and refresh the tree after success.
+  - risk: Path encoding could mismatch existing document routes.
+    mitigation: Reuse the existing encodeDocumentPath helper in pmDocumentService.
+verification_plan:
+  - command: npm run test -- PMDocumentPanel pmService
+    expected: PM document panel delete workflow and typed service tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- PMDocumentPanel pmService
+    result: PASS
+    evidence: 2 test files passed, 70 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: PASS
+    evidence: 16 test files passed, 137 tests passed.

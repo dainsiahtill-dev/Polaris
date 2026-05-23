@@ -3,7 +3,7 @@
  * 将业务逻辑从组件中抽离，实现容器/展示分离
  */
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { apiFetchFresh } from '@/api';
+import { listDirectorTaskFallbackRows } from '@/services';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntime';
@@ -378,23 +378,11 @@ export function useDirectorWorkspace({
 
     const syncTasks = async () => {
       try {
-        const source = directorRunning ? 'workflow' : 'auto';
-        const payload = await apiFetchFresh(`/v2/director/tasks?source=${source}`);
-        if (!Array.isArray(payload) || cancelled) {
+        const result = await listDirectorTaskFallbackRows(directorRunning);
+        if (!result.ok || !Array.isArray(result.data) || cancelled) {
           return;
         }
-        const normalized = payload
-          .filter((item): item is PmTask => {
-            return Boolean(item && typeof item === 'object' && String((item as { id?: unknown }).id || '').trim());
-          })
-          .map((item) => ({
-            ...item,
-            metadata: {
-              ...readTaskMetadata(item),
-              director_task_source: source,
-            },
-          }));
-        setFallbackTasks(normalized);
+        setFallbackTasks(result.data as unknown as PmTask[]);
       } catch {
         // Ignore polling errors and keep using live push data.
       }

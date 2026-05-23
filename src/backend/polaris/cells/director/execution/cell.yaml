@@ -51,6 +51,7 @@ depends_on:
 - finops.budget_guard
 - events.fact_stream
 - llm.control_plane
+- llm.dialogue
 - llm.provider_runtime
 - roles.runtime
 - workspace.integrity

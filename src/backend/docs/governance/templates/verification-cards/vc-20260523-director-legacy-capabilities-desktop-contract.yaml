@@ -1,0 +1,46 @@
+id: vc-20260523-director-legacy-capabilities-desktop-contract
+title: Director legacy capabilities desktop contract
+date: "2026-05-23"
+classification: one_off
+status: pending
+owner: codex
+scope:
+  - src/backend/polaris/delivery/http/routers/arsenal.py
+  - src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py
+  - src/frontend/src/app/components/SystemServicesTab.tsx
+  - src/frontend/src/app/components/SystemServicesTab.test.tsx
+related_blueprint: src/backend/docs/blueprints/DIRECTOR_LEGACY_CAPABILITIES_DESKTOP_CONTRACT_20260523.md
+assumption_register:
+  - id: A1
+    statement: The deprecated Arsenal Director capability route is still a desktop dependency.
+    evidence:
+      - src/frontend/src/app/components/SystemServicesTab.tsx
+    verified: true
+  - id: A2
+    statement: RoleCapabilitiesResponse requires an ok envelope.
+    evidence:
+      - src/backend/polaris/delivery/http/schemas/common.py
+    verified: true
+  - id: A3
+    statement: Director capabilities can be returned as a host-scoped map.
+    evidence:
+      - src/backend/polaris/delivery/http/v2/director.py
+      - src/frontend/src/services/pmService.ts
+    verified: true
+pre_mortem:
+  - risk: Fixing only the backend route could leave the desktop panel showing valid maps as offline.
+    mitigation: Normalize array and host-scoped map payloads before status/detail rendering.
+  - risk: Changing the deprecated route could drift from the canonical v2 route.
+    mitigation: Return the same ok/role/capabilities envelope as the v2 route.
+  - risk: The existing skipped integration test could keep hiding the regression.
+    mitigation: Replace the skip with concrete response assertions.
+verification_plan:
+  - command: pytest src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py -q
+    expected: Deprecated Arsenal Director capabilities contract passes without skip.
+  - command: npm run test -- SystemServicesTab
+    expected: Desktop panel renders host-scoped Director capability maps as online evidence.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+verification_results: []

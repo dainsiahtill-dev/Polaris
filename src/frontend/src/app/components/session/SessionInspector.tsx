@@ -20,12 +20,14 @@ import {
   Link2Off,
   Download,
   Shield,
-  Clock,
-  FileText,
   Activity,
-  X,
 } from 'lucide-react';
-import { apiFetch } from '@/api';
+import {
+  detachRoleSession,
+  exportRoleSessionSnapshot,
+  getRoleCapabilities,
+  resolveRoleCapabilities,
+} from '@/services/roleSessionService';
 
 interface SessionInspectorProps {
   sessionId: string;
@@ -63,18 +65,17 @@ export function SessionInspector({
   onExport,
 }: SessionInspectorProps) {
   const [capabilities, setCapabilities] = useState<string[]>([]);
-  const [auditEvents, setAuditEvents] = useState<number>(0);
   const [loading, setLoading] = useState(true);
 
   // 加载能力配置
   useEffect(() => {
     const loadCapabilities = async () => {
       try {
-        const res = await apiFetch(`/v2/roles/capabilities/${role}?host_kind=${hostKind}`);
-        const data = await res.json();
-        if (data.ok && data.capabilities) {
-          const caps = data.capabilities[hostKind] || data.capabilities.default || [];
-          setCapabilities(caps);
+        const result = await getRoleCapabilities(role, hostKind);
+        if (result.ok) {
+          setCapabilities(resolveRoleCapabilities(result.data, hostKind));
+        } else {
+          devLogger.error('[SessionInspector] Failed to load capabilities:', result.error);
         }
       } catch (err) {
         devLogger.error('[SessionInspector] Failed to load capabilities:', err);
@@ -108,7 +109,6 @@ export function SessionInspector({
   };
 
   const handleAttach = async () => {
-    // TODO: 实现附着逻辑
     onAttach?.();
   };
 
@@ -116,12 +116,11 @@ export function SessionInspector({
     if (!sessionId) return;
     
     try {
-      const res = await apiFetch(`/v2/roles/sessions/${sessionId}/actions/detach`, {
-        method: 'POST',
-      });
-      const data = await res.json();
-      if (data.ok) {
+      const result = await detachRoleSession(sessionId);
+      if (result.ok) {
         onDetach?.();
+      } else {
+        devLogger.error('[SessionInspector] Failed to detach:', result.error);
       }
     } catch (err) {
       devLogger.error('[SessionInspector] Failed to detach:', err);
@@ -132,13 +131,14 @@ export function SessionInspector({
     if (!sessionId) return;
     
     try {
-      const res = await apiFetch(`/v2/roles/sessions/${sessionId}/actions/export`, {
-        method: 'POST',
-        body: JSON.stringify({ include_messages: true, format: 'json' }),
+      const result = await exportRoleSessionSnapshot(sessionId, {
+        include_messages: true,
+        format: 'json',
       });
-      const data = await res.json();
-      if (data.ok) {
+      if (result.ok) {
         onExport?.();
+      } else {
+        devLogger.error('[SessionInspector] Failed to export:', result.error);
       }
     } catch (err) {
       devLogger.error('[SessionInspector] Failed to export:', err);

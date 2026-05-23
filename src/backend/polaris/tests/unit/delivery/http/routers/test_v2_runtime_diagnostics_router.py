@@ -146,3 +146,33 @@ async def test_runtime_diagnostics_exposes_nats_ws_and_rate_limit(client: AsyncC
     assert data["websocket"]["details"]["channels"] == ["director", "llm"]
     assert data["rate_limit"]["state"] == "active"
     assert data["rate_limit"]["details"]["store"]["clients"][0]["client_key_hash"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_runtime_diagnostics_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Runtime diagnostics should report the active desktop workspace_path."""
+
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_managed_nats_runtime_snapshot",
+            return_value={"tcp_reachable": False},
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_default_client_snapshot",
+            return_value={"is_connected": False},
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_rate_limit_diagnostics",
+            return_value={"enabled": False, "store": {}},
+        ),
+    ):
+        response = await client.get("/v2/runtime/diagnostics")
+
+    assert response.status_code == 200
+    assert response.json()["workspace"] == "C:/Temp/Product"

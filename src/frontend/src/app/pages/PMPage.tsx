@@ -20,14 +20,24 @@ export interface PMPageProps {
   pmState: Record<string, unknown> | null;
   /** PM 是否运行中 */
   pmRunning: boolean;
+  /** Director 是否运行中 */
+  directorRunning?: boolean;
+  /** PM 终端状态 */
+  pmTerminalStatus?: Parameters<typeof PMWorkspace>[0]['pmTerminalStatus'];
+  /** PM 启动阻断原因 */
+  pmStartBlockedReason?: string;
+  /** PM 运行时问题 */
+  runtimeIssue?: Parameters<typeof PMWorkspace>[0]['runtimeIssue'];
   /** 是否正在启动 */
   isStarting: boolean;
   /** PM 切换回调 */
-  onTogglePm: () => void;
+  onTogglePm: () => void | boolean | Promise<void | boolean>;
   /** 单次运行回调 */
-  onRunPmOnce: () => void;
+  onRunPmOnce: () => void | boolean | Promise<void | boolean>;
   /** 返回主界面回调 */
   onBackToMain: () => void;
+  /** 打开系统配置 */
+  onOpenSettings?: () => void;
   /** WebSocket 连接状态 */
   websocketLive: boolean;
   /** WebSocket 重连状态 */
@@ -51,6 +61,10 @@ export interface PMPageProps {
   llmStreamEvents?: LogEntry[];
   /** 进程流事件 */
   processStreamEvents?: LogEntry[];
+  /** 文件编辑事件 */
+  fileEditEvents?: Parameters<typeof LlmRuntimeOverlay>[0]['fileEditEvents'];
+  /** 任务追踪事件 */
+  taskTraceMap?: Parameters<typeof PMWorkspace>[0]['taskTraceMap'];
   /** 错误通知回调 */
   notifyError: (message: string) => void;
 }
@@ -63,10 +77,15 @@ export function PMPage({
   tasks,
   pmState,
   pmRunning,
+  directorRunning = false,
+  pmTerminalStatus = null,
+  pmStartBlockedReason = '',
+  runtimeIssue = null,
   isStarting,
   onTogglePm,
   onRunPmOnce,
   onBackToMain,
+  onOpenSettings,
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
@@ -76,6 +95,8 @@ export function PMPage({
   executionLogs,
   llmStreamEvents,
   processStreamEvents,
+  fileEditEvents,
+  taskTraceMap,
   notifyError,
 }: PMPageProps) {
   return (
@@ -84,15 +105,21 @@ export function PMPage({
         tasks={tasks}
         pmState={pmState}
         pmRunning={pmRunning}
+        pmTerminalStatus={pmTerminalStatus}
+        pmStartBlockedReason={pmStartBlockedReason}
+        runtimeIssue={runtimeIssue}
         isStarting={isStarting}
         onBackToMain={onBackToMain}
         onTogglePm={onTogglePm}
         onRunPmOnce={onRunPmOnce}
+        onOpenSettings={onOpenSettings}
         workspace={workspace}
         executionLogs={executionLogs}
         llmStreamEvents={llmStreamEvents}
         processStreamEvents={processStreamEvents}
         currentPhase={currentPhase}
+        qualityGate={qualityGate as Parameters<typeof PMWorkspace>[0]['qualityGate']}
+        taskTraceMap={taskTraceMap}
       />
       <LlmRuntimeOverlay
         activeView="pm"
@@ -100,7 +127,7 @@ export function PMPage({
         websocketReconnecting={websocketReconnecting}
         websocketAttemptCount={websocketAttemptCount}
         pmRunning={pmRunning}
-        directorRunning={false}
+        directorRunning={directorRunning}
         llmState={llmRuntimeState.state}
         llmBlockedRoles={llmRuntimeState.blockedRoles}
         llmRequiredRoles={llmRuntimeState.requiredRoles}
@@ -110,6 +137,7 @@ export function PMPage({
         executionLogs={executionLogs ?? []}
         llmStreamEvents={llmStreamEvents ?? []}
         processStreamEvents={processStreamEvents ?? []}
+        fileEditEvents={fileEditEvents}
       />
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>

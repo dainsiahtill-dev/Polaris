@@ -125,14 +125,8 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
             yield ac
 
 
-# ---------------------------------------------------------------------------
-# GET /v2/runtime/storage/layout
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_v2_runtime_storage_layout_success(client: AsyncClient) -> None:
-    """Storage layout endpoint should return 200 with expected fields."""
+def _make_mock_storage_roots() -> MagicMock:
+    """Build storage roots projection used by runtime router tests."""
     mock_roots = MagicMock()
     mock_roots.workspace_abs = "/workspace"
     mock_roots.workspace_key = "workspace-abc123"
@@ -149,6 +143,18 @@ async def test_v2_runtime_storage_layout_success(client: AsyncClient) -> None:
     mock_roots.runtime_root = "/cache/runtime"
     mock_roots.runtime_project_root = "/cache/runtime/workspace-abc123"
     mock_roots.history_root = "/workspace/.polaris/history"
+    return mock_roots
+
+
+# ---------------------------------------------------------------------------
+# GET /v2/runtime/storage/layout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_v2_runtime_storage_layout_success(client: AsyncClient) -> None:
+    """Storage layout endpoint should return 200 with expected fields."""
+    mock_roots = _make_mock_storage_roots()
 
     with (
         patch(
@@ -184,6 +190,45 @@ async def test_v2_runtime_storage_layout_success(client: AsyncClient) -> None:
         assert "policies" in data
         assert "paths" in data
         assert "env" in data
+
+
+@pytest.mark.asyncio
+async def test_v2_runtime_storage_layout_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Storage layout should inspect the active desktop workspace_path first."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_roots = _make_mock_storage_roots()
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.runtime.resolve_storage_roots",
+            return_value=mock_roots,
+        ) as mock_resolve_roots,
+        patch(
+            "polaris.delivery.http.routers.runtime.resolve_global_path",
+            side_effect=lambda p: f"/home/global/{p}",
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.resolve_workspace_persistent_path",
+            side_effect=lambda workspace, path: f"{workspace}/.polaris/{path}",
+        ) as mock_resolve_workspace_path,
+        patch(
+            "polaris.delivery.http.routers.runtime.polaris_home",
+            return_value="/home",
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.resolve_env_str",
+            return_value="",
+        ),
+    ):
+        response = await client.get("/v2/runtime/storage/layout")
+
+    assert response.status_code == 200
+    mock_resolve_roots.assert_called_once_with("C:/Temp/Product", ramdisk_root=None)
+    mock_resolve_workspace_path.assert_any_call("C:/Temp/Product", "workspace/brain")
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +296,38 @@ async def test_v2_runtime_clear_default_scope(client: AsyncClient) -> None:
         mock_clear.assert_called_once()
         call_args = mock_clear.call_args
         assert call_args[0][2] == "all"
+
+
+@pytest.mark.asyncio
+async def test_v2_runtime_clear_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Runtime clear should clear active workspace runtime state."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_settings.ramdisk_root = "C:/Ram"
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.runtime.build_cache_root",
+            return_value="C:/Ram/runtime",
+        ) as mock_cache_root,
+        patch(
+            "polaris.delivery.http.routers.runtime.clear_runtime_scope",
+            return_value={
+                "cleared_paths": [],
+                "failed_paths": [],
+                "cleared_count": 0,
+                "failed_count": 0,
+            },
+        ) as mock_clear,
+    ):
+        response = await client.post("/v2/runtime/clear", json={"scope": "pm"})
+
+    assert response.status_code == 200
+    mock_cache_root.assert_called_once_with("C:/Ram", "C:/Temp/Product")
+    mock_clear.assert_called_once_with("C:/Temp/Product", "C:/Ram/runtime", "pm")
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +398,28 @@ async def test_v2_runtime_migration_status_with_version_file(client: AsyncClient
         assert data["strict_mode"] is True
         assert data["archived_counts"] == {"runs": 2, "tasks": 1, "factory": 0}
         assert backup_dir.name in data["backup_path"]
+
+
+@pytest.mark.asyncio
+async def test_v2_runtime_migration_status_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Migration status should read active workspace storage roots."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_roots = MagicMock()
+    mock_roots.workspace_persistent_root = "/workspace/.polaris"
+    mock_roots.history_root = "/workspace/.polaris/history"
+
+    with patch(
+        "polaris.delivery.http.routers.runtime.resolve_storage_roots",
+        return_value=mock_roots,
+    ) as mock_resolve_roots:
+        response = await client.get("/v2/runtime/migration/status")
+
+    assert response.status_code == 200
+    mock_resolve_roots.assert_called_once_with("C:/Temp/Product")
 
 
 # ---------------------------------------------------------------------------
@@ -523,3 +622,63 @@ async def test_v2_runtime_reset_tasks_services_not_found(client: AsyncClient) ->
         assert data["ok"] is True
         assert data["pm_running"] is False
         assert data["director_running"] is False
+
+
+@pytest.mark.asyncio
+async def test_v2_runtime_reset_tasks_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Runtime task reset should clear stop flags and records for workspace_path."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_settings.ramdisk_root = "C:/Ram"
+
+    container = MagicMock()
+    container.resolve = MagicMock(side_effect=RuntimeError("Service not found"))
+
+    async def _mock_get_container():
+        return container
+
+    with (
+        patch(
+            "polaris.infrastructure.di.container.get_container",
+            new=_mock_get_container,
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.build_cache_root",
+            return_value="C:/Ram/runtime",
+        ) as mock_cache_root,
+        patch(
+            "polaris.delivery.http.routers.runtime.terminate_external_loop_pm_processes",
+            return_value=[],
+        ) as mock_terminate_pm,
+        patch(
+            "polaris.delivery.http.routers.runtime.build_director_runtime_status",
+            return_value={"running": False, "pid": None},
+        ) as mock_director_status,
+        patch(
+            "polaris.delivery.http.routers.runtime.clear_stop_flag",
+        ) as mock_clear_stop,
+        patch(
+            "polaris.delivery.http.routers.runtime.clear_director_stop_flag",
+        ) as mock_clear_director_stop,
+        patch(
+            "polaris.delivery.http.routers.runtime.reset_runtime_records",
+            return_value={
+                "cleared_paths": [],
+                "failed_paths": [],
+                "cleared_count": 0,
+                "failed_count": 0,
+            },
+        ) as mock_reset,
+    ):
+        response = await client.post("/v2/runtime/reset/tasks")
+
+    assert response.status_code == 200
+    mock_cache_root.assert_called_once_with("C:/Ram", "C:/Temp/Product")
+    mock_terminate_pm.assert_called_once_with("C:/Temp/Product")
+    assert mock_director_status.call_args.args[1:] == ("C:/Temp/Product", "C:/Ram/runtime")
+    mock_clear_stop.assert_called_once_with("C:/Temp/Product", "C:/Ram/runtime")
+    mock_clear_director_stop.assert_called_once_with("C:/Temp/Product", "C:/Ram/runtime")
+    mock_reset.assert_called_once_with("C:/Temp/Product", "C:/Ram/runtime")

@@ -145,7 +145,8 @@ async def test_role_chat_status_not_configured(client: AsyncClient) -> None:
         data = response.json()
         assert data["ready"] is False
         assert data["configured"] is False
-        assert "PM role not configured" in data["error"]
+        assert data["error"] == "Role not configured"
+        assert data["debug"]["supported_roles"]
 
 
 @pytest.mark.asyncio
@@ -202,7 +203,9 @@ async def test_role_chat_status_missing_provider(client: AsyncClient) -> None:
         data = response.json()
         assert data["ready"] is False
         assert data["configured"] is False
-        assert "Provider 'missing_provider' not found" in data["error"]
+        assert data["error"] == "Provider not found"
+        assert data["debug"]["role_config"]["provider_id"] == "missing_provider"
+        assert data["debug"]["available_providers"] == []
 
 
 @pytest.mark.asyncio
@@ -248,7 +251,9 @@ async def test_role_chat_status_exception(client: AsyncClient) -> None:
         assert data["ready"] is False
         assert data["configured"] is False
         assert data["llm_test_ready"] is False
-        assert "config load failed" in data["message"]
+        assert data["message"] == "Status check failed"
+        assert data["code"] == "internal_error"
+        assert "config load failed" in data["details"]["exception"]
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +309,38 @@ async def test_role_chat_status_architect(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_role_chat_status_chief_engineer(client: AsyncClient) -> None:
+    """Role chat status for Chief Engineer should work when configured."""
+    with (
+        patch(
+            "polaris.delivery.http.routers.role_chat.load_llm_test_index",
+            return_value={"roles": {"chief_engineer": {"ready": True}}},
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.llm_config.load_llm_config",
+            return_value={
+                "roles": {
+                    "chief_engineer": {"provider_id": "openai", "model": "gpt-5", "profile": "ce"},
+                },
+                "providers": {
+                    "openai": {"type": "openai"},
+                },
+            },
+        ),
+    ):
+        response = await client.get("/v2/role/chief_engineer/chat/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ready"] is True
+        assert data["configured"] is True
+        assert data["llm_test_ready"] is True
+        assert data["role"] == "chief_engineer"
+        assert data["role_config"]["provider_id"] == "openai"
+        assert data["role_config"]["model"] == "gpt-5"
+        assert data["provider_type"] == "openai"
+
+
+@pytest.mark.asyncio
 async def test_role_chat_status_director_not_configured(client: AsyncClient) -> None:
     """Role chat status for director should report not ready when missing."""
     with (
@@ -323,7 +360,8 @@ async def test_role_chat_status_director_not_configured(client: AsyncClient) -> 
         assert response.status_code == 200
         data = response.json()
         assert data["ready"] is False
-        assert "DIRECTOR role not configured" in data["error"]
+        assert data["error"] == "Role not configured"
+        assert data["debug"]["roles_keys"] == ["pm"]
 
 
 @pytest.mark.asyncio
@@ -347,34 +385,97 @@ async def test_role_chat_status_with_test_index_only(client: AsyncClient) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Broken Import Endpoints (Production Bug Documentation)
+# Role Kernel Diagnostics
 # ---------------------------------------------------------------------------
-# NOTE: role_chat.py imports from ..roles.events and ..roles.kernel_components
-# which do not exist. These endpoints will fail at runtime with ModuleNotFoundError.
 
 
-@pytest.mark.xfail(raises=ModuleNotFoundError, reason="Production bug: polaris.delivery.http.roles does not exist")
 @pytest.mark.asyncio
-async def test_role_llm_events_broken_import(client: AsyncClient) -> None:
-    """Role LLM events endpoint has a production bug: missing module."""
-    response = await client.get("/v2/role/pm/llm-events")
-    assert response.status_code == 500
+async def test_role_llm_events_returns_role_scoped_kernel_events(client: AsyncClient) -> None:
+    """Role LLM events should return filtered events from the shared emitter."""
+    mock_event = MagicMock()
+    mock_event.event_type = "llm_call_start"
+    mock_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "role": "pm",
+        "run_id": "run-1",
+        "task_id": "PM-1",
+        "attempt": 1,
+    }
+
+    with patch(
+        "polaris.delivery.http.routers.role_chat.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [mock_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/role/pm/llm-events?run_id=run-1&task_id=PM-1&limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "pm"
+    assert data["run_id"] == "run-1"
+    assert data["task_id"] == "PM-1"
+    assert data["events"] == [mock_event.to_dict.return_value]
+    assert data["stats"]["total"] == 1
+    assert data["stats"]["call_start"] == 1
+    mock_emitter.get_events.assert_called_once_with(
+        run_id="run-1",
+        task_id="PM-1",
+        role="pm",
+        limit=5,
+    )
 
 
-@pytest.mark.xfail(raises=ModuleNotFoundError, reason="Production bug: polaris.delivery.http.roles does not exist")
 @pytest.mark.asyncio
-async def test_role_all_llm_events_broken_import(client: AsyncClient) -> None:
-    """All LLM events endpoint has a production bug: missing module."""
-    response = await client.get("/v2/role/llm-events")
-    assert response.status_code == 500
+async def test_role_all_llm_events_returns_filtered_kernel_events(client: AsyncClient) -> None:
+    """All-role LLM events should expose shared emitter events and counts."""
+    mock_event = MagicMock()
+    mock_event.event_type = "llm_call_end"
+    mock_event.to_dict.return_value = {
+        "event_type": "llm_call_end",
+        "role": "director",
+        "run_id": "run-2",
+        "task_id": None,
+        "attempt": 1,
+    }
+
+    with patch(
+        "polaris.delivery.http.routers.role_chat.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [mock_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/role/llm-events?run_id=run-2&role=director&limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["events"] == [mock_event.to_dict.return_value]
+    assert data["count"] == 1
+    mock_emitter.get_events.assert_called_once_with(
+        run_id="run-2",
+        task_id=None,
+        role="director",
+        limit=10,
+    )
 
 
-@pytest.mark.xfail(raises=ModuleNotFoundError, reason="Production bug: polaris.delivery.http.roles does not exist")
 @pytest.mark.asyncio
-async def test_role_cache_stats_broken_import(client: AsyncClient) -> None:
-    """Role cache-stats endpoint has a production bug: missing module."""
-    response = await client.get("/v2/role/cache-stats")
-    assert response.status_code == 500
+async def test_role_cache_stats_returns_shared_kernel_cache_stats(client: AsyncClient) -> None:
+    """Role cache stats should return the shared role-kernel cache payload."""
+    with patch(
+        "polaris.delivery.http.routers.role_chat.get_global_llm_cache",
+    ) as mock_get_cache:
+        mock_cache = MagicMock()
+        mock_cache.get_stats.return_value = {"hits": 4, "misses": 2, "size": 6}
+        mock_get_cache.return_value = mock_cache
+
+        response = await client.get("/v2/role/cache-stats")
+
+    assert response.status_code == 200
+    assert response.json() == {"hits": 4, "misses": 2, "size": 6}
+    mock_cache.get_stats.assert_called_once_with()
 
 
 @pytest.mark.asyncio

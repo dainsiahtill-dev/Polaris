@@ -200,6 +200,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(memory.router)
     app.include_router(logs.router)
     app.include_router(permissions.router)
+    app.include_router(pm_management.v2_router)
     app.include_router(pm_management.router)
     app.include_router(arsenal.router)
     app.include_router(court.router)

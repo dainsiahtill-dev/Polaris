@@ -13,6 +13,7 @@ import type {
   CancelInterviewPayload,
   InterviewApiEndpoints,
 } from '../llm';
+import { describe, expect, it } from 'vitest';
 
 // ============================================================================
 // Backend Type Mirrors (keep in sync with backend/app/routers/llm.py)

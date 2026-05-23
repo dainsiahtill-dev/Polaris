@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { getRoleChatStatus, sendRoleChatMessage, parseSSEData } from '@/services';
 import type { ChatStatus, ChatMessageRequest } from '@/services';
+import type { RoleChatRole } from '@/services/api.types';
 
-export type DialogueRole = 'pm' | 'architect' | 'director' | 'qa';
+export type DialogueRole = RoleChatRole;
 
 export interface Message {
   id: string;
@@ -15,7 +16,7 @@ export interface Message {
 }
 
 export interface UseRoleChatOptions {
-  role: DialogueRole;
+  role: RoleChatRole;
   welcomeMessage?: string;
   context?: Record<string, unknown>;
 }

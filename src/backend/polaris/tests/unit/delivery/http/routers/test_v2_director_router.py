@@ -170,6 +170,52 @@ async def test_director_status_auto_uses_merged_projection(client: AsyncClient) 
         assert data["state"] == "COMPLETED"
 
 
+@pytest.mark.asyncio
+async def test_director_status_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director status projection should use the active desktop workspace path."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    with patch(
+        "polaris.cells.runtime.projection.public.service.RuntimeProjectionService.build_async",
+        new_callable=AsyncMock,
+    ) as mock_build:
+        mock_projection = MagicMock()
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/status")
+
+    assert response.status_code == 200
+    mock_build.assert_awaited_once()
+    build_call = mock_build.await_args
+    assert build_call is not None
+    assert build_call.args[0] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_director_capabilities(client: AsyncClient) -> None:
+    """Director capabilities should be exposed on the canonical v2 route."""
+    with patch(
+        "polaris.domain.entities.capability.get_role_capabilities",
+        return_value={"electron_workbench": ["read_files"], "workflow": ["execute_tests"]},
+    ) as get_capabilities:
+        response = await client.get("/v2/director/capabilities")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["role"] == "director"
+    assert data["capabilities"] == {
+        "electron_workbench": ["read_files"],
+        "workflow": ["execute_tests"],
+    }
+    get_capabilities.assert_called_once_with("director")
+
+
 # ---------------------------------------------------------------------------
 # Task Management
 # ---------------------------------------------------------------------------
@@ -301,6 +347,60 @@ async def test_director_list_tasks(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_director_list_tasks_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director task projection should use workspace_path before stale workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_director = MagicMock()
+    mock_director.config.workspace = "C:/Temp/Product"
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/tasks")
+
+    assert response.status_code == 200
+    mock_build.assert_awaited_once()
+    build_call = mock_build.await_args
+    assert build_call is not None
+    assert build_call.args[0] == "C:/Temp/Product"
+
+
+def test_director_debug_append_ignores_debug_log_failure() -> None:
+    """Optional Director debug evidence should not leak filesystem failures."""
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.Path.open",
+            side_effect=OSError("debug log locked"),
+        ),
+        patch("polaris.delivery.http.v2.director.logger.debug") as mock_debug,
+    ):
+        from polaris.delivery.http.v2.director import _append_debug
+
+        _append_debug("test.event", {"ok": True})
+        mock_debug.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_director_list_tasks_with_status_filter(client: AsyncClient) -> None:
     """Director list tasks should filter by status via projection."""
     mock_director = MagicMock()
@@ -385,16 +485,132 @@ async def test_director_get_task_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_director_get_task_falls_back_to_projection(client: AsyncClient) -> None:
+    """Director task detail should resolve workflow/projection rows after a local miss."""
+    mock_director = MagicMock()
+    mock_director.get_task = AsyncMock(return_value=None)
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": "projection-row-1",
+                    "subject": "Workflow projected task",
+                    "description": "Visible from workflow projection",
+                    "status": "RUNNING",
+                    "priority": "HIGH",
+                    "claimed_by": "worker-projection",
+                    "goal": "Keep detail panel in sync with listed tasks",
+                    "acceptance": ["projection detail returned"],
+                    "metadata": {
+                        "pm_task_id": "PM-42",
+                        "blueprint_id": "BP-42",
+                    },
+                },
+            ],
+        ),
+    ):
+
+        async def _resolve_projection_fallback(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_projection_fallback)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/tasks/PM-42")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "projection-row-1"
+    assert data["subject"] == "Workflow projected task"
+    assert data["status"] == "RUNNING"
+    assert data["worker"] == "worker-projection"
+    assert data["pm_task_id"] == "PM-42"
+    assert data["blueprint_id"] == "BP-42"
+    assert data["acceptance"] == ["projection detail returned"]
+
+
+@pytest.mark.asyncio
+async def test_director_get_task_projection_fallback_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director task detail projection fallback should use the active workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_director = MagicMock()
+    mock_director.get_task = AsyncMock(return_value=None)
+    mock_director.config.workspace = "C:/Temp/Product"
+
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+    ):
+
+        async def _resolve_projection_fallback(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_projection_fallback)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/tasks/PM-404")
+
+    assert response.status_code == 404
+    mock_build.assert_awaited_once()
+    build_call = mock_build.await_args
+    assert build_call is not None
+    assert build_call.args[0] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
 async def test_director_get_task_not_found(client: AsyncClient) -> None:
     """Director get task should 404 when task doesn't exist."""
     mock_director = MagicMock()
     mock_director.get_task = AsyncMock(return_value=None)
     mock_director.config.workspace = "."
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+    ):
 
         async def _resolve_get_task(iface: type) -> object:
             if iface.__name__ == "DirectorService":
@@ -402,6 +618,9 @@ async def test_director_get_task_not_found(client: AsyncClient) -> None:
             return MagicMock()
 
         mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_get_task)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
 
         response = await client.get("/v2/director/tasks/nonexistent")
         assert response.status_code == 404
@@ -434,6 +653,41 @@ async def test_director_cancel_task_success(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_director_cancel_task_returns_service_success_payload(client: AsyncClient) -> None:
+    """Director cancel task should preserve a successful service payload."""
+    mock_director = MagicMock()
+    mock_director.cancel_task = AsyncMock(
+        return_value={
+            "ok": True,
+            "task_id": "task-123",
+            "status": "CANCELLED",
+            "worker": "worker-1",
+        }
+    )
+    mock_director.config.workspace = "."
+
+    with patch(
+        "polaris.delivery.http.dependencies.get_container",
+        new_callable=AsyncMock,
+    ) as mock_container:
+
+        async def _resolve_cancel_payload(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_cancel_payload)
+
+        response = await client.post("/v2/director/tasks/task-123/cancel")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["task_id"] == "task-123"
+        assert data["status"] == "CANCELLED"
+        assert data["worker"] == "worker-1"
+
+
+@pytest.mark.asyncio
 async def test_director_cancel_task_fails(client: AsyncClient) -> None:
     """Director cancel task should 400 when cancellation fails."""
     mock_director = MagicMock()
@@ -454,6 +708,36 @@ async def test_director_cancel_task_fails(client: AsyncClient) -> None:
 
         response = await client.post("/v2/director/tasks/task-123/cancel")
         assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_director_cancel_task_respects_service_failure_payload(client: AsyncClient) -> None:
+    """Director cancel task should not treat a non-empty ok=false payload as success."""
+    mock_director = MagicMock()
+    mock_director.cancel_task = AsyncMock(
+        return_value={
+            "ok": False,
+            "error": "Task not found or not cancellable",
+            "task_id": "task-123",
+        }
+    )
+    mock_director.config.workspace = "."
+
+    with patch(
+        "polaris.delivery.http.dependencies.get_container",
+        new_callable=AsyncMock,
+    ) as mock_container:
+
+        async def _resolve_cancel_failure_payload(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_cancel_failure_payload)
+
+        response = await client.post("/v2/director/tasks/task-123/cancel")
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Task not found or not cancellable"
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +947,7 @@ async def test_director_run_orchestration(client: AsyncClient) -> None:
     mock_result.run_id = "run-789"
     mock_result.status = "running"
     mock_result.message = "Director started in parallel mode"
+    mock_result.metadata = {"tasks_queued": 2, "task_ids": ["PM-1", "PM-2"]}
 
     with (
         patch(
@@ -693,6 +978,96 @@ async def test_director_run_orchestration(client: AsyncClient) -> None:
         assert data["run_id"] == "run-789"
         assert data["status"] == "running"
         assert data["workspace"] == "."
+        assert data["tasks_queued"] == 2
+
+
+@pytest.mark.asyncio
+async def test_director_run_orchestration_defaults_to_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director run should resolve omitted workspace through active desktop settings."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_result = MagicMock()
+    mock_result.run_id = "run-active"
+    mock_result.status = "running"
+    mock_result.message = "Director started in parallel mode"
+    mock_result.metadata = {"tasks_queued": 0}
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.director.get_orchestration_service",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.cells.roles.adapters.public.service.register_all_adapters",
+        ),
+    ):
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(return_value=mock_result)
+        mock_service_cls.return_value = mock_service
+
+        response = await client.post(
+            "/v2/director/run",
+            json={
+                "max_workers": 3,
+                "execution_mode": "parallel",
+            },
+        )
+
+    assert response.status_code == 200
+    _, kwargs = mock_service.execute_director_run.await_args
+    assert kwargs["workspace"] == "C:/Temp/Product"
+    assert response.json()["workspace"] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_director_run_orchestration_preserves_explicit_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director run should not override explicit non-dot API workspace values."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_result = MagicMock()
+    mock_result.run_id = "run-explicit"
+    mock_result.status = "running"
+    mock_result.message = "Director started in parallel mode"
+    mock_result.metadata = {"tasks_queued": 0}
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.director.get_orchestration_service",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.cells.roles.adapters.public.service.register_all_adapters",
+        ),
+    ):
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(return_value=mock_result)
+        mock_service_cls.return_value = mock_service
+
+        response = await client.post(
+            "/v2/director/run",
+            json={
+                "workspace": "D:/Explicit/Product",
+                "max_workers": 3,
+                "execution_mode": "parallel",
+            },
+        )
+
+    assert response.status_code == 200
+    _, kwargs = mock_service.execute_director_run.await_args
+    assert kwargs["workspace"] == "D:/Explicit/Product"
+    assert response.json()["workspace"] == "D:/Explicit/Product"
 
 
 @pytest.mark.asyncio
@@ -702,6 +1077,7 @@ async def test_director_run_orchestration_serial_mode(client: AsyncClient) -> No
     mock_result.run_id = "run-abc"
     mock_result.status = "running"
     mock_result.message = None
+    mock_result.metadata = None
 
     with (
         patch(
@@ -740,6 +1116,7 @@ async def test_director_run_orchestration_accepts_task_id(client: AsyncClient) -
     mock_result.run_id = "run-task"
     mock_result.status = "running"
     mock_result.message = "Director started for selected task"
+    mock_result.metadata = None
 
     with (
         patch(
@@ -768,8 +1145,10 @@ async def test_director_run_orchestration_accepts_task_id(client: AsyncClient) -
 
         assert response.status_code == 200
         _, kwargs = mock_service.execute_director_run.await_args
+        assert kwargs["tasks"] == ["PM-42"]
         assert kwargs["options"]["task_id"] == "PM-42"
         assert kwargs["options"]["task_filter"] == "PM-42"
+        assert response.json()["tasks_queued"] == 1
 
 
 @pytest.mark.asyncio
@@ -794,6 +1173,83 @@ async def test_director_get_orchestration_found(client: AsyncClient) -> None:
         data = response.json()
         assert data["run_id"] == "run-789"
         assert data["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_director_cancel_orchestration_run(client: AsyncClient) -> None:
+    """Director cancel orchestration should call the runtime cancel path."""
+    mock_current_snapshot = MagicMock()
+    mock_current_snapshot.run_id = "run-789"
+    mock_current_snapshot.status.value = "running"
+    mock_current_snapshot.workspace = "."
+    mock_current_snapshot.tasks = {"task-1": MagicMock()}
+
+    mock_cancelled_snapshot = MagicMock()
+    mock_cancelled_snapshot.run_id = "run-789"
+    mock_cancelled_snapshot.status.value = "cancelled"
+    mock_cancelled_snapshot.workspace = "."
+    mock_cancelled_snapshot.tasks = {"task-1": MagicMock()}
+
+    with patch(
+        "polaris.delivery.http.v2.director.get_orchestration_service",
+        new_callable=AsyncMock,
+    ) as mock_orch:
+        mock_service = MagicMock()
+        mock_service.query_run = AsyncMock(return_value=mock_current_snapshot)
+        mock_service.cancel_run = AsyncMock(return_value=mock_cancelled_snapshot)
+        mock_orch.return_value = mock_service
+
+        response = await client.post("/v2/director/runs/run-789/cancel")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["run_id"] == "run-789"
+        assert data["status"] == "cancelled"
+        assert data["tasks_queued"] == 1
+        mock_service.query_run.assert_awaited_once_with("run-789")
+        mock_service.cancel_run.assert_awaited_once_with("run-789")
+
+
+@pytest.mark.asyncio
+async def test_director_cancel_orchestration_terminal_run_is_idempotent(client: AsyncClient) -> None:
+    """Director cancel orchestration should return terminal snapshots unchanged."""
+    mock_snapshot = MagicMock()
+    mock_snapshot.run_id = "run-789"
+    mock_snapshot.status.value = "completed"
+    mock_snapshot.workspace = "."
+    mock_snapshot.tasks = {}
+
+    with patch(
+        "polaris.delivery.http.v2.director.get_orchestration_service",
+        new_callable=AsyncMock,
+    ) as mock_orch:
+        mock_service = MagicMock()
+        mock_service.query_run = AsyncMock(return_value=mock_snapshot)
+        mock_service.cancel_run = AsyncMock()
+        mock_orch.return_value = mock_service
+
+        response = await client.post("/v2/director/runs/run-789/cancel")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["run_id"] == "run-789"
+        assert data["status"] == "completed"
+        mock_service.query_run.assert_awaited_once_with("run-789")
+        mock_service.cancel_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_cancel_orchestration_not_found(client: AsyncClient) -> None:
+    """Director cancel orchestration should 404 for unknown run_id."""
+    with patch(
+        "polaris.delivery.http.v2.director.get_orchestration_service",
+        new_callable=AsyncMock,
+    ) as mock_orch:
+        mock_service = MagicMock()
+        mock_service.query_run = AsyncMock(return_value=None)
+        mock_orch.return_value = mock_service
+
+        response = await client.post("/v2/director/runs/nonexistent/cancel")
+        assert response.status_code == 404
+        assert "Run not found" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 # Phase 6: 统一编排集成
-from polaris.cells.orchestration.workflow_runtime.public.service import get_orchestration_service
+from polaris.cells.orchestration.workflow_runtime.public.service import (
+    OrchestrationError,
+    get_orchestration_service,
+)
 from polaris.cells.roles.kernel.public.service import (
     get_global_emitter,
     get_global_token_budget,
@@ -36,6 +39,9 @@ from polaris.delivery.http.dependencies import (
     get_director_service as get_director_service_dep,
     require_auth,
 )
+from polaris.delivery.http.routers._shared import StructuredHTTPException
+from polaris.delivery.http.schemas.common import RoleCapabilitiesResponse
+from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
 from polaris.domain.entities import TaskPriority
 from polaris.kernelone._runtime_config import resolve_env_str
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_OPERATION_TIMEOUT_SECONDS
@@ -47,7 +53,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# TODO: remove after 2026-06-30
+# Deprecation removal target: 2026-06-30.
 # Backward-compat re-export for tests.
 # Tests should import merge_director_status directly from
 # polaris.cells.runtime.projection.public.service.
@@ -78,9 +84,9 @@ def _append_debug(event: str, payload: dict[str, Any]) -> None:
         }
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except (RuntimeError, ValueError):
-        # Event logging failure should not break main flow, but visibility is compromised
-        pass
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        # Event logging failure should not break main flow, but visibility is compromised.
+        logger.debug("Director debug event append failed: %s", exc, exc_info=True)
 
 
 def _state_token(payload: dict[str, Any]) -> str:
@@ -107,6 +113,20 @@ def _flatten_director_status(payload: dict[str, Any] | None) -> dict[str, Any]:
     flattened.setdefault("status", local_payload.get("status") or {"state": state_token})
     flattened.setdefault("source", str(local_payload.get("source") or "none"))
     return flattened
+
+
+def _director_tasks_queued(result: Any, requested_task_ids: list[str]) -> int:
+    metadata = getattr(result, "metadata", None)
+    if isinstance(metadata, dict):
+        queued = metadata.get("tasks_queued")
+        if isinstance(queued, int) and not isinstance(queued, bool) and queued >= 0:
+            return queued
+        if isinstance(queued, str) and queued.strip().isdigit():
+            return int(queued.strip())
+        task_ids = metadata.get("task_ids")
+        if isinstance(task_ids, list):
+            return len([item for item in task_ids if str(item).strip()])
+    return len(requested_task_ids)
 
 
 def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
@@ -147,6 +167,68 @@ def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
             }
         )
     return fallback_rows
+
+
+def _task_row_matches_id(row: dict[str, Any], task_id: str) -> bool:
+    requested = str(task_id or "").strip()
+    if not requested:
+        return False
+
+    metadata = _as_dict(row.get("metadata"))
+    candidates = {
+        row.get("id"),
+        row.get("task_id"),
+        row.get("pm_task_id"),
+        metadata.get("pm_task_id"),
+        metadata.get("external_task_id"),
+        metadata.get("source_task_id"),
+    }
+    return requested in {str(candidate).strip() for candidate in candidates if candidate is not None}
+
+
+def _cancel_success_payload(task_id: str, result: Any) -> dict[str, Any] | None:
+    if isinstance(result, bool):
+        return {"ok": True, "task_id": task_id} if result else None
+
+    if not isinstance(result, dict):
+        return None
+
+    status_token = _normalize_task_status_token(result.get("status"))
+    accepted = result.get("ok") is True or result.get("cancelled") is True or status_token == "CANCELLED"
+    if not accepted:
+        return None
+
+    payload = dict(result)
+    payload["ok"] = True
+    payload.setdefault("task_id", task_id)
+    return payload
+
+
+def _cancel_failure_detail(result: Any) -> str:
+    if isinstance(result, dict):
+        for key in ("error", "detail", "message"):
+            text = _text_or_none(result.get(key))
+            if text:
+                return text
+    return "Task cannot be cancelled"
+
+
+async def _projected_task_response(request: Request, task_id: str) -> TaskResponse | None:
+    """Return a workflow/projection task detail when local Director queue misses."""
+    state = getattr(request.app.state, "app_state", None) or request.app.state
+    settings = state.settings
+    workspace = active_workspace_value(settings)
+
+    try:
+        projection = await RuntimeProjectionService.build_async(workspace, state=state)
+    except (RuntimeError, ValueError):
+        logger.debug("Failed to build Director task projection for task_id=%s", task_id, exc_info=True)
+        return None
+
+    for row in _projection_task_rows(projection):
+        if _task_row_matches_id(row, task_id):
+            return _task_response_from_row(row)
+    return None
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -508,8 +590,8 @@ async def get_status(
     settings = state.settings
 
     # Use RuntimeProjectionService for consistent state
-    workspace = getattr(settings, "workspace_path", None) or getattr(settings, "workspace", "")
-    projection = await RuntimeProjectionService.build_async(str(workspace), state=state)
+    workspace = active_workspace_value(settings)
+    projection = await RuntimeProjectionService.build_async(workspace, state=state)
 
     selected_status = (
         getattr(projection, "director_merged", None)
@@ -526,6 +608,26 @@ async def get_status(
     }
 
 
+@router.get("/capabilities", dependencies=[Depends(require_auth)], response_model=RoleCapabilitiesResponse)
+def get_director_capabilities() -> dict[str, Any]:
+    """Return the Director capability matrix for desktop and workflow hosts."""
+    try:
+        from polaris.domain.entities.capability import get_role_capabilities
+
+        return {
+            "ok": True,
+            "role": "director",
+            "capabilities": get_role_capabilities("director"),
+        }
+    except (RuntimeError, ValueError) as exc:
+        raise StructuredHTTPException(
+            status_code=500,
+            code="CAPABILITY_LOAD_FAILED",
+            message=str(exc),
+            details={"capabilities": {}},
+        ) from exc
+
+
 @router.post("/tasks", response_model=TaskResponse, dependencies=[Depends(require_auth)])
 async def create_task(
     request: TaskCreateRequest,
@@ -533,13 +635,14 @@ async def create_task(
 ) -> TaskResponse:
     """Create and submit a new task."""
     priority = TaskPriority[request.priority]
+    blocked_by: list[int | str] = list(request.blocked_by)
 
     task = await service.submit_task(
         subject=request.subject,
         description=request.description,
         command=request.command,
         priority=priority,
-        blocked_by=request.blocked_by,
+        blocked_by=blocked_by,
         timeout_seconds=request.timeout_seconds,
         metadata=request.metadata,
     )
@@ -574,8 +677,8 @@ async def list_tasks(
             # Keep local-only path fast for high-frequency observers and stress tracer.
             state = getattr(request.app.state, "app_state", None) or request.app.state
             settings = state.settings
-            workspace = getattr(settings, "workspace_path", None) or getattr(settings, "workspace", "")
-            projection = await RuntimeProjectionService.build_async(str(workspace), state=state)
+            workspace = active_workspace_value(settings)
+            projection = await RuntimeProjectionService.build_async(workspace, state=state)
             used_projection = True
 
             tasks = _projection_task_rows(projection)
@@ -600,15 +703,20 @@ async def list_tasks(
 
 @router.get("/tasks/{task_id}", dependencies=[Depends(require_auth)])
 async def get_task(
+    request: Request,
     task_id: str,
     service: DirectorService = Depends(get_director_service_dep),
 ) -> TaskResponse:
     """Get task by ID."""
     task = await service.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    if task:
+        return _task_response_from_row(_task_row_from_object(task))
 
-    return _task_response_from_row(_task_row_from_object(task))
+    projected = await _projected_task_response(request, task_id)
+    if projected is not None:
+        return projected
+
+    raise HTTPException(status_code=404, detail="Task not found")
 
 
 @router.post("/tasks/{task_id}/cancel", dependencies=[Depends(require_auth)])
@@ -617,12 +725,13 @@ async def cancel_task(
     service: DirectorService = Depends(get_director_service_dep),
 ) -> dict[str, Any]:
     """Cancel a task."""
-    cancelled = await service.cancel_task(task_id)
+    result = await service.cancel_task(task_id)
+    payload = _cancel_success_payload(task_id, result)
 
-    if not cancelled:
-        raise HTTPException(status_code=400, detail="Task cannot be cancelled")
+    if payload is None:
+        raise HTTPException(status_code=400, detail=_cancel_failure_detail(result))
 
-    return {"ok": True, "task_id": task_id}
+    return payload
 
 
 @router.get("/workers", dependencies=[Depends(require_auth)])
@@ -757,13 +866,17 @@ async def director_run_orchestration(
         # Phase 4: Use OrchestrationCommandService as single entry point
         from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
 
-        service = OrchestrationCommandService(request.app.state.app_state.settings)
+        settings = request.app.state.app_state.settings
+        workspace = requested_or_active_workspace(settings, payload.workspace)
+        service = OrchestrationCommandService(settings)
+        task_ids = [str(payload.task_id).strip()] if str(payload.task_id or "").strip() else []
+        task_filter = payload.task_filter or (task_ids[0] if task_ids else None)
 
         result = await service.execute_director_run(
-            workspace=payload.workspace,
-            tasks=[],
+            workspace=workspace,
+            tasks=task_ids,
             options={
-                "task_filter": payload.task_filter or payload.task_id,
+                "task_filter": task_filter,
                 "task_id": payload.task_id,
                 "max_workers": payload.max_workers,
                 "execution_mode": payload.execution_mode,
@@ -779,8 +892,8 @@ async def director_run_orchestration(
         return DirectorOrchestrationResponse(
             run_id=result.run_id,
             status=result.status,
-            workspace=payload.workspace,
-            tasks_queued=0,  # Will be populated by query
+            workspace=workspace,
+            tasks_queued=_director_tasks_queued(result, task_ids),
             message=result.message or f"Director started in {payload.execution_mode} mode",
         )
 
@@ -819,6 +932,46 @@ async def director_get_orchestration(run_id: str) -> DirectorOrchestrationRespon
         raise
     except (RuntimeError, ValueError) as e:
         logger.error("Failed to query Director run: run_id=%s: %s", run_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="internal error",
+        ) from e
+
+
+@router.post(
+    "/runs/{run_id}/cancel",
+    response_model=DirectorOrchestrationResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def director_cancel_orchestration(run_id: str) -> DirectorOrchestrationResponse:
+    """Cancel a Director orchestration run and return the resulting snapshot."""
+    try:
+        service = await get_orchestration_service()
+        snapshot = await service.query_run(run_id)
+
+        if not snapshot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run not found: {run_id}",
+            )
+
+        status_token = str(snapshot.status.value).lower()
+        terminal_statuses = {"completed", "failed", "cancelled", "canceled", "blocked", "timeout"}
+        if status_token not in terminal_statuses:
+            snapshot = await service.cancel_run(run_id)
+
+        return DirectorOrchestrationResponse(
+            run_id=snapshot.run_id,
+            status=snapshot.status.value,
+            workspace=str(snapshot.workspace),
+            tasks_queued=len(snapshot.tasks),
+            message=f"Status: {snapshot.status.value}",
+        )
+
+    except HTTPException:
+        raise
+    except (RuntimeError, ValueError, OrchestrationError) as e:
+        logger.error("Failed to cancel Director run: run_id=%s: %s", run_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="internal error",

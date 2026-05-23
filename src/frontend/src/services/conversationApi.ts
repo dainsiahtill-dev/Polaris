@@ -8,7 +8,7 @@
 import { apiFetch } from '@/api';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
-export type DialogueRole = 'pm' | 'architect' | 'director' | 'qa';
+export type DialogueRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa' | 'scout';
 
 // ============================================================================
 // Type Definitions

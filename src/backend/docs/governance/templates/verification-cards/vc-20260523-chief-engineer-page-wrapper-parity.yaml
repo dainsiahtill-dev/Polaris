@@ -1,0 +1,57 @@
+id: vc-20260523-chief-engineer-page-wrapper-parity
+title: Chief Engineer page wrapper parity
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/pages/ChiefEngineerPage.tsx
+  - src/frontend/src/app/pages/ChiefEngineerPage.test.tsx
+  - src/frontend/src/app/pages/index.ts
+  - src/frontend/src/app/App.tsx
+related_blueprint: src/backend/docs/blueprints/CHIEF_ENGINEER_PAGE_WRAPPER_PARITY_20260523.md
+assumption_register:
+  - id: A1
+    statement: PM and Director already define role page wrappers.
+    evidence:
+      - src/frontend/src/app/pages/PMPage.tsx
+      - src/frontend/src/app/pages/DirectorPage.tsx
+    verified: true
+  - id: A2
+    statement: App owns shared settings state and can forward the callback to a Chief Engineer page wrapper.
+    evidence:
+      - src/frontend/src/app/App.tsx
+    verified: true
+  - id: A3
+    statement: Chief Engineer page composition does not require a backend route contract change.
+    evidence:
+      - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+      - src/frontend/src/services/chiefEngineerService.ts
+    verified: true
+pre_mortem:
+  - risk: The wrapper drops runtime overlay evidence or changes the active view token.
+    mitigation: Hard-code `activeView="chief_engineer"` in the page and cover callback forwarding in a page test.
+  - risk: The App branch loses existing Chief Engineer workspace props during refactor.
+    mitigation: Pass the same workspace, task, worker, PM state, Director state, runtime overlay, and settings props through the page.
+verification_plan:
+  - command: npm run test -- ChiefEngineerPage ChiefEngineerWorkspace
+    expected: Page callback forwarding and workspace tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- ChiefEngineerPage ChiefEngineerWorkspace
+    result: passed
+    evidence: 2 test files passed, 11 tests passed
+  - command: npm run typecheck
+    result: passed
+    evidence: tsc --noEmit completed with exit code 0
+  - command: npm run lint
+    result: passed
+    evidence: eslint completed with exit code 0
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: passed
+    evidence: 15 test files passed, 129 tests passed

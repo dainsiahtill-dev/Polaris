@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { isLancedbExplicitlyBlocked } from '../lancedbGate';
 
 describe('isLancedbExplicitlyBlocked', () => {

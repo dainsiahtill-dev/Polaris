@@ -7,6 +7,7 @@ External services are mocked to avoid LLM provider and storage dependencies.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -128,6 +129,36 @@ async def test_role_chat_success(client: AsyncClient) -> None:
         assert data["response"] == "Hello from PM"
         assert data["role"] == "pm"
         mock_generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_role_chat_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Non-streaming role chat should generate against workspace_path before workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.role_chat.get_registered_roles",
+            return_value=["pm"],
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            new_callable=AsyncMock,
+            return_value={"response": "ok", "role": "pm", "model": "x", "provider": "y"},
+        ) as mock_generate,
+    ):
+        response = await client.post("/v2/role/pm/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert mock_generate.await_args is not None
+    assert mock_generate.await_args.kwargs["workspace"] == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio
@@ -276,6 +307,45 @@ async def test_role_chat_stream_empty_message(client: AsyncClient) -> None:
         body = response.text
         assert "event: error" in body
         assert "message is required" in body
+
+
+@pytest.mark.asyncio
+async def test_role_chat_stream_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Streaming role chat should generate against workspace_path before workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+
+    async def _fake_streaming_response(**kwargs: Any) -> None:
+        output_queue = kwargs["output_queue"]
+        await output_queue.put({"type": "complete", "data": {"ok": True}})
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.role_chat.get_registered_roles",
+            return_value=["pm"],
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            new_callable=AsyncMock,
+            side_effect=_fake_streaming_response,
+        ) as mock_generate,
+    ):
+        response = await client.post(
+            "/v2/role/pm/chat/stream",
+            json={"message": "hello"},
+            headers={"Accept": "text/event-stream"},
+        )
+
+    assert response.status_code == 200
+    assert "event: complete" in response.text
+    assert mock_generate.await_args is not None
+    assert mock_generate.await_args.kwargs["workspace"] == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio

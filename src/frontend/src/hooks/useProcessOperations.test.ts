@@ -161,6 +161,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(toast.loading).toHaveBeenCalledWith('Resuming PM...', expect.any(Object));
+      expect(mockStartPm).toHaveBeenCalledWith(true);
       expect(toast.success).toHaveBeenCalledWith('PM resumed');
     });
 
@@ -308,7 +309,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(mockStartDirector).toHaveBeenCalledWith();
-      expect(toast.success).toHaveBeenCalledWith('Chief Engineer started');
+      expect(toast.success).toHaveBeenCalledWith('Director started');
     });
 
     it('returns false when checkAgents.required and not draftReady', async () => {
@@ -337,7 +338,7 @@ describe('useProcessOperations', () => {
         expect(success).toBe(false);
       });
 
-      expect(toast.warning).toHaveBeenCalledWith('Please review and confirm AGENTS.generated.md before starting Chief Engineer.');
+      expect(toast.warning).toHaveBeenCalledWith('Please review and confirm AGENTS.generated.md before starting Director.');
     });
 
     it('seeds director queue from PM tasks', async () => {

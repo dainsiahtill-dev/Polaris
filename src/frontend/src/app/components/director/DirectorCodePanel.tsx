@@ -1,11 +1,13 @@
 /**
  * DirectorCodePanel - 代码面板展示组件
  */
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { openPath } from '@/api';
 import { FilePlus, FileX, FileEdit, FileCode } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import { RealTimeFileDiff } from './RealTimeFileDiff';
+import { resolveDirectorOpenTarget } from './directorFileActions';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 
 interface DirectorCodePanelProps {
@@ -15,6 +17,10 @@ interface DirectorCodePanelProps {
 
 export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps) {
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
+  const [openFileStatus, setOpenFileStatus] = useState<{
+    kind: 'idle' | 'loading' | 'success' | 'error';
+    message: string | null;
+  }>({ kind: 'idle', message: null });
 
   const getOperationIcon = (operation: string) => {
     switch (operation) {
@@ -55,11 +61,38 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
   };
 
   // 只显示最近的 20 个事件，按时间倒序
-  const recentEvents = [...fileEditEvents].reverse().slice(0, 20);
+  const recentEvents = useMemo(() => [...fileEditEvents].reverse().slice(0, 20), [fileEditEvents]);
+  const selectedOpenEvent = useMemo(
+    () => recentEvents.find((event) => event.id === expandedEventId) ?? recentEvents[0] ?? null,
+    [expandedEventId, recentEvents],
+  );
 
   const toggleExpand = (eventId: string) => {
     setExpandedEventId((prev) => (prev === eventId ? null : eventId));
   };
+
+  const handleOpenFile = useCallback(async () => {
+    const target = resolveDirectorOpenTarget(workspace, selectedOpenEvent?.filePath);
+    if (!target) {
+      setOpenFileStatus({ kind: 'error', message: '没有可打开的工作区文件' });
+      return;
+    }
+
+    setOpenFileStatus({ kind: 'loading', message: `正在打开 ${selectedOpenEvent?.filePath || target}` });
+    try {
+      const result = await openPath(target);
+      if (!result.ok) {
+        setOpenFileStatus({ kind: 'error', message: result.error || '打开文件失败' });
+        return;
+      }
+      setOpenFileStatus({ kind: 'success', message: `已请求打开 ${selectedOpenEvent?.filePath || target}` });
+    } catch (error) {
+      setOpenFileStatus({
+        kind: 'error',
+        message: error instanceof Error ? error.message : '打开文件失败',
+      });
+    }
+  }, [selectedOpenEvent, workspace]);
 
   return (
     <div className="h-full flex flex-col">
@@ -73,12 +106,33 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" className="text-slate-400">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { void handleOpenFile(); }}
+            disabled={!selectedOpenEvent || openFileStatus.kind === 'loading'}
+            data-testid="director-code-open-file"
+            title={selectedOpenEvent?.filePath ? `打开 ${selectedOpenEvent.filePath}` : '没有可打开的文件'}
+            className="text-slate-400"
+          >
             <FileCode className="w-4 h-4 mr-1.5" />
-            打开文件
+            {openFileStatus.kind === 'loading' ? '打开中' : '打开文件'}
           </Button>
         </div>
       </div>
+      {openFileStatus.message ? (
+        <div
+          className={cn(
+            'border-b px-4 py-1.5 text-[11px]',
+            openFileStatus.kind === 'error'
+              ? 'border-amber-500/20 bg-amber-500/10 text-amber-100'
+              : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-100',
+          )}
+          data-testid="director-code-open-file-evidence"
+        >
+          {openFileStatus.message}
+        </div>
+      ) : null}
       <div className="flex-1 overflow-hidden flex">
         {/* 文件变更列表 + Diff 详情 */}
         <div className="flex-1 overflow-auto p-4">

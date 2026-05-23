@@ -1,0 +1,86 @@
+card_id: "vc-20260523-role-session-active-workspace-path"
+bug_summary: >
+  RoleSession desktop backend routes can use stale settings.workspace for PM,
+  Chief Engineer, and Director session lifecycle, evidence, and workflow export
+  operations instead of the active Electron workspace_path or stored session
+  workspace.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/role_session.py"
+  method: "create/list/session streaming/artifacts/audit/export-to-workflow"
+  symptom: >
+    Desktop RoleSession calls appear successful but can create, filter, stream,
+    read artifacts, audit, or export workflow bundles in the wrong workspace.
+
+assumptions:
+  - id: "A1"
+    statement: "PM, Chief Engineer, and Director desktop panels use RoleSession routes."
+    status: verified_true
+    evidence: >
+      roleSessionService.ts is the typed frontend boundary for /v2/roles/sessions
+      used by shared AIDialoguePanel and role workspaces.
+
+  - id: "A2"
+    statement: "Existing sessions can carry their own workspace and should not be re-bound to a stale active setting."
+    status: verified_true
+    evidence: >
+      Conversation.workspace is persisted and indexed; RoleSessionService stores
+      the workspace passed at session creation.
+
+  - id: "A3"
+    statement: "Legacy callers may still omit payload workspace and rely on backend settings."
+    status: verified_true
+    evidence: >
+      Existing router tests omit workspace for list/create cases and the router
+      previously fell back to state.settings.workspace.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Only switching create/list to workspace_path would leave streaming,
+    artifact/audit evidence, and workflow export using settings.workspace.
+  guardrail: >
+    Add shared router helpers and use session.workspace for existing-session
+    operations before falling back to active settings.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py"
+    expected: "Formatting complete without changes or with formatted files"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py -v"
+    expected: "All tests pass"
+  - command: "npm test -- src/frontend/src/services/__tests__/roleSessionService.test.ts src/frontend/src/app/components/ai-dialogue/__tests__/AIDialoguePanel.test.tsx src/frontend/src/app/components/ai-dialogue/__tests__/useAIDialogue.test.ts"
+    expected: "Focused desktop RoleSession tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run test:e2e:smoke"
+    expected: "Electron smoke suite passes"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py"
+    result: pass
+    evidence: "1 file reformatted, 1 file left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py"
+    result: pass
+    evidence: "Success: no issues found in 2 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py -v"
+    result: pass
+    evidence: "26 passed in 10.30s."
+  - command: "npm test -- src/frontend/src/services/__tests__/roleSessionService.test.ts src/frontend/src/app/components/ai-dialogue/__tests__/AIDialoguePanel.test.tsx src/frontend/src/app/components/ai-dialogue/__tests__/useAIDialogue.test.ts"
+    result: pass
+    evidence: "3 files passed; 14 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run test:e2e:smoke"
+    result: pass
+    evidence: "6 passed."
+
+status: passed

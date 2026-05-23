@@ -21,12 +21,16 @@ export interface DirectorPageProps {
   workers?: RuntimeWorkerState[];
   /** Director 是否运行中 */
   directorRunning: boolean;
+  /** PM 是否运行中 */
+  pmRunning?: boolean;
   /** 是否正在启动 */
   isStarting: boolean;
   /** 是否正在停止 */
   isStopping: boolean;
   /** Director 切换回调 */
-  onToggleDirector: () => void;
+  onToggleDirector: () => void | boolean | Promise<void | boolean>;
+  /** 打开系统配置 */
+  onOpenSettings?: () => void;
   /** 当前任务 ID */
   currentTaskId?: string | null;
   /** 当前任务标题 */
@@ -47,6 +51,8 @@ export interface DirectorPageProps {
   currentPhase?: string;
   /** 任务进度映射 */
   taskProgressMap?: unknown;
+  /** 任务追踪映射 */
+  taskTraceMap?: Parameters<typeof DirectorWorkspace>[0]['taskTraceMap'];
   /** WebSocket 连接状态 */
   websocketLive: boolean;
   /** WebSocket 重连状态 */
@@ -78,9 +84,11 @@ export function DirectorPage({
   tasks,
   workers,
   directorRunning,
+  pmRunning = false,
   isStarting,
   isStopping: _isStopping,
   onToggleDirector,
+  onOpenSettings,
   currentTaskId,
   currentTaskTitle,
   currentTaskStatus,
@@ -91,6 +99,7 @@ export function DirectorPage({
   processStreamEvents,
   currentPhase,
   taskProgressMap,
+  taskTraceMap,
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
@@ -110,6 +119,7 @@ export function DirectorPage({
         directorRunning={directorRunning}
         isStarting={isStarting}
         onToggleDirector={() => onToggleDirector()}
+        onOpenSettings={onOpenSettings}
         currentTaskId={currentTaskId ?? null}
         currentTaskTitle={currentTaskTitle ?? null}
         currentTaskStatus={currentTaskStatus ?? null}
@@ -119,13 +129,14 @@ export function DirectorPage({
         processStreamEvents={processStreamEvents}
         currentPhase={currentPhase}
         taskProgressMap={taskProgressMap as Parameters<typeof DirectorWorkspace>[0]['taskProgressMap']}
+        taskTraceMap={taskTraceMap}
       />
       <LlmRuntimeOverlay
         activeView="director"
         websocketLive={websocketLive}
         websocketReconnecting={websocketReconnecting}
         websocketAttemptCount={websocketAttemptCount}
-        pmRunning={false}
+        pmRunning={pmRunning}
         directorRunning={directorRunning}
         llmState={llmRuntimeState.state}
         llmBlockedRoles={llmRuntimeState.blockedRoles}
@@ -136,6 +147,7 @@ export function DirectorPage({
         executionLogs={executionLogs ?? []}
         llmStreamEvents={llmStreamEvents ?? []}
         processStreamEvents={processStreamEvents ?? []}
+        fileEditEvents={fileEditEvents as Parameters<typeof LlmRuntimeOverlay>[0]['fileEditEvents']}
       />
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>

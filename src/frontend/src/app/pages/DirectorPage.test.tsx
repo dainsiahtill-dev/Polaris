@@ -1,0 +1,73 @@
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { DirectorPage } from './DirectorPage';
+
+const directorWorkspaceProps = vi.hoisted(() => vi.fn());
+const runtimeOverlayProps = vi.hoisted(() => vi.fn());
+
+vi.mock('@/app/components/director', () => ({
+  DirectorWorkspace: (props: Record<string, unknown>) => {
+    directorWorkspaceProps(props);
+    return <div data-testid="director-page-workspace" />;
+  },
+}));
+
+vi.mock('@/app/components/LlmRuntimeOverlay', () => ({
+  LlmRuntimeOverlay: (props: Record<string, unknown>) => {
+    runtimeOverlayProps(props);
+    return <div data-testid="runtime-overlay">{String(props.activeView)}</div>;
+  },
+}));
+
+vi.mock('@/app/components/ui/sonner', () => ({
+  Toaster: () => <div data-testid="toaster" />,
+}));
+
+describe('DirectorPage', () => {
+  it('forwards workspace evidence and cross-role runtime state', () => {
+    const fileEditEvents = [{ task_id: 'D-1', path: 'src/app.ts' }];
+    const taskTraceMap = new Map([['D-1', [{ phase: 'tool_running' }]]]);
+    const taskProgressMap = new Map([['D-1', { phase: 'executing', phaseIndex: 1, phaseTotal: 3 }]]);
+
+    render(
+      <DirectorPage
+        workspace="C:/Temp/Product"
+        tasks={[]}
+        workers={[]}
+        directorRunning={true}
+        pmRunning={true}
+        isStarting={false}
+        isStopping={false}
+        onToggleDirector={vi.fn()}
+        onBackToMain={vi.fn()}
+        fileEditEvents={fileEditEvents}
+        taskTraceMap={taskTraceMap}
+        taskProgressMap={taskProgressMap}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('director-page-workspace')).toBeInTheDocument();
+    expect(directorWorkspaceProps).toHaveBeenCalledWith(expect.objectContaining({
+      fileEditEvents,
+      taskTraceMap,
+      taskProgressMap,
+    }));
+    expect(runtimeOverlayProps).toHaveBeenCalledWith(expect.objectContaining({
+      activeView: 'director',
+      pmRunning: true,
+      directorRunning: true,
+      fileEditEvents,
+    }));
+  });
+});
+

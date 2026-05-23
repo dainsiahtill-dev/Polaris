@@ -28,6 +28,7 @@ cells:
   - audit.evidence
   - context.engine
   - llm.control_plane
+  - llm.dialogue
   # Shared execution infrastructure (not business cells — no entry/exit role)
   - roles.kernel        # RoleExecutionKernel: unified CHAT | WORKFLOW execution engine
   - roles.runtime       # RoleRuntimeService: facade + lifecycle management
@@ -100,6 +101,10 @@ relations:
     to: runtime.task_runtime
     type: commands
     contract: UpdateRuntimeTaskCommandV1
+  - from: director.execution
+    to: llm.dialogue
+    type: commands
+    contract: InvokeRoleDialogueCommandV1
   - from: orchestration.pm_planning
     to: runtime.execution_broker
     type: commands

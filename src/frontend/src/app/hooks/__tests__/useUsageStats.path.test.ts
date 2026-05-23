@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { LLM_OBSERVATIONS_LOGICAL_PATH } from '../useUsageStats';
 import { normalizeArtifactPath } from '@/services/fileService';
 

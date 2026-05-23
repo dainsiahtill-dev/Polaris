@@ -1,6 +1,13 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ControlPanel } from './ControlPanel';
+
+const serviceMocks = vi.hoisted(() => ({
+  getPmStatus: vi.fn(),
+  getDirectorStatus: vi.fn(),
+}));
+
+vi.mock('@/services', () => serviceMocks);
 
 // Mock the DropdownMenu components
 vi.mock('./ui/dropdown-menu', () => ({
@@ -49,6 +56,14 @@ const defaultProps = {
 describe('ControlPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    serviceMocks.getPmStatus.mockResolvedValue({
+      ok: true,
+      data: { running: false, pid: null, started_at: null, mode: 'desktop_service', source: 'status_file' },
+    });
+    serviceMocks.getDirectorStatus.mockResolvedValue({
+      ok: true,
+      data: { running: false, pid: null, started_at: null, mode: 'desktop_service', source: 'status_file' },
+    });
   });
 
   describe('Basic Rendering', () => {
@@ -73,6 +88,33 @@ describe('ControlPanel', () => {
       render(<ControlPanel {...defaultProps} />);
       fireEvent.click(screen.getByTestId('control-panel-pm-toggle'));
       expect(defaultProps.onTogglePm).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows PM backend status evidence after toggling', async () => {
+      const onTogglePm = vi.fn().mockResolvedValue(undefined);
+      serviceMocks.getPmStatus.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          running: true,
+          pid: 4101,
+          started_at: 1779512400,
+          mode: 'desktop_service',
+          source: 'status_file',
+        },
+      });
+
+      render(<ControlPanel {...defaultProps} onTogglePm={onTogglePm} />);
+
+      fireEvent.click(screen.getByTestId('control-panel-pm-toggle'));
+
+      await waitFor(() => expect(onTogglePm).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledTimes(1));
+      const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
+      expect(evidence).toHaveTextContent('/v2/pm/status');
+      expect(evidence).toHaveTextContent('running');
+      expect(evidence).toHaveTextContent('pid=4101');
+      expect(evidence).toHaveTextContent('mode=desktop_service');
+      expect(evidence).toHaveTextContent('source=status_file');
     });
 
     it('disables PM toggle when pmToggleDisabled is true', () => {
@@ -101,6 +143,33 @@ describe('ControlPanel', () => {
       render(<ControlPanel {...defaultProps} />);
       fireEvent.click(screen.getByTestId('control-panel-director-toggle'));
       expect(defaultProps.onToggleDirector).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows Director backend status evidence after toggling', async () => {
+      const onToggleDirector = vi.fn().mockResolvedValue(undefined);
+      serviceMocks.getDirectorStatus.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          running: false,
+          pid: null,
+          started_at: null,
+          mode: 'desktop_service',
+          source: 'status_file',
+        },
+      });
+
+      render(<ControlPanel {...defaultProps} onToggleDirector={onToggleDirector} directorRunning={true} />);
+
+      fireEvent.click(screen.getByTestId('control-panel-director-toggle'));
+
+      await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledTimes(1));
+      const evidence = await screen.findByTestId('control-panel-director-toggle-evidence');
+      expect(evidence).toHaveTextContent('/v2/director/status?source=auto');
+      expect(evidence).toHaveTextContent('idle');
+      expect(evidence).toHaveTextContent('pid=none');
+      expect(evidence).toHaveTextContent('mode=desktop_service');
+      expect(evidence).toHaveTextContent('source=status_file');
     });
 
     it('disables Director toggle when directorToggleDisabled is true', () => {
@@ -144,15 +213,91 @@ describe('ControlPanel', () => {
     });
   });
 
+  describe('Health Ping', () => {
+    it('calls health ping and exposes backend evidence in the tooltip', () => {
+      const onPingHealth = vi.fn();
+      render(
+        <ControlPanel
+          {...defaultProps}
+          healthStatus="healthy"
+          healthStatusDetail="/v2/health · healthy · version=0.1"
+          onPingHealth={onPingHealth}
+        />,
+      );
+
+      const healthButton = screen.getByTestId('control-panel-health-ping');
+      expect(healthButton).toHaveAttribute('title', '/v2/health · healthy · version=0.1');
+      expect(healthButton).toHaveTextContent('Ready');
+
+      fireEvent.click(healthButton);
+
+      expect(onPingHealth).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('PM Run Once', () => {
     it('shows run once button when onRunPmOnce is provided', () => {
       render(<ControlPanel {...defaultProps} onRunPmOnce={vi.fn()} />);
       expect(screen.getByTestId('control-panel-pm-run-once')).toBeInTheDocument();
     });
 
+    it('shows PM backend status evidence after run once', async () => {
+      const onRunPmOnce = vi.fn().mockResolvedValue(undefined);
+      serviceMocks.getPmStatus.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          running: false,
+          pid: null,
+          started_at: null,
+          mode: 'single_iteration',
+          source: 'status_file',
+        },
+      });
+
+      render(<ControlPanel {...defaultProps} onRunPmOnce={onRunPmOnce} />);
+
+      fireEvent.click(screen.getByTestId('control-panel-pm-run-once'));
+
+      await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledTimes(1));
+      const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
+      expect(evidence).toHaveTextContent('/v2/pm/status');
+      expect(evidence).toHaveTextContent('idle');
+      expect(evidence).toHaveTextContent('pid=none');
+      expect(evidence).toHaveTextContent('mode=single_iteration');
+      expect(evidence).toHaveTextContent('source=status_file');
+    });
+
     it('disables run once when runOnceDisabled is true', () => {
       render(<ControlPanel {...defaultProps} onRunPmOnce={vi.fn()} runOnceDisabled={true} />);
       expect(screen.getByTestId('control-panel-pm-run-once')).toBeDisabled();
+    });
+
+    it('shows PM backend status evidence after resume', async () => {
+      const onResumePm = vi.fn().mockResolvedValue(undefined);
+      serviceMocks.getPmStatus.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          running: true,
+          pid: 4102,
+          started_at: 1779512500,
+          mode: 'resume',
+          source: 'status_file',
+        },
+      });
+
+      render(<ControlPanel {...defaultProps} onResumePm={onResumePm} />);
+
+      fireEvent.click(screen.getByTitle('Resume Last'));
+
+      await waitFor(() => expect(onResumePm).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledTimes(1));
+      const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
+      expect(evidence).toHaveTextContent('/v2/pm/status');
+      expect(evidence).toHaveTextContent('running');
+      expect(evidence).toHaveTextContent('pid=4102');
+      expect(evidence).toHaveTextContent('mode=resume');
+      expect(evidence).toHaveTextContent('source=status_file');
     });
   });
 
@@ -181,6 +326,17 @@ describe('ControlPanel', () => {
       render(<ControlPanel {...defaultProps} onEnterChiefEngineerWorkspace={onEnterChiefEngineerWorkspace} />);
       fireEvent.click(screen.getByText('Chief Engineer 工作区'));
       expect(onEnterChiefEngineerWorkspace).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Brain Menu', () => {
+    it('calls onOpenBrain from the more menu entry', () => {
+      const onOpenBrain = vi.fn();
+      render(<ControlPanel {...defaultProps} onOpenBrain={onOpenBrain} />);
+
+      fireEvent.click(screen.getByText('明镜台 (Brain)'));
+
+      expect(onOpenBrain).toHaveBeenCalledTimes(1);
     });
   });
 

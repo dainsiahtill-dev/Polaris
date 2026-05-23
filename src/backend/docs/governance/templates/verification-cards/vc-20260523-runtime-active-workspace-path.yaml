@@ -1,0 +1,80 @@
+card_id: "vc-20260523-runtime-active-workspace-path"
+bug_summary: >
+  Runtime desktop support routes can inspect or mutate stale settings.workspace
+  instead of the active Electron workspace_path selected for PM and Director
+  workflows.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/runtime.py and polaris/delivery/http/v2/runtime_diagnostics.py"
+  method: "storage layout / clear / migration status / reset tasks / diagnostics"
+  symptom: >
+    Desktop storage preflight, runtime clear/reset, and diagnostics can report
+    or modify runtime state for the Polaris repo while the UI is working on a
+    target project workspace.
+
+assumptions:
+  - id: "A1"
+    statement: "Desktop PM/Director support flows use runtime storage, clear, reset, and diagnostics routes."
+    status: verified_true
+    evidence: >
+      runtimeService.clearDialogue uses /v2/runtime/clear and
+      RuntimeDiagnosticsWorkspace fetches /v2/runtime/diagnostics; root
+      AGENTS preflight requires /runtime/storage-layout.
+
+  - id: "A2"
+    statement: "settings.workspace_path is the active Electron target workspace when populated."
+    status: verified_true
+    evidence: >
+      Existing PM, Chief Engineer, RoleChat, RoleSession, and PM management
+      contracts all now prefer workspace_path over workspace.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only diagnostics would leave reset/clear/storage-layout mutating
+    stale runtime state.
+  guardrail: >
+    Use one shared delivery helper for active workspace resolution and assert
+    each runtime helper receives workspace_path when workspace is stale.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/runtime.py src/backend/polaris/delivery/http/v2/runtime_diagnostics.py src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/runtime.py src/backend/polaris/delivery/http/v2/runtime_diagnostics.py src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/runtime.py src/backend/polaris/delivery/http/v2/runtime_diagnostics.py src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py -v"
+    expected: "All tests pass"
+  - command: "npm test -- src/frontend/src/app/components/RuntimeDiagnosticsWorkspace.test.tsx src/frontend/src/services/__tests__/runtimeService.test.ts"
+    expected: "Runtime desktop frontend tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    expected: "Electron role workspace visual surface passes"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/runtime.py src/backend/polaris/delivery/http/v2/runtime_diagnostics.py src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/runtime.py src/backend/polaris/delivery/http/v2/runtime_diagnostics.py src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py"
+    result: pass
+    evidence: "5 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/runtime.py src/backend/polaris/delivery/http/v2/runtime_diagnostics.py src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py"
+    result: pass
+    evidence: "Success: no issues found in 5 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_runtime_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py -v"
+    result: pass
+    evidence: "15 passed in 8.44s."
+  - command: "npm test -- src/frontend/src/app/components/RuntimeDiagnosticsWorkspace.test.tsx src/frontend/src/services/__tests__/runtimeService.test.ts"
+    result: pass
+    evidence: "2 files passed; 4 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "1 passed."
+
+status: passed

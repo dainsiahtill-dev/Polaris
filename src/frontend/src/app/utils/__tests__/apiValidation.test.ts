@@ -2,7 +2,8 @@
  * Tests for API Validation Layer
  */
 
-import { 
+import { describe, expect, it, vi } from 'vitest';
+import {
   validateApiPayload, 
   assertApiPayload, 
   validatePayloadDetailed,
@@ -178,7 +179,7 @@ describe('API Validation', () => {
   
   describe('createValidatedFetch', () => {
     it('should validate payload before calling fetch', async () => {
-      const mockFetch = jest.fn().mockResolvedValue(new Response());
+      const mockFetch = vi.fn().mockResolvedValue(new Response());
       const validatedFetch = createValidatedFetch(mockFetch);
       
       const payload = {
@@ -200,7 +201,7 @@ describe('API Validation', () => {
     });
     
     it('should throw for invalid payload without calling fetch', async () => {
-      const mockFetch = jest.fn().mockResolvedValue(new Response());
+      const mockFetch = vi.fn().mockResolvedValue(new Response());
       const validatedFetch = createValidatedFetch(mockFetch);
       
       const payload = {
@@ -219,7 +220,7 @@ describe('API Validation', () => {
     });
     
     it('should skip validation for non-interview endpoints', async () => {
-      const mockFetch = jest.fn().mockResolvedValue(new Response());
+      const mockFetch = vi.fn().mockResolvedValue(new Response());
       const validatedFetch = createValidatedFetch(mockFetch);
       
       await validatedFetch('/other/endpoint', {
@@ -231,7 +232,7 @@ describe('API Validation', () => {
     });
     
     it('should skip validation for GET requests', async () => {
-      const mockFetch = jest.fn().mockResolvedValue(new Response());
+      const mockFetch = vi.fn().mockResolvedValue(new Response());
       const validatedFetch = createValidatedFetch(mockFetch);
       
       await validatedFetch('/llm/interview/ask', {
@@ -242,7 +243,7 @@ describe('API Validation', () => {
     });
     
     it('should handle invalid JSON gracefully', async () => {
-      const mockFetch = jest.fn().mockResolvedValue(new Response());
+      const mockFetch = vi.fn().mockResolvedValue(new Response());
       const validatedFetch = createValidatedFetch(mockFetch);
       
       await validatedFetch('/llm/interview/ask', {

@@ -9,6 +9,7 @@
  */
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { openPath } from '@/api';
 import {
   Hammer,
   Code2,
@@ -28,6 +29,7 @@ import {
   Zap,
   Pause,
   RotateCcw,
+  RefreshCw,
   Send,
   FilePlus,
   FileEdit,
@@ -44,16 +46,52 @@ import {
   Hash,
   Brain,
   Wrench,
+  Database,
+  Trash2,
+  XCircle,
 } from 'lucide-react';
-import { apiFetchFresh } from '@/api';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import { AIDialoguePanel } from '@/app/components/ai-dialogue';
 import { RealTimeFileDiff } from './RealTimeFileDiff';
+import { resolveDirectorOpenTarget } from './directorFileActions';
 import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
-import { DirectorTaskPanel as DirectorTaskPanelView } from './DirectorTaskPanel';
-import { runDirector } from '@/services';
+import {
+  DirectorTaskPanel as DirectorTaskPanelView,
+  type DirectorTaskBackendDetailState,
+  type DirectorTaskCreateDraft,
+  type DirectorTaskLLMEventsState,
+  type DirectorWorkerDetailState,
+} from './DirectorTaskPanel';
+import {
+  cancelDirectorRun,
+  cancelDirectorTask,
+  createDirectorTask,
+  getDirectorCapabilities,
+  getDirectorRun,
+  getDirectorStatus,
+  getDirectorTask,
+  getDirectorWorker,
+  clearRoleKernelCache,
+  getDirectorTaskKernelLLMEvents,
+  getRoleKernelCacheStats,
+  getRoleKernelLLMEvents,
+  getRoleKernelTokenBudgetStats,
+  listDirectorTaskFallbackRows,
+  listDirectorWorkers,
+  runDirector,
+  type DirectorCapabilitiesResponse,
+  type DirectorOrchestrationRunResponse,
+  type DirectorStatus,
+  type DirectorWorker,
+  type CreateDirectorTaskPayload,
+  type RunDirectorPayload,
+  type RoleKernelCacheStats,
+  type RoleKernelLLMEvent,
+  type RoleKernelLLMEventsResponse,
+  type RoleKernelTokenBudgetStats,
+} from '@/services';
 import type { PmTask } from '@/types/task';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 import type { LogEntry } from '@/types/log';
@@ -67,7 +105,8 @@ interface DirectorWorkspaceProps {
   workers?: RuntimeWorkerState[];
   directorRunning: boolean;
   isStarting?: boolean;
-  onToggleDirector: () => void;
+  onToggleDirector: () => void | boolean | Promise<void | boolean>;
+  onOpenSettings?: () => void;
   currentTaskId?: string | null;
   currentTaskTitle?: string | null;
   currentTaskStatus?: string | null;
@@ -87,6 +126,48 @@ interface DirectorWorkspaceProps {
   }>;
   taskTraceMap?: TaskTraceMap;
 }
+
+interface DirectorTaskCancelState {
+  taskId: string | null;
+  loading: boolean;
+  message: string | null;
+  error: string | null;
+}
+
+interface DirectorTaskCreateState {
+  loading: boolean;
+  message: string | null;
+  error: string | null;
+  taskId: string | null;
+}
+
+interface DirectorRunEvidenceState {
+  runId: string | null;
+  loading: boolean;
+  data: DirectorOrchestrationRunResponse | null;
+  error: string | null;
+}
+
+interface DirectorRunCancelState {
+  runId: string | null;
+  loading: boolean;
+  message: string | null;
+  error: string | null;
+}
+
+interface DirectorToggleStatusEvidenceState {
+  triggered: boolean;
+  loading: boolean;
+  data: DirectorStatus | null;
+  error: string | null;
+}
+
+const DIRECTOR_TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
+
+const isDirectorRunTerminal = (status?: string | null): boolean => {
+  const token = String(status || '').trim().toLowerCase();
+  return DIRECTOR_TERMINAL_RUN_STATUSES.has(token);
+};
 
 interface ExecutionTask {
   id: string;
@@ -193,6 +274,11 @@ interface TaskRealtimeTelemetryAccumulator {
   currentPhase?: string;
   phaseIndex?: number;
   phaseTotal?: number;
+}
+
+interface DirectorCapabilityHost {
+  hostKind: string;
+  capabilities: string[];
 }
 
 export function resolveTaskExecutionStatus(params: ResolveTaskExecutionStatusParams): TaskExecutionStatus {
@@ -589,6 +675,410 @@ function resolveSessionStatus(
   return 'idle';
 }
 
+export function normalizeDirectorCapabilityHosts(
+  payload: DirectorCapabilitiesResponse | null | undefined,
+): DirectorCapabilityHost[] {
+  const capabilities = payload?.capabilities;
+  if (Array.isArray(capabilities)) {
+    return [{ hostKind: payload?.role || 'default', capabilities: capabilities.filter(Boolean).map(String).sort() }];
+  }
+
+  if (!capabilities || typeof capabilities !== 'object') {
+    return [];
+  }
+
+  return Object.entries(capabilities)
+    .map(([hostKind, values]) => ({
+      hostKind,
+      capabilities: Array.isArray(values) ? values.filter(Boolean).map(String).sort() : [],
+    }))
+    .filter((entry) => entry.capabilities.length > 0)
+    .sort((left, right) => left.hostKind.localeCompare(right.hostKind));
+}
+
+function formatCapabilityLabel(value: string): string {
+  return value.replace(/_/g, ' ');
+}
+
+function formatKernelNumber(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '-';
+}
+
+function formatKernelPercent(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
+}
+
+function readKernelEventText(event: RoleKernelLLMEvent | null | undefined, keys: string[]): string {
+  if (!event) {
+    return '';
+  }
+  for (const key of keys) {
+    const value = event[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return '';
+}
+
+function readKernelStatNumber(stats: Record<string, unknown> | null | undefined, keys: string[]): number | undefined {
+  if (!stats) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = stats[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function formatKernelEventType(event: RoleKernelLLMEvent | null | undefined): string {
+  return readKernelEventText(event, ['event_type', 'type', 'status']).replace(/_/g, ' ') || '-';
+}
+
+function formatKernelEventModel(event: RoleKernelLLMEvent | null | undefined): string {
+  return readKernelEventText(event, ['model', 'model_name', 'provider']) || '-';
+}
+
+function readWorkerText(row: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return '';
+}
+
+function readWorkerNumber(row: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return undefined;
+}
+
+function readWorkerBoolean(row: Record<string, unknown>, keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const normalized = value.trim().toLowerCase();
+      if (['true', 'healthy', 'ok', 'ready'].includes(normalized)) {
+        return true;
+      }
+      if (['false', 'unhealthy', 'failed', 'error'].includes(normalized)) {
+        return false;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function normalizeDirectorWorkerRows(rows: DirectorWorker[] | null | undefined): RuntimeWorkerState[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows
+    .map((row) => {
+      if (!row || typeof row !== 'object') {
+        return null;
+      }
+      const record = row as Record<string, unknown>;
+      const id = readWorkerText(record, ['id', 'worker_id', 'name']);
+      if (!id) {
+        return null;
+      }
+      const worker: RuntimeWorkerState = {
+        id,
+        name: readWorkerText(record, ['name', 'display_name', 'worker_name']) || id,
+        status: readWorkerText(record, ['status', 'state']) || 'idle',
+        currentTaskId: readWorkerText(record, ['currentTaskId', 'current_task_id', 'task_id', 'current_task']) || undefined,
+        healthy: readWorkerBoolean(record, ['healthy', 'is_healthy']),
+        tasksCompleted: readWorkerNumber(record, ['tasksCompleted', 'tasks_completed', 'completed_tasks']),
+        tasksFailed: readWorkerNumber(record, ['tasksFailed', 'tasks_failed', 'failed_tasks']),
+      };
+      return worker;
+    })
+    .filter((row): row is RuntimeWorkerState => Boolean(row));
+}
+
+export function mergeDirectorWorkers(
+  realtimeWorkers: RuntimeWorkerState[],
+  backendWorkers: RuntimeWorkerState[],
+): RuntimeWorkerState[] {
+  const merged = new Map<string, RuntimeWorkerState>();
+  for (const worker of backendWorkers) {
+    if (worker?.id) {
+      merged.set(worker.id, worker);
+    }
+  }
+  for (const worker of realtimeWorkers) {
+    if (worker?.id) {
+      merged.set(worker.id, {
+        ...merged.get(worker.id),
+        ...worker,
+      });
+    }
+  }
+  return Array.from(merged.values()).sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function DirectorCapabilityStrip({
+  hosts,
+  isLoading,
+  error,
+}: {
+  hosts: DirectorCapabilityHost[];
+  isLoading: boolean;
+  error: string | null;
+}) {
+  const allCapabilities = new Set(hosts.flatMap((host) => host.capabilities));
+  const deleteAllowed = allCapabilities.has('delete_files');
+
+  return (
+    <section
+      className="border-b border-white/10 bg-slate-950/55 px-4 py-2"
+      data-testid="director-capability-strip"
+      aria-label="Director capability matrix"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
+          <Wrench className="h-3.5 w-3.5 text-indigo-300" />
+          能力矩阵
+        </div>
+        <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-400">
+          /v2/director/capabilities
+        </span>
+
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+            正在读取 Director 能力
+          </div>
+        ) : error ? (
+          <div
+            className="flex items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
+            data-testid="director-capability-error"
+          >
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {error}
+          </div>
+        ) : hosts.length > 0 ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto" data-testid="director-capability-hosts">
+            {hosts.map((host) => (
+              <div
+                key={host.hostKind}
+                className="flex shrink-0 items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1"
+                data-testid="director-capability-host"
+              >
+                <Brain className="h-3.5 w-3.5 text-cyan-300" />
+                <span className="text-[10px] font-medium text-slate-200">{host.hostKind}</span>
+                <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] text-indigo-200">
+                  {host.capabilities.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  {host.capabilities.slice(0, 4).map((capability) => (
+                    <span
+                      key={`${host.hostKind}-${capability}`}
+                      className="rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] text-slate-300"
+                      title={capability}
+                    >
+                      {formatCapabilityLabel(capability)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-[11px] text-slate-500" data-testid="director-capability-empty">
+            后端未返回能力矩阵
+          </div>
+        )}
+
+        {!isLoading && !error ? (
+          <div
+            className={cn(
+              'ml-auto flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 text-[10px]',
+              deleteAllowed
+                ? 'border-red-500/25 bg-red-500/10 text-red-200'
+                : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
+            )}
+            data-testid="director-delete-capability"
+          >
+            {deleteAllowed ? (
+              <AlertTriangle className="h-3 w-3" />
+            ) : (
+              <CheckCircle2 className="h-3 w-3" />
+            )}
+            delete_files {deleteAllowed ? 'allowed' : 'blocked'}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function DirectorKernelDiagnosticsStrip({
+  cacheStats,
+  llmEvents,
+  tokenBudgetStats,
+  isLoading,
+  isClearing,
+  error,
+  onRefresh,
+  onClearCache,
+}: {
+  cacheStats: RoleKernelCacheStats | null;
+  llmEvents: RoleKernelLLMEventsResponse | null;
+  tokenBudgetStats: RoleKernelTokenBudgetStats | null;
+  isLoading: boolean;
+  isClearing: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onClearCache: () => void;
+}) {
+  return (
+    <section
+      className="border-b border-white/10 bg-slate-950/45 px-4 py-2"
+      data-testid="director-kernel-diagnostics-strip"
+      aria-label="Director Kernel diagnostics"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
+          <BarChart3 className="h-3.5 w-3.5 text-indigo-300" />
+          Kernel 统计
+        </div>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+            正在读取缓存、预算与 LLM 事件
+          </div>
+        ) : error ? (
+          <div
+            className="flex min-w-0 items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
+            data-testid="director-kernel-diagnostics-error"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{error}</span>
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+            <KernelStripMetric
+              icon={<Database className="h-3.5 w-3.5 text-cyan-300" />}
+              label="缓存"
+              endpoint="/v2/director/cache-stats"
+              values={[
+                `hit ${formatKernelPercent(cacheStats?.hit_rate)}`,
+                `${formatKernelNumber(cacheStats?.size)} / ${formatKernelNumber(cacheStats?.max_size)}`,
+                cacheStats?.enabled === false ? 'disabled' : 'enabled',
+              ]}
+            />
+            <KernelStripMetric
+              icon={<Coins className="h-3.5 w-3.5 text-emerald-300" />}
+              label="预算"
+              endpoint="/v2/director/token-budget-stats"
+              values={[
+                `total ${formatKernelNumber(tokenBudgetStats?.total)}`,
+                `dialogue ${formatKernelNumber(tokenBudgetStats?.available_conversation)}`,
+                `margin ${formatKernelNumber(tokenBudgetStats?.safety_margin)}`,
+              ]}
+            />
+            <KernelStripMetric
+              icon={<Brain className="h-3.5 w-3.5 text-indigo-300" />}
+              label="LLM"
+              endpoint="/v2/director/llm-events?role=director&limit=5"
+              values={[
+                `events ${formatKernelNumber(llmEvents?.count ?? llmEvents?.events?.length)}`,
+                `last ${formatKernelEventType(llmEvents?.events?.[0])}`,
+                `model ${formatKernelEventModel(llmEvents?.events?.[0])}`,
+                `err/retry ${formatKernelNumber(readKernelStatNumber(llmEvents?.stats, ['call_error', 'llm_error', 'errors']))}/${formatKernelNumber(readKernelStatNumber(llmEvents?.stats, ['call_retry', 'llm_retry', 'retries']))}`,
+              ]}
+            />
+          </div>
+        )}
+
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onRefresh}
+            disabled={isLoading || isClearing}
+            title="刷新 Kernel 统计"
+            className="h-7 w-7 text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClearCache}
+            disabled={isLoading || isClearing}
+            title="清空 Director LLM 缓存"
+            data-testid="director-kernel-cache-clear"
+            className="h-7 w-7 text-slate-400 hover:text-red-300 hover:bg-red-500/10"
+          >
+            {isClearing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function KernelStripMetric({
+  icon,
+  label,
+  endpoint,
+  values,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  endpoint: string;
+  values: string[];
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1">
+      {icon}
+      <span className="text-[10px] font-medium text-slate-200">{label}</span>
+      <span className="rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] text-slate-500">
+        {endpoint}
+      </span>
+      <div className="flex items-center gap-1">
+        {values.map((value) => (
+          <span
+            key={`${label}-${value}`}
+            className="rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] text-slate-300"
+          >
+            {value}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function DirectorWorkspace({
   workspace,
   onBackToMain,
@@ -597,6 +1087,7 @@ export function DirectorWorkspace({
   directorRunning,
   isStarting,
   onToggleDirector,
+  onOpenSettings,
   currentTaskId,
   currentTaskTitle,
   currentTaskStatus,
@@ -619,11 +1110,71 @@ export function DirectorWorkspace({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string>('');
   const [fallbackTasks, setFallbackTasks] = useState<PmTask[]>([]);
-  
+  const [backendWorkers, setBackendWorkers] = useState<RuntimeWorkerState[]>([]);
+  const [workerFallbackError, setWorkerFallbackError] = useState<string | null>(null);
+  const [workerBackendDetail, setWorkerBackendDetail] = useState<DirectorWorkerDetailState>({
+    workerId: null,
+    data: null,
+    loading: false,
+    error: null,
+  });
+  const [taskLLMEvents, setTaskLLMEvents] = useState<DirectorTaskLLMEventsState>({
+    taskId: null,
+    events: [],
+    stats: null,
+    loading: false,
+    error: null,
+  });
+  const [taskCancelState, setTaskCancelState] = useState<DirectorTaskCancelState>({
+    taskId: null,
+    loading: false,
+    message: null,
+    error: null,
+  });
+  const [taskCreateState, setTaskCreateState] = useState<DirectorTaskCreateState>({
+    loading: false,
+    message: null,
+    error: null,
+    taskId: null,
+  });
+  const [directorRunEvidence, setDirectorRunEvidence] = useState<DirectorRunEvidenceState>({
+    runId: null,
+    loading: false,
+    data: null,
+    error: null,
+  });
+  const [directorRunCancelState, setDirectorRunCancelState] = useState<DirectorRunCancelState>({
+    runId: null,
+    loading: false,
+    message: null,
+    error: null,
+  });
+  const [directorToggleStatusEvidence, setDirectorToggleStatusEvidence] = useState<DirectorToggleStatusEvidenceState>({
+    triggered: false,
+    loading: false,
+    data: null,
+    error: null,
+  });
+  const [taskBackendDetail, setTaskBackendDetail] = useState<DirectorTaskBackendDetailState>({
+    taskId: null,
+    data: null,
+    loading: false,
+    error: null,
+  });
+  const [capabilityHosts, setCapabilityHosts] = useState<DirectorCapabilityHost[]>([]);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
+  const [isCapabilityLoading, setIsCapabilityLoading] = useState(false);
+  const [kernelCacheStats, setKernelCacheStats] = useState<RoleKernelCacheStats | null>(null);
+  const [kernelLLMEvents, setKernelLLMEvents] = useState<RoleKernelLLMEventsResponse | null>(null);
+  const [kernelTokenBudgetStats, setKernelTokenBudgetStats] = useState<RoleKernelTokenBudgetStats | null>(null);
+  const [kernelDiagnosticsError, setKernelDiagnosticsError] = useState<string | null>(null);
+  const [isKernelDiagnosticsLoading, setIsKernelDiagnosticsLoading] = useState(false);
+  const [isKernelCacheClearing, setIsKernelCacheClearing] = useState(false);
+
   // 用户手动切换视图的标记
   const userSwitchedViewRef = useRef(false);
   const lastPhaseRef = useRef<string>('');
-  
+
   // 阶段到视图的映射
   const PHASE_TO_VIEW: Record<string, { view: DirectorActiveView; label: string }> = {
     'idle': { view: 'tasks', label: '等待' },
@@ -636,28 +1187,134 @@ export function DirectorWorkspace({
     'completed': { view: 'tasks', label: '完成' },
     'error': { view: 'activity', label: '错误' },
   };
-  
+
   // 自动切换视图基于当前阶段
   useEffect(() => {
     if (!directorRunning || userSwitchedViewRef.current) return;
-    
+
     const phaseConfig = PHASE_TO_VIEW[currentPhase] || PHASE_TO_VIEW['idle'];
-    
+
     if (currentPhase !== lastPhaseRef.current) {
       lastPhaseRef.current = currentPhase;
-      
+
       if (phaseConfig.view !== activeView) {
         setActiveView(phaseConfig.view);
       }
     }
   }, [currentPhase, directorRunning, activeView]);
-  
+
   // 用户手动点击导航时记录偏好
   const handleViewChange = useCallback((view: DirectorActiveView) => {
     userSwitchedViewRef.current = true;
     setActiveView(view);
   }, []);
-  
+
+  useEffect(() => {
+    if (!workspace) {
+      setCapabilityHosts([]);
+      setCapabilityError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCapabilities = async () => {
+      setIsCapabilityLoading(true);
+      setCapabilityError(null);
+
+      const result = await getDirectorCapabilities();
+      if (cancelled) return;
+
+      if (result.ok && result.data) {
+        setCapabilityHosts(normalizeDirectorCapabilityHosts(result.data));
+      } else {
+        setCapabilityHosts([]);
+        setCapabilityError(result.error || 'Director capability matrix unavailable');
+      }
+
+      setIsCapabilityLoading(false);
+    };
+
+    void loadCapabilities();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace]);
+
+  const loadKernelDiagnostics = useCallback(async () => {
+    if (!workspace) {
+      setKernelCacheStats(null);
+      setKernelLLMEvents(null);
+      setKernelTokenBudgetStats(null);
+      setKernelDiagnosticsError(null);
+      return;
+    }
+
+    setIsKernelDiagnosticsLoading(true);
+    setKernelDiagnosticsError(null);
+
+    try {
+      const [cacheResult, tokenResult, llmResult] = await Promise.all([
+        getRoleKernelCacheStats('director'),
+        getRoleKernelTokenBudgetStats('director'),
+        getRoleKernelLLMEvents('director', { role: 'director', limit: 5 }),
+      ]);
+      const errors: string[] = [];
+
+      if (cacheResult.ok && cacheResult.data) {
+        setKernelCacheStats(cacheResult.data);
+      } else {
+        setKernelCacheStats(null);
+        errors.push(cacheResult.error || 'Director LLM cache stats unavailable');
+      }
+
+      if (tokenResult.ok && tokenResult.data) {
+        setKernelTokenBudgetStats(tokenResult.data);
+      } else {
+        setKernelTokenBudgetStats(null);
+        errors.push(tokenResult.error || 'Director token budget stats unavailable');
+      }
+
+      if (llmResult.ok && llmResult.data) {
+        setKernelLLMEvents(llmResult.data);
+      } else {
+        setKernelLLMEvents(null);
+        errors.push(llmResult.error || 'Director LLM events unavailable');
+      }
+
+      setKernelDiagnosticsError(errors.length > 0 ? errors.join('；') : null);
+    } catch (err) {
+      setKernelCacheStats(null);
+      setKernelLLMEvents(null);
+      setKernelTokenBudgetStats(null);
+      setKernelDiagnosticsError(err instanceof Error ? err.message : 'Director Kernel diagnostics unavailable');
+    } finally {
+      setIsKernelDiagnosticsLoading(false);
+    }
+  }, [workspace]);
+
+  useEffect(() => {
+    void loadKernelDiagnostics();
+  }, [loadKernelDiagnostics]);
+
+  const handleClearKernelCache = useCallback(async () => {
+    setIsKernelCacheClearing(true);
+    setKernelDiagnosticsError(null);
+    try {
+      const result = await clearRoleKernelCache('director');
+      if (result.ok) {
+        await loadKernelDiagnostics();
+      } else {
+        setKernelDiagnosticsError(result.error || 'Director LLM cache clear failed');
+      }
+    } catch (err) {
+      setKernelDiagnosticsError(err instanceof Error ? err.message : 'Director LLM cache clear failed');
+    } finally {
+      setIsKernelCacheClearing(false);
+    }
+  }, [loadKernelDiagnostics]);
+
   useEffect(() => {
     if (!workspace) {
       setFallbackTasks([]);
@@ -669,39 +1326,13 @@ export function DirectorWorkspace({
 
     const syncTasks = async () => {
       try {
-        const sources = directorRunning ? ['workflow', 'local'] : ['auto', 'local'];
-        const rows: PmTask[] = [];
-        for (const source of sources) {
-          const response = await apiFetchFresh(`/v2/director/tasks?source=${source}`);
-          if (!response.ok) {
-            continue;
-          }
-          const payload = await response.json();
-          if (!Array.isArray(payload) || cancelled) {
-            continue;
-          }
-          rows.push(
-            ...payload
-              .filter((item): item is PmTask => {
-                return Boolean(item && typeof item === 'object' && String((item as { id?: unknown }).id || '').trim());
-              })
-              .map((item) => ({
-                ...item,
-                metadata: {
-                  ...readTaskMetadata(item),
-                  director_task_source: source,
-                },
-              })),
-          );
-        }
+        const result = await listDirectorTaskFallbackRows(directorRunning);
         if (cancelled) {
           return;
         }
-        const merged = new Map<string, PmTask>();
-        for (const row of rows) {
-          merged.set(String(row.id), row);
+        if (result.ok && Array.isArray(result.data)) {
+          setFallbackTasks(result.data as unknown as PmTask[]);
         }
-        setFallbackTasks(Array.from(merged.values()));
       } catch {
         // Ignore polling errors and keep using live push data.
       }
@@ -719,6 +1350,146 @@ export function DirectorWorkspace({
       }
     };
   }, [workspace, directorRunning]);
+
+  useEffect(() => {
+    if (!workspace) {
+      setBackendWorkers([]);
+      setWorkerFallbackError(null);
+      setWorkerBackendDetail({
+        workerId: null,
+        data: null,
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const syncWorkers = async () => {
+      try {
+        const result = await listDirectorWorkers();
+        if (cancelled) {
+          return;
+        }
+        if (result.ok && Array.isArray(result.data)) {
+          setBackendWorkers(normalizeDirectorWorkerRows(result.data));
+          setWorkerFallbackError(null);
+        } else {
+          setWorkerFallbackError(result.error || 'Director worker backend unavailable');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setWorkerFallbackError(err instanceof Error ? err.message : 'Director worker backend unavailable');
+        }
+      }
+    };
+
+    void syncWorkers();
+    timer = setInterval(() => {
+      void syncWorkers();
+    }, directorRunning ? 2500 : 6000);
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        clearInterval(timer);
+      }
+    };
+  }, [workspace, directorRunning]);
+
+  useEffect(() => {
+    const taskId = String(selectedTaskId || '').trim();
+    if (!taskId) {
+      setTaskBackendDetail({
+        taskId: null,
+        data: null,
+        loading: false,
+        error: null,
+      });
+      setTaskLLMEvents({
+        taskId: null,
+        events: [],
+        stats: null,
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+
+    let detailCancelled = false;
+    setTaskBackendDetail((current) => ({
+      taskId,
+      data: current.taskId === taskId ? current.data : null,
+      loading: true,
+      error: null,
+    }));
+
+    const loadTaskBackendDetail = async () => {
+      const result = await getDirectorTask(taskId);
+      if (detailCancelled) {
+        return;
+      }
+      if (result.ok && result.data) {
+        setTaskBackendDetail({
+          taskId,
+          data: result.data,
+          loading: false,
+          error: null,
+        });
+      } else {
+        setTaskBackendDetail({
+          taskId,
+          data: null,
+          loading: false,
+          error: result.error || 'Director task detail unavailable',
+        });
+      }
+    };
+
+    void loadTaskBackendDetail();
+
+    let cancelled = false;
+    setTaskLLMEvents((current) => ({
+      taskId,
+      events: current.taskId === taskId ? current.events : [],
+      stats: current.taskId === taskId ? current.stats : null,
+      loading: true,
+      error: null,
+    }));
+
+    const loadTaskLLMEvents = async () => {
+      const result = await getDirectorTaskKernelLLMEvents(taskId, { limit: 25 });
+      if (cancelled) {
+        return;
+      }
+      if (result.ok && result.data) {
+        setTaskLLMEvents({
+          taskId,
+          events: Array.isArray(result.data.events) ? result.data.events : [],
+          stats: result.data.stats || null,
+          loading: false,
+          error: null,
+        });
+      } else {
+        setTaskLLMEvents({
+          taskId,
+          events: [],
+          stats: null,
+          loading: false,
+          error: result.error || 'Director task LLM events unavailable',
+        });
+      }
+    };
+
+    void loadTaskLLMEvents();
+
+    return () => {
+      detailCancelled = true;
+      cancelled = true;
+    };
+  }, [selectedTaskId]);
 
   const visibleTasks = useMemo(() => {
     const toTaskId = (task: PmTask): string => String(task.id || '').trim();
@@ -759,6 +1530,11 @@ export function DirectorWorkspace({
       .map((taskId) => merged.get(taskId))
       .filter((task): task is PmTask => Boolean(task));
   }, [tasks, fallbackTasks]);
+
+  const visibleWorkers = useMemo(
+    () => mergeDirectorWorkers(workers, backendWorkers),
+    [workers, backendWorkers],
+  );
 
   const taskRealtimeTelemetry = useMemo(
     () => buildTaskRealtimeTelemetry(visibleTasks, fileEditEvents, taskProgressMap),
@@ -914,11 +1690,341 @@ export function DirectorWorkspace({
 
   const handleTaskSelect = useCallback((taskId: string) => {
     setSelectedTaskId(taskId);
+    setTaskCancelState({
+      taskId,
+      loading: false,
+      message: null,
+      error: null,
+    });
     const task = executionTasks.find(t => t.id === taskId);
     if (task) {
       setTerminalOutput(`选中任务: ${task.name}\n状态: ${task.status}\n类型: ${task.type}\n`);
     }
   }, [executionTasks]);
+
+  const handleWorkerSelect = useCallback(async (workerId: string) => {
+    const normalizedWorkerId = String(workerId || '').trim();
+    if (!normalizedWorkerId) {
+      return;
+    }
+
+    setWorkerBackendDetail({
+      workerId: normalizedWorkerId,
+      data: null,
+      loading: true,
+      error: null,
+    });
+    setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] 读取 Director worker: ${normalizedWorkerId}\n`);
+
+    try {
+      const result = await getDirectorWorker(normalizedWorkerId);
+      if (!result.ok || !result.data) {
+        setWorkerBackendDetail({
+          workerId: normalizedWorkerId,
+          data: null,
+          loading: false,
+          error: result.error || 'Director worker detail unavailable',
+        });
+        return;
+      }
+      setWorkerBackendDetail({
+        workerId: normalizedWorkerId,
+        data: result.data,
+        loading: false,
+        error: null,
+      });
+    } catch (error) {
+      setWorkerBackendDetail({
+        workerId: normalizedWorkerId,
+        data: null,
+        loading: false,
+        error: error instanceof Error ? error.message : 'Director worker detail unavailable',
+      });
+    }
+  }, []);
+
+  const handleTaskCreate = useCallback(async (draft: DirectorTaskCreateDraft) => {
+    const subject = String(draft.subject || '').trim();
+    if (!subject) {
+      return;
+    }
+    const selectedTask = selectedTaskId ? executionTaskMap.get(selectedTaskId) || null : null;
+    const selectedTaskIdForMetadata = selectedTask?.pmTaskId || selectedTask?.id || `director-desktop-${Date.now()}`;
+    const acceptance = selectedTask?.acceptanceCriteria?.length
+      ? selectedTask.acceptanceCriteria
+      : [`Desktop-created Director task: ${subject}`];
+    const payload: CreateDirectorTaskPayload = {
+      subject,
+      description: String(draft.description || subject).trim() || subject,
+      command: null,
+      priority: draft.priority,
+      timeout_seconds: Math.max(30, Math.round(Number(draft.timeoutSeconds) || 300)),
+      metadata: {
+        pm_task_id: selectedTaskIdForMetadata,
+        pm_task_title: selectedTask?.name || subject,
+        pm_task_status: selectedTask?.status || 'desktop_created',
+        acceptance,
+        blueprint_id: selectedTask?.blueprintId || null,
+        blueprint_path: selectedTask?.blueprintPath || null,
+        runtime_blueprint_path: selectedTask?.blueprintPath || null,
+        guardrails: {
+          source: 'director_desktop_task_create',
+        },
+        context_snapshot_ref: null,
+      },
+    };
+
+    setTaskCreateState({
+      loading: true,
+      message: null,
+      error: null,
+      taskId: null,
+    });
+    setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] 创建 Director 任务: ${subject}\n`);
+
+    try {
+      const result = await createDirectorTask(payload);
+      if (!result.ok || !result.data) {
+        setTaskCreateState({
+          loading: false,
+          message: null,
+          error: result.error || 'Director task create failed',
+          taskId: null,
+        });
+        return;
+      }
+
+      const createdTaskId = String(result.data.id || result.data.task_id || subject).trim();
+      setTaskCreateState({
+        loading: false,
+        message: `已创建 Director 任务: ${createdTaskId}`,
+        error: null,
+        taskId: createdTaskId,
+      });
+      setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] Director 任务已创建: ${createdTaskId}\n`);
+      if (createdTaskId) {
+        setSelectedTaskId(createdTaskId);
+      }
+
+      try {
+        const refreshed = await listDirectorTaskFallbackRows(directorRunning);
+        if (refreshed.ok && Array.isArray(refreshed.data)) {
+          setFallbackTasks(refreshed.data as unknown as PmTask[]);
+        }
+      } catch {
+        // The create evidence is still valid if the best-effort list refresh fails.
+      }
+    } catch (error) {
+      setTaskCreateState({
+        loading: false,
+        message: null,
+        error: error instanceof Error ? error.message : 'Director task create failed',
+        taskId: null,
+      });
+    }
+  }, [directorRunning, executionTaskMap, selectedTaskId]);
+
+  const handleTaskCancel = useCallback(async (taskId: string) => {
+    const normalizedTaskId = String(taskId || '').trim();
+    if (!normalizedTaskId) {
+      return;
+    }
+
+    const startedAt = new Date().toLocaleTimeString();
+    setTaskCancelState({
+      taskId: normalizedTaskId,
+      loading: true,
+      message: null,
+      error: null,
+    });
+    setTerminalOutput((prev) => `${prev}[${startedAt}] 请求取消 Director 任务: ${normalizedTaskId}\n`);
+
+    try {
+      const result = await cancelDirectorTask(normalizedTaskId);
+      if (!result.ok || !result.data) {
+        const error = result.error || 'Director task cancel failed';
+        setTaskCancelState({
+          taskId: normalizedTaskId,
+          loading: false,
+          message: null,
+          error,
+        });
+        setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] Director 任务取消失败: ${error}\n`);
+        return;
+      }
+
+      const responseTaskId = String(result.data.task_id || result.data.id || normalizedTaskId).trim();
+      const status = String(result.data.status || '').trim();
+      const message = status
+        ? `取消请求已提交: ${responseTaskId} (${status})`
+        : `取消请求已提交: ${responseTaskId}`;
+      setTaskCancelState({
+        taskId: normalizedTaskId,
+        loading: false,
+        message,
+        error: null,
+      });
+      setTerminalOutput((prev) =>
+        `${prev}[${new Date().toLocaleTimeString()}] Director 任务取消请求已提交: ${responseTaskId}${status ? ` status=${status}` : ''}\n`,
+      );
+
+      try {
+        const refreshed = await listDirectorTaskFallbackRows(directorRunning);
+        if (refreshed.ok && Array.isArray(refreshed.data)) {
+          setFallbackTasks(refreshed.data as unknown as PmTask[]);
+        }
+      } catch {
+        // Keep the submitted cancellation evidence visible even if the best-effort refresh fails.
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || 'Director task cancel failed');
+      setTaskCancelState({
+        taskId: normalizedTaskId,
+        loading: false,
+        message: null,
+        error: message,
+      });
+      setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] Director 任务取消失败: ${message}\n`);
+    }
+  }, [directorRunning]);
+
+  const loadDirectorRunEvidence = useCallback(async (runId: string) => {
+    const normalizedRunId = String(runId || '').trim();
+    if (!normalizedRunId) {
+      return;
+    }
+
+    setDirectorRunEvidence({
+      runId: normalizedRunId,
+      loading: true,
+      data: null,
+      error: null,
+    });
+    setDirectorRunCancelState({
+      runId: normalizedRunId,
+      loading: false,
+      message: null,
+      error: null,
+    });
+
+    try {
+      const result = await getDirectorRun(normalizedRunId);
+      if (!result.ok || !result.data) {
+        setDirectorRunEvidence({
+          runId: normalizedRunId,
+          loading: false,
+          data: null,
+          error: result.error || 'Director run evidence unavailable',
+        });
+        return;
+      }
+
+      setDirectorRunEvidence({
+        runId: normalizedRunId,
+        loading: false,
+        data: result.data,
+        error: null,
+      });
+    } catch (error) {
+      setDirectorRunEvidence({
+        runId: normalizedRunId,
+        loading: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'Director run evidence unavailable',
+      });
+    }
+  }, []);
+
+  const handleCancelDirectorRun = useCallback(async () => {
+    const normalizedRunId = String(directorRunEvidence.runId || '').trim();
+    if (!normalizedRunId) {
+      return;
+    }
+
+    setDirectorRunCancelState({
+      runId: normalizedRunId,
+      loading: true,
+      message: null,
+      error: null,
+    });
+    setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] 请求取消 Director run: ${normalizedRunId}\n`);
+
+    try {
+      const result = await cancelDirectorRun(normalizedRunId);
+      if (!result.ok || !result.data) {
+        const error = result.error || 'Director run cancel failed';
+        setDirectorRunCancelState({
+          runId: normalizedRunId,
+          loading: false,
+          message: null,
+          error,
+        });
+        setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] Director run 取消失败: ${error}\n`);
+        return;
+      }
+
+      const statusText = String(result.data.status || 'unknown').trim() || 'unknown';
+      setDirectorRunEvidence({
+        runId: normalizedRunId,
+        loading: false,
+        data: result.data,
+        error: null,
+      });
+      setDirectorRunCancelState({
+        runId: normalizedRunId,
+        loading: false,
+        message: `取消运行已提交: ${statusText}`,
+        error: null,
+      });
+      setTerminalOutput((prev) =>
+        `${prev}[${new Date().toLocaleTimeString()}] Director run 取消请求已提交: ${normalizedRunId} status=${statusText}\n`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || 'Director run cancel failed');
+      setDirectorRunCancelState({
+        runId: normalizedRunId,
+        loading: false,
+        message: null,
+        error: message,
+      });
+      setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] Director run 取消失败: ${message}\n`);
+    }
+  }, [directorRunEvidence.runId]);
+
+  const toggleDirectorWithStatusEvidence = useCallback(async () => {
+    setDirectorToggleStatusEvidence({
+      triggered: true,
+      loading: true,
+      data: null,
+      error: null,
+    });
+    try {
+      await Promise.resolve(onToggleDirector());
+      const statusResult = await getDirectorStatus();
+      if (statusResult.ok && statusResult.data) {
+        setDirectorToggleStatusEvidence({
+          triggered: true,
+          loading: false,
+          data: statusResult.data,
+          error: null,
+        });
+        return;
+      }
+      setDirectorToggleStatusEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: statusResult.error || 'Director status unavailable',
+      });
+    } catch (error) {
+      setDirectorToggleStatusEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'Director status unavailable',
+      });
+    }
+  }, [onToggleDirector]);
 
   const handleExecute = useCallback(async () => {
     const nextAction = directorRunning ? '停止' : '启动';
@@ -929,39 +2035,45 @@ export function DirectorWorkspace({
     setTerminalOutput(prev => prev + newLog + '\n');
 
     if (directorRunning) {
-      onToggleDirector();
+      await toggleDirectorWithStatusEvidence();
       return;
     }
 
-    if (!selectedTaskId) {
-      onToggleDirector();
-      return;
-    }
-
-    const result = await runDirector({
+    const payload: RunDirectorPayload = {
       workspace,
-      task_id: selectedTaskId,
-      task_filter: selectedTaskId,
       execution_mode: 'parallel',
-    });
+    };
+    if (selectedTaskId) {
+      payload.task_id = selectedTaskId;
+      payload.task_filter = selectedTaskId;
+    }
+
+    const result = await runDirector(payload);
     if (!result.ok || !result.data) {
       setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director 任务启动失败: ${result.error || 'unknown error'}\n`);
       return;
     }
     const data = result.data;
     setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director run 已创建: ${data.run_id} queued=${data.tasks_queued}\n`);
-  }, [currentTaskTitle, directorRunning, executionTasks, onToggleDirector, selectedTaskId, workspace]);
+    if (data.run_id) {
+      void loadDirectorRunEvidence(data.run_id);
+    }
+  }, [currentTaskTitle, directorRunning, executionTasks, loadDirectorRunEvidence, selectedTaskId, toggleDirectorWithStatusEvidence, workspace]);
 
-  const handlePause = useCallback(() => {
+  const handlePause = useCallback(async () => {
     if (!directorRunning) {
       return;
     }
     setTerminalOutput(prev => prev + `[${new Date().toLocaleTimeString()}] 停止 Director 执行\n`);
-    onToggleDirector();
-  }, [directorRunning, onToggleDirector]);
+    await toggleDirectorWithStatusEvidence();
+  }, [directorRunning, toggleDirectorWithStatusEvidence]);
 
   const handleReset = useCallback(() => {
     setSelectedTaskId(null);
+    setTerminalOutput('');
+  }, []);
+
+  const handleClearTerminal = useCallback(() => {
     setTerminalOutput('');
   }, []);
 
@@ -995,6 +2107,12 @@ export function DirectorWorkspace({
   const pendingTasks = executionTasks.filter(t => t.status === 'pending').length;
   const totalTasks = executionTasks.length;
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const directorToggleBusy = directorToggleStatusEvidence.loading;
+  const directorRunCancelDisabled =
+    !directorRunEvidence.runId ||
+    directorRunEvidence.loading ||
+    directorRunCancelState.loading ||
+    isDirectorRunTerminal(directorRunEvidence.data?.status);
 
   return (
     <div data-testid="director-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
@@ -1100,11 +2218,11 @@ export function DirectorWorkspace({
             size="sm"
             onClick={handleExecute}
             data-testid="director-workspace-execute"
-            disabled={factoryMode}
+            disabled={factoryMode || directorToggleBusy}
             title={factoryMode ? "工厂模式下无法使用此功能" : undefined}
             className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
           >
-            {isStarting ? (
+            {isStarting || directorToggleBusy ? (
               <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
             ) : (
               <Play className="w-3.5 h-3.5 mr-1.5" />
@@ -1115,9 +2233,9 @@ export function DirectorWorkspace({
           <Button
             variant="ghost"
             size="icon"
-            onClick={handlePause}
+            onClick={() => { void handlePause(); }}
             data-testid="director-workspace-pause"
-            disabled={!directorRunning}
+            disabled={!directorRunning || directorToggleBusy}
             className="text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10"
           >
             <Pause className="w-4 h-4" />
@@ -1150,12 +2268,117 @@ export function DirectorWorkspace({
           <Button
             variant="ghost"
             size="icon"
+            onClick={onOpenSettings}
+            disabled={!onOpenSettings}
+            data-testid="director-workspace-open-settings"
+            title={onOpenSettings ? '系统配置' : '系统配置需由主界面打开'}
             className="text-slate-400 hover:text-slate-100"
           >
             <Settings className="w-4 h-4" />
           </Button>
         </div>
       </header>
+
+      <DirectorCapabilityStrip
+        hosts={capabilityHosts}
+        isLoading={isCapabilityLoading}
+        error={capabilityError}
+      />
+      <DirectorKernelDiagnosticsStrip
+        cacheStats={kernelCacheStats}
+        llmEvents={kernelLLMEvents}
+        tokenBudgetStats={kernelTokenBudgetStats}
+        isLoading={isKernelDiagnosticsLoading}
+        isClearing={isKernelCacheClearing}
+        error={kernelDiagnosticsError}
+        onRefresh={() => void loadKernelDiagnostics()}
+        onClearCache={() => void handleClearKernelCache()}
+      />
+      {directorRunEvidence.runId && (
+        <div
+          className="border-b border-white/10 bg-slate-950/70 px-4 py-2 text-xs text-slate-300"
+          data-testid="director-run-evidence"
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="font-medium text-slate-100">Director run evidence</span>
+            <span className="font-mono text-[11px] text-cyan-300">
+              /v2/director/runs/{directorRunEvidence.runId}
+            </span>
+            {directorRunEvidence.loading ? (
+              <span className="text-slate-400">正在读取运行快照...</span>
+            ) : directorRunEvidence.error ? (
+              <span className="text-rose-300">{directorRunEvidence.error}</span>
+            ) : directorRunEvidence.data ? (
+              <span className="text-emerald-300">
+                {directorRunEvidence.data.status || 'unknown'} · queued={directorRunEvidence.data.tasks_queued ?? 0}
+              </span>
+            ) : null}
+            {directorRunEvidence.data?.workspace ? (
+              <span className="truncate text-slate-400">{directorRunEvidence.data.workspace}</span>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void handleCancelDirectorRun();
+              }}
+              data-testid="director-run-cancel"
+              disabled={directorRunCancelDisabled}
+              title="取消 Director run"
+              className="h-6 gap-1 px-2 text-[11px] text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 disabled:text-slate-500"
+            >
+              {directorRunCancelState.loading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <XCircle className="h-3 w-3" />
+              )}
+              取消
+            </Button>
+            {directorRunCancelState.runId === directorRunEvidence.runId &&
+            (directorRunCancelState.loading || directorRunCancelState.message || directorRunCancelState.error) ? (
+              <span
+                className={cn(
+                  'font-mono text-[11px]',
+                  directorRunCancelState.error ? 'text-rose-300' : 'text-amber-300',
+                )}
+                data-testid="director-run-cancel-result"
+              >
+                /v2/director/runs/{directorRunEvidence.runId}/cancel ·{' '}
+                {directorRunCancelState.loading
+                  ? 'cancelling'
+                  : directorRunCancelState.error || directorRunCancelState.message}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
+      {directorToggleStatusEvidence.triggered && (
+        <div
+          className="border-b border-white/10 bg-slate-950/70 px-4 py-2 text-xs text-slate-300"
+          data-testid="director-toggle-status-evidence"
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="font-medium text-slate-100">Director status evidence</span>
+            <span className="font-mono text-[11px] text-cyan-300">/v2/director/status?source=auto</span>
+            {directorToggleStatusEvidence.loading ? (
+              <span className="text-slate-400">正在读取进程状态...</span>
+            ) : directorToggleStatusEvidence.error ? (
+              <span className="text-rose-300">{directorToggleStatusEvidence.error}</span>
+            ) : directorToggleStatusEvidence.data ? (
+              <span className={cn(
+                directorToggleStatusEvidence.data.running ? 'text-emerald-300' : 'text-slate-300',
+              )}>
+                {directorToggleStatusEvidence.data.running ? 'running' : 'idle'}
+                {' · '}
+                pid={directorToggleStatusEvidence.data.pid ?? 'none'}
+                {directorToggleStatusEvidence.data.mode ? ` · mode=${directorToggleStatusEvidence.data.mode}` : ''}
+                {directorToggleStatusEvidence.data.source ? ` · source=${directorToggleStatusEvidence.data.source}` : ''}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
@@ -1200,13 +2423,26 @@ export function DirectorWorkspace({
               {activeView === 'tasks' && (
                 <DirectorTaskPanelView
                   tasks={executionTasks}
-                  workers={workers}
+                  workers={visibleWorkers}
                   taskMap={executionTaskMap}
                   selectedTaskId={selectedTaskId}
                   onTaskSelect={handleTaskSelect}
                   onExecute={handleExecute}
+                  onTaskCancel={handleTaskCancel}
+                  onTaskCreate={handleTaskCreate}
                   isExecuting={isExecuting}
+                  isTaskCreating={taskCreateState.loading}
+                  taskCreateMessage={taskCreateState.message}
+                  taskCreateError={taskCreateState.error}
+                  isTaskCancelling={taskCancelState.taskId === selectedTaskId && taskCancelState.loading}
+                  taskCancelMessage={taskCancelState.taskId === selectedTaskId ? taskCancelState.message : null}
+                  taskCancelError={taskCancelState.taskId === selectedTaskId ? taskCancelState.error : null}
                   taskTraceMap={taskTraceMap}
+                  workerFallbackError={workerFallbackError}
+                  workerBackendDetail={workerBackendDetail}
+                  onWorkerSelect={handleWorkerSelect}
+                  taskBackendDetail={taskBackendDetail}
+                  taskLLMEvents={taskLLMEvents}
                 />
               )}
               {activeView === 'activity' && (
@@ -1223,11 +2459,17 @@ export function DirectorWorkspace({
                 <DirectorCodePanel workspace={workspace} fileEditEvents={fileEditEvents} />
               )}
               {activeView === 'terminal' && (
-                <DirectorTerminalPanel output={terminalOutput} />
+                <DirectorTerminalPanel output={terminalOutput} onClear={handleClearTerminal} />
               )}
               {activeView === 'debug' && (
                 <DirectorDebugPanel
                   tasks={executionTasks.filter((task) => task.status === 'failed' || task.status === 'blocked')}
+                  cancellingTaskId={taskCancelState.loading ? taskCancelState.taskId : null}
+                  onInspectTask={(taskId) => {
+                    handleTaskSelect(taskId);
+                    setActiveView('tasks');
+                  }}
+                  onCancelTask={(taskId) => { void handleTaskCancel(taskId); }}
                 />
               )}
             </div>
@@ -1239,7 +2481,7 @@ export function DirectorWorkspace({
               <Panel defaultSize={40} minSize={25} maxSize={50}>
                 <AIDialoguePanel
                   dialogueRole="director"
-                  roleDisplayName="大将军"
+                  roleDisplayName="Director"
                   roleTheme={{
                     primary: 'indigo',
                     secondary: 'indigo-400',
@@ -1251,7 +2493,16 @@ export function DirectorWorkspace({
                     session_id: session.id,
                     tasks_count: executionTasks.length,
                     running_tasks: runningTasks,
+                    workers_count: visibleWorkers.length,
+                    selected_task_id: selectedTaskId || null,
+                    current_task_id: currentTaskId || null,
                   }}
+                  workspace={workspace}
+                  hostKind="electron_workbench"
+                  attachmentMode={(selectedTaskId || currentTaskId) ? 'attached_readonly' : 'isolated'}
+                  attachedTaskId={selectedTaskId || currentTaskId || undefined}
+                  workflowExportTarget="director"
+                  workflowExportLabel="导出执行"
                 />
               </Panel>
             </>
@@ -2049,6 +3300,10 @@ interface DirectorCodePanelProps {
 
 function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps) {
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
+  const [openFileStatus, setOpenFileStatus] = useState<{
+    kind: 'idle' | 'loading' | 'success' | 'error';
+    message: string | null;
+  }>({ kind: 'idle', message: null });
 
   const getOperationIcon = (operation: string) => {
     switch (operation) {
@@ -2089,11 +3344,38 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
   };
 
   // 只显示最近的 20 个事件，按时间倒序
-  const recentEvents = [...fileEditEvents].reverse().slice(0, 20);
+  const recentEvents = useMemo(() => [...fileEditEvents].reverse().slice(0, 20), [fileEditEvents]);
+  const selectedOpenEvent = useMemo(
+    () => recentEvents.find((event) => event.id === expandedEventId) ?? recentEvents[0] ?? null,
+    [expandedEventId, recentEvents],
+  );
 
   const toggleExpand = (eventId: string) => {
     setExpandedEventId(prev => prev === eventId ? null : eventId);
   };
+
+  const handleOpenFile = useCallback(async () => {
+    const target = resolveDirectorOpenTarget(workspace, selectedOpenEvent?.filePath);
+    if (!target) {
+      setOpenFileStatus({ kind: 'error', message: '没有可打开的工作区文件' });
+      return;
+    }
+
+    setOpenFileStatus({ kind: 'loading', message: `正在打开 ${selectedOpenEvent?.filePath || target}` });
+    try {
+      const result = await openPath(target);
+      if (!result.ok) {
+        setOpenFileStatus({ kind: 'error', message: result.error || '打开文件失败' });
+        return;
+      }
+      setOpenFileStatus({ kind: 'success', message: `已请求打开 ${selectedOpenEvent?.filePath || target}` });
+    } catch (error) {
+      setOpenFileStatus({
+        kind: 'error',
+        message: error instanceof Error ? error.message : '打开文件失败',
+      });
+    }
+  }, [selectedOpenEvent, workspace]);
 
   return (
     <div className="h-full flex flex-col">
@@ -2107,12 +3389,33 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" className="text-slate-400">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { void handleOpenFile(); }}
+            disabled={!selectedOpenEvent || openFileStatus.kind === 'loading'}
+            data-testid="director-code-open-file"
+            title={selectedOpenEvent?.filePath ? `打开 ${selectedOpenEvent.filePath}` : '没有可打开的文件'}
+            className="text-slate-400"
+          >
             <FileCode className="w-4 h-4 mr-1.5" />
-            打开文件
+            {openFileStatus.kind === 'loading' ? '打开中' : '打开文件'}
           </Button>
         </div>
       </div>
+      {openFileStatus.message ? (
+        <div
+          className={cn(
+            'border-b px-4 py-1.5 text-[11px]',
+            openFileStatus.kind === 'error'
+              ? 'border-amber-500/20 bg-amber-500/10 text-amber-100'
+              : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-100',
+          )}
+          data-testid="director-code-open-file-evidence"
+        >
+          {openFileStatus.message}
+        </div>
+      ) : null}
       <div className="flex-1 overflow-hidden flex">
         {/* 文件变更列表 + Diff 详情 */}
         <div className="flex-1 overflow-auto p-4">
@@ -2234,12 +3537,19 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
 }
 
 // Terminal Panel
-function DirectorTerminalPanel({ output }: { output: string }) {
+function DirectorTerminalPanel({ output, onClear }: { output: string; onClear: () => void }) {
   return (
     <div className="h-full flex flex-col">
       <div className="h-12 flex items-center justify-between px-4 border-b border-white/5">
         <h2 className="text-sm font-medium text-slate-200">执行终端</h2>
-        <Button variant="ghost" size="sm" className="text-slate-400">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClear}
+          disabled={!output}
+          data-testid="director-terminal-clear"
+          className="text-slate-400"
+        >
           <RotateCcw className="w-4 h-4 mr-1.5" />
           清空
         </Button>
@@ -2258,7 +3568,17 @@ function DirectorTerminalPanel({ output }: { output: string }) {
 }
 
 // Debug Panel
-function DirectorDebugPanel({ tasks }: { tasks: ExecutionTask[] }) {
+function DirectorDebugPanel({
+  tasks,
+  cancellingTaskId,
+  onInspectTask,
+  onCancelTask,
+}: {
+  tasks: ExecutionTask[];
+  cancellingTaskId?: string | null;
+  onInspectTask: (taskId: string) => void;
+  onCancelTask: (taskId: string) => void;
+}) {
   return (
     <div className="h-full flex flex-col">
       <div className="h-12 flex items-center px-4 border-b border-white/5">
@@ -2287,11 +3607,24 @@ function DirectorDebugPanel({ tasks }: { tasks: ExecutionTask[] }) {
                   </pre>
                 )}
                 <div className="mt-3 flex gap-2">
-                  <Button size="sm" variant="outline" className="border-red-500/30 text-red-400">
-                    调试
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onInspectTask(task.id)}
+                    data-testid={`director-debug-inspect-${task.id}`}
+                    className="border-red-500/30 text-red-400"
+                  >
+                    定位
                   </Button>
-                  <Button size="sm" variant="ghost" className="text-slate-400">
-                    跳过
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => onCancelTask(task.id)}
+                    disabled={cancellingTaskId === task.id}
+                    data-testid={`director-debug-cancel-${task.id}`}
+                    className="text-slate-400"
+                  >
+                    {cancellingTaskId === task.id ? '取消中' : '取消'}
                   </Button>
                 </div>
               </div>

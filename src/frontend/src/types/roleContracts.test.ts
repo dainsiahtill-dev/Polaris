@@ -4,6 +4,9 @@ import {
   type ChiefEngineerBlueprintListV1,
   type RoleTaskContractV1,
 } from './roleContracts';
+import type { UseRoleChatOptions } from '@/app/components/ai-dialogue/useRoleChat';
+import type { RoleChatRole } from '@/services/api.types';
+import type { DialogueRole } from '@/services/conversationApi';
 
 describe('roleContracts', () => {
   it('keeps Director task fields shared with backend contract names', () => {
@@ -50,5 +53,26 @@ describe('roleContracts', () => {
     };
 
     expect(listing.blueprints[0].source).toBe('runtime/blueprints');
+  });
+
+  it('keeps Chief Engineer available to the shared dialogue stack', () => {
+    const role: DialogueRole = 'chief_engineer';
+    const apiRole: RoleChatRole = 'chief_engineer';
+    const hookOptions: Pick<UseRoleChatOptions, 'role'> = {
+      role: 'chief_engineer',
+    };
+
+    expect(role).toBe('chief_engineer');
+    expect(apiRole).toBe('chief_engineer');
+    expect(hookOptions.role).toBe('chief_engineer');
+  });
+
+  it('keeps Scout out of the backend role-chat prompt registry type', () => {
+    const conversationOnlyRole: DialogueRole = 'scout';
+    // @ts-expect-error Scout has no backend role-chat prompt template.
+    const unsupportedRole: RoleChatRole = 'scout';
+
+    expect(conversationOnlyRole).toBe('scout');
+    expect(unsupportedRole).toBe('scout');
   });
 });

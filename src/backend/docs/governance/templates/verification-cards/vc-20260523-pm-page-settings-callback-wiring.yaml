@@ -1,0 +1,58 @@
+card_id: "vc-20260523-pm-page-settings-callback-wiring"
+bug_summary: >
+  PMPage dropped the PMWorkspace onOpenSettings callback, making the PM desktop
+  settings control inert when mounted through the page wrapper.
+
+classification: one_off
+
+bug_path:
+  file: "src/frontend/src/app/pages/PMPage.tsx"
+  method: "PMWorkspace wrapper props"
+  symptom: >
+    PMWorkspace supports onOpenSettings, but PMPage did not declare or forward
+    the callback.
+
+assumptions:
+  - id: "A1"
+    statement: "PMWorkspace already supports settings entry wiring."
+    status: verified_true
+    evidence: >
+      PMWorkspaceProps includes onOpenSettings and the settings button is
+      enabled only when the callback is present.
+
+  - id: "A2"
+    statement: "App already passes settings wiring directly to PMWorkspace."
+    status: verified_true
+    evidence: >
+      App.tsx mounts PMWorkspace with onOpenSettings={() => uiActions.openSettings()}.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Adding another settings button in PMPage would duplicate PMWorkspace UI and
+    leave the wrapper contract incomplete.
+  guardrail: >
+    Forward the existing callback through PMPage and test the wrapper boundary.
+
+verification_plan:
+  - command: "npm run test -- PMPage PMWorkspace"
+    expected: "PM page and workspace focused tests pass."
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes."
+  - command: "npm run lint"
+    expected: "ESLint passes."
+
+verification_results:
+  - command: "npm run test -- PMPage PMWorkspace"
+    status: passed
+    evidence: "2 focused frontend test files passed; 6 tests passed."
+  - command: "npm run typecheck"
+    status: passed
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    status: passed
+    evidence: "ESLint completed without findings."
+  - command: "npm run test -- PMPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService"
+    status: passed
+    evidence: "14 cross-role frontend/service test files passed; 126 tests passed."
+
+status: passed

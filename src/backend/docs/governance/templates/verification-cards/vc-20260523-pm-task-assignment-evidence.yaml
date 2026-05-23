@@ -1,0 +1,80 @@
+card_id: "vc-20260523-pm-task-assignment-evidence"
+bug_summary: >
+  PM desktop task detail did not expose assignment history from
+  /v2/pm/tasks/{task_id}/assignments even though the backend route exists.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/pm/PMTaskPanel.tsx"
+  method: "selected task assignment evidence"
+  symptom: >
+    A selected PM task showed contract and task-detail evidence, but omitted
+    assignment/worker handoff history recorded by the PM management backend.
+
+assumptions:
+  - id: "A1"
+    statement: "The backend already exposes a PM task assignment route."
+    status: verified_true
+    evidence: >
+      pm_management.py exposes /v2/pm/tasks/{task_id}/assignments and existing
+      PM management v2 tests cover the route.
+
+  - id: "A2"
+    statement: "The PM service layer lacks a typed assignment wrapper."
+    status: verified_true
+    evidence: >
+      pmService exposes task list/detail/history/search wrappers but no
+      listPmTaskAssignments wrapper.
+
+  - id: "A3"
+    statement: "Assignment evidence must not become a writable PM task source."
+    status: verified_true
+    evidence: >
+      The intended panel only reads and renders assignment rows; task state
+      remains owned by the existing PM task registry.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Merging assignment rows into the task list would confuse task contracts with
+    assignment events and distort PM task counts.
+  guardrail: >
+    Keep assignment rows in a separate detail-only evidence section.
+
+verification_plan:
+  - command: "npm run test -- PMTaskPanel pmService"
+    expected: "PM task panel and PM service tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run lint"
+    expected: "ESLint passes"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    expected: "Existing PM management v2 route tests pass"
+
+verification_results:
+  - command: "npm run test -- PMTaskPanel pmService"
+    result: pass
+    evidence: "2 files passed; 64 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    result: pass
+    evidence: "eslint completed successfully."
+  - command: "npm run test -- PMWorkspace PMWorkbenchPanel PMTaskPanel PMDocumentPanel PMDiagnosticsPanel ChiefEngineerWorkspace DirectorWorkspace DirectorWorkbenchPanel DirectorTaskPanel pmService"
+    result: pass
+    evidence: "11 files passed; 115 tests passed."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    result: pass
+    evidence: "37 tests passed."
+  - command: "npm run test"
+    result: pass
+    evidence: "76 files passed; 685 tests passed. jsdom emitted its existing non-fatal navigation warning."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "Renderer build passed and Electron role workspace visual audit passed."
+  - command: "git diff --check -- src/frontend/src/services/pmService.ts src/frontend/src/services/index.ts src/frontend/src/services/__tests__/pmService.test.ts src/frontend/src/app/components/pm/PMTaskPanel.tsx src/frontend/src/app/components/pm/PMTaskPanel.test.tsx src/backend/docs/blueprints/PM_DESKTOP_TASK_ASSIGNMENT_EVIDENCE_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-pm-task-assignment-evidence.yaml"
+    result: pass
+    evidence: "No whitespace errors; Git reported LF-to-CRLF normalization warnings for existing frontend files."
+
+status: passed

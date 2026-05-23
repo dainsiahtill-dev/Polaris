@@ -1,0 +1,81 @@
+card_id: "vc-20260523-pm-task-detail-backend-hydration"
+bug_summary: >
+  PM desktop task detail drill-down rendered selected runtime/list/search rows
+  but did not hydrate full task contracts from /v2/pm/tasks/{task_id}.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/pm/PMTaskPanel.tsx"
+  method: "selected task detail projection"
+  symptom: >
+    A selected PM task could show only a summarized projection even when the PM
+    management backend had a richer registry detail payload.
+
+assumptions:
+  - id: "A1"
+    statement: "The backend already exposes a single PM task detail route."
+    status: verified_true
+    evidence: >
+      pm_management.py exposes /v2/pm/tasks/{task_id}; pmService already has
+      getPmTask(taskId) from the prior service contract slice.
+
+  - id: "A2"
+    statement: "The current PM task panel only hydrates backend rows through search."
+    status: verified_true
+    evidence: >
+      PMTaskPanel imports searchPmTasks and normalizes selected search results,
+      but no selected-task useEffect calls getPmTask.
+
+  - id: "A3"
+    statement: "Hydration failure must not blank the existing selected task detail."
+    status: verified_true
+    evidence: >
+      PMTaskPanel already has local task projections; the fix must preserve that
+      projection and render backend error evidence separately.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Replacing the selected task with backend detail before the request resolves
+    would make the detail panel flicker or disappear on backend errors.
+  guardrail: >
+    Keep the selected local/search projection visible and merge backend detail
+    only after a successful response.
+
+verification_plan:
+  - command: "npm run test -- PMTaskPanel pmService"
+    expected: "PM task panel and PM service tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run lint"
+    expected: "ESLint passes"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    expected: "Existing PM management v2 route tests pass"
+
+verification_results:
+  - command: "npm run test -- PMTaskPanel pmService"
+    result: pass
+    evidence: "2 files passed; 61 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    result: pass
+    evidence: "eslint completed successfully."
+  - command: "npm run test -- PMWorkspace PMWorkbenchPanel PMTaskPanel PMDocumentPanel PMDiagnosticsPanel ChiefEngineerWorkspace DirectorWorkspace DirectorWorkbenchPanel DirectorTaskPanel pmService"
+    result: pass
+    evidence: "11 files passed; 112 tests passed."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    result: pass
+    evidence: "37 tests passed."
+  - command: "npm run test"
+    result: pass
+    evidence: "76 files passed; 682 tests passed. jsdom emitted its existing non-fatal navigation warning."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "Renderer build passed and Electron role workspace visual audit passed."
+  - command: "git diff --check -- src/frontend/src/app/components/pm/PMTaskPanel.tsx src/frontend/src/app/components/pm/PMTaskPanel.test.tsx src/backend/docs/blueprints/PM_DESKTOP_TASK_DETAIL_BACKEND_HYDRATION_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-pm-task-detail-backend-hydration.yaml"
+    result: pass
+    evidence: "No whitespace errors; Git reported LF-to-CRLF normalization warnings for existing frontend files."
+
+status: passed

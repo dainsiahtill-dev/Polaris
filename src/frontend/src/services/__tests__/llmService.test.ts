@@ -145,6 +145,21 @@ describe('llmService', () => {
       expect(result.ok).toBe(true);
     });
 
+    it('should call chief engineer role chat status path', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          ready: true,
+          role: 'chief_engineer',
+        },
+      });
+
+      const result = await llmService.getRoleChatStatus('chief_engineer');
+
+      expect(mockApiGet).toHaveBeenCalledWith('/v2/role/chief_engineer/chat/status', '获取对话状态失败');
+      expect(result.data?.role).toBe('chief_engineer');
+    });
+
     it('should return error on API failure', async () => {
       mockApiGet.mockResolvedValueOnce({
         ok: false,
@@ -188,6 +203,21 @@ describe('llmService', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
         signal,
+      });
+    });
+
+    it('should stream chief engineer role chat messages through the generic role path', async () => {
+      const request = { message: 'Review this implementation' };
+      const mockResponse = new Response(JSON.stringify({ type: 'complete' }));
+      mockApiFetch.mockResolvedValueOnce(mockResponse);
+
+      await llmService.sendRoleChatMessage('chief_engineer', request);
+
+      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/chief_engineer/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: undefined,
       });
     });
   });

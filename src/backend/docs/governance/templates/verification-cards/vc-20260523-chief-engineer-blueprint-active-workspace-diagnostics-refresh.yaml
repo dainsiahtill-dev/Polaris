@@ -1,0 +1,82 @@
+card_id: "vc-20260523-chief-engineer-blueprint-active-workspace-diagnostics-refresh"
+bug_summary: >
+  Chief Engineer blueprint command/status routes lacked active workspace
+  regression coverage, and the desktop diagnostics panel could remain stale
+  after a successful blueprint generate/status action.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/v2/chief_engineer.py and ChiefEngineerWorkspace.tsx"
+  method: "generate_chief_engineer_blueprint / get_chief_engineer_blueprint_status / handleGenerateBlueprint / handleCheckBlueprintStatus"
+  symptom: >
+    Desktop users could see a newly generated or discovered Chief Engineer
+    blueprint while the diagnostics panel still reported no blueprint handoff,
+    and backend command/query coverage did not guard workspace_path precedence.
+
+assumptions:
+  - id: "A1"
+    statement: "settings.workspace_path is the active Electron selected workspace when populated."
+    status: verified_true
+    evidence: >
+      PM, Director, runtime, role session/chat, LLM/provider, and existing Chief
+      Engineer list/detail contracts all prefer workspace_path before workspace.
+
+  - id: "A2"
+    statement: "Generating or finding a blueprint changes the evidence shown by the CE workbench."
+    status: verified_true
+    evidence: >
+      ChiefEngineerWorkspace adds a runtime blueprint summary after
+      generateChiefEngineerBlueprint or getChiefEngineerBlueprintStatus returns
+      a blueprint_id.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only the visible blueprint list would leave diagnostics and
+    Director handoff readiness stale, while changing backend routes inline would
+    preserve another workspace resolver fork.
+  guardrail: >
+    Reuse the shared active_workspace_value helper in the route and refresh
+    diagnostics after successful generate/status actions.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -v"
+    expected: "Chief Engineer v2 router tests pass"
+  - command: "npm test -- src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx src/frontend/src/services/__tests__/chiefEngineerService.test.ts"
+    expected: "Chief Engineer desktop and service tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py"
+    result: pass
+    evidence: "2 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py"
+    result: pass
+    evidence: "Success: no issues found in 2 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -v"
+    result: pass
+    evidence: "10 passed in 5.69s."
+  - command: "npm test -- src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx src/frontend/src/services/__tests__/chiefEngineerService.test.ts"
+    result: pass
+    evidence: "2 files passed; 12 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "1 passed; renderer build completed successfully."
+  - command: "git diff --check -- src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx src/backend/docs/blueprints/CHIEF_ENGINEER_BLUEPRINT_ACTIVE_WORKSPACE_DIAGNOSTICS_REFRESH_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-chief-engineer-blueprint-active-workspace-diagnostics-refresh.yaml"
+    result: pass
+    evidence: "No whitespace errors; Git reported LF-to-CRLF normalization warnings for two frontend files."
+
+status: passed

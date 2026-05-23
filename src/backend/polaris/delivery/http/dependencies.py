@@ -18,6 +18,7 @@ from polaris.cells.director.execution.public import rebind_director_service
 from polaris.cells.director.execution.public.service import DirectorService
 from polaris.cells.orchestration.pm_planning.public.service import PMService
 from polaris.delivery.http.auth.roles import UserRole
+from polaris.delivery.http.workspace import active_workspace_value
 from polaris.domain.services.background_task import BackgroundTaskService
 from polaris.infrastructure.di.container import get_container
 from polaris.kernelone.auth_context import SimpleAuthContext
@@ -52,7 +53,7 @@ async def get_workspace(request: Request) -> Path:
     app_state = getattr(request.app.state, "app_state", None)
     state_settings = getattr(app_state, "settings", None)
     app_settings = getattr(request.app.state, "settings", None)
-    raw_workspace = str(getattr(state_settings, "workspace", "") or getattr(app_settings, "workspace", "")).strip()
+    raw_workspace = active_workspace_value(state_settings) or active_workspace_value(app_settings)
     if not raw_workspace:
         raise HTTPException(status_code=500, detail="workspace not configured")
     return Path(raw_workspace).resolve()
@@ -74,7 +75,8 @@ async def get_director_service(request: Request) -> DirectorService:
 
     app_state = getattr(request.app.state, "app_state", None)
     state_settings = getattr(app_state, "settings", None)
-    requested_workspace = str(getattr(state_settings, "workspace", "") or "").strip()
+    app_settings = getattr(request.app.state, "settings", None)
+    requested_workspace = active_workspace_value(state_settings) or active_workspace_value(app_settings)
     if requested_workspace:
         current_workspace = str(getattr(service.config, "workspace", "") or "").strip()
         try:

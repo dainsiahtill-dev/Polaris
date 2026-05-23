@@ -11,6 +11,7 @@ import type {
   LLMConfigResponse,
   LLMStatusResponse,
   ProviderConfig,
+  RoleChatRole,
   RoleConfig,
 } from './api.types';
 
@@ -18,6 +19,7 @@ export type {
   LLMConfigResponse,
   LLMStatusResponse,
   ProviderConfig,
+  RoleChatRole,
   RoleConfig,
 } from './api.types';
 
@@ -71,7 +73,7 @@ export interface ChatMessageRequest {
 /**
  * 获取角色对话状态
  */
-export async function getRoleChatStatus(role: string): Promise<ApiResult<ChatStatus>> {
+export async function getRoleChatStatus(role: RoleChatRole): Promise<ApiResult<ChatStatus>> {
   return apiGet<ChatStatus>(`/v2/role/${role}/chat/status`, '获取对话状态失败');
 }
 
@@ -80,7 +82,7 @@ export async function getRoleChatStatus(role: string): Promise<ApiResult<ChatSta
  * 返回Response对象，需要自行处理流式读取
  */
 export async function sendRoleChatMessage(
-  role: string,
+  role: RoleChatRole,
   request: ChatMessageRequest,
   signal?: AbortSignal
 ): Promise<Response> {

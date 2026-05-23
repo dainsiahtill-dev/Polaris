@@ -1,4 +1,5 @@
 export { useProcessOperations } from './useProcessOperations';
+export { useBackendHealthPing, type BackendHealthPingStatus } from './useBackendHealthPing';
 export { useUIState } from './useUIState';
 export { useSettings } from './useSettings';
 export { useFileManager, type FileInfo, type FileBadge } from './useFileManager';

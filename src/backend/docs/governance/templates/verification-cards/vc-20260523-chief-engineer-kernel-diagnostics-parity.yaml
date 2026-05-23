@@ -1,0 +1,92 @@
+card_id: "vc-20260523-chief-engineer-kernel-diagnostics-parity"
+bug_summary: >
+  Chief Engineer desktop lacked PM/Director parity for role-kernel cache,
+  token-budget, and role-scoped LLM diagnostics.
+
+classification: pattern
+
+bug_path:
+  file: "src/backend/polaris/delivery/http/v2/chief_engineer.py"
+  method: "Chief Engineer role-kernel diagnostics routes"
+  symptom: >
+    PM and Director expose role-scoped kernel diagnostics, but Chief Engineer
+    desktop could only read generic role LLM events and had no cache/token
+    evidence or cache clear result.
+
+assumptions:
+  - id: "A1"
+    statement: "PM and Director already expose role-kernel diagnostics routes."
+    status: verified_true
+    evidence: >
+      pm.py and director.py expose /llm-events, /cache-stats, /cache-clear, and
+      /token-budget-stats routes with backend tests.
+
+  - id: "A2"
+    statement: "Chief Engineer may reuse the shared roles-kernel global cache, event emitter, and token budget."
+    status: verified_true
+    evidence: >
+      The execution_governance_pipeline includes roles.kernel as shared
+      execution infrastructure and chief_engineer.blueprint allows
+      llm.invoke:chief_engineer/* effects.
+
+  - id: "A3"
+    statement: "The desktop should show evidence without inventing fallback data."
+    status: verified_true
+    evidence: >
+      Existing role desktops render backend errors as evidence and avoid
+      example data when real backend calls fail.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Continuing to use only /v2/role/chief_engineer/llm-events would keep cache
+    and token-budget diagnostics unavailable from the Chief Engineer role route.
+  guardrail: >
+    Add Chief Engineer role routes and route the frontend typed role-kernel
+    service to /v2/chief-engineer before rendering desktop evidence.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -v"
+    expected: "Chief Engineer v2 route tests pass, including kernel diagnostics parity."
+  - command: "npm run test -- ChiefEngineerWorkspace chiefEngineerService pmService"
+    expected: "Chief Engineer workspace and role-kernel service tests pass."
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes."
+  - command: "npm run lint"
+    expected: "ESLint passes."
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py --fix"
+    status: passed
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py"
+    status: passed
+    evidence: "2 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/v2/chief_engineer.py"
+    status: passed
+    evidence: "Success: no issues found in 1 source file."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -v"
+    status: passed
+    evidence: "14 Chief Engineer v2 route tests passed."
+  - command: "npm run test -- ChiefEngineerWorkspace chiefEngineerService pmService"
+    status: passed
+    evidence: "3 focused frontend/service test files passed; 77 tests passed."
+  - command: "npm run typecheck"
+    status: passed
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    status: passed
+    evidence: "ESLint completed without findings."
+  - command: "npm run test -- PMWorkspace PMWorkbenchPanel PMTaskPanel PMDocumentPanel PMDiagnosticsPanel ChiefEngineerWorkspace DirectorWorkspace DirectorWorkbenchPanel DirectorTaskPanel pmService chiefEngineerService"
+    status: passed
+    evidence: "12 cross-role frontend test files passed; 125 tests passed."
+  - command: "npm run test"
+    status: passed
+    evidence: "76 frontend test files passed; 690 tests passed. Existing jsdom navigation warning is non-fatal."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    status: passed
+    evidence: "Renderer production build succeeded and 1 Electron visual audit test passed."
+  - command: "git diff --check -- src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx src/frontend/src/services/pmService.ts src/frontend/src/services/__tests__/pmService.test.ts src/backend/docs/blueprints/CHIEF_ENGINEER_KERNEL_DIAGNOSTICS_PARITY_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-chief-engineer-kernel-diagnostics-parity.yaml"
+    status: passed
+    evidence: "No whitespace errors; Git reported existing LF-to-CRLF normalization warnings only."
+
+status: passed

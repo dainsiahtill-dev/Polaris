@@ -1,0 +1,85 @@
+card_id: "vc-20260523-role-chat-kernel-events-cache-route-tests"
+bug_summary: >
+  Generic role chat tests still documented fixed production imports as xfail
+  bugs and asserted older verbose status errors, so working PM/Chief
+  Engineer/Director diagnostics and readiness endpoints failed when the stale
+  tests were selected.
+
+classification: pattern
+
+bug_path:
+  file: "src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py"
+  method: "generic role LLM/cache route tests"
+  symptom: >
+    Tests expected 500 responses and ModuleNotFoundError for routes that now
+    return 200 through the shared roles-kernel emitter and cache services; the
+    same file expected raw status details in top-level error/message fields.
+
+assumptions:
+  - id: "A1"
+    statement: "The generic role LLM/cache routes are active runtime contracts."
+    status: verified_true
+    evidence: >
+      role_chat.py exposes /v2/role/{role}/llm-events, /v2/role/llm-events,
+      and /v2/role/cache-stats with response models.
+
+  - id: "A2"
+    statement: "The previous import bug has already been fixed in production code."
+    status: verified_true
+    evidence: >
+      role_chat.py imports get_global_emitter and get_global_llm_cache from
+      polaris.cells.roles.kernel.public.service, and focused tests returned
+      200 OK before this baseline update.
+
+  - id: "A3"
+    statement: "The PM, Chief Engineer, and Director desktops depend on these generic diagnostics as fallback evidence."
+    status: verified_true
+    evidence: >
+      The frontend role workspaces read role-scoped LLM evidence and backend
+      diagnostics through shared role-kernel contracts.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Keeping the xfail markers would preserve false production-bug
+    documentation and hide regressions in shared diagnostic routes.
+  guardrail: >
+    Replace xfail tests with positive route assertions that patch the shared
+    emitter/cache and verify route filters and response payloads; align status
+    assertions with sanitized top-level errors and structured diagnostics.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -k \"llm_events or cache_stats\" -v"
+    expected: "Focused generic role LLM/cache route tests pass."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -v"
+    expected: "Full generic role router test file passes."
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py --fix"
+    expected: "Ruff reports no remaining issues."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py"
+    expected: "Formatter completes cleanly."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py"
+    expected: "Mypy reports no issues for the changed test module."
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -k \"llm_events or cache_stats\" -v"
+    status: passed
+    evidence: "3 focused generic role LLM/cache route tests passed; 12 deselected."
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py --fix"
+    status: passed
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py"
+    status: passed
+    evidence: "1 file left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py"
+    status: passed
+    evidence: "Success: no issues found in 1 source file."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -v"
+    status: passed
+    evidence: "15 role chat router tests passed."
+  - command: "rg --encoding utf-8 -n \"xfail|Production bug|broken_import|ModuleNotFoundError\" src\\backend\\polaris\\tests\\unit\\delivery\\http\\routers\\test_v2_role_router.py"
+    status: passed
+    evidence: "No obsolete xfail or broken-import production-bug markers remain."
+  - command: "git diff --check -- src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py src/backend/docs/blueprints/ROLE_CHAT_KERNEL_EVENTS_CACHE_ROUTE_TESTS_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-role-chat-kernel-events-cache-route-tests.yaml"
+    status: passed
+    evidence: "No whitespace errors."
+
+status: passed

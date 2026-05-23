@@ -126,6 +126,95 @@ async def test_get_llm_config_success(client: AsyncClient) -> None:
         mock_redact.assert_called_once_with(mock_config)
 
 
+@pytest.mark.asyncio
+async def test_get_llm_config_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """GET /v2/llm/config should load config from the active desktop workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_settings.ramdisk_root = "R:/PolarisCache"
+    mock_config = {"provider": "openai", "model": "gpt-4", "api_key": "sk-123"}
+    redacted = {"provider": "openai", "model": "gpt-4", "api_key": "***"}
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.build_cache_root",
+            return_value="C:/CacheRoot",
+        ) as mock_build_cache_root,
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ) as mock_load,
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.redact_llm_config",
+            return_value=redacted,
+        ),
+    ):
+        response = await client.get("/v2/llm/config")
+        assert response.status_code == 200
+
+    mock_build_cache_root.assert_called_once_with("R:/PolarisCache", "C:/Temp/Product")
+    mock_load.assert_called_once_with("C:/Temp/Product", "C:/CacheRoot", settings=mock_settings)
+
+
+# ---------------------------------------------------------------------------
+# POST /v2/llm/config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_llm_config_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """POST /v2/llm/config should save config for the active desktop workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_settings.ramdisk_root = "R:/PolarisCache"
+    config_payload = {"provider": "openai", "model": "gpt-4", "api_key": "sk-123"}
+    saved_config = {**config_payload, "saved": True}
+    redacted = {"provider": "openai", "model": "gpt-4", "api_key": "***", "saved": True}
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.build_cache_root",
+            return_value="C:/CacheRoot",
+        ) as mock_build_cache_root,
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.save_llm_config",
+            return_value=saved_config,
+        ) as mock_save,
+        patch(
+            "polaris.delivery.http.routers.llm.reconcile_llm_test_index",
+        ) as mock_reconcile,
+        patch(
+            "polaris.delivery.http.routers.llm.sync_settings_from_llm",
+        ) as mock_sync,
+        patch(
+            "polaris.delivery.http.routers.llm.save_persisted_settings",
+        ) as mock_persist,
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.redact_llm_config",
+            return_value=redacted,
+        ),
+    ):
+        response = await client.post("/v2/llm/config", json={"config": config_payload})
+        assert response.status_code == 200
+
+    mock_build_cache_root.assert_called_once_with("R:/PolarisCache", "C:/Temp/Product")
+    mock_save.assert_called_once_with(
+        "C:/Temp/Product",
+        "C:/CacheRoot",
+        config_payload,
+        settings=mock_settings,
+    )
+    mock_reconcile.assert_called_once_with(mock_settings, saved_config)
+    mock_sync.assert_called_once_with(mock_settings, saved_config)
+    mock_persist.assert_called_once_with(mock_settings)
+
+
 # ---------------------------------------------------------------------------
 # POST /v2/llm/config/migrate
 # ---------------------------------------------------------------------------
@@ -207,11 +296,11 @@ async def test_get_runtime_status_success(client: AsyncClient, tmp_path) -> None
 
     # Create a lock file for pm
     lock_file = runtime_dir / "pm.lock"
-    lock_file.write_text('{"startedAt": "2024-01-01T00:00:00Z", "pid": 1234}')
+    lock_file.write_text('{"startedAt": "2024-01-01T00:00:00Z", "pid": 1234}', encoding="utf-8")
 
     # Create a status file for pm
     status_file = runtime_dir / "pm_status.json"
-    status_file.write_text('{"lastRun": "2024-01-01T00:00:00Z", "status": "ok"}')
+    status_file.write_text('{"lastRun": "2024-01-01T00:00:00Z", "status": "ok"}', encoding="utf-8")
 
     with (
         patch(
@@ -235,6 +324,40 @@ async def test_get_runtime_status_success(client: AsyncClient, tmp_path) -> None
         assert data["roles"]["pm"]["running"] is True
         assert data["roles"]["pm"]["config"]["provider_id"] == "openai"
         assert data["roles"]["pm"]["config"]["model"] == "gpt-4"
+
+
+@pytest.mark.asyncio
+async def test_get_runtime_status_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path,
+) -> None:
+    """GET /v2/llm/runtime-status should inspect the active desktop workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_settings.ramdisk_root = "R:/PolarisCache"
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.build_cache_root",
+            return_value=str(tmp_path),
+        ) as mock_build_cache_root,
+        patch(
+            "polaris.delivery.http.routers.llm.resolve_artifact_path",
+            return_value=str(runtime_dir),
+        ) as mock_resolve_artifact_path,
+        patch(
+            "polaris.delivery.http.routers.llm.load_role_config",
+            side_effect=ValueError("no config"),
+        ),
+    ):
+        response = await client.get("/v2/llm/runtime-status")
+        assert response.status_code == 200
+
+    mock_build_cache_root.assert_called_once_with("R:/PolarisCache", "C:/Temp/Product")
+    mock_resolve_artifact_path.assert_called_once_with("C:/Temp/Product", str(tmp_path), "runtime")
 
 
 @pytest.mark.asyncio
@@ -278,10 +401,13 @@ async def test_get_role_runtime_status_success(client: AsyncClient, tmp_path) ->
     runtime_dir.mkdir()
 
     lock_file = runtime_dir / "director.lock"
-    lock_file.write_text('{"startedAt": "2024-06-01T12:00:00Z", "pid": 5678}')
+    lock_file.write_text('{"startedAt": "2024-06-01T12:00:00Z", "pid": 5678}', encoding="utf-8")
 
     status_file = runtime_dir / "director_status.json"
-    status_file.write_text('{"lastRun": "2024-06-01T12:00:00Z", "status": "completed"}')
+    status_file.write_text(
+        '{"lastRun": "2024-06-01T12:00:00Z", "status": "completed"}',
+        encoding="utf-8",
+    )
 
     with (
         patch(
@@ -325,7 +451,7 @@ async def test_get_role_runtime_status_docs_alias(client: AsyncClient, tmp_path)
     runtime_dir.mkdir()
 
     lock_file = runtime_dir / "architect.lock"
-    lock_file.write_text('{"startedAt": "2024-03-01T08:00:00Z", "pid": 9999}')
+    lock_file.write_text('{"startedAt": "2024-03-01T08:00:00Z", "pid": 9999}', encoding="utf-8")
 
     with (
         patch(

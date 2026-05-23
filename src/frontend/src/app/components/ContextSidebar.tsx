@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { MessageSquare, FileText, Brain, Database, Camera, Bot } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DialoguePanel, DialogueEvent } from '@/app/components/DialoguePanel';
@@ -43,6 +43,8 @@ interface ContextSidebarProps {
     snapshotFilePaths?: string[] | null;
     snapshotDirectorState?: Record<string, unknown> | null;
     resident?: ResidentStatusPayload | null;
+    activeTab?: ContextTab;
+    onActiveTabChange?: (tab: ContextTab) => void;
 }
 
 interface AnthroState {
@@ -78,8 +80,15 @@ export function ContextSidebar({
     snapshotFilePaths,
     snapshotDirectorState,
     resident,
+    activeTab: controlledActiveTab,
+    onActiveTabChange,
 }: ContextSidebarProps) {
-    const [activeTab, setActiveTab] = useState<ContextTab>('dialogue');
+    const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<ContextTab>('dialogue');
+    const activeTab = controlledActiveTab ?? uncontrolledActiveTab;
+    const setActiveTab = useCallback((tab: ContextTab) => {
+        setUncontrolledActiveTab(tab);
+        onActiveTabChange?.(tab);
+    }, [onActiveTabChange]);
 
     return (
         <div className="flex h-full glass-bubble border-l-0 overflow-hidden">

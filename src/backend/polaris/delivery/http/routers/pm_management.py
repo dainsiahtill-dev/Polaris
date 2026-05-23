@@ -28,9 +28,10 @@ from polaris.delivery.http.schemas.common import (
     TaskListResponse,
     TaskSearchResponse,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/pm", tags=["PM Management"])
+v2_router = APIRouter(tags=["PM Management V2"])
 
 
 def _get_pm_instance(workspace: str) -> ScriptsPMAdapter:
@@ -41,6 +42,118 @@ def _get_pm_instance(workspace: str) -> ScriptsPMAdapter:
 def _resolve_document_path(workspace: str, doc_path: str) -> str:
     """Resolve document path under workspace-bound safe path policy."""
     return resolve_safe_path(workspace, "", doc_path)
+
+
+def _workspace_value(settings: Any) -> str:
+    """Resolve the active PM workspace from desktop settings."""
+    for attr in ("workspace_path", "workspace"):
+        raw_value = getattr(settings, attr, "")
+        value = str(raw_value or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _workspace_from_request(request: Request) -> str:
+    """Resolve the active workspace for PM management requests."""
+    workspace = _workspace_value(get_state(request).settings)
+    if not workspace:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="WORKSPACE_NOT_CONFIGURED",
+            message="workspace is not configured",
+        )
+    return workspace
+
+
+def _enum_to_wire(value: Any) -> Any:
+    """Convert str Enum values from PM internals to their JSON wire value."""
+    return value.value if hasattr(value, "value") else value
+
+
+def _task_to_response(task: Any) -> dict[str, Any]:
+    """Normalize PM task dataclass/dict payloads for desktop API clients."""
+    if isinstance(task, dict):
+        task_dict = dict(task)
+    else:
+        task_dict = {
+            "id": getattr(task, "id", ""),
+            "title": getattr(task, "title", ""),
+            "description": getattr(task, "description", ""),
+            "status": _enum_to_wire(getattr(task, "status", "")),
+            "priority": _enum_to_wire(getattr(task, "priority", "")),
+            "assignee": getattr(task, "assignee", None),
+            "assignee_type": _enum_to_wire(getattr(task, "assignee_type", None)),
+            "requirements": getattr(task, "requirements", []),
+            "dependencies": getattr(task, "dependencies", []),
+            "estimated_effort": getattr(task, "estimated_effort", 0),
+            "actual_effort": getattr(task, "actual_effort", 0),
+            "created_at": getattr(task, "created_at", None),
+            "updated_at": getattr(task, "updated_at", None),
+            "assigned_at": getattr(task, "assigned_at", None),
+            "started_at": getattr(task, "started_at", None),
+            "completed_at": getattr(task, "completed_at", None),
+            "result_summary": getattr(task, "result_summary", ""),
+            "artifacts": getattr(task, "artifacts", []),
+            "metadata": getattr(task, "metadata", {}),
+        }
+
+    task_dict["status"] = _enum_to_wire(task_dict.get("status"))
+    task_dict["priority"] = _enum_to_wire(task_dict.get("priority"))
+    task_dict["assignee_type"] = _enum_to_wire(task_dict.get("assignee_type"))
+
+    title = str(task_dict.get("title") or task_dict.get("subject") or "").strip()
+    subject = str(task_dict.get("subject") or title).strip()
+    task_dict["title"] = title
+    task_dict["subject"] = subject
+
+    metadata = task_dict.get("metadata")
+    if isinstance(metadata, dict):
+        if "acceptance" in metadata:
+            task_dict["acceptance"] = metadata["acceptance"]
+        if "due_date" in metadata:
+            task_dict["due_date"] = metadata["due_date"]
+        if "tags" in metadata:
+            task_dict["tags"] = metadata["tags"]
+        if "parent_id" in metadata:
+            task_dict["parent_id"] = metadata["parent_id"]
+
+    return task_dict
+
+
+def _collection_total(result: dict[str, Any], items: list[Any]) -> int:
+    """Resolve a stable total for desktop list responses."""
+    pagination = result.get("pagination")
+    if isinstance(pagination, dict):
+        raw_total = pagination.get("total")
+        if isinstance(raw_total, int):
+            return raw_total
+        if isinstance(raw_total, str):
+            try:
+                return int(raw_total)
+            except ValueError:
+                pass
+    return len(items)
+
+
+def _with_desktop_collection_aliases(
+    result: dict[str, Any],
+    collection_key: str,
+    *,
+    normalize_item: bool = False,
+) -> dict[str, Any]:
+    """Add desktop `items`/`total` aliases while preserving legacy keys."""
+    response = dict(result)
+    raw_items = response.get(collection_key)
+    items = list(raw_items) if isinstance(raw_items, list) else []
+    if normalize_item:
+        items = [_task_to_response(item) for item in items]
+
+    response[collection_key] = items
+    response["items"] = items
+    response["total"] = _collection_total(response, items)
+    response.setdefault("ok", True)
+    return response
 
 
 # ===== Request/Response Models =====
@@ -54,6 +167,19 @@ class DocumentCreateRequest(BaseModel):
 class DocumentUpdateRequest(BaseModel):
     content: str
     change_summary: str = ""
+
+
+class PMTaskCreateRequest(BaseModel):
+    subject: str = Field(..., min_length=1)
+    description: str = ""
+    priority: str | None = None
+    status: str | None = None
+    acceptance: list[str] = Field(default_factory=list)
+    assignee: str | None = None
+    due_date: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    parent_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class DocumentInfo(BaseModel):
@@ -101,9 +227,7 @@ def list_documents(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """List all tracked documents in the workspace."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -121,9 +245,7 @@ def get_document(
     version: str | None = Query(None, description="Specific version (default: current)"),
 ) -> dict[str, Any]:
     """Get document information including versions and analysis."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -152,9 +274,7 @@ def create_or_update_document(
     body: DocumentUpdateRequest,
 ) -> dict[str, Any]:
     """Create or update a document."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -193,9 +313,7 @@ def delete_document(
     delete_file: bool = Query(True, description="Whether to delete the actual file"),
 ) -> dict[str, Any]:
     """Delete a document and its version history."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -221,9 +339,7 @@ def get_document_versions(
     doc_path: str,
 ) -> dict[str, Any]:
     """Get all versions of a document."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -260,9 +376,7 @@ def compare_document_versions(
     new_version: str = Query(..., description="New version number"),
 ) -> dict[str, Any]:
     """Compare two document versions."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -299,9 +413,7 @@ def search_documents(
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     """Search documents by content or path."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -325,9 +437,7 @@ def list_tasks(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """List tasks with optional filtering."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -350,9 +460,7 @@ def get_task_history(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """Get task history with filtering and pagination."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -382,9 +490,7 @@ def get_director_task_history(
 
     This retrieves the task list sent to Director in each orchestration iteration.
     """
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -401,9 +507,7 @@ def get_task(
     task_id: str,
 ) -> dict[str, Any]:
     """Get a specific task by ID."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -414,37 +518,34 @@ def get_task(
     if task is None:
         raise StructuredHTTPException(status_code=404, code="TASK_NOT_FOUND", message="Task not found")
 
-    # Convert task to dict
-    if hasattr(task, "__dict__"):
-        task_dict = {
-            "id": task.id,
-            "title": task.title,
-            "description": task.description,
-            "status": task.status.value if hasattr(task.status, "value") else str(task.status),
-            "priority": task.priority.value if hasattr(task.priority, "value") else str(task.priority),
-            "assignee": task.assignee,
-            "assignee_type": task.assignee_type.value
-            if hasattr(task.assignee_type, "value")
-            else str(task.assignee_type)
-            if task.assignee_type
-            else None,
-            "requirements": task.requirements,
-            "dependencies": task.dependencies,
-            "estimated_effort": task.estimated_effort,
-            "actual_effort": task.actual_effort,
-            "created_at": task.created_at,
-            "updated_at": task.updated_at,
-            "assigned_at": task.assigned_at,
-            "started_at": task.started_at,
-            "completed_at": task.completed_at,
-            "result_summary": task.result_summary,
-            "artifacts": task.artifacts,
-            "metadata": task.metadata,
-        }
-    else:
-        task_dict = dict(task)
+    return _task_to_response(task)
 
-    return task_dict
+
+def create_task(
+    request: Request,
+    body: PMTaskCreateRequest,
+) -> dict[str, Any]:
+    """Create a PM task in the workspace-owned task registry."""
+    workspace = _workspace_from_request(request)
+
+    pm = _get_pm_instance(workspace)
+
+    if not pm.is_initialized():
+        raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
+
+    task = pm.create_task(
+        subject=body.subject.strip(),
+        description=body.description,
+        priority=body.priority,
+        status=body.status,
+        acceptance=body.acceptance,
+        assignee=body.assignee,
+        due_date=body.due_date,
+        tags=body.tags,
+        parent_id=body.parent_id,
+        metadata=body.metadata,
+    )
+    return _task_to_response(task)
 
 
 @router.get(
@@ -456,9 +557,7 @@ def get_task_assignments(
     limit: int = Query(100, ge=1, le=500),
 ) -> dict[str, Any]:
     """Get assignment history for a task."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -477,9 +576,7 @@ def search_tasks(
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     """Search tasks by title or description."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -503,9 +600,7 @@ def list_requirements(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """List requirements with optional filtering."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -522,9 +617,7 @@ def get_requirement(
     req_id: str,
 ) -> dict[str, Any]:
     """Get a specific requirement by ID."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -544,9 +637,7 @@ def get_requirement(
 @router.get("/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
 def get_pm_status(request: Request) -> dict[str, Any]:
     """Get PM system status."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -559,9 +650,7 @@ def get_pm_status(request: Request) -> dict[str, Any]:
 @router.get("/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
 def get_pm_health(request: Request) -> dict[str, Any]:
     """Get project health analysis."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -578,9 +667,7 @@ def init_pm(
     description: str = Query("", description="Project description"),
 ) -> dict[str, Any]:
     """Initialize PM system for the workspace."""
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
 
@@ -594,6 +681,7 @@ def init_pm(
 # --- V2 namespace aliases (backward-compatible) ---
 
 
+@v2_router.get("/v2/pm/documents", dependencies=[Depends(require_auth)], response_model=DocumentListResponse)
 @router.get("/v2/pm/documents", dependencies=[Depends(require_auth)], response_model=DocumentListResponse)
 def v2_list_documents(
     request: Request,
@@ -606,6 +694,11 @@ def v2_list_documents(
     return list_documents(request, doc_type, pattern, limit, offset)
 
 
+@v2_router.get(
+    "/v2/pm/documents/{doc_path:path}/versions",
+    dependencies=[Depends(require_auth)],
+    response_model=DocumentVersionsResponse,
+)
 @router.get(
     "/v2/pm/documents/{doc_path:path}/versions",
     dependencies=[Depends(require_auth)],
@@ -619,6 +712,11 @@ def v2_get_document_versions(
     return get_document_versions(request, doc_path)
 
 
+@v2_router.get(
+    "/v2/pm/documents/{doc_path:path}/compare",
+    dependencies=[Depends(require_auth)],
+    response_model=DocumentDiffResponse,
+)
 @router.get(
     "/v2/pm/documents/{doc_path:path}/compare",
     dependencies=[Depends(require_auth)],
@@ -634,6 +732,9 @@ def v2_compare_document_versions(
     return compare_document_versions(request, doc_path, old_version, new_version)
 
 
+@v2_router.get(
+    "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDetailResponse
+)
 @router.get(
     "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDetailResponse
 )
@@ -646,6 +747,9 @@ def v2_get_document(
     return get_document(request, doc_path, version)
 
 
+@v2_router.post(
+    "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentWriteResponse
+)
 @router.post(
     "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentWriteResponse
 )
@@ -658,6 +762,9 @@ def v2_create_or_update_document(
     return create_or_update_document(request, doc_path, body)
 
 
+@v2_router.delete(
+    "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDeleteResponse
+)
 @router.delete(
     "/v2/pm/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDeleteResponse
 )
@@ -670,6 +777,7 @@ def v2_delete_document(
     return delete_document(request, doc_path, delete_file)
 
 
+@v2_router.get("/v2/pm/search/documents", dependencies=[Depends(require_auth)], response_model=DocumentSearchResponse)
 @router.get("/v2/pm/search/documents", dependencies=[Depends(require_auth)], response_model=DocumentSearchResponse)
 def v2_search_documents(
     request: Request,
@@ -680,6 +788,7 @@ def v2_search_documents(
     return search_documents(request, q, limit)
 
 
+@v2_router.get("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskListResponse)
 @router.get("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskListResponse)
 def v2_list_tasks(
     request: Request,
@@ -690,9 +799,20 @@ def v2_list_tasks(
 ) -> dict[str, Any]:
     """List tasks with optional filtering."""
     result = list_tasks(request, status, assignee, limit, offset)
-    return {"ok": True, **result}
+    return _with_desktop_collection_aliases(result, "tasks", normalize_item=True)
 
 
+@v2_router.post("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
+@router.post("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
+def v2_create_task(
+    request: Request,
+    body: PMTaskCreateRequest,
+) -> dict[str, Any]:
+    """Create a PM task through the desktop v2 management API."""
+    return create_task(request, body)
+
+
+@v2_router.get("/v2/pm/tasks/history", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
 @router.get("/v2/pm/tasks/history", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
 def v2_get_task_history(
     request: Request,
@@ -708,6 +828,7 @@ def v2_get_task_history(
     return get_task_history(request, task_id, assignee, status, start_date, end_date, limit, offset)
 
 
+@v2_router.get("/v2/pm/tasks/director", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
 @router.get("/v2/pm/tasks/director", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
 def v2_get_director_task_history(
     request: Request,
@@ -719,6 +840,9 @@ def v2_get_director_task_history(
     return get_director_task_history(request, iteration, limit, offset)
 
 
+@v2_router.get(
+    "/v2/pm/tasks/{task_id}/assignments", dependencies=[Depends(require_auth)], response_model=TaskAssignmentsResponse
+)
 @router.get(
     "/v2/pm/tasks/{task_id}/assignments", dependencies=[Depends(require_auth)], response_model=TaskAssignmentsResponse
 )
@@ -731,6 +855,7 @@ def v2_get_task_assignments(
     return get_task_assignments(request, task_id, limit)
 
 
+@v2_router.get("/v2/pm/tasks/{task_id}", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
 @router.get("/v2/pm/tasks/{task_id}", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
 def v2_get_task(
     request: Request,
@@ -740,6 +865,7 @@ def v2_get_task(
     return get_task(request, task_id)
 
 
+@v2_router.get("/v2/pm/search/tasks", dependencies=[Depends(require_auth)], response_model=TaskSearchResponse)
 @router.get("/v2/pm/search/tasks", dependencies=[Depends(require_auth)], response_model=TaskSearchResponse)
 def v2_search_tasks(
     request: Request,
@@ -750,6 +876,7 @@ def v2_search_tasks(
     return search_tasks(request, q, limit)
 
 
+@v2_router.get("/v2/pm/requirements", dependencies=[Depends(require_auth)], response_model=RequirementListResponse)
 @router.get("/v2/pm/requirements", dependencies=[Depends(require_auth)], response_model=RequirementListResponse)
 def v2_list_requirements(
     request: Request,
@@ -760,9 +887,12 @@ def v2_list_requirements(
 ) -> dict[str, Any]:
     """List requirements with optional filtering."""
     result = list_requirements(request, status, priority, limit, offset)
-    return {"ok": True, **result}
+    return _with_desktop_collection_aliases(result, "requirements")
 
 
+@v2_router.get(
+    "/v2/pm/requirements/{req_id}", dependencies=[Depends(require_auth)], response_model=RequirementDetailResponse
+)
 @router.get(
     "/v2/pm/requirements/{req_id}", dependencies=[Depends(require_auth)], response_model=RequirementDetailResponse
 )

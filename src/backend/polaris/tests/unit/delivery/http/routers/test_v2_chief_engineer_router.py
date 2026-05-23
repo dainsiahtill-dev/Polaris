@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from polaris.bootstrap.config import Settings
+from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
 
 
 @pytest.fixture
@@ -17,8 +19,7 @@ def mock_settings() -> Settings:
     from polaris.config.nats_config import NATSConfig
 
     settings = MagicMock(spec=Settings)
-    settings.workspace = "."
-    settings.workspace_path = "."
+    settings.workspace = Path(".")
     settings.ramdisk_root = ""
     settings.nats = NATSConfig(enabled=False, required=False, url="")
     settings.server = ServerConfig(cors_origins=["*"])
@@ -71,6 +72,157 @@ async def client(mock_settings: Settings) -> AsyncIterator[AsyncClient]:
 
 
 @pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_reports_blueprint_store_health(client: AsyncClient) -> None:
+    """Chief Engineer diagnostics should summarize blueprint store readiness without writes."""
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["bp-invalid", "bp-ready"]
+
+    def load_payload(blueprint_id: str) -> dict[str, object] | None:
+        if blueprint_id == "bp-ready":
+            return {
+                "blueprint_id": "bp-ready",
+                "summary": "Ready Director handoff",
+                "updated_at": "2026-05-23T08:00:00Z",
+            }
+        return None
+
+    persistence.load.side_effect = load_payload
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+        return_value=persistence,
+    ) as persistence_cls:
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    persistence_cls.assert_called_once_with(".", ensure_directory=False)
+    data = response.json()
+    assert data["role"] == "chief_engineer"
+    assert data["ok"] is False
+    assert data["workspace"]["ok"] is True
+    assert data["blueprints"]["status"] == "degraded"
+    assert data["blueprints"]["total"] == 2
+    assert data["blueprints"]["loadable"] == 1
+    assert data["blueprints"]["invalid_payloads"] == 1
+    assert data["blueprints"]["director_handoff_ready"] is True
+    assert data["blueprints"]["latest_updated_at"] == "2026-05-23T08:00:00Z"
+    assert data["issues"] == ["blueprint_payload_invalid"]
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_reports_store_error(client: AsyncClient) -> None:
+    """Chief Engineer diagnostics should degrade when the blueprint store cannot be inspected."""
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+        side_effect=RuntimeError("store offline"),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["blueprints"]["status"] == "error"
+    assert data["blueprints"]["error"] == "RuntimeError: store offline"
+    assert data["issues"] == ["blueprint_store_unreadable"]
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_llm_events_filters_role_and_task(client: AsyncClient) -> None:
+    """Chief Engineer LLM events should be available through the role route."""
+    mock_event = MagicMock()
+    mock_event.event_type = "llm_call_start"
+    mock_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "run_id": "run-1",
+        "task_id": "PM-1",
+        "role": "chief_engineer",
+    }
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [mock_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/chief-engineer/llm-events?run_id=run-1&task_id=PM-1&limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "chief_engineer"
+    assert data["run_id"] == "run-1"
+    assert data["task_id"] == "PM-1"
+    assert data["count"] == 1
+    assert data["stats"]["call_start"] == 1
+    mock_emitter.get_events.assert_called_once_with(
+        run_id="run-1",
+        task_id="PM-1",
+        role="chief_engineer",
+        limit=5,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_cache_stats(client: AsyncClient) -> None:
+    """Chief Engineer cache stats should reuse the shared roles-kernel cache."""
+    with patch(
+        "polaris.cells.roles.kernel.public.service.get_global_llm_cache",
+    ) as mock_get_cache:
+        mock_cache = MagicMock()
+        mock_cache.get_stats.return_value = {"hits": 7, "misses": 3, "size": 10}
+        mock_get_cache.return_value = mock_cache
+
+        response = await client.get("/v2/chief-engineer/cache-stats")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["hits"] == 7
+    assert data["misses"] == 3
+    assert data["size"] == 10
+
+
+@pytest.mark.asyncio
+async def test_clear_chief_engineer_cache(client: AsyncClient) -> None:
+    """Chief Engineer cache clear should clear the shared roles-kernel cache."""
+    with patch(
+        "polaris.cells.roles.kernel.public.service.get_global_llm_cache",
+    ) as mock_get_cache:
+        mock_cache = MagicMock()
+        mock_get_cache.return_value = mock_cache
+
+        response = await client.post("/v2/chief-engineer/cache-clear")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["message"] == "Cache cleared"
+    mock_cache.clear.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_token_budget_stats(client: AsyncClient) -> None:
+    """Chief Engineer token-budget stats should reuse the shared roles-kernel budget."""
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.get_global_token_budget",
+    ) as mock_get_budget:
+        mock_budget = MagicMock()
+        mock_budget.get_stats.return_value = {
+            "total_budget": 100000,
+            "used_tokens": 4096,
+            "remaining": 95904,
+        }
+        mock_get_budget.return_value = mock_budget
+
+        response = await client.get("/v2/chief-engineer/token-budget-stats")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_budget"] == 100000
+    assert data["used_tokens"] == 4096
+    assert data["remaining"] == 95904
+
+
+@pytest.mark.asyncio
 async def test_list_chief_engineer_blueprints(client: AsyncClient) -> None:
     """Chief Engineer blueprints list should expose persisted blueprint summaries."""
     persistence = MagicMock()
@@ -96,6 +248,191 @@ async def test_list_chief_engineer_blueprints(client: AsyncClient) -> None:
     assert data["blueprints"][0]["title"] == "Director TaskBoard"
     assert data["blueprints"][0]["target_files"] == ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"]
     assert data["blueprints"][0]["source"] == "runtime/blueprints"
+
+
+@pytest.mark.asyncio
+async def test_list_chief_engineer_blueprints_uses_workspace_path_fallback(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Blueprint list route should use workspace_path when workspace is not populated."""
+    mock_settings.workspace = ""
+    mock_settings.workspace_path = "C:/Temp/Product"
+    persistence = MagicMock()
+    persistence.list_all.return_value = []
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+        return_value=persistence,
+    ) as persistence_cls:
+        response = await client.get("/v2/chief-engineer/blueprints")
+
+    assert response.status_code == 200
+    persistence_cls.assert_called_once_with("C:/Temp/Product")
+    assert response.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_chief_engineer_blueprints_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Blueprint list route should prefer active workspace_path over stale workspace."""
+    mock_settings.workspace = Path("C:/Repo/Polaris")
+    mock_settings.workspace_path = "C:/Temp/Product"
+    persistence = MagicMock()
+    persistence.list_all.return_value = []
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+        return_value=persistence,
+    ) as persistence_cls:
+        response = await client.get("/v2/chief-engineer/blueprints")
+
+    assert response.status_code == 200
+    persistence_cls.assert_called_once_with("C:/Temp/Product")
+    assert response.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_chief_engineer_blueprint_uses_public_command_contract(client: AsyncClient) -> None:
+    """Blueprint generation route should build the CE command and expose persisted context."""
+    persistence = MagicMock()
+    persistence.load.return_value = {
+        "blueprint_id": "ce_PM-42_20260523",
+        "task_id": "PM-42",
+        "summary": "Generated handoff",
+    }
+    result = TaskBlueprintResultV1(
+        ok=True,
+        task_id="PM-42",
+        workspace=".",
+        status="generated",
+        blueprint_id="ce_PM-42_20260523",
+        blueprint_path="runtime/blueprints/ce_PM-42_20260523.json",
+        summary="Generated handoff",
+        recommendations=("Verify acceptance",),
+    )
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.generate_task_blueprint",
+            return_value=result,
+        ) as generate,
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+    ):
+        response = await client.post(
+            "/v2/chief-engineer/blueprints",
+            json={
+                "task_id": "PM-42",
+                "objective": "Build Director task board",
+                "run_id": "run-1",
+                "constraints": {"guardrail": "no target writes"},
+                "context": {"target_files": ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"]},
+            },
+        )
+
+    assert response.status_code == 200
+    command = generate.call_args.args[0]
+    assert command.task_id == "PM-42"
+    assert command.workspace == "."
+    assert command.run_id == "run-1"
+    data = response.json()
+    assert data["ok"] is True
+    assert data["blueprint_id"] == "ce_PM-42_20260523"
+    assert data["blueprint"]["task_id"] == "PM-42"
+    assert data["recommendations"] == ["Verify acceptance"]
+
+
+@pytest.mark.asyncio
+async def test_generate_chief_engineer_blueprint_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Blueprint generation should use the active desktop workspace_path."""
+    mock_settings.workspace = Path("C:/Repo/Polaris")
+    mock_settings.workspace_path = "C:/Temp/Product"
+    result = TaskBlueprintResultV1(
+        ok=True,
+        task_id="PM-active",
+        workspace="C:/Temp/Product",
+        status="generated",
+        summary="Generated in active workspace",
+    )
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.generate_task_blueprint",
+        return_value=result,
+    ) as generate:
+        response = await client.post(
+            "/v2/chief-engineer/blueprints",
+            json={
+                "task_id": "PM-active",
+                "objective": "Build active workspace blueprint",
+            },
+        )
+
+    assert response.status_code == 200
+    command = generate.call_args.args[0]
+    assert command.workspace == "C:/Temp/Product"
+    assert response.json()["workspace"] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_blueprint_status_uses_public_query_contract(client: AsyncClient) -> None:
+    """Blueprint status route should build the CE status query contract."""
+    result = TaskBlueprintResultV1(
+        ok=False,
+        task_id="PM-404",
+        workspace=".",
+        status="missing",
+        summary="No Chief Engineer blueprint has been generated for this task.",
+    )
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.get_blueprint_status",
+        return_value=result,
+    ) as get_status:
+        response = await client.get("/v2/chief-engineer/blueprints/status?task_id=PM-404")
+
+    assert response.status_code == 200
+    query = get_status.call_args.args[0]
+    assert query.task_id == "PM-404"
+    assert query.workspace == "."
+    data = response.json()
+    assert data["ok"] is False
+    assert data["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_blueprint_status_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Blueprint status query should use active workspace_path over stale workspace."""
+    mock_settings.workspace = Path("C:/Repo/Polaris")
+    mock_settings.workspace_path = "C:/Temp/Product"
+    result = TaskBlueprintResultV1(
+        ok=False,
+        task_id="PM-active",
+        workspace="C:/Temp/Product",
+        status="missing",
+        summary="No Chief Engineer blueprint has been generated for this task.",
+    )
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.get_blueprint_status",
+        return_value=result,
+    ) as get_status:
+        response = await client.get("/v2/chief-engineer/blueprints/status?task_id=PM-active")
+
+    assert response.status_code == 200
+    query = get_status.call_args.args[0]
+    assert query.workspace == "C:/Temp/Product"
+    assert response.json()["workspace"] == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,85 @@
+card_id: "vc-20260523-director-execution-llm-dialogue-dependency"
+bug_summary: >
+  director.execution imported llm.dialogue.public.service.generate_role_response
+  without declaring llm.dialogue as a graph or cell manifest dependency.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/director/execution/internal/code_generation_engine.py"
+  method: "_invoke_director_role_response"
+  symptom: >
+    Catalog governance reported a high-severity undeclared dependency from
+    director.execution to llm.dialogue.
+
+assumptions:
+  - id: "A1"
+    statement: "Director execution directly imports the llm.dialogue public service."
+    status: verified_true
+    evidence: >
+      code_generation_engine.py imports
+      polaris.cells.llm.dialogue.public.service.generate_role_response.
+
+  - id: "A2"
+    statement: "llm.dialogue exposes the public role dialogue contract used by this path."
+    status: verified_true
+    evidence: >
+      llm.dialogue public contracts include InvokeRoleDialogueCommandV1 and the
+      public service exports generate_role_response.
+
+  - id: "A3"
+    statement: "The fix is metadata-only and should not alter Director behavior."
+    status: verified_true
+    evidence: >
+      Only graph/catalog YAML, governance tests, and governance documentation
+      are changed.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only docs/graph/catalog/cells.yaml would leave the individual cell
+    manifest and subgraph stale.
+  guardrail: >
+    Update catalog, cell.yaml, execution_governance_pipeline, and add regression
+    tests for all three declarations.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/tests/test_cell_yaml_governance.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/tests/test_cell_yaml_governance.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/tests/test_cell_yaml_governance.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_cell_yaml_governance.py::TestDirectorExecutionGovernance -v"
+    expected: "Director execution governance tests pass"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/cells/director/execution/tests/test_code_generation.py -v"
+    expected: "Director code generation tests pass"
+  - command: ".venv\\Scripts\\python.exe src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace src/backend --mode audit-only"
+    expected: "Audit report has exit_code 0 and no undeclared llm.dialogue dependency issue"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/tests/test_cell_yaml_governance.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/tests/test_cell_yaml_governance.py"
+    result: pass
+    evidence: "1 file left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/tests/test_cell_yaml_governance.py"
+    result: pass
+    evidence: "Success: no issues found in 1 source file."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_cell_yaml_governance.py::TestDirectorExecutionGovernance -v"
+    result: pass
+    evidence: "2 passed in 1.93s."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/cells/director/execution/tests/test_code_generation.py -v"
+    result: pass
+    evidence: "30 passed in 2.05s."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_cell_yaml_governance.py -v"
+    result: pass
+    evidence: "11 passed in 2.61s."
+  - command: ".venv\\Scripts\\python.exe src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace src/backend --mode audit-only"
+    result: pass
+    evidence: "exit_code=0; issue_count=0; high_count=0; mismatch_count=0."
+  - command: "git diff --check -- src/backend/docs/graph/catalog/cells.yaml src/backend/polaris/cells/director/execution/cell.yaml src/backend/docs/graph/subgraphs/execution_governance_pipeline.yaml src/backend/polaris/tests/test_cell_yaml_governance.py src/backend/docs/blueprints/DIRECTOR_EXECUTION_LLM_DIALOGUE_DEPENDENCY_20260523.md src/backend/docs/governance/decisions/adr-0087-director-execution-llm-dialogue-dependency.md src/backend/docs/governance/templates/verification-cards/vc-20260523-director-execution-llm-dialogue-dependency.yaml"
+    result: pass
+    evidence: "No whitespace errors; Git reported LF-to-CRLF normalization warnings for existing YAML files."
+
+status: passed

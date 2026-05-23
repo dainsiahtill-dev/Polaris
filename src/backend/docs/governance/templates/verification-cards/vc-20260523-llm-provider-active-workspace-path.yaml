@@ -1,0 +1,81 @@
+card_id: "vc-20260523-llm-provider-active-workspace-path"
+bug_summary: >
+  LLM config/runtime and provider action routes can resolve KernelOne cache and
+  config paths from stale settings.workspace instead of the active Electron
+  workspace_path used by PM, Chief Engineer, and Director desktop surfaces.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/llm.py and polaris/delivery/http/routers/providers.py"
+  method: "LLM config/runtime-status and provider health/models"
+  symptom: >
+    Desktop role workspaces can display, save, test, or inspect LLM state for
+    the Polaris repo while the UI is operating on a selected target workspace.
+
+assumptions:
+  - id: "A1"
+    statement: "Desktop PM/Chief Engineer/Director LLM surfaces use these v2 LLM/provider routes."
+    status: verified_true
+    evidence: >
+      Existing desktop role workspace smoke coverage exercises role surfaces,
+      and the LLM/provider routes are the canonical backend APIs for config,
+      runtime status, provider health, and model listing.
+
+  - id: "A2"
+    statement: "settings.workspace_path is the active Electron target workspace when populated."
+    status: verified_true
+    evidence: >
+      Existing PM, Chief Engineer, RoleChat, RoleSession, readiness, and
+      runtime active-workspace contracts now prefer workspace_path over
+      workspace.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only readiness or runtime status would still leave provider health
+    and model listing resolving provider config from the stale repo workspace.
+  guardrail: >
+    Reuse the shared delivery active_workspace_value helper and assert
+    build_cache_root, load/save config, resolve_artifact_path, and
+    resolve_provider_request_context receive workspace_path first.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/delivery/http/routers/providers.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/delivery/http/routers/providers.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/delivery/http/routers/providers.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py -v"
+    expected: "All tests pass"
+  - command: "npm test -- src/frontend/src/app/components/llm/providers/AnthropicCompatProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/BaseProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/KimiProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/OpenAICompatProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/ProviderCard.test.tsx"
+    expected: "Provider frontend tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    expected: "Electron role workspace visual surface passes"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/delivery/http/routers/providers.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/delivery/http/routers/providers.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py"
+    result: pass
+    evidence: "4 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/delivery/http/routers/providers.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py"
+    result: pass
+    evidence: "Success: no issues found in 4 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_providers_v2.py -v"
+    result: pass
+    evidence: "38 passed in 13.21s."
+  - command: "npm test -- src/frontend/src/app/components/llm/providers/AnthropicCompatProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/BaseProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/KimiProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/OpenAICompatProviderSettings.test.tsx src/frontend/src/app/components/llm/providers/ProviderCard.test.tsx"
+    result: pass
+    evidence: "5 files passed; 14 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "1 passed; pretest renderer build completed."
+
+status: passed

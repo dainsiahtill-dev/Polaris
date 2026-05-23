@@ -1,0 +1,80 @@
+card_id: "vc-20260523-pm-management-active-workspace-path"
+bug_summary: >
+  PM management desktop routes can instantiate ScriptsPMAdapter with a stale
+  settings.workspace value instead of the active Electron workspace_path.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/pm_management.py"
+  method: "workspace resolution across PM management route handlers"
+  symptom: >
+    /v2/pm document, task, requirement, status, health, and init routes can read
+    or write PM state for the repository workspace instead of the selected
+    target workspace.
+
+assumptions:
+  - id: "A1"
+    statement: "Desktop runtime treats settings.workspace_path as the active selected workspace."
+    status: verified_true
+    evidence: >
+      Chief Engineer workspace route contract now prefers workspace_path, and
+      PM desktop services call /v2/pm/* without passing an explicit workspace.
+
+  - id: "A2"
+    statement: "PM management routes repeat local workspace resolution rather than using one resolver."
+    status: verified_true
+    evidence: >
+      pm_management.py contains repeated blocks that read state.settings.workspace
+      before constructing ScriptsPMAdapter.
+
+  - id: "A3"
+    statement: "Legacy non-desktop callers may still rely on settings.workspace."
+    status: verified_true
+    evidence: >
+      Existing router tests configure both workspace and workspace_path as '.',
+      so fallback compatibility must remain.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Replacing workspace with workspace_path inline in each handler would preserve
+    the repeated pattern and risk future drift or missing endpoints.
+  guardrail: >
+    Add one helper used by every PM management handler that constructs
+    ScriptsPMAdapter.
+
+verification_plan:
+  - command: "ruff check src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py --fix"
+    expected: "All checks passed"
+  - command: "ruff format src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    expected: "Formatting complete without changes or with formatted files"
+  - command: "mypy src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    expected: "Success: no issues found"
+  - command: "pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    expected: "All tests pass"
+  - command: "npm test -- PMDocumentPanel.test.tsx PMTaskPanel.test.tsx PMWorkspace.test.tsx api.pmTaskService.test.ts pmService.test.ts"
+    expected: "Focused desktop PM tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run test:e2e"
+    expected: "Electron E2E suite passes or only known tests are skipped"
+
+verification_results:
+  - command: "ruff check src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py --fix"
+    result: "passed"
+  - command: "ruff format src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    result: "passed"
+  - command: "mypy src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py"
+    result: "passed"
+  - command: "pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    result: "37 passed"
+  - command: "npm test -- PMDocumentPanel.test.tsx PMTaskPanel.test.tsx PMWorkspace.test.tsx api.pmTaskService.test.ts pmService.test.ts"
+    result: "5 files passed, 67 tests passed"
+  - command: "npm run typecheck"
+    result: "passed"
+  - command: "git diff --check"
+    result: "passed with existing LF/CRLF warnings"
+  - command: "npm run test:e2e"
+    result: "7 passed, 3 skipped"
+
+status: verified

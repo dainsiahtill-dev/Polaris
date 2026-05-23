@@ -1,0 +1,69 @@
+card_id: "vc-20260523-role-readiness-active-workspace-path"
+bug_summary: >
+  Shared role readiness checks can load LLM config and cache roots from stale
+  settings.workspace while RoleChat message generation runs against the active
+  Electron workspace_path.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/_shared.py"
+  method: "_ensure_llm_ready / required_ready_roles"
+  symptom: >
+    PM, Chief Engineer, or Director desktop dialogue can be blocked or allowed
+    by LLM readiness evidence from the wrong workspace.
+
+assumptions:
+  - id: "A1"
+    statement: "RoleChat invokes the shared readiness gate before generation."
+    status: verified_true
+    evidence: >
+      role_chat.py calls ensure_required_roles_ready before non-stream and
+      streaming generate_role_response paths.
+
+  - id: "A2"
+    statement: "Electron active workspace is settings.workspace_path when populated."
+    status: verified_true
+    evidence: >
+      Existing PM, Chief Engineer, RoleChat, and RoleSession active-workspace
+      contracts now prefer workspace_path over workspace.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only RoleChat generation leaves readiness loading stale repo
+    config, so the visible dialogue path still fails under active target
+    workspaces.
+  guardrail: >
+    Centralize active workspace resolution in _shared.py and assert both
+    build_cache_root and load_llm_config receive workspace_path first.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_llm_phase0_regression.py -v"
+    expected: "All tests pass"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -v"
+    expected: "RoleChat route tests pass"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py"
+    result: pass
+    evidence: "2 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py"
+    result: pass
+    evidence: "Success: no issues found in 2 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_llm_phase0_regression.py -v"
+    result: pass
+    evidence: "36 passed in 2.71s."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -v"
+    result: pass
+    evidence: "11 passed, 2 skipped."
+
+status: passed

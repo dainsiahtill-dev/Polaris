@@ -14,7 +14,12 @@ from polaris.cells.llm.provider_config.public.service import sync_settings_from_
 from polaris.cells.llm.provider_runtime.public.service import get_provider_manager
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.cells.storage.layout.public.service import save_persisted_settings
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.routers._shared import (
+    StructuredHTTPException,
+    active_workspace_value,
+    get_state,
+    require_auth,
+)
 from polaris.delivery.http.schemas.common import (
     LLMConfigResponse,
     LLMMigrateConfigResponse,
@@ -32,6 +37,12 @@ logger = logging.getLogger(__name__)
 
 # Resolve provider_manager from the Cell layer (which delegates to kernelone)
 _provider_manager: ProviderManager = get_provider_manager()
+
+
+def _workspace_and_cache_root(settings: Any) -> tuple[str, str]:
+    workspace = active_workspace_value(settings)
+    cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace)
+    return workspace, cache_root
 
 
 def _normalize_runtime_role_id(role_id: str) -> str:
@@ -93,22 +104,22 @@ def _build_role_runtime_status(runtime_dir: str, role_id: str) -> dict[str, Any]
 @router.get("/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def get_llm_config(request: Request) -> dict[str, Any]:
     state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
-    config = llm_config.load_llm_config(str(state.settings.workspace), cache_root, settings=state.settings)
+    workspace, cache_root = _workspace_and_cache_root(state.settings)
+    config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     return llm_config.redact_llm_config(config)
 
 
 @router.post("/llm/config", dependencies=[Depends(require_auth)], response_model=LLMConfigResponse)
 def save_llm_config(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
     state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
+    workspace, cache_root = _workspace_and_cache_root(state.settings)
     config_payload = payload.get("config") if isinstance(payload, dict) and "config" in payload else payload
     if not isinstance(config_payload, dict):
         raise StructuredHTTPException(status_code=400, code="INVALID_CONFIG", message="invalid config payload")
 
     try:
         config = llm_config.save_llm_config(
-            str(state.settings.workspace),
+            workspace,
             cache_root,
             config_payload,
             settings=state.settings,
@@ -143,8 +154,8 @@ def llm_status(request: Request) -> dict[str, Any]:
 @router.get("/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)
 def get_runtime_status(request: Request) -> dict[str, Any]:
     state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
-    runtime_dir = resolve_artifact_path(str(state.settings.workspace), cache_root, "runtime")
+    workspace, cache_root = _workspace_and_cache_root(state.settings)
+    runtime_dir = resolve_artifact_path(workspace, cache_root, "runtime")
 
     roles_status: dict[str, dict[str, Any]] = {}
     for role_id in ("pm", "director", "qa", "architect"):
@@ -165,8 +176,8 @@ def get_role_runtime_status(request: Request, role_id: str) -> dict[str, Any]:
         raise StructuredHTTPException(status_code=400, code="INVALID_ROLE_ID", message="invalid role_id")
 
     state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
-    runtime_dir = resolve_artifact_path(str(state.settings.workspace), cache_root, "runtime")
+    workspace, cache_root = _workspace_and_cache_root(state.settings)
+    runtime_dir = resolve_artifact_path(workspace, cache_root, "runtime")
 
     role_status = _build_role_runtime_status(runtime_dir, normalized_role_id)
     role_status["roleId"] = normalized_role_id

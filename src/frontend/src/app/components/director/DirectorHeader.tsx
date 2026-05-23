@@ -39,6 +39,7 @@ interface DirectorHeaderProps {
   onPause: () => void;
   onReset: () => void;
   onToggleAIDialogue: () => void;
+  onOpenSettings?: () => void;
 }
 
 export function DirectorHeader({
@@ -61,6 +62,7 @@ export function DirectorHeader({
   onPause,
   onReset,
   onToggleAIDialogue,
+  onOpenSettings,
 }: DirectorHeaderProps) {
   return (
     <header className="h-14 flex items-center justify-between px-4 border-b border-indigo-500/20 bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/20">
@@ -214,6 +216,10 @@ export function DirectorHeader({
         <Button
           variant="ghost"
           size="icon"
+          onClick={onOpenSettings}
+          disabled={!onOpenSettings}
+          data-testid="director-header-open-settings"
+          title={onOpenSettings ? '系统配置' : '系统配置需由主界面打开'}
           className="text-slate-400 hover:text-slate-100"
         >
           <Settings className="w-4 h-4" />

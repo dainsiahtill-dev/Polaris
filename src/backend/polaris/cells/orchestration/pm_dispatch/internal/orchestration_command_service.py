@@ -287,6 +287,7 @@ class OrchestrationCommandService:
         started_at = datetime.now(timezone.utc).isoformat()
 
         opts = options or {}
+        task_ids = [str(item).strip() for item in list(tasks or []) if str(item).strip()]
         director_options = DirectorRunOptions(
             task_filter=opts.get("task_filter"),
             max_workers=opts.get("max_workers", DEFAULT_DIRECTOR_MAX_PARALLELISM),
@@ -301,8 +302,8 @@ class OrchestrationCommandService:
 
             # Build role entries
             input_text = director_options.task_filter or "Execute ready tasks"
-            if tasks:
-                input_text = f"Execute tasks: {', '.join(tasks)}"
+            if task_ids:
+                input_text = f"Execute tasks: {', '.join(task_ids)}"
 
             role_entries = [
                 RoleEntrySpec(
@@ -320,7 +321,7 @@ class OrchestrationCommandService:
                 mode=OrchestrationMode.WORKFLOW,
                 role_entries=role_entries,
                 metadata={
-                    "tasks": tasks or [],
+                    "tasks": task_ids,
                     "max_workers": director_options.max_workers,
                     "execution_mode": director_options.execution_mode,
                     "command_source": "orchestration_command_service",
@@ -342,6 +343,8 @@ class OrchestrationCommandService:
 
             # Submit run
             snapshot = await service.submit_run(orch_request)
+            snapshot_task_ids = list(snapshot.tasks.keys())
+            queued_task_ids = snapshot_task_ids or task_ids
 
             # Track active run
             self._active_runs[run_id] = {
@@ -356,6 +359,12 @@ class OrchestrationCommandService:
                 message=f"Director started in {director_options.execution_mode} mode",
                 started_at=started_at,
                 artifacts=[],
+                metadata={
+                    "tasks_queued": len(queued_task_ids),
+                    "task_ids": queued_task_ids,
+                    "snapshot_task_ids": snapshot_task_ids,
+                    "requested_task_ids": task_ids,
+                },
             )
 
         except (RuntimeError, ValueError) as e:

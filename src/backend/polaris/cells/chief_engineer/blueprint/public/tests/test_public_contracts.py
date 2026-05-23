@@ -10,6 +10,10 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintGeneratedEventV1,
     TaskBlueprintResultV1,
 )
+from polaris.cells.chief_engineer.blueprint.public.service import (
+    generate_task_blueprint,
+    get_blueprint_status,
+)
 
 
 class TestGenerateTaskBlueprintCommandV1HappyPath:
@@ -140,9 +144,20 @@ class TestTaskBlueprintResultV1HappyPath:
             blueprint_path="/bp.yaml",
         )
         assert res.ok is True
+        assert res.blueprint_id is None
         assert res.blueprint_path == "/bp.yaml"
         assert res.recommendations == ()
         assert res.risks == ()
+
+    def test_with_blueprint_id(self) -> None:
+        res = TaskBlueprintResultV1(
+            ok=True,
+            task_id="task-1",
+            workspace="/repo",
+            status="generated",
+            blueprint_id="bp-1",
+        )
+        assert res.blueprint_id == "bp-1"
 
     def test_failure(self) -> None:
         res = TaskBlueprintResultV1(
@@ -199,3 +214,48 @@ class TestChiefEngineerBlueprintErrorV1:
     def test_empty_code_raises(self) -> None:
         with pytest.raises(ValueError, match="code"):
             ChiefEngineerBlueprintErrorV1("error", code="  ")
+
+
+class TestChiefEngineerBlueprintPublicService:
+    def test_generate_and_query_task_blueprint(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="PM-42",
+            workspace=str(tmp_path),
+            objective="Build Director task board",
+            run_id="run-1",
+            constraints={"guardrail": "no target project writes"},
+            context={
+                "task_title": "Director board",
+                "target_files": ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"],
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert result.blueprint_id is not None
+        assert result.status == "generated"
+        assert result.blueprint_path == f"runtime/blueprints/{result.blueprint_id}.json"
+
+        status = get_blueprint_status(
+            GetBlueprintStatusQueryV1(
+                task_id="PM-42",
+                workspace=str(tmp_path),
+                run_id="run-1",
+            )
+        )
+
+        assert status.ok is True
+        assert status.blueprint_id == result.blueprint_id
+        assert status.summary.startswith("Chief Engineer blueprint for PM-42")
+
+    def test_query_missing_task_blueprint(self, tmp_path) -> None:
+        status = get_blueprint_status(
+            GetBlueprintStatusQueryV1(
+                task_id="missing",
+                workspace=str(tmp_path),
+            )
+        )
+
+        assert status.ok is False
+        assert status.status == "missing"

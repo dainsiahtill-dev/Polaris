@@ -1,0 +1,80 @@
+card_id: "vc-20260523-pm-task-list-backend-fallback"
+bug_summary: >
+  PM desktop task board and task metrics used only runtime snapshot task props
+  and ignored available backend PM task registry rows from /v2/pm/tasks.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/pm/PMWorkspace.tsx"
+  method: "PM task evidence aggregation"
+  symptom: >
+    When realtime PM task rows were absent, the PM workspace could show an empty
+    task board, zero progress, zero analytics, and zero dialogue task context
+    even though /v2/pm/tasks had auditable backend rows.
+
+assumptions:
+  - id: "A1"
+    statement: "The backend already exposes PM task list/detail routes."
+    status: verified_true
+    evidence: >
+      pm_management.py exposes /v2/pm/tasks and /v2/pm/tasks/{task_id}.
+
+  - id: "A2"
+    statement: "The desktop service layer lacked PM task list/detail wrappers."
+    status: verified_true
+    evidence: >
+      pmService had search/history functions, but no listPmTasks or getPmTask
+      wrapper before this change.
+
+  - id: "A3"
+    statement: "Runtime task rows must remain authoritative when both sources share an id."
+    status: verified_true
+    evidence: >
+      The merge order inserts backend rows first and then runtime rows by task id.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Replacing runtime snapshot tasks with backend rows would drop volatile live
+    execution state from the desktop.
+  guardrail: >
+    Merge backend rows only as fallback evidence and keep runtime rows as the
+    final writer for duplicate task ids.
+
+verification_plan:
+  - command: "npm run test -- PMWorkspace pmService"
+    expected: "PM workspace and PM service tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run lint"
+    expected: "ESLint passes"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    expected: "Existing PM management v2 route tests pass"
+
+verification_results:
+  - command: "npm run test -- PMWorkspace pmService"
+    result: pass
+    evidence: "2 files passed; 62 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    result: pass
+    evidence: "eslint completed successfully."
+  - command: "npm run test -- PMWorkspace PMWorkbenchPanel PMTaskPanel PMDocumentPanel PMDiagnosticsPanel ChiefEngineerWorkspace DirectorWorkspace DirectorWorkbenchPanel DirectorTaskPanel pmService"
+    result: pass
+    evidence: "11 files passed; 111 tests passed."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    result: pass
+    evidence: "37 tests passed."
+  - command: "npm run test"
+    result: pass
+    evidence: "76 files passed; 681 tests passed. jsdom emitted its existing non-fatal navigation warning."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "Renderer build passed and Electron role workspace visual audit passed."
+  - command: "git diff --check -- src/frontend/src/services/pmService.ts src/frontend/src/services/index.ts src/frontend/src/app/components/pm/PMWorkspace.tsx src/frontend/src/app/components/pm/PMWorkspace.test.tsx src/frontend/src/services/__tests__/pmService.test.ts src/backend/docs/blueprints/PM_DESKTOP_TASK_LIST_BACKEND_FALLBACK_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-pm-task-list-backend-fallback.yaml"
+    result: pass
+    evidence: "No whitespace errors; Git reported LF-to-CRLF normalization warnings for existing frontend files."
+
+status: passed

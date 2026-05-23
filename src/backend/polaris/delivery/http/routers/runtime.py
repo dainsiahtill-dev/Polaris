@@ -32,7 +32,7 @@ from polaris.kernelone.storage import (
 from polaris.kernelone.storage.io_paths import build_cache_root
 from pydantic import BaseModel
 
-from ._shared import get_state, require_auth
+from ._shared import active_workspace_value, get_state, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,7 @@ class RuntimeClearPayload(BaseModel):
 
 def _runtime_storage_layout_core(request: Request) -> dict[str, Any]:
     state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = active_workspace_value(state.settings)
     roots = resolve_storage_roots(
         workspace,
         ramdisk_root=state.settings.ramdisk_root or None,
@@ -177,8 +176,7 @@ async def v2_runtime_storage_layout(request: Request) -> dict[str, Any]:
 
 def _runtime_clear_core(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:
     state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = active_workspace_value(state.settings)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace)
 
     result = clear_runtime_scope(workspace, cache_root, payload.scope)
@@ -218,8 +216,7 @@ def _runtime_migration_status_core(request: Request) -> dict[str, Any]:
     from pathlib import Path
 
     state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = active_workspace_value(state.settings)
 
     # Default values
     version = 1
@@ -297,8 +294,7 @@ async def v2_runtime_migration_status(request: Request) -> dict[str, Any]:
 
 async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    workspace = active_workspace_value(state.settings)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace)
 
     pm_running = False

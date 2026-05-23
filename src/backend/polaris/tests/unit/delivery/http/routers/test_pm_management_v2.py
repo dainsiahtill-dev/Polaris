@@ -1,8 +1,6 @@
 """Tests for Polaris PM management v2 routes in pm_management.py.
 
-Covers v2 aliases: /pm/v2/pm/documents, /pm/v2/pm/tasks,
-/pm/v2/pm/requirements, /pm/v2/pm/status, /pm/v2/pm/health,
-/pm/v2/pm/init.
+Covers legacy v2 aliases under /pm/v2/pm/* and desktop aliases under /v2/pm/*.
 External PM service is mocked to avoid DI container and storage dependencies.
 """
 
@@ -102,6 +100,39 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
 # ---------------------------------------------------------------------------
 
 
+def test_desktop_v2_pm_management_routes_are_registered(mock_settings: Settings) -> None:
+    """Desktop PM document/task/requirement endpoints must be mounted at /v2/pm."""
+    from polaris.delivery.http.app_factory import create_app
+
+    app = create_app(settings=mock_settings)
+    route_paths = {getattr(route, "path", "") for route in app.routes}
+    route_methods = {
+        (getattr(route, "path", ""), method)
+        for route in app.routes
+        for method in (getattr(route, "methods", set()) or set())
+    }
+
+    expected_paths = {
+        "/v2/pm/documents",
+        "/v2/pm/documents/{doc_path:path}",
+        "/v2/pm/documents/{doc_path:path}/versions",
+        "/v2/pm/documents/{doc_path:path}/compare",
+        "/v2/pm/search/documents",
+        "/v2/pm/tasks",
+        "/v2/pm/tasks/history",
+        "/v2/pm/tasks/director",
+        "/v2/pm/tasks/{task_id}",
+        "/v2/pm/tasks/{task_id}/assignments",
+        "/v2/pm/search/tasks",
+        "/v2/pm/requirements",
+        "/v2/pm/requirements/{req_id}",
+    }
+
+    assert expected_paths.issubset(route_paths)
+    assert ("/v2/pm/tasks", "GET") in route_methods
+    assert ("/v2/pm/tasks", "POST") in route_methods
+
+
 def _mock_pm_adapter(
     *,
     initialized: bool = True,
@@ -117,6 +148,7 @@ def _mock_pm_adapter(
     get_task_history_result: dict | None = None,
     get_director_task_history_result: dict | None = None,
     get_task_result: object | None = None,
+    create_task_result: object | None = None,
     get_task_assignments_result: list | None = None,
     search_tasks_result: list | None = None,
     list_requirements_result: dict | None = None,
@@ -152,6 +184,7 @@ def _mock_pm_adapter(
         "pagination": {"total": 0, "limit": 50, "offset": 0},
     }
     mock_pm.get_task.return_value = get_task_result
+    mock_pm.create_task.return_value = create_task_result
     mock_pm.get_task_assignments.return_value = get_task_assignments_result or []
     mock_pm.search_tasks.return_value = search_tasks_result or []
     mock_pm.list_requirements.return_value = list_requirements_result or {
@@ -180,6 +213,43 @@ def _mock_pm_adapter(
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_v2_pm_management_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Desktop PM routes should use workspace_path before stale workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_pm = _mock_pm_adapter()
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ) as adapter_cls:
+        response = await client.get("/v2/pm/documents")
+
+    assert response.status_code == 200
+    adapter_cls.assert_called_once_with("C:/Temp/Product")
+
+
+@pytest.mark.asyncio
+async def test_v2_pm_management_requires_configured_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """PM management routes should fail before adapter construction without a workspace."""
+    mock_settings.workspace = ""
+    mock_settings.workspace_path = ""
+
+    with patch("polaris.delivery.http.routers.pm_management.ScriptsPMAdapter") as adapter_cls:
+        response = await client.get("/v2/pm/documents")
+
+    assert response.status_code == 400
+    assert "WORKSPACE_NOT_CONFIGURED" in response.json()["error"]["code"]
+    adapter_cls.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -481,15 +551,12 @@ async def test_v2_compare_document_versions(client: AsyncClient) -> None:
         old_version: str = "1"
         new_version: str = "2"
         diff_text: str = "-old\n+new"
-        changed_sections: list[str] = None
-        added_requirements: list[str] = None
-        removed_requirements: list[str] = None
+        changed_sections: list[str] = field(default_factory=list)
+        added_requirements: list[str] = field(default_factory=list)
+        removed_requirements: list[str] = field(default_factory=list)
         impact_score: float = 0.5
 
-    diff = _FakeDiff()
-    diff.changed_sections = ["section1"]
-    diff.added_requirements = ["req1"]
-    diff.removed_requirements = []
+    diff = _FakeDiff(changed_sections=["section1"], added_requirements=["req1"])
 
     mock_pm = _mock_pm_adapter(compare_document_versions_result=diff)
 
@@ -562,6 +629,9 @@ async def test_v2_list_tasks(client: AsyncClient) -> None:
         data = response.json()
         assert len(data["tasks"]) == 1
         assert data["tasks"][0]["id"] == "task-1"
+        assert data["items"][0]["id"] == "task-1"
+        assert data["items"][0]["subject"] == "Task 1"
+        assert data["total"] == 1
         mock_pm.list_tasks.assert_called_once_with(status=None, assignee=None, limit=100, offset=0)
 
 
@@ -577,6 +647,64 @@ async def test_v2_list_tasks_with_filters(client: AsyncClient) -> None:
         response = await client.get("/pm/v2/pm/tasks?status=pending&assignee=user1&limit=20&offset=10")
         assert response.status_code == 200
         mock_pm.list_tasks.assert_called_once_with(status="pending", assignee="user1", limit=20, offset=10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/pm/v2/pm/tasks", "/v2/pm/tasks"])
+async def test_v2_create_task_aliases(client: AsyncClient, path: str) -> None:
+    """POST PM task aliases should create through the PM task adapter."""
+    mock_pm = _mock_pm_adapter(
+        create_task_result={
+            "id": "TASK-0001",
+            "title": "Close PM route gap",
+            "description": "Wire desktop create route",
+            "status": "pending",
+            "priority": "high",
+            "metadata": {
+                "acceptance": ["POST returns task detail"],
+                "due_date": "2026-06-01",
+                "tags": ["desktop"],
+                "parent_id": "parent-1",
+            },
+        },
+    )
+
+    payload = {
+        "subject": "Close PM route gap",
+        "description": "Wire desktop create route",
+        "priority": "high",
+        "status": "pending",
+        "acceptance": ["POST returns task detail"],
+        "assignee": "pm",
+        "due_date": "2026-06-01",
+        "tags": ["desktop"],
+        "parent_id": "parent-1",
+        "metadata": {"source": "test"},
+    }
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ):
+        response = await client.post(path, json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "TASK-0001"
+        assert data["subject"] == "Close PM route gap"
+        assert data["title"] == "Close PM route gap"
+        assert data["acceptance"] == ["POST returns task detail"]
+        mock_pm.create_task.assert_called_once_with(
+            subject="Close PM route gap",
+            description="Wire desktop create route",
+            priority="high",
+            status="pending",
+            acceptance=["POST returns task detail"],
+            assignee="pm",
+            due_date="2026-06-01",
+            tags=["desktop"],
+            parent_id="parent-1",
+            metadata={"source": "test"},
+        )
 
 
 @pytest.mark.asyncio
@@ -764,6 +892,8 @@ async def test_v2_list_requirements(client: AsyncClient) -> None:
         data = response.json()
         assert len(data["requirements"]) == 1
         assert data["requirements"][0]["id"] == "req-1"
+        assert data["items"][0]["id"] == "req-1"
+        assert data["total"] == 1
         mock_pm.list_requirements.assert_called_once_with(status=None, priority=None, limit=100, offset=0)
 
 

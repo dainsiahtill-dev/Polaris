@@ -311,6 +311,63 @@ class ScriptsPMAdapter:
         pm = self.get_pm()
         return pm.get_task(task_id)
 
+    def create_task(
+        self,
+        *,
+        subject: str,
+        description: str = "",
+        priority: str | None = None,
+        status: str | None = None,
+        acceptance: list[str] | None = None,
+        assignee: str | None = None,
+        due_date: str | None = None,
+        tags: list[str] | None = None,
+        parent_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        """Create a PM-owned task through the existing task orchestrator.
+
+        The desktop API uses ``subject`` while the PM source of truth stores
+        the same value as ``title``. Extra desktop fields are preserved in
+        task metadata so the create route remains forward-compatible without
+        widening the Task dataclass itself.
+        """
+        pm = self.get_pm()
+        module = self._load_pm_module()
+        priority_value = self._enum_value(getattr(module, "TaskPriority", None), priority, "MEDIUM")
+
+        task_metadata: dict[str, Any] = dict(metadata or {})
+        task_metadata.update(
+            {
+                "subject": subject,
+                "acceptance": list(acceptance or []),
+                "due_date": due_date,
+                "tags": list(tags or []),
+                "parent_id": parent_id,
+                "created_via": "v2_pm_tasks_api",
+            }
+        )
+
+        task = pm.tasks.register_task(
+            title=subject,
+            description=description,
+            priority=priority_value,
+            metadata=task_metadata,
+        )
+
+        updates: dict[str, Any] = {}
+        if status:
+            updates["status"] = self._enum_value(getattr(module, "TaskStatus", None), status, "PENDING")
+        if assignee:
+            updates["assignee"] = assignee
+
+        if updates:
+            updated = pm.tasks.update_task(task.id, changed_by="api", **updates)
+            if updated is not None:
+                task = updated
+
+        return task
+
     def get_task_assignments(
         self,
         task_id: str | None = None,
@@ -329,6 +386,27 @@ class ScriptsPMAdapter:
         """
         pm = self.get_pm()
         return pm.get_task_assignments(task_id, assignee, limit)
+
+    @staticmethod
+    def _enum_value(enum_cls: Any, raw_value: str | None, default_name: str) -> Any:
+        """Resolve a string token to a str Enum member with a named default."""
+        if enum_cls is None:
+            return str(raw_value or default_name).lower()
+
+        token = str(raw_value or "").strip().lower()
+        try:
+            members = list(enum_cls)
+        except TypeError:
+            members = []
+
+        if token:
+            for member in members:
+                member_name = str(getattr(member, "name", "")).lower()
+                member_value = str(getattr(member, "value", member)).lower()
+                if token in {member_name, member_value}:
+                    return member
+
+        return getattr(enum_cls, default_name)
 
     def search_tasks(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search tasks.

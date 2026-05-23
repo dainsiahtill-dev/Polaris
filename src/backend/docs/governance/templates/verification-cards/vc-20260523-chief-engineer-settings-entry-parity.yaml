@@ -1,0 +1,55 @@
+id: vc-20260523-chief-engineer-settings-entry-parity
+title: Chief Engineer settings entry parity
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx
+  - src/frontend/src/app/App.tsx
+related_blueprint: src/backend/docs/blueprints/CHIEF_ENGINEER_SETTINGS_ENTRY_PARITY_20260523.md
+assumption_register:
+  - id: A1
+    statement: PM and Director role workspaces already have shared settings entry callbacks.
+    evidence:
+      - src/frontend/src/app/components/pm/PMWorkspace.tsx
+      - src/frontend/src/app/components/director/DirectorWorkspace.tsx
+    verified: true
+  - id: A2
+    statement: App owns the shared settings action and can pass it to role workspaces.
+    evidence:
+      - src/frontend/src/app/App.tsx
+    verified: true
+  - id: A3
+    statement: Chief Engineer only needs a frontend callback and no backend contract change.
+    evidence:
+      - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+    verified: true
+pre_mortem:
+  - risk: The callback is not optional and breaks embedded test or factory hosts.
+    mitigation: Keep `onOpenSettings` optional and disable the button when absent.
+  - risk: App route forgets to pass the callback, leaving the desktop gap in production.
+    mitigation: Wire Chief Engineer route to `uiActions.openSettings()` and test the component callback.
+verification_plan:
+  - command: npm run test -- ChiefEngineerWorkspace
+    expected: Chief Engineer workspace tests pass, including settings callback regression.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director desktop parity regression passes.
+verification_results:
+  - command: npm run test -- ChiefEngineerWorkspace
+    result: passed
+    evidence: 1 test file passed, 9 tests passed
+  - command: npm run typecheck
+    result: passed
+    evidence: tsc --noEmit completed with exit code 0
+  - command: npm run lint
+    result: passed
+    evidence: eslint completed with exit code 0
+  - command: npm run test -- PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: passed
+    evidence: 13 test files passed, 126 tests passed

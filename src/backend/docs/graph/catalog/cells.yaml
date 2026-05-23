@@ -2191,11 +2191,13 @@ cells:
       - polaris.cells.chief_engineer.blueprint.internal.event_bus
       - polaris.cells.chief_engineer.blueprint.internal.adr_store
       - polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence
+      - polaris.delivery.http.v2.chief_engineer
       - polaris.infrastructure.code_intelligence
     owned_paths:
       - polaris/cells/chief_engineer/blueprint/internal/**
       - polaris/cells/chief_engineer/blueprint/public/**
       - polaris/cells/chief_engineer/blueprint/tests/**
+      - polaris/delivery/http/v2/chief_engineer.py
     public_contracts:
       modules:
         - polaris.cells.chief_engineer.blueprint.public.contracts
@@ -2236,6 +2238,7 @@ cells:
     verification:
       tests:
         - tests/test_chief_engineer_preflight.py
+        - polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
       gaps:
         - Blueprint adapter convergence with roles adapters is not complete.
 
@@ -2347,6 +2350,7 @@ cells:
       - finops.budget_guard
       - events.fact_stream
       - llm.control_plane
+      - llm.dialogue
       - audit.verdict
       - llm.provider_runtime
       - roles.runtime

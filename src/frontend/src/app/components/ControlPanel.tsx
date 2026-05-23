@@ -1,9 +1,17 @@
+import { useState } from 'react';
 import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import { UsageHUD, type UsageStats } from './UsageHUD';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
 import { MiniStatusBadge } from '@/app/components/ai-dialogue/ManusStyleStatusIndicator';
 import { cleanRuntimeDisplayText } from '@/app/utils/runtimeDisplay';
+import {
+  getDirectorStatus,
+  getPmStatus,
+  type DirectorStatus,
+  type PmStatus,
+  type ProcessStatus,
+} from '@/services';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,10 +35,10 @@ interface ControlPanelProps {
   onGenerateAgentsDraft?: () => void;
   onOpenSettings: () => void;
   onPickWorkspace?: () => void;
-  onTogglePm: () => void;
-  onRunPmOnce?: () => void;
-  onResumePm?: () => void;
-  onToggleDirector: () => void;
+  onTogglePm: () => void | boolean | Promise<void | boolean>;
+  onRunPmOnce?: () => void | boolean | Promise<void | boolean>;
+  onResumePm?: () => void | boolean | Promise<void | boolean>;
+  onToggleDirector: () => void | boolean | Promise<void | boolean>;
   onStopOllama?: () => void;
   onRefresh: () => void;
   onOpenBrain?: () => void;
@@ -47,6 +55,7 @@ interface ControlPanelProps {
   isStoppingDirector?: boolean;
   isStoppingOllama?: boolean;
   healthStatus?: string | null;
+  healthStatusDetail?: string | null;
   onPingHealth?: () => void;
   onOpenLogs?: () => void;
   isArtifactsOpen: boolean;
@@ -61,6 +70,32 @@ interface ControlPanelProps {
   currentTask?: string;
   isExecutingTool?: boolean;
   currentToolName?: string;
+}
+
+interface ProcessToggleEvidence<T extends ProcessStatus> {
+  triggered: boolean;
+  loading: boolean;
+  data: T | null;
+  error: string | null;
+}
+
+function processEvidenceText<T extends ProcessStatus>(
+  endpoint: string,
+  evidence: ProcessToggleEvidence<T>,
+): string {
+  if (evidence.loading) {
+    return `${endpoint} · reading`;
+  }
+  if (evidence.error) {
+    return `${endpoint} · ${evidence.error}`;
+  }
+  if (!evidence.data) {
+    return `${endpoint} · no status`;
+  }
+  const pid = evidence.data.pid ?? 'none';
+  const mode = evidence.data.mode ? ` · mode=${evidence.data.mode}` : '';
+  const source = evidence.data.source ? ` · source=${evidence.data.source}` : '';
+  return `${endpoint} · ${evidence.data.running ? 'running' : 'idle'} · pid=${pid}${mode}${source}`;
 }
 
 export function ControlPanel({
@@ -98,6 +133,7 @@ export function ControlPanel({
   isStoppingDirector,
   isStoppingOllama,
   healthStatus,
+  healthStatusDetail,
   onPingHealth,
   onOpenLogs,
   isArtifactsOpen,
@@ -112,9 +148,23 @@ export function ControlPanel({
   isExecutingTool,
   currentToolName,
 }: ControlPanelProps) {
+  const [pmToggleEvidence, setPmToggleEvidence] = useState<ProcessToggleEvidence<PmStatus>>({
+    triggered: false,
+    loading: false,
+    data: null,
+    error: null,
+  });
+  const [directorToggleEvidence, setDirectorToggleEvidence] = useState<ProcessToggleEvidence<DirectorStatus>>({
+    triggered: false,
+    loading: false,
+    data: null,
+    error: null,
+  });
   const pmDisabled = !!pmToggleDisabled;
   const directorDisabled = !!directorToggleDisabled;
   const runOnceBlocked = !!runOnceDisabled;
+  const pmToggleBusy = Boolean(isStartingPM || isStoppingPM || pmToggleEvidence.loading);
+  const directorToggleBusy = Boolean(isStartingDirector || isStoppingDirector || directorToggleEvidence.loading);
   const showAgents = !!agentsNeeded;
   const agentsReady = !!agentsDraftReady || !!agentsDraftFailed;
   const normalizedIoMode = ioFsyncMode === 'relaxed' ? 'RELAXED' : ioFsyncMode ? 'STRICT' : '';
@@ -132,6 +182,18 @@ export function ControlPanel({
         : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
   const displayCurrentTask = cleanRuntimeDisplayText(currentTask);
   const displayCurrentToolName = cleanRuntimeDisplayText(currentToolName);
+  const healthTone = healthStatus === 'unhealthy'
+    ? 'bg-status-error text-status-error'
+    : healthStatus === 'healthy' || healthStatus === 'ok'
+      ? 'bg-status-success text-status-success'
+      : 'bg-status-warning text-status-warning';
+  const healthLabel = healthStatus === 'unhealthy'
+    ? UI_TERMS.states.offline
+    : healthStatus === 'checking'
+      ? UI_TERMS.states.pinging
+      : healthStatus
+        ? UI_TERMS.states.ready
+        : UI_TERMS.states.pinging;
 
   // 计算当前状态指示
   const getStatusIndicator = () => {
@@ -145,6 +207,152 @@ export function ControlPanel({
   };
 
   const statusInfo = getStatusIndicator();
+
+  const handleTogglePm = async () => {
+    setPmToggleEvidence({
+      triggered: true,
+      loading: true,
+      data: null,
+      error: null,
+    });
+    try {
+      await Promise.resolve(onTogglePm());
+      const statusResult = await getPmStatus();
+      if (statusResult.ok && statusResult.data) {
+        setPmToggleEvidence({
+          triggered: true,
+          loading: false,
+          data: statusResult.data,
+          error: null,
+        });
+        return;
+      }
+      setPmToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: statusResult.error || 'PM status unavailable',
+      });
+    } catch (error) {
+      setPmToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'PM status unavailable',
+      });
+    }
+  };
+
+  const handleRunPmOnce = async () => {
+    if (!onRunPmOnce) {
+      return;
+    }
+    setPmToggleEvidence({
+      triggered: true,
+      loading: true,
+      data: null,
+      error: null,
+    });
+    try {
+      await Promise.resolve(onRunPmOnce());
+      const statusResult = await getPmStatus();
+      if (statusResult.ok && statusResult.data) {
+        setPmToggleEvidence({
+          triggered: true,
+          loading: false,
+          data: statusResult.data,
+          error: null,
+        });
+        return;
+      }
+      setPmToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: statusResult.error || 'PM status unavailable',
+      });
+    } catch (error) {
+      setPmToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'PM status unavailable',
+      });
+    }
+  };
+
+  const handleResumePm = async () => {
+    if (!onResumePm) {
+      return;
+    }
+    setPmToggleEvidence({
+      triggered: true,
+      loading: true,
+      data: null,
+      error: null,
+    });
+    try {
+      await Promise.resolve(onResumePm());
+      const statusResult = await getPmStatus();
+      if (statusResult.ok && statusResult.data) {
+        setPmToggleEvidence({
+          triggered: true,
+          loading: false,
+          data: statusResult.data,
+          error: null,
+        });
+        return;
+      }
+      setPmToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: statusResult.error || 'PM status unavailable',
+      });
+    } catch (error) {
+      setPmToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'PM status unavailable',
+      });
+    }
+  };
+
+  const handleToggleDirector = async () => {
+    setDirectorToggleEvidence({
+      triggered: true,
+      loading: true,
+      data: null,
+      error: null,
+    });
+    try {
+      await Promise.resolve(onToggleDirector());
+      const statusResult = await getDirectorStatus();
+      if (statusResult.ok && statusResult.data) {
+        setDirectorToggleEvidence({
+          triggered: true,
+          loading: false,
+          data: statusResult.data,
+          error: null,
+        });
+        return;
+      }
+      setDirectorToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: statusResult.error || 'Director status unavailable',
+      });
+    } catch (error) {
+      setDirectorToggleEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'Director status unavailable',
+      });
+    }
+  };
 
   return (
     <header className="panel-header z-50 relative">
@@ -223,16 +431,16 @@ export function ControlPanel({
         <div className="no-drag flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/5 backdrop-blur-sm">
           <span className="text-[10px] uppercase font-bold text-text-dim tracking-wider px-1">{UI_TERMS.roles.pm}</span>
           <button
-            onClick={onTogglePm}
+            onClick={() => { void handleTogglePm(); }}
             data-testid="control-panel-pm-toggle"
-            disabled={pmDisabled || isStartingPM || isStoppingPM}
+            disabled={pmDisabled || pmToggleBusy}
             className={`p-1.5 rounded-md transition-all duration-300 relative ${pmRunning
               ? 'bg-gradient-primary text-white shadow-glow'
               : 'bg-white/5 text-text-muted hover:bg-white/10 hover:text-text-main'
-              } ${pmDisabled || isStartingPM || isStoppingPM ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
+              } ${pmDisabled || pmToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
             title={pmRunning ? UI_TERMS.actions.stopLoop : UI_TERMS.actions.startLoop}
           >
-            {isStartingPM || isStoppingPM ? (
+            {pmToggleBusy ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : pmRunning ? (
               <Square className="size-3.5 fill-current" />
@@ -240,23 +448,37 @@ export function ControlPanel({
               <Play className="size-3.5 fill-current" />
             )}
           </button>
+          {pmToggleEvidence.triggered ? (
+            <span
+              data-testid="control-panel-pm-toggle-evidence"
+              title={processEvidenceText('/v2/pm/status', pmToggleEvidence)}
+              className={`max-w-[170px] truncate rounded border px-1.5 py-0.5 font-mono text-[10px] ${pmToggleEvidence.error
+                ? 'border-status-error/30 bg-status-error/10 text-status-error'
+                : pmToggleEvidence.data?.running
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                  : 'border-white/10 bg-white/5 text-text-muted'
+                }`}
+            >
+              {processEvidenceText('/v2/pm/status', pmToggleEvidence)}
+            </span>
+          ) : null}
           {onRunPmOnce ? (
             <button
-              onClick={onRunPmOnce}
+              onClick={() => { void handleRunPmOnce(); }}
               data-testid="control-panel-pm-run-once"
-              disabled={runOnceBlocked || isStartingPM}
-              className={`p-1.5 rounded-md transition-colors text-text-muted hover:text-accent hover:bg-accent-dim relative ${runOnceBlocked || isStartingPM ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''
+              disabled={runOnceBlocked || pmToggleBusy}
+              className={`p-1.5 rounded-md transition-colors text-text-muted hover:text-accent hover:bg-accent-dim relative ${runOnceBlocked || pmToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''
                 }`}
               title={UI_TERMS.actions.runOnce}
             >
-              {isStartingPM ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
+              {pmToggleBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
             </button>
           ) : null}
           {onResumePm && !pmRunning ? (
             <button
-              onClick={onResumePm}
-              disabled={pmDisabled || isStartingPM || isStoppingPM}
-              className={`p-1.5 rounded-md transition-colors text-text-muted hover:text-status-warning hover:bg-status-warning/10 relative ${pmDisabled || isStartingPM || isStoppingPM ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''
+              onClick={() => { void handleResumePm(); }}
+              disabled={pmDisabled || pmToggleBusy}
+              className={`p-1.5 rounded-md transition-colors text-text-muted hover:text-status-warning hover:bg-status-warning/10 relative ${pmDisabled || pmToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''
                 }`}
               title={UI_TERMS.actions.resumeLast}
             >
@@ -274,16 +496,16 @@ export function ControlPanel({
             </span>
           ) : null}
           <button
-            onClick={onToggleDirector}
+            onClick={() => { void handleToggleDirector(); }}
             data-testid="control-panel-director-toggle"
-            disabled={directorDisabled || isStartingDirector || isStoppingDirector}
+            disabled={directorDisabled || directorToggleBusy}
             className={`p-1.5 rounded-md transition-all duration-300 relative ${directorRunning
               ? 'bg-gradient-to-r from-accent-secondary to-blue-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.4)]'
               : 'bg-white/5 text-text-muted hover:bg-white/10 hover:text-text-main'
-              } ${directorDisabled || isStartingDirector || isStoppingDirector ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
+              } ${directorDisabled || directorToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
             title={directorBlockedReason || undefined}
           >
-            {isStartingDirector || isStoppingDirector ? (
+            {directorToggleBusy ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : directorRunning ? (
               <Square className="size-3.5 fill-current" />
@@ -291,6 +513,20 @@ export function ControlPanel({
               <Play className="size-3.5 fill-current" />
             )}
           </button>
+          {directorToggleEvidence.triggered ? (
+            <span
+              data-testid="control-panel-director-toggle-evidence"
+              title={processEvidenceText('/v2/director/status?source=auto', directorToggleEvidence)}
+              className={`max-w-[190px] truncate rounded border px-1.5 py-0.5 font-mono text-[10px] ${directorToggleEvidence.error
+                ? 'border-status-error/30 bg-status-error/10 text-status-error'
+                : directorToggleEvidence.data?.running
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                  : 'border-white/10 bg-white/5 text-text-muted'
+                }`}
+            >
+              {processEvidenceText('/v2/director/status?source=auto', directorToggleEvidence)}
+            </span>
+          ) : null}
         </div>
 
         {/* Factory 模式按钮 */}
@@ -337,11 +573,12 @@ export function ControlPanel({
           <button
             onClick={onPingHealth}
             className="flex items-center gap-2 group transition-all"
-            title="校验连通性"
+            title={healthStatusDetail || '校验连通性'}
+            data-testid="control-panel-health-ping"
           >
-            <div className={`size-1.5 rounded-full shadow-[0_0_8px_currentColor] transition-colors duration-500 ${healthStatus === 'unhealthy' ? 'bg-status-error text-status-error' : healthStatus ? 'bg-status-success text-status-success' : 'bg-status-warning text-status-warning'}`} />
+            <div className={`size-1.5 rounded-full shadow-[0_0_8px_currentColor] transition-colors duration-500 ${healthTone}`} />
             <span className="text-[10px] font-mono text-text-dim transition-colors group-hover:text-text-muted uppercase">
-              {healthStatus === 'unhealthy' ? UI_TERMS.states.offline : healthStatus ? UI_TERMS.states.ready : UI_TERMS.states.pinging}
+              {healthLabel}
             </span>
           </button>
           <div className="w-px h-3 bg-white/10 mx-1" />

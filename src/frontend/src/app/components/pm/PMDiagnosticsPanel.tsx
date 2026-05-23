@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -9,27 +9,48 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
+  BarChart3,
+  Brain,
+  Coins,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
-import { apiFetch } from '@/api';
-import { devLogger } from '@/app/utils/devLogger';
+import {
+  clearRoleKernelCache,
+  getRoleKernelCacheStats,
+  getRoleKernelLLMEvents,
+  getRoleKernelTokenBudgetStats,
+  getPmManagementHealth,
+  getPmManagementStatus,
+  getPmStartupDiagnostics,
+  initializePmManagement,
+  type PmManagementHealthResponse,
+  type PmManagementInitResponse,
+  type PmManagementStatusResponse,
+  type RoleKernelCacheStats,
+  type RoleKernelLLMEvent,
+  type RoleKernelLLMEventsResponse,
+  type RoleKernelTokenBudgetStats,
+  type PmStartupDiagnosticsResponse,
+} from '@/services/pmService';
 
 interface DiagnosticsStatus {
-  lancedb: {
-    ok: boolean;
-    error?: string;
-  } | null;
-  llm: {
-    state: string;
-    blocked_roles?: string[];
-    required_ready_roles?: string[];
-  } | null;
-  workspace: {
-    status: string;
-    docs_present?: boolean;
-    error?: string;
-  } | null;
+  lancedb: PmStartupDiagnosticsResponse['lancedb'] | null;
+  llm: PmStartupDiagnosticsResponse['llm'] | null;
+  workspace: PmStartupDiagnosticsResponse['workspace'] | null;
+}
+
+interface KernelDiagnosticsStatus {
+  cache: RoleKernelCacheStats | null;
+  llmEvents: RoleKernelLLMEventsResponse | null;
+  tokenBudget: RoleKernelTokenBudgetStats | null;
+}
+
+interface PmManagementDiagnosticsStatus {
+  status: PmManagementStatusResponse | null;
+  health: PmManagementHealthResponse | null;
+  initResult: PmManagementInitResponse | null;
 }
 
 interface PMDiagnosticsPanelProps {
@@ -43,41 +64,182 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     llm: null,
     workspace: null,
   });
+  const [kernelStatus, setKernelStatus] = useState<KernelDiagnosticsStatus>({
+    cache: null,
+    llmEvents: null,
+    tokenBudget: null,
+  });
+  const [managementStatus, setManagementStatus] = useState<PmManagementDiagnosticsStatus>({
+    status: null,
+    health: null,
+    initResult: null,
+  });
   const [loading, setLoading] = useState(false);
+  const [kernelLoading, setKernelLoading] = useState(false);
+  const [managementLoading, setManagementLoading] = useState(false);
+  const [cacheClearing, setCacheClearing] = useState(false);
+  const [managementInitializing, setManagementInitializing] = useState(false);
+  const [error, setError] = useState('');
+  const [kernelError, setKernelError] = useState('');
+  const [managementError, setManagementError] = useState('');
+  const [initProjectName, setInitProjectName] = useState('');
+  const [initDescription, setInitDescription] = useState('');
   const [expanded, setExpanded] = useState<string[]>(['all']);
 
-  const runDiagnostics = async () => {
-    setLoading(true);
+  const loadKernelDiagnostics = useCallback(async () => {
+    setKernelLoading(true);
+    setKernelError('');
+    const errors: string[] = [];
+
     try {
-      // Check LanceDB
-      const lancedbRes = await apiFetch('/lancedb/status');
-      const lancedb = lancedbRes.ok ? await lancedbRes.json() : { ok: false, error: 'Failed to check' };
+      const [cacheResult, tokenResult, llmResult] = await Promise.all([
+        getRoleKernelCacheStats('pm'),
+        getRoleKernelTokenBudgetStats('pm'),
+        getRoleKernelLLMEvents('pm', { limit: 5 }),
+      ]);
 
-      // Check LLM status
-      const llmRes = await apiFetch('/v2/llm/status');
-      const llm = llmRes.ok ? await llmRes.json() : { state: 'unknown' };
+      setKernelStatus({
+        cache: cacheResult.ok && cacheResult.data ? cacheResult.data : null,
+        llmEvents: llmResult.ok && llmResult.data ? llmResult.data : null,
+        tokenBudget: tokenResult.ok && tokenResult.data ? tokenResult.data : null,
+      });
 
-      // Check workspace status
-      const settingsRes = await apiFetch('/settings');
-      const settings = settingsRes.ok ? await settingsRes.json() : {};
-      const workspace = {
-        status: settings.workspace ? 'ok' : 'missing',
-        docs_present: settings.docs_present,
-      };
-
-      setStatus({ lancedb, llm, workspace });
+      if (!cacheResult.ok) {
+        errors.push(cacheResult.error || 'PM LLM 缓存统计读取失败');
+      }
+      if (!tokenResult.ok) {
+        errors.push(tokenResult.error || 'PM Token 预算统计读取失败');
+      }
+      if (!llmResult.ok) {
+        errors.push(llmResult.error || 'PM LLM 事件读取失败');
+      }
     } catch (err) {
-      devLogger.error('Diagnostics failed:', err);
+      errors.push(err instanceof Error ? err.message : 'PM Kernel 诊断读取失败');
+      setKernelStatus({ cache: null, llmEvents: null, tokenBudget: null });
+    } finally {
+      setKernelLoading(false);
+    }
+
+    setKernelError(errors.join('；'));
+  }, []);
+
+  const loadManagementDiagnostics = useCallback(async () => {
+    setManagementLoading(true);
+    setManagementError('');
+    try {
+      const statusResult = await getPmManagementStatus();
+      if (!statusResult.ok || !statusResult.data) {
+        setManagementStatus((current) => ({
+          ...current,
+          status: null,
+          health: null,
+        }));
+        setManagementError(statusResult.error || 'PM 管理状态读取失败');
+        return;
+      }
+
+      const nextStatus = statusResult.data;
+      if (!nextStatus.initialized) {
+        setManagementStatus((current) => ({
+          ...current,
+          status: nextStatus,
+          health: null,
+        }));
+        return;
+      }
+
+      const healthResult = await getPmManagementHealth();
+      setManagementStatus((current) => ({
+        ...current,
+        status: nextStatus,
+        health: healthResult.ok && healthResult.data ? healthResult.data : null,
+      }));
+      if (!healthResult.ok) {
+        setManagementError(healthResult.error || 'PM 项目健康读取失败');
+      }
+    } catch (err) {
+      setManagementStatus((current) => ({
+        ...current,
+        status: null,
+        health: null,
+      }));
+      setManagementError(err instanceof Error ? err.message : 'PM 管理诊断读取失败');
+    } finally {
+      setManagementLoading(false);
+    }
+  }, []);
+
+  const runDiagnostics = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [result] = await Promise.all([
+        getPmStartupDiagnostics(),
+        loadKernelDiagnostics(),
+        loadManagementDiagnostics(),
+      ]);
+      if (result.ok && result.data) {
+        setStatus({
+          lancedb: result.data.lancedb,
+          llm: result.data.llm,
+          workspace: result.data.workspace,
+        });
+      } else {
+        setError(result.error || 'PM 启动诊断读取失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'PM 启动诊断读取失败');
     } finally {
       setLoading(false);
     }
-  };
+  }, [loadKernelDiagnostics]);
+
+  const handleClearKernelCache = useCallback(async () => {
+    setCacheClearing(true);
+    setKernelError('');
+    try {
+      const result = await clearRoleKernelCache('pm');
+      if (result.ok) {
+        await loadKernelDiagnostics();
+      } else {
+        setKernelError(result.error || 'PM LLM 缓存清理失败');
+      }
+    } catch (err) {
+      setKernelError(err instanceof Error ? err.message : 'PM LLM 缓存清理失败');
+    } finally {
+      setCacheClearing(false);
+    }
+  }, [loadKernelDiagnostics]);
+
+  const handleInitializeManagement = useCallback(async () => {
+    setManagementInitializing(true);
+    setManagementError('');
+    try {
+      const result = await initializePmManagement({
+        projectName: initProjectName.trim(),
+        description: initDescription.trim(),
+      });
+      if (result.ok && result.data) {
+        setManagementStatus((current) => ({
+          ...current,
+          initResult: result.data ?? null,
+        }));
+        await loadManagementDiagnostics();
+      } else {
+        setManagementError(result.error || 'PM 管理初始化失败');
+      }
+    } catch (err) {
+      setManagementError(err instanceof Error ? err.message : 'PM 管理初始化失败');
+    } finally {
+      setManagementInitializing(false);
+    }
+  }, [initDescription, initProjectName, loadManagementDiagnostics]);
 
   useEffect(() => {
     if (isOpen) {
-      runDiagnostics();
+      void runDiagnostics();
     }
-  }, [isOpen]);
+  }, [isOpen, runDiagnostics]);
 
   if (!isOpen) return null;
 
@@ -85,6 +247,16 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     status.lancedb?.ok &&
     status.llm?.state === 'ready' &&
     status.workspace?.status === 'ok';
+  const kernelDiagnosticStatus: 'success' | 'warning' | 'error' = kernelError
+    ? 'error'
+    : kernelStatus.cache || kernelStatus.tokenBudget
+      ? 'success'
+      : 'warning';
+  const managementDiagnosticStatus: 'success' | 'warning' | 'error' = managementError
+    ? 'error'
+    : managementStatus.status?.initialized && managementStatus.health
+      ? pmManagementHealthTone(managementStatus.health.overall)
+      : 'warning';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -114,6 +286,15 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
             </div>
           ) : (
             <>
+              {error && (
+                <div
+                  className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+                  data-testid="pm-diagnostics-error"
+                >
+                  {error}
+                </div>
+              )}
+
               {/* Overall Status */}
               <div
                 className={cn(
@@ -238,6 +419,214 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
                   </div>
                 )}
               </DiagnosticItem>
+
+              <DiagnosticItem
+                title="PM 管理状态"
+                icon={<Settings className="w-4 h-4" />}
+                status={managementDiagnosticStatus}
+                expanded={expanded.includes('management')}
+                onToggle={() => toggleExpanded('management', expanded, setExpanded)}
+              >
+                <div className="space-y-3" data-testid="pm-management-diagnostics">
+                  {managementError ? (
+                    <div
+                      className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200"
+                      data-testid="pm-management-diagnostics-error"
+                    >
+                      {managementError}
+                    </div>
+                  ) : null}
+
+                  {managementLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-400">
+                      <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+                      正在读取 PM 管理状态...
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <ManagementMetricBlock
+                          label="状态"
+                          endpoint="/pm/v2/pm/status"
+                          rows={[
+                            ['Initialized', String(managementStatus.status?.initialized ?? false)],
+                            ['Workspace', managementStatus.status?.workspace || '-'],
+                            ['Project', readManagementString(managementStatus.status, ['project', 'project_name']) || '-'],
+                            ['Version', managementStatus.status?.version || '-'],
+                          ]}
+                        />
+                        <ManagementMetricBlock
+                          label="健康"
+                          endpoint="/pm/v2/pm/health"
+                          rows={[
+                            ['Overall', managementStatus.health?.overall || (managementStatus.status?.initialized ? 'unavailable' : 'not initialized')],
+                            ['Components', String(Object.keys(managementStatus.health?.components || {}).length)],
+                            ['Metrics', String(Object.keys(managementStatus.health?.metrics || {}).length)],
+                            ['Advice', String(managementStatus.health?.recommendations?.length || 0)],
+                          ]}
+                        />
+                      </div>
+
+                      {managementStatus.health ? (
+                        <div className="grid gap-2 rounded-md border border-white/10 bg-white/[0.035] p-3 text-xs text-slate-300">
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(managementStatus.health.components).map(([name, value]) => (
+                              <span key={name} className="rounded border border-white/10 bg-slate-950/55 px-2 py-1">
+                                {name} · {value}
+                              </span>
+                            ))}
+                          </div>
+                          {managementStatus.health.recommendations.length > 0 ? (
+                            <ul className="list-disc space-y-1 pl-4 text-[11px] text-slate-400">
+                              {managementStatus.health.recommendations.slice(0, 4).map((recommendation) => (
+                                <li key={recommendation}>{recommendation}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {!managementStatus.status?.initialized ? (
+                        <div
+                          className="rounded-md border border-amber-500/20 bg-amber-500/10 p-3"
+                          data-testid="pm-management-init-panel"
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-2 text-xs text-amber-100">
+                            <span className="font-medium">PM 管理尚未初始化</span>
+                            <span className="rounded border border-amber-500/20 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[10px]">
+                              POST /pm/v2/pm/init
+                            </span>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto]">
+                            <input
+                              value={initProjectName}
+                              onChange={(event) => setInitProjectName(event.target.value)}
+                              placeholder="Project name"
+                              data-testid="pm-management-init-project"
+                              className="h-8 rounded-md border border-white/10 bg-slate-950/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-amber-500/50 focus:outline-none"
+                            />
+                            <input
+                              value={initDescription}
+                              onChange={(event) => setInitDescription(event.target.value)}
+                              placeholder="Description"
+                              data-testid="pm-management-init-description"
+                              className="h-8 rounded-md border border-white/10 bg-slate-950/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-amber-500/50 focus:outline-none"
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void handleInitializeManagement()}
+                              disabled={managementInitializing}
+                              data-testid="pm-management-init-submit"
+                              className="border-amber-500/30 text-amber-100 hover:bg-amber-500/10"
+                            >
+                              {managementInitializing ? (
+                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                              )}
+                              初始化
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {managementStatus.initResult ? (
+                        <div
+                          className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100"
+                          data-testid="pm-management-init-result"
+                        >
+                          initialized · {managementStatus.initResult.project_name || managementStatus.initResult.message || managementStatus.initResult.workspace}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </DiagnosticItem>
+
+              <DiagnosticItem
+                title="LLM 缓存与预算"
+                icon={<BarChart3 className="w-4 h-4" />}
+                status={kernelDiagnosticStatus}
+                expanded={expanded.includes('kernel')}
+                onToggle={() => toggleExpanded('kernel', expanded, setExpanded)}
+              >
+                <div className="space-y-3" data-testid="pm-kernel-diagnostics">
+                  {kernelError && (
+                    <div
+                      className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200"
+                      data-testid="pm-kernel-diagnostics-error"
+                    >
+                      {kernelError}
+                    </div>
+                  )}
+
+                  {kernelLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-400">
+                      <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+                      正在读取 Kernel 统计...
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <KernelMetricBlock
+                        icon={<Database className="h-3.5 w-3.5 text-cyan-300" />}
+                        label="缓存"
+                        endpoint="/v2/pm/cache-stats"
+                        rows={[
+                          ['状态', kernelStatus.cache?.enabled === false ? '关闭' : '开启'],
+                          ['命中率', formatPercent(kernelStatus.cache?.hit_rate)],
+                          ['条目', `${formatNumber(kernelStatus.cache?.size)} / ${formatNumber(kernelStatus.cache?.max_size)}`],
+                          ['命中/未命中', `${formatNumber(kernelStatus.cache?.hits)} / ${formatNumber(kernelStatus.cache?.misses)}`],
+                        ]}
+                      />
+                      <KernelMetricBlock
+                        icon={<Coins className="h-3.5 w-3.5 text-emerald-300" />}
+                        label="Token 预算"
+                        endpoint="/v2/pm/token-budget-stats"
+                        rows={[
+                          ['总量', formatNumber(kernelStatus.tokenBudget?.total)],
+                          ['对话可用', formatNumber(kernelStatus.tokenBudget?.available_conversation)],
+                          ['系统/任务', `${formatNumber(kernelStatus.tokenBudget?.system_context)} / ${formatNumber(kernelStatus.tokenBudget?.task_context)}`],
+                          ['安全边际', formatNumber(kernelStatus.tokenBudget?.safety_margin)],
+                        ]}
+                      />
+                      <KernelMetricBlock
+                        icon={<Brain className="h-3.5 w-3.5 text-indigo-300" />}
+                        label="LLM 事件"
+                        endpoint="/v2/pm/llm-events?limit=5"
+                        testId="pm-llm-events-diagnostics"
+                        rows={[
+                          ['事件数', formatNumber(kernelStatus.llmEvents?.count ?? kernelStatus.llmEvents?.events?.length)],
+                          ['最近类型', formatKernelEventType(kernelStatus.llmEvents?.events?.[0])],
+                          ['最近模型', formatKernelEventModel(kernelStatus.llmEvents?.events?.[0])],
+                          ['错误/重试', `${formatNumber(readStatNumber(kernelStatus.llmEvents?.stats, ['call_error', 'llm_error', 'errors']))} / ${formatNumber(readStatNumber(kernelStatus.llmEvents?.stats, ['call_retry', 'llm_retry', 'retries']))}`],
+                        ]}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/[0.035] px-3 py-2">
+                    <div className="min-w-0 text-xs text-slate-400">
+                      清理动作会调用后端缓存端点；不会修改工作区文件。
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleClearKernelCache()}
+                      disabled={cacheClearing || kernelLoading}
+                      data-testid="pm-kernel-cache-clear"
+                      className="shrink-0 border-red-500/25 text-red-200 hover:bg-red-500/10"
+                    >
+                      {cacheClearing ? (
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      )}
+                      清空缓存
+                    </Button>
+                  </div>
+                </div>
+              </DiagnosticItem>
             </>
           )}
         </div>
@@ -247,7 +636,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
           <Button
             variant="ghost"
             size="sm"
-            onClick={runDiagnostics}
+            onClick={() => void runDiagnostics()}
             disabled={loading}
             className="text-slate-400 hover:text-slate-200"
           >
@@ -258,6 +647,151 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
             知道了
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function formatNumber(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '-';
+}
+
+function formatPercent(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
+}
+
+function readManagementString(record: Record<string, unknown> | null | undefined, keys: string[]): string {
+  if (!record) {
+    return '';
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return '';
+}
+
+function pmManagementHealthTone(overall: string): 'success' | 'warning' | 'error' {
+  const token = overall.trim().toLowerCase();
+  if (['healthy', 'ok', 'ready', 'pass', 'passed'].includes(token)) {
+    return 'success';
+  }
+  if (['failed', 'error', 'unhealthy', 'blocked'].includes(token)) {
+    return 'error';
+  }
+  return 'warning';
+}
+
+function readEventText(event: RoleKernelLLMEvent | null | undefined, keys: string[]): string {
+  if (!event) {
+    return '';
+  }
+  for (const key of keys) {
+    const value = event[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return '';
+}
+
+function readStatNumber(stats: Record<string, unknown> | null | undefined, keys: string[]): number | null {
+  if (!stats) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = stats[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
+function formatKernelEventType(event: RoleKernelLLMEvent | null | undefined): string {
+  const eventType = readEventText(event, ['event_type', 'type', 'name']);
+  return eventType ? eventType.replace(/_/g, ' ') : '-';
+}
+
+function formatKernelEventModel(event: RoleKernelLLMEvent | null | undefined): string {
+  return readEventText(event, ['model', 'provider', 'provider_type']) || '-';
+}
+
+function KernelMetricBlock({
+  icon,
+  label,
+  endpoint,
+  rows,
+  testId,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  endpoint: string;
+  rows: Array<[string, string]>;
+  testId?: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] p-3" data-testid={testId}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-200">
+          {icon}
+          <span className="truncate">{label}</span>
+        </div>
+        <span className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
+          {endpoint}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {rows.map(([name, value]) => (
+          <div key={name} className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-slate-500">{name}</span>
+            <span className="min-w-0 truncate font-mono text-slate-300" title={value}>
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ManagementMetricBlock({
+  label,
+  endpoint,
+  rows,
+}: {
+  label: string;
+  endpoint: string;
+  rows: Array<[string, string]>;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="truncate text-xs font-medium text-slate-200">{label}</span>
+        <span className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
+          {endpoint}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {rows.map(([name, value]) => (
+          <div key={name} className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-slate-500">{name}</span>
+            <span className="min-w-0 truncate font-mono text-slate-300" title={value}>
+              {value}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

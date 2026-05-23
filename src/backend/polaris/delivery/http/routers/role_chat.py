@@ -15,6 +15,7 @@ from polaris.cells.llm.dialogue.public import (
     get_registered_roles,
 )
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
+from polaris.cells.roles.kernel.public.service import get_global_emitter, get_global_llm_cache
 from polaris.delivery.http.auth.roles import UserRole
 from polaris.delivery.http.schemas import (
     AllLLMEventsResponse,
@@ -64,6 +65,16 @@ async def _load_llm_config_async(workspace: str, cache_root: str, settings: Any)
     return await asyncio.to_thread(llm_config.load_llm_config, workspace, cache_root, settings)
 
 
+def _workspace_value(settings: Any) -> str:
+    """Resolve the active desktop workspace with legacy fallback."""
+    for attr in ("workspace_path", "workspace"):
+        value = getattr(settings, attr, "")
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
 @router.get("/v2/role/{role}/chat/status", dependencies=[Depends(require_auth)], response_model=RoleChatStatusResponse)
 async def role_chat_status(
     request: Request,
@@ -75,11 +86,12 @@ async def role_chat_status(
         Ready state, provider info, and debug details.
     """
     state = get_state(request)
+    workspace = _workspace_value(state.settings)
 
     try:
         cache_root = build_cache_root(
             "",  # ramdisk_root (empty string as default)
-            str(state.settings.workspace),
+            workspace,
         )
 
         # 评测索引用于补充状态，不应误判为“未配置”。
@@ -90,7 +102,7 @@ async def role_chat_status(
 
         # 加载配置获取详细信息（使用线程池执行文件 I/O）
         config = await _load_llm_config_async(
-            str(state.settings.workspace),
+            workspace,
             cache_root,
             state.settings,
         )
@@ -198,8 +210,6 @@ async def get_role_llm_events(
     Returns:
         Events list with categorized stats.
     """
-    from ..roles.events import get_global_emitter
-
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
 
@@ -231,8 +241,6 @@ async def get_all_llm_events(
     limit: int = 100,
 ) -> dict[str, Any]:
     """Get LLM call events across all roles."""
-    from ..roles.events import get_global_emitter
-
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
 
@@ -245,8 +253,6 @@ async def get_all_llm_events(
 @router.get("/v2/role/cache-stats", dependencies=[Depends(require_auth)], response_model=CacheStatsResponse)
 async def get_llm_cache_stats() -> dict[str, Any]:
     """Get LLM cache statistics."""
-    from ..roles.kernel_components import get_global_llm_cache
-
     cache = get_global_llm_cache()
     return cache.get_stats()
 
@@ -258,8 +264,6 @@ async def get_llm_cache_stats() -> dict[str, Any]:
 )
 async def clear_llm_cache() -> dict[str, Any]:
     """Clear the global LLM cache."""
-    from ..roles.kernel_components import get_global_llm_cache
-
     cache = get_global_llm_cache()
     cache.clear()
     return {"ok": True, "message": "Cache cleared"}
@@ -300,6 +304,7 @@ async def role_chat(
         Response, thinking trace, and model metadata.
     """
     state = get_state(request)
+    workspace = _workspace_value(state.settings)
 
     _validate_role(role)
 
@@ -324,7 +329,7 @@ async def role_chat(
 
     try:
         result = await generate_role_response(
-            workspace=str(state.settings.workspace),
+            workspace=workspace,
             settings=state.settings,
             role=role,
             message=message,
@@ -356,6 +361,7 @@ async def role_chat_stream(
     )
 
     state = get_state(request)
+    workspace = _workspace_value(state.settings)
 
     _validate_role(role)
 
@@ -373,7 +379,7 @@ async def role_chat_stream(
     async def _run_role_dialogue(queue: asyncio.Queue) -> None:
         """运行角色对话并输出到队列"""
         await generate_role_response_streaming(
-            workspace=str(state.settings.workspace),
+            workspace=workspace,
             settings=state.settings,
             role=role,
             message=message,

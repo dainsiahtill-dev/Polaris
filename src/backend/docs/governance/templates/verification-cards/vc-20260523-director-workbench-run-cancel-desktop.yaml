@@ -1,0 +1,56 @@
+id: vc-20260523-director-workbench-run-cancel-desktop
+title: Director workbench run cancel desktop
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/components/director/DirectorWorkbenchPanel.tsx
+  - src/frontend/src/app/components/director/__tests__/DirectorWorkbenchPanel.test.tsx
+related_blueprint: src/backend/docs/blueprints/DIRECTOR_WORKBENCH_RUN_CANCEL_DESKTOP_20260523.md
+assumption_register:
+  - id: A1
+    statement: Existing typed Director run cancel service can be reused by the workbench.
+    evidence:
+      - src/frontend/src/services/pmService.ts
+      - src/frontend/src/services/index.ts
+    verified: true
+  - id: A2
+    statement: Director workbench run evidence represents a single run and can host run-scoped controls.
+    evidence:
+      - src/frontend/src/app/components/director/DirectorWorkbenchPanel.tsx
+    verified: true
+  - id: A3
+    statement: Terminal Director run statuses should disable cancellation in the desktop.
+    evidence:
+      - src/frontend/src/app/components/director/DirectorWorkbenchPanel.tsx
+    verified: true
+pre_mortem:
+  - risk: Workbench run cancellation could be mistaken for RoleSession deletion.
+    mitigation: Render exact run cancel endpoint evidence after cancellation.
+  - risk: Terminal runs could still be cancellable from the UI.
+    mitigation: Disable the cancel control for terminal statuses.
+  - risk: Cancel response could fail to update the displayed run snapshot.
+    mitigation: Update workflowRunEvidence with the cancel response payload.
+verification_plan:
+  - command: npm run test -- DirectorWorkbenchPanel pmService
+    expected: Director workbench run cancel and typed service regression pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- DirectorWorkbenchPanel pmService
+    result: PASS
+    evidence: 2 test files passed, 73 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: PASS
+    evidence: 16 test files passed, 149 tests passed.

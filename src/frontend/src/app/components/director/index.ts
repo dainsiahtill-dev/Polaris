@@ -5,6 +5,7 @@ export { DirectorTaskPanel } from './DirectorTaskPanel';
 export { DirectorCodePanel } from './DirectorCodePanel';
 export { DirectorTerminalPanel } from './DirectorTerminalPanel';
 export { DirectorDebugPanel } from './DirectorDebugPanel';
+export { DirectorWorkbenchPanel } from './DirectorWorkbenchPanel';
 export { StrategyEditorPanel } from './StrategyEditorPanel';
 export { StrategyDiffViewer } from './StrategyDiffViewer';
 export { RealTimeFileDiff } from './RealTimeFileDiff';

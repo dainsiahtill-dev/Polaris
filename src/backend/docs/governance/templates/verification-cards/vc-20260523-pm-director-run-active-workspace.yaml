@@ -1,0 +1,91 @@
+card_id: "vc-20260523-pm-director-run-active-workspace"
+bug_summary: >
+  PM and Director run orchestration routes default workspace to "." and can
+  bypass the active Electron workspace_path when a caller omits workspace or
+  forwards the request model default.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/v2/pm.py and polaris/delivery/http/v2/director.py"
+  method: "pm_run_orchestration / director_run_orchestration"
+  symptom: >
+    Desktop run requests without a concrete workspace can execute PM or
+    Director orchestration against the backend process working directory rather
+    than the selected target workspace.
+
+assumptions:
+  - id: "A1"
+    statement: "settings.workspace_path is the active Electron selected workspace when populated."
+    status: verified_true
+    evidence: >
+      Existing active-workspace contracts for PM diagnostics, Chief Engineer,
+      role sessions, runtime, LLM/provider routes, and Director projections use
+      workspace_path before workspace.
+
+  - id: "A2"
+    statement: "PM and Director run request models still default workspace to '.'."
+    status: verified_true
+    evidence: >
+      PMRunOrchestrationRequest.workspace and DirectorRunOrchestrationRequest.workspace
+      use Field(default='.') before this fix.
+
+  - id: "A3"
+    statement: "Explicit API workspace paths must remain supported."
+    status: verified_true
+    evidence: >
+      Existing router tests post concrete workspace fields through the run
+      endpoints; the contract only treats blank or dot values as active-workspace
+      fallback requests.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Replacing every payload workspace with settings.workspace_path would break
+    explicit API callers that intentionally target another workspace.
+  guardrail: >
+    Centralize a requested-or-active resolver and test both default dot fallback
+    and explicit non-dot preservation through PM and Director run routes.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -v"
+    expected: "PM and Director v2 router tests pass"
+  - command: "npm test -- src/frontend/src/app/components/pm/PMWorkbenchPanel.test.tsx src/frontend/src/app/components/director/__tests__/DirectorWorkbenchPanel.test.tsx"
+    expected: "Focused PM/Director desktop workbench tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    expected: "Electron role workspace visual surface passes"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    result: pass
+    evidence: "5 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+    result: pass
+    evidence: "Success: no issues found in 5 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -v"
+    result: pass
+    evidence: "58 passed, 1 deprecation warning in 18.54s."
+  - command: "npm test -- src/frontend/src/app/components/pm/PMWorkbenchPanel.test.tsx src/frontend/src/app/components/director/__tests__/DirectorWorkbenchPanel.test.tsx"
+    result: pass
+    evidence: "2 files passed; 4 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "1 passed; renderer build completed successfully."
+  - command: "git diff --check -- src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py src/backend/docs/blueprints/PM_DIRECTOR_RUN_ACTIVE_WORKSPACE_CONTRACT_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-pm-director-run-active-workspace.yaml"
+    result: pass
+    evidence: "No whitespace errors."
+
+status: passed

@@ -322,7 +322,8 @@ export interface CourtMappingResponse {
 // Role Chat Types
 // ============================================================================
 
-export type DialogueRole = 'pm' | 'architect' | 'director' | 'qa';
+export type RoleChatRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa';
+export type DialogueRole = RoleChatRole;
 
 export interface ChatStatus {
   ready: boolean;
@@ -1104,13 +1105,8 @@ export interface RoleCacheClearResponse {
 }
 
 export interface RoleChatRolesResponse {
-  ok: boolean;
-  roles: Array<{
-    id: string;
-    name: string;
-    description?: string;
-    enabled?: boolean;
-  }>;
+  roles: string[];
+  count: number;
 }
 
 // ============================================================================
@@ -1246,9 +1242,15 @@ export interface AddConversationMessageRequestV2 {
 // ============================================================================
 
 export interface HealthV2Response {
+  ok?: boolean;
   status?: string;
   timestamp?: string;
   version?: string;
+  lancedb_ok?: boolean;
+  lancedb_error?: string | null;
+  python?: string;
+  pm?: Record<string, unknown>;
+  director?: Record<string, unknown>;
 }
 
 export interface ReadyV2Response {

@@ -1,0 +1,80 @@
+card_id: "vc-20260523-role-chat-active-workspace-path"
+bug_summary: >
+  PM and Chief Engineer desktop dialogue routes can use stale settings.workspace
+  for role chat status and generation instead of the active Electron
+  workspace_path.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/role_chat.py"
+  method: "role_chat_status / role_chat / role_chat_stream"
+  symptom: >
+    /v2/role/{role}/chat/status, /v2/role/{role}/chat, and streaming chat can
+    read LLM configuration or generate role responses for the wrong workspace.
+
+assumptions:
+  - id: "A1"
+    statement: "PM and Chief Engineer desktop panels use the generic role chat routes."
+    status: verified_true
+    evidence: >
+      Frontend services call /v2/role/{role}/chat/status and /v2/role/{role}/chat
+      for PM/Chief Engineer dialogue surfaces.
+
+  - id: "A2"
+    statement: "The active selected desktop workspace is settings.workspace_path when populated."
+    status: verified_true
+    evidence: >
+      PM management, PM diagnostics, and Chief Engineer desktop route contracts
+      now prefer workspace_path with workspace fallback.
+
+  - id: "A3"
+    statement: "Legacy callers may only configure settings.workspace."
+    status: verified_true
+    evidence: >
+      Existing role chat tests build app state with settings.workspace='.' and
+      no request-level workspace field.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only non-streaming chat would leave chat readiness and SSE dialogue
+    using different workspaces from the desktop role surface.
+  guardrail: >
+    Add one helper and use it for config lookup, non-streaming generation, and
+    streaming generation.
+
+verification_plan:
+  - command: "ruff check src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py --fix"
+    expected: "All checks passed"
+  - command: "ruff format src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py"
+    expected: "Formatting complete without changes or with formatted files"
+  - command: "mypy src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+    expected: "Success: no issues found"
+  - command: "pytest src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -v"
+    expected: "All tests pass"
+  - command: "npm test -- AIDialoguePanel.test.tsx useAIDialogue.test.ts ChiefEngineerWorkspace.test.tsx llmService.test.ts"
+    expected: "Focused desktop role dialogue tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run test:e2e"
+    expected: "Electron E2E suite passes or only known tests are skipped"
+
+verification_results:
+  - command: "ruff check src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py --fix"
+    result: "passed"
+  - command: "ruff format src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+    result: "passed"
+  - command: "mypy src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+    result: "passed"
+  - command: "pytest src/backend/polaris/tests/integration/delivery/routers/test_role_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -v"
+    result: "24 passed, 2 skipped"
+  - command: "npm test -- AIDialoguePanel.test.tsx useAIDialogue.test.ts ChiefEngineerWorkspace.test.tsx llmService.test.ts"
+    result: "4 files passed, 28 tests passed"
+  - command: "npm run typecheck"
+    result: "passed"
+  - command: "git diff --check"
+    result: "passed with existing LF/CRLF warnings"
+  - command: "npm run test:e2e"
+    result: "7 passed, 3 skipped"
+
+status: verified

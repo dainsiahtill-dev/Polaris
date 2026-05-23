@@ -11,13 +11,18 @@ from polaris.cells.llm.provider_config.public.contracts import (
     ProviderConfigValidationError,
     ProviderNotFoundError,
 )
-from polaris.cells.llm.provider_config.public.service import resolve_provider_request_context
+from polaris.cells.llm.provider_config.public.service import ProviderRequestContext, resolve_provider_request_context
 from polaris.cells.llm.provider_runtime.public.contracts import (
     LlmProviderRuntimeError,
     UnsupportedProviderTypeError,
 )
 from polaris.cells.llm.provider_runtime.public.service import get_provider_manager, run_provider_action
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.routers._shared import (
+    StructuredHTTPException,
+    active_workspace_value,
+    get_state,
+    require_auth,
+)
 from polaris.delivery.http.schemas.common import (
     ProviderConfigResponse,
     ProviderDetailResponse,
@@ -37,6 +42,28 @@ _provider_manager: ProviderManager = get_provider_manager()
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _workspace_and_cache_root(settings: Any) -> tuple[str, str]:
+    workspace = active_workspace_value(settings)
+    cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace)
+    return workspace, cache_root
+
+
+def _resolve_provider_context(
+    request: Request,
+    provider_id: str,
+    payload: ProviderActionPayload,
+) -> ProviderRequestContext:
+    state = get_state(request)
+    workspace, cache_root = _workspace_and_cache_root(state.settings)
+    return resolve_provider_request_context(
+        workspace=workspace,
+        cache_root=cache_root,
+        provider_id=provider_id,
+        api_key=payload.api_key,
+        headers=payload.headers,
+    )
 
 
 def _map_provider_config_error(exc: LlmProviderConfigError) -> StructuredHTTPException:
@@ -64,16 +91,8 @@ def _map_provider_runtime_error(exc: LlmProviderRuntimeError) -> StructuredHTTPE
     "/llm/providers/{provider_id}/health", dependencies=[Depends(require_auth)], response_model=ProviderHealthResponse
 )  # DEPRECATED
 def provider_health(request: Request, provider_id: str, payload: ProviderActionPayload) -> dict[str, Any]:
-    state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
     try:
-        provider_context = resolve_provider_request_context(
-            workspace=str(state.settings.workspace),
-            cache_root=cache_root,
-            provider_id=provider_id,
-            api_key=payload.api_key,
-            headers=payload.headers,
-        )
+        provider_context = _resolve_provider_context(request, provider_id, payload)
     except LlmProviderConfigError as exc:
         raise _map_provider_config_error(exc) from exc
     provider_cfg = provider_context.provider_cfg
@@ -95,16 +114,8 @@ def provider_health(request: Request, provider_id: str, payload: ProviderActionP
     "/llm/providers/{provider_id}/models", dependencies=[Depends(require_auth)], response_model=ProviderModelsResponse
 )  # DEPRECATED
 def provider_models(request: Request, provider_id: str, payload: ProviderActionPayload) -> dict[str, Any]:
-    state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
     try:
-        provider_context = resolve_provider_request_context(
-            workspace=str(state.settings.workspace),
-            cache_root=cache_root,
-            provider_id=provider_id,
-            api_key=payload.api_key,
-            headers=payload.headers,
-        )
+        provider_context = _resolve_provider_context(request, provider_id, payload)
     except LlmProviderConfigError as exc:
         raise _map_provider_config_error(exc) from exc
     provider_cfg = provider_context.provider_cfg
@@ -251,17 +262,8 @@ def health_check_all(request: Request, payload: dict[str, Any]) -> dict[str, Any
 )
 def v2_provider_health(request: Request, provider_id: str, payload: ProviderActionPayload) -> dict[str, Any]:
     """Run a health check against a specific LLM provider."""
-    state = get_state(request)
-    state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
     try:
-        provider_context = resolve_provider_request_context(
-            workspace=str(state.settings.workspace),
-            cache_root=cache_root,
-            provider_id=provider_id,
-            api_key=payload.api_key,
-            headers=payload.headers,
-        )
+        provider_context = _resolve_provider_context(request, provider_id, payload)
     except LlmProviderConfigError as exc:
         raise _map_provider_config_error(exc) from exc
     provider_cfg = provider_context.provider_cfg
@@ -286,16 +288,8 @@ def v2_provider_health(request: Request, provider_id: str, payload: ProviderActi
 )
 def v2_provider_models(request: Request, provider_id: str, payload: ProviderActionPayload) -> dict[str, Any]:
     """List available models for a specific LLM provider."""
-    state = get_state(request)
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
     try:
-        provider_context = resolve_provider_request_context(
-            workspace=str(state.settings.workspace),
-            cache_root=cache_root,
-            provider_id=provider_id,
-            api_key=payload.api_key,
-            headers=payload.headers,
-        )
+        provider_context = _resolve_provider_context(request, provider_id, payload)
     except LlmProviderConfigError as exc:
         raise _map_provider_config_error(exc) from exc
     provider_cfg = provider_context.provider_cfg

@@ -17,6 +17,7 @@ import type {
   SnapshotPayload,
 } from '@/app/types/appContracts';
 import type { LLMStatus } from '@/app/components/llm/types';
+import type { RoleChatRole } from './api.types';
 
 export interface ApiResult<T> {
   ok: boolean;
@@ -447,7 +448,7 @@ export const memoService = {
 
 export const runtimeService = {
   async clearDialogue(): Promise<ApiResult<void>> {
-    const res = await apiFetch('/runtime/clear', {
+    const res = await apiFetch('/v2/runtime/clear', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scope: 'dialogue' }),
@@ -637,7 +638,7 @@ export const v2Services = {
 
 export const roleChatService = {
   /** POST /v2/role/{role}/chat — Non-streaming unified role chat */
-  async chat(role: string, request: import('./api.types').RoleChatRequest): Promise<ApiResult<import('./api.types').RoleChatResponse>> {
+  async chat(role: RoleChatRole, request: import('./api.types').RoleChatRequest): Promise<ApiResult<import('./api.types').RoleChatResponse>> {
     const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -647,7 +648,7 @@ export const roleChatService = {
   },
 
   /** POST /v2/role/{role}/chat/stream — Streaming unified role chat (returns raw Response for SSE handling) */
-  async chatStream(role: string, request: import('./api.types').RoleChatRequest, signal?: AbortSignal): Promise<Response> {
+  async chatStream(role: RoleChatRole, request: import('./api.types').RoleChatRequest, signal?: AbortSignal): Promise<Response> {
     return apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -657,7 +658,7 @@ export const roleChatService = {
   },
 
   /** GET /v2/role/{role}/chat/status — Role chat readiness status */
-  async getStatus(role: string): Promise<ApiResult<import('./api.types').RoleChatStatusResponse>> {
+  async getStatus(role: RoleChatRole): Promise<ApiResult<import('./api.types').RoleChatStatusResponse>> {
     const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/status`);
     return handleResponse(res, 'Failed to load role chat status');
   },
@@ -738,7 +739,7 @@ export const factoryStreamService = {
 };
 
 // ============================================================================
-// V2 P0 Missing Routes — Conversations (unified stubs in api.ts)
+// V2 P0 Routes — Conversations
 // ============================================================================
 
 // ============================================================================

@@ -6,6 +6,10 @@ const documentServiceMock = vi.hoisted(() => ({
   list: vi.fn(),
   get: vi.fn(),
   save: vi.fn(),
+  delete: vi.fn(),
+  search: vi.fn(),
+  versions: vi.fn(),
+  compare: vi.fn(),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -24,6 +28,14 @@ vi.mock('sonner', () => ({
 describe('PMDocumentPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    documentServiceMock.versions.mockResolvedValue({
+      ok: true,
+      data: { path: '', versions: [] },
+    });
+    documentServiceMock.delete.mockResolvedValue({
+      ok: true,
+      data: { success: true, path: '', deleted: true },
+    });
   });
 
   it('does not render invented documents when PM has no tracked document evidence', async () => {
@@ -130,5 +142,331 @@ describe('PMDocumentPanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('pm-document-provenance')).toHaveTextContent('PM docs API · v3');
     });
+  });
+
+  it('uses backend document search results to open matching PM documents', async () => {
+    const onDocumentSelect = vi.fn();
+    const documentPath = 'C:\\Temp\\SimpleGame\\docs\\quality\\gate.md';
+
+    documentServiceMock.list.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        documents: [
+          {
+            path: documentPath,
+            current_version: '1',
+            version_count: 1,
+            last_modified: '2026-05-08T07:16:25Z',
+            created_at: '2026-05-08T07:00:00Z',
+          },
+        ],
+        pagination: { total: 1 },
+      },
+    });
+    documentServiceMock.search.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        query: 'quality',
+        results: [
+          {
+            path: documentPath,
+            snippet: 'quality gate passed with backend evidence',
+            line: 12,
+            score: 0.91,
+          },
+        ],
+        count: 1,
+      },
+    });
+    documentServiceMock.get.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        current_version: '1',
+        version_count: 1,
+        last_modified: '2026-05-08T07:16:25Z',
+        created_at: '2026-05-08T07:00:00Z',
+        content: '# Quality Gate Evidence',
+      },
+    });
+
+    render(
+      <PMDocumentPanel
+        workspace="C:/Temp/SimpleGame"
+        selectedPath={null}
+        onDocumentSelect={onDocumentSelect}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('搜索文档...'), { target: { value: 'quality' } });
+
+    await waitFor(() => expect(documentServiceMock.search).toHaveBeenCalledWith('quality', 20));
+    expect(await screen.findByTestId('pm-document-search-results')).toHaveTextContent(
+      'quality gate passed with backend evidence',
+    );
+
+    fireEvent.click(screen.getByTestId('pm-document-search-result'));
+
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath));
+    expect(onDocumentSelect).toHaveBeenCalledWith(documentPath);
+    expect(await screen.findByText('Quality Gate Evidence')).toBeInTheDocument();
+  });
+
+  it('loads document versions and compares the latest two versions through the PM API', async () => {
+    const documentPath = 'C:\\Temp\\SimpleGame\\docs\\product\\plan.md';
+
+    documentServiceMock.list.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        documents: [
+          {
+            path: documentPath,
+            current_version: '2',
+            version_count: 2,
+            last_modified: '2026-05-09T07:16:25Z',
+            created_at: '2026-05-09T07:00:00Z',
+          },
+        ],
+        pagination: { total: 1 },
+      },
+    });
+    documentServiceMock.get.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        current_version: '2',
+        version_count: 2,
+        last_modified: '2026-05-09T07:16:25Z',
+        created_at: '2026-05-09T07:00:00Z',
+        content: '# Versioned Plan',
+      },
+    });
+    documentServiceMock.versions.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        versions: [
+          {
+            version: '1',
+            created_at: '2026-05-09T07:00:00Z',
+            created_by: 'pm',
+            change_summary: 'Initial plan',
+            checksum: 'aaa',
+          },
+          {
+            version: '2',
+            created_at: '2026-05-09T07:16:25Z',
+            created_by: 'pm',
+            change_summary: 'Added QA criteria',
+            checksum: 'bbb',
+          },
+        ],
+      },
+    });
+    documentServiceMock.compare.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        old_version: '1',
+        new_version: '2',
+        diff_text: '+ Added QA criteria',
+        changed_sections: ['QA'],
+        added_requirements: ['QA criteria'],
+        removed_requirements: [],
+        impact_score: 0.3,
+      },
+    });
+
+    render(
+      <PMDocumentPanel
+        workspace="C:/Temp/SimpleGame"
+        selectedPath={null}
+        onDocumentSelect={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText('plan.md'));
+
+    await waitFor(() => expect(documentServiceMock.versions).toHaveBeenCalledWith(documentPath));
+    expect(await screen.findByTestId('pm-document-version-list')).toHaveTextContent('Added QA criteria');
+
+    fireEvent.click(screen.getByText('比较最新'));
+
+    await waitFor(() => expect(documentServiceMock.compare).toHaveBeenCalledWith(documentPath, '1', '2'));
+    expect(await screen.findByTestId('pm-document-diff')).toHaveTextContent('+ Added QA criteria');
+  });
+
+  it('opens historical PM document versions as read-only backend content', async () => {
+    const documentPath = 'C:\\Temp\\SimpleGame\\docs\\product\\plan.md';
+
+    documentServiceMock.list.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        documents: [
+          {
+            path: documentPath,
+            current_version: '2',
+            version_count: 2,
+            last_modified: '2026-05-11T07:16:25Z',
+            created_at: '2026-05-11T07:00:00Z',
+          },
+        ],
+        pagination: { total: 1 },
+      },
+    });
+    documentServiceMock.get.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        current_version: '2',
+        version_count: 2,
+        last_modified: '2026-05-11T07:16:25Z',
+        created_at: '2026-05-11T07:00:00Z',
+        content: '# Current Plan',
+      },
+    });
+    documentServiceMock.versions.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        versions: [
+          {
+            version: '1',
+            created_at: '2026-05-11T07:00:00Z',
+            created_by: 'pm',
+            change_summary: 'Initial historical plan',
+            checksum: 'aaa',
+          },
+          {
+            version: '2',
+            created_at: '2026-05-11T07:16:25Z',
+            created_by: 'pm',
+            change_summary: 'Current plan',
+            checksum: 'bbb',
+          },
+        ],
+      },
+    });
+
+    render(
+      <PMDocumentPanel
+        workspace="C:/Temp/SimpleGame"
+        selectedPath={null}
+        onDocumentSelect={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText('plan.md'));
+    expect(await screen.findByText('Current Plan')).toBeInTheDocument();
+
+    documentServiceMock.get.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        current_version: '2',
+        version_count: 2,
+        last_modified: '2026-05-11T07:16:25Z',
+        created_at: '2026-05-11T07:00:00Z',
+        content: '# Historical Plan',
+      },
+    });
+
+    fireEvent.click((await screen.findAllByTestId('pm-document-version-open'))[1]);
+
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, '1'));
+    expect(await screen.findByText('Historical Plan')).toBeInTheDocument();
+    expect(screen.getByTestId('pm-document-version-read-evidence')).toHaveTextContent('version=1');
+    expect(screen.getByRole('button', { name: /编辑/ })).toBeDisabled();
+
+    documentServiceMock.get.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        current_version: '2',
+        version_count: 2,
+        last_modified: '2026-05-11T07:16:25Z',
+        created_at: '2026-05-11T07:00:00Z',
+        content: '# Current Plan',
+      },
+    });
+
+    fireEvent.click(screen.getByTestId('pm-document-current-version'));
+
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, null));
+    expect(await screen.findByText('Current Plan')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /编辑/ })).not.toBeDisabled();
+  });
+
+  it('deletes PM document records through the guarded backend delete route', async () => {
+    const documentPath = 'C:\\Temp\\SimpleGame\\docs\\product\\obsolete.md';
+
+    documentServiceMock.list
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          documents: [
+            {
+              path: documentPath,
+              current_version: '4',
+              version_count: 4,
+              last_modified: '2026-05-10T07:16:25Z',
+              created_at: '2026-05-10T07:00:00Z',
+            },
+          ],
+          pagination: { total: 1 },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          documents: [],
+          pagination: { total: 0 },
+        },
+      });
+    documentServiceMock.get.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: documentPath,
+        current_version: '4',
+        version_count: 4,
+        last_modified: '2026-05-10T07:16:25Z',
+        created_at: '2026-05-10T07:00:00Z',
+        content: '# Obsolete Plan',
+      },
+    });
+    documentServiceMock.delete.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        success: true,
+        path: documentPath,
+        deleted: true,
+      },
+    });
+
+    render(
+      <PMDocumentPanel
+        workspace="C:/Temp/SimpleGame"
+        selectedPath={null}
+        onDocumentSelect={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText('obsolete.md'));
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath));
+
+    fireEvent.click(screen.getByTestId('pm-document-delete-toggle'));
+
+    expect(screen.getByTestId('pm-document-delete-panel')).toHaveTextContent(
+      'DELETE /v2/pm/documents/docs/product/obsolete.md',
+    );
+    expect(screen.getByTestId('pm-document-delete-evidence')).toHaveTextContent('delete_file=false');
+    expect(screen.getByTestId('pm-document-delete-delete-file')).not.toBeChecked();
+
+    fireEvent.click(screen.getByTestId('pm-document-delete-submit'));
+
+    await waitFor(() => expect(documentServiceMock.delete).toHaveBeenCalledWith(documentPath, false));
+    expect(toastMock.success).toHaveBeenCalledWith('PM 文档记录已删除');
+    await waitFor(() => expect(documentServiceMock.list).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('选择文档以查看')).toBeInTheDocument();
   });
 });

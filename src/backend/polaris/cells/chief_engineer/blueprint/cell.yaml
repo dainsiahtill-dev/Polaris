@@ -10,14 +10,18 @@ purpose: 'Generate task-level implementation blueprints and dependency analysis 
   '
 current_modules:
 - polaris.cells.chief_engineer.blueprint.public.contracts
+- polaris.cells.chief_engineer.blueprint.public.service
+- polaris.delivery.http.v2.chief_engineer
 tags: []
 owned_paths:
 - polaris/cells/chief_engineer/blueprint/internal/**
 - polaris/cells/chief_engineer/blueprint/public/**
 - polaris/cells/chief_engineer/blueprint/tests/**
+- polaris/delivery/http/v2/chief_engineer.py
 public_contracts:
   modules:
   - polaris.cells.chief_engineer.blueprint.public.contracts
+  - polaris.cells.chief_engineer.blueprint.public.service
   commands:
   - GenerateTaskBlueprintCommandV1
   queries:
@@ -40,15 +44,18 @@ subgraphs:
 - execution_governance_pipeline
 state_owners:
 - runtime/state/blueprints/*
+- runtime/blueprints/*
 effects_allowed:
 - fs.read:workspace/**
 - fs.write:runtime/state/blueprints/*
+- fs.write:runtime/blueprints/*
 - fs.write:runtime/events/runtime.events.jsonl
 - llm.invoke:chief_engineer/*
 verification:
   tests:
   - tests/test_chief_engineer_preflight.py
+  - polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
   gaps:
-  - Initial business-cell declaration; implementation convergence is in progress.
+  - Blueprint adapter convergence with roles adapters is not complete.
   smoke_commands: []
 generated_artifacts: []

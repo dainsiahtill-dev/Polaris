@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -195,6 +197,35 @@ async def test_create_session(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_session_defaults_to_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Session creation must use the desktop active workspace when payload omits one."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_session = _make_mock_session(session_id="sess_active", role="pm")
+
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.create_session.return_value = mock_session
+
+        response = await client.post(
+            "/v2/roles/sessions",
+            json={
+                "role": "pm",
+                "host_kind": "electron_workbench",
+                "title": "PM Session",
+            },
+        )
+
+    assert response.status_code == 200
+    mock_service_cls.assert_called_once_with(workspace="C:/Temp/Product")
+    assert mock_service.create_session.call_args.kwargs["workspace"] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
 async def test_create_session_request_error(client: AsyncClient) -> None:
     """POST /v2/roles/sessions should return 400 on service error."""
     with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
@@ -238,6 +269,27 @@ async def test_list_sessions(client: AsyncClient) -> None:
     assert len(data["sessions"]) == 2
     assert data["total"] == 2
     mock_service.get_sessions.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_defaults_to_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Session list filters must use the active workspace, not stale repo settings."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.get_sessions.return_value = [_make_mock_session("sess_1", "pm")]
+
+        response = await client.get("/v2/roles/sessions?role=pm&limit=10")
+
+    assert response.status_code == 200
+    mock_service_cls.assert_called_once_with(workspace="C:/Temp/Product")
+    assert mock_service.get_sessions.call_args.kwargs["workspace"] == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio
@@ -542,6 +594,36 @@ async def test_get_artifacts(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_artifacts_uses_stored_session_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Artifact lookup must follow the selected session workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Active/Workspace"
+    mock_session = _make_mock_session("sess_abc", "pm")
+    mock_session.workspace = "C:/Temp/Product"
+
+    with (
+        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
+    ):
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.get_session.return_value = mock_session
+
+        mock_artifact_service = MagicMock()
+        mock_artifact_cls.return_value = mock_artifact_service
+        mock_artifact_service.list_artifacts.return_value = []
+
+        response = await client.get("/v2/roles/sessions/sess_abc/artifacts")
+
+    assert response.status_code == 200
+    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
+    mock_artifact_cls.assert_called_once_with(Path("C:/Temp/Product"))
+
+
+@pytest.mark.asyncio
 async def test_get_artifacts_session_not_found(client: AsyncClient) -> None:
     """GET /v2/roles/sessions/{session_id}/artifacts should return 404 when session missing."""
     with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
@@ -624,6 +706,36 @@ async def test_get_audit(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_audit_uses_stored_session_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Audit lookup must follow the selected session workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Active/Workspace"
+    mock_session = _make_mock_session("sess_abc", "pm")
+    mock_session.workspace = "C:/Temp/Product"
+
+    with (
+        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
+    ):
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.get_session.return_value = mock_session
+
+        mock_audit_service = MagicMock()
+        mock_audit_cls.return_value = mock_audit_service
+        mock_audit_service.get_events.return_value = []
+
+        response = await client.get("/v2/roles/sessions/sess_abc/audit")
+
+    assert response.status_code == 200
+    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
+    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
+
+
+@pytest.mark.asyncio
 async def test_get_audit_session_not_found(client: AsyncClient) -> None:
     """GET /v2/roles/sessions/{session_id}/audit should return 404 when session missing."""
     with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
@@ -662,3 +774,71 @@ async def test_get_audit_with_event_type_filter(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     mock_audit_service.get_events.assert_called_once_with("sess_abc", "message_sent", 2, 1)
+
+
+# ---------------------------------------------------------------------------
+# Export To Workflow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_export_to_pm_workflow_uses_stored_session_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """PM export must hand off the selected session workspace to orchestration."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Active/Workspace"
+    mock_session = _make_mock_session("sess_abc", "pm")
+    mock_session.workspace = "C:/Temp/Product"
+
+    mock_artifact = MagicMock()
+    mock_artifact.id = "art_1"
+    mock_artifact.type = "directive"
+    mock_artifact.content = "Implement the desktop workflow"
+    mock_artifact.metadata = {}
+
+    with (
+        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
+        patch("polaris.infrastructure.storage.LocalFileSystemAdapter"),
+        patch("polaris.kernelone.fs.KernelFileSystem") as mock_kernel_fs_cls,
+        patch("polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService") as mock_command_cls,
+    ):
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.get_session.return_value = mock_session
+
+        mock_artifact_service = MagicMock()
+        mock_artifact_cls.return_value = mock_artifact_service
+        mock_artifact_service.list_artifacts.return_value = [mock_artifact]
+
+        mock_audit_service = MagicMock()
+        mock_audit_cls.return_value = mock_audit_service
+        mock_audit_service.get_events.return_value = []
+
+        mock_kernel_fs = MagicMock()
+        mock_kernel_fs_cls.return_value = mock_kernel_fs
+        mock_kernel_fs.to_workspace_relative_path.return_value = ".polaris/exports/export.json"
+
+        mock_command = MagicMock()
+        mock_command.execute_pm_run = AsyncMock(return_value=SimpleNamespace(run_id="pm-run-1"))
+        mock_command_cls.return_value = mock_command
+
+        response = await client.post(
+            "/v2/roles/sessions/sess_abc/actions/export-to-workflow",
+            json={
+                "target": "pm",
+                "export_kind": "session_bundle",
+                "include_audit_log": False,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_id"] == "pm-run-1"
+    mock_artifact_cls.assert_called_once_with(Path("C:/Temp/Product"))
+    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
+    assert mock_command.execute_pm_run.await_args.kwargs["workspace"] == "C:/Temp/Product"
+    mock_kernel_fs.workspace_write_text.assert_called_once()

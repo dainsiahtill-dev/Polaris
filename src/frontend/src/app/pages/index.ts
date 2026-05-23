@@ -5,6 +5,9 @@
 export { PMPage } from './PMPage';
 export type { PMPageProps } from './PMPage';
 
+export { ChiefEngineerPage } from './ChiefEngineerPage';
+export type { ChiefEngineerPageProps } from './ChiefEngineerPage';
+
 export { DirectorPage } from './DirectorPage';
 export type { DirectorPageProps } from './DirectorPage';
 

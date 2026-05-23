@@ -40,6 +40,7 @@ import type {
   SettingsV2Response,
   SettingsV2UpdateRequest,
   HealthV2Response,
+  RoleChatRole,
 } from '@/services/api.types';
 
 // ============================================================================
@@ -55,7 +56,7 @@ export interface UseRoleChatResult {
   reset: () => void;
 }
 
-export function useRoleChat(role: string): UseRoleChatResult {
+export function useRoleChat(role: RoleChatRole): UseRoleChatResult {
   const [response, setResponse] = useState('');
   const [thinking, setThinking] = useState('');
   const [loading, setLoading] = useState(false);
@@ -105,7 +106,7 @@ export interface UseRoleChatStatusResult {
   refresh: () => Promise<void>;
 }
 
-export function useRoleChatStatus(role: string): UseRoleChatStatusResult {
+export function useRoleChatStatus(role: RoleChatRole): UseRoleChatStatusResult {
   const [status, setStatus] = useState<RoleChatStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

@@ -1,0 +1,81 @@
+card_id: "vc-20260523-pm-requirements-panel"
+bug_summary: >
+  PM desktop did not expose backend requirement list/detail evidence from
+  /v2/pm/requirements even though the PM management backend provides it.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/pm/PMWorkspace.tsx"
+  method: "PM workspace navigation and requirements evidence"
+  symptom: >
+    PM users could inspect tasks, documents, history, and analytics, but could
+    not inspect requirement traceability stored in the PM backend registry.
+
+assumptions:
+  - id: "A1"
+    statement: "The backend already exposes PM requirement list/detail routes."
+    status: verified_true
+    evidence: >
+      pm_management.py exposes /v2/pm/requirements and
+      /v2/pm/requirements/{req_id}; PM management v2 tests cover both routes.
+
+  - id: "A2"
+    statement: "The canonical PM role service layer lacks requirements wrappers."
+    status: verified_true
+    evidence: >
+      pmService contains PM task/document/history wrappers, while requirement
+      wrappers only existed on the legacy api.ts service.
+
+  - id: "A3"
+    statement: "Requirements should be read-only desktop evidence in this slice."
+    status: verified_true
+    evidence: >
+      The requested objective is desktop/backend completeness; no backend
+      mutation contract is needed to surface existing requirement evidence.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Folding requirements into task analytics would hide requirement identity and
+    blur requirement traceability with task execution state.
+  guardrail: >
+    Add a separate PM workspace requirements view with list and detail endpoint
+    provenance.
+
+verification_plan:
+  - command: "npm run test -- PMWorkspace pmService"
+    expected: "PM workspace and PM service tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run lint"
+    expected: "ESLint passes"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    expected: "Existing PM management v2 route tests pass"
+
+verification_results:
+  - command: "npm run test -- PMWorkspace pmService"
+    status: passed
+    evidence: "2 test files passed; 68 tests passed."
+  - command: "npm run typecheck"
+    status: passed
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    status: passed
+    evidence: "ESLint completed without findings."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py -v"
+    status: passed
+    evidence: "37 backend PM management route tests passed, including requirement list/detail routes."
+  - command: "npm run test -- PMWorkspace PMWorkbenchPanel PMTaskPanel PMDocumentPanel PMDiagnosticsPanel ChiefEngineerWorkspace DirectorWorkspace DirectorWorkbenchPanel DirectorTaskPanel pmService"
+    status: passed
+    evidence: "11 role-workspace test files passed; 119 tests passed."
+  - command: "npm run test"
+    status: passed
+    evidence: "76 frontend test files passed; 689 tests passed. Existing jsdom navigation warning is non-fatal."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    status: passed
+    evidence: "Renderer production build succeeded and 1 Electron visual audit test passed."
+  - command: "git diff --check -- src/frontend/src/app/components/pm/PMWorkspace.tsx src/frontend/src/app/components/pm/PMWorkspace.test.tsx src/frontend/src/services/pmService.ts src/frontend/src/services/index.ts src/frontend/src/services/__tests__/pmService.test.ts src/backend/docs/blueprints/PM_DESKTOP_REQUIREMENTS_PANEL_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-pm-requirements-panel.yaml"
+    status: passed
+    evidence: "No whitespace errors; Git reported existing LF-to-CRLF normalization warnings only."
+
+status: passed

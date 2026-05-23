@@ -9,29 +9,101 @@
  * - Loading state
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRoleChat } from '@/app/hooks/useV2Api';
 import { useV2ApiError } from '@/app/hooks/useV2ApiError';
+import { roleChatRolesService } from '@/services/api';
+import type { RoleChatRole } from '@/services/api.types';
 
-const AVAILABLE_ROLES = [
+interface RoleOption {
+  value: RoleChatRole;
+  label: string;
+}
+
+const ROLE_LABELS: Record<RoleChatRole, string> = {
+  pm: 'PM (尚书令)',
+  architect: 'Architect (中书令)',
+  chief_engineer: 'Chief Engineer (工部尚书)',
+  director: 'Director (工部侍郎)',
+  qa: 'QA (门下侍中)',
+};
+
+const FALLBACK_ROLE_OPTIONS: RoleOption[] = [
   { value: 'pm', label: 'PM (尚书令)' },
   { value: 'architect', label: 'Architect (中书令)' },
   { value: 'chief_engineer', label: 'Chief Engineer (工部尚书)' },
   { value: 'director', label: 'Director (工部侍郎)' },
   { value: 'qa', label: 'QA (门下侍中)' },
-  { value: 'scout', label: 'Scout (探子)' },
-] as const;
+] as const satisfies RoleOption[];
+
+function isRoleChatRole(value: string): value is RoleChatRole {
+  return Object.prototype.hasOwnProperty.call(ROLE_LABELS, value);
+}
+
+function roleOptionsFromRegistry(roles: string[]): RoleOption[] {
+  const seen = new Set<RoleChatRole>();
+  const options: RoleOption[] = [];
+  for (const role of roles) {
+    if (!isRoleChatRole(role) || seen.has(role)) continue;
+    seen.add(role);
+    options.push({ value: role, label: ROLE_LABELS[role] });
+  }
+  return options;
+}
 
 export interface RoleChatPanelProps {
-  defaultRole?: string;
+  defaultRole?: RoleChatRole;
   onError?: (error: string) => void;
 }
 
 export function RoleChatPanel({ defaultRole = 'pm', onError }: RoleChatPanelProps): JSX.Element {
-  const [selectedRole, setSelectedRole] = useState<string>(defaultRole);
+  const [selectedRole, setSelectedRole] = useState<RoleChatRole>(defaultRole);
+  const [roleOptions, setRoleOptions] = useState<RoleOption[]>(FALLBACK_ROLE_OPTIONS);
+  const [roleRegistrySource, setRoleRegistrySource] = useState<'loading' | 'backend' | 'fallback'>('loading');
   const [message, setMessage] = useState('');
   const { response, thinking, loading, error, sendMessage, reset } = useRoleChat(selectedRole);
   const { apiError } = useV2ApiError();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRoleRegistry(): Promise<void> {
+      const result = await roleChatRolesService.list();
+      if (cancelled) return;
+
+      if (result.ok && result.data) {
+        const backendOptions = roleOptionsFromRegistry(result.data.roles);
+        if (backendOptions.length > 0) {
+          setRoleOptions(backendOptions);
+          setRoleRegistrySource('backend');
+          setSelectedRole((current) => {
+            if (backendOptions.some((role) => role.value === current)) return current;
+            reset();
+            return backendOptions[0].value;
+          });
+          return;
+        }
+      }
+
+      setRoleOptions(FALLBACK_ROLE_OPTIONS);
+      setRoleRegistrySource('fallback');
+      setSelectedRole((current) => {
+        if (FALLBACK_ROLE_OPTIONS.some((role) => role.value === current)) return current;
+        reset();
+        return 'pm';
+      });
+    }
+
+    void loadRoleRegistry().catch(() => {
+      if (cancelled) return;
+      setRoleOptions(FALLBACK_ROLE_OPTIONS);
+      setRoleRegistrySource('fallback');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reset]);
 
   const handleSend = useCallback(async () => {
     if (!message.trim() || loading) return;
@@ -58,6 +130,7 @@ export function RoleChatPanel({ defaultRole = 'pm', onError }: RoleChatPanelProp
 
   const handleRoleChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
+      if (!isRoleChatRole(e.target.value)) return;
       setSelectedRole(e.target.value);
       reset();
     },
@@ -68,18 +141,26 @@ export function RoleChatPanel({ defaultRole = 'pm', onError }: RoleChatPanelProp
     <div className="flex flex-col h-full border rounded-lg bg-white dark:bg-gray-900">
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Role Chat</h2>
-        <select
-          value={selectedRole}
-          onChange={handleRoleChange}
-          className="text-sm border rounded px-2 py-1 bg-white dark:bg-gray-800 dark:text-gray-100"
-          aria-label="Select role"
-        >
-          {AVAILABLE_ROLES.map((role) => (
-            <option key={role.value} value={role.value}>
-              {role.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <span
+            data-testid="role-chat-registry-source"
+            className="text-[11px] text-gray-500 dark:text-gray-400"
+          >
+            roles: {roleRegistrySource}
+          </span>
+          <select
+            value={selectedRole}
+            onChange={handleRoleChange}
+            className="text-sm border rounded px-2 py-1 bg-white dark:bg-gray-800 dark:text-gray-100"
+            aria-label="Select role"
+          >
+            {roleOptions.map((role) => (
+              <option key={role.value} value={role.value}>
+                {role.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0">

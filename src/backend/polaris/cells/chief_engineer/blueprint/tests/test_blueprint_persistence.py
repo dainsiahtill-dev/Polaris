@@ -61,6 +61,13 @@ class TestAtomicWrite:
             bp.save("bp1", {"x": 1})
             assert os.path.isdir(os.path.join(workspace, "runtime", "blueprints"))
 
+    def test_can_skip_directory_creation_for_read_only_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = os.path.join(tmpdir, "nested", "workspace")
+            bp = BlueprintPersistence(workspace=workspace, ensure_directory=False)
+            assert bp.list_all() == []
+            assert not os.path.exists(os.path.join(workspace, "runtime", "blueprints"))
+
 
 class TestDelete:
     """Tests for deletion."""

@@ -1,0 +1,61 @@
+id: vc-20260523-role-page-router-convergence
+title: Role page router convergence
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/App.tsx
+  - src/frontend/src/app/pages/PMPage.tsx
+  - src/frontend/src/app/pages/PMPage.test.tsx
+  - src/frontend/src/app/pages/DirectorPage.tsx
+  - src/frontend/src/app/pages/DirectorPage.test.tsx
+related_blueprint: src/backend/docs/blueprints/ROLE_PAGE_ROUTER_CONVERGENCE_20260523.md
+assumption_register:
+  - id: A1
+    statement: App is the role desktop router and currently owns PM, Chief Engineer, and Director snapshot data.
+    evidence:
+      - src/frontend/src/app/App.tsx
+    verified: true
+  - id: A2
+    statement: PMPage and DirectorPage are existing role wrapper contracts.
+    evidence:
+      - src/frontend/src/app/pages/PMPage.tsx
+      - src/frontend/src/app/pages/DirectorPage.tsx
+    verified: true
+  - id: A3
+    statement: Converging App routing through page wrappers does not require backend route changes.
+    evidence:
+      - src/frontend/src/app/pages/PMPage.tsx
+      - src/frontend/src/app/pages/DirectorPage.tsx
+      - src/frontend/src/app/pages/ChiefEngineerPage.tsx
+    verified: true
+pre_mortem:
+  - risk: PMPage drops PM terminal/runtime blockage context while replacing the inline App branch.
+    mitigation: Add explicit PM page props and a regression test that captures workspace props.
+  - risk: DirectorPage drops file edit or task trace evidence while replacing the inline App branch.
+    mitigation: Add explicit Director page props and a regression test that captures workspace and overlay props.
+  - risk: Runtime overlay cross-role running evidence changes during the routing refactor.
+    mitigation: Pass `pmRunning`/`directorRunning` through page wrappers and assert overlay props in tests.
+verification_plan:
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage
+    expected: Page wrapper tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage
+    result: passed
+    evidence: 3 test files passed, 5 tests passed
+  - command: npm run typecheck
+    result: passed
+    evidence: tsc --noEmit completed with exit code 0
+  - command: npm run lint
+    result: passed
+    evidence: eslint completed with exit code 0
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: passed
+    evidence: 15 test files passed, 130 tests passed

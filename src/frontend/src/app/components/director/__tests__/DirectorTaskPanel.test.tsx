@@ -101,11 +101,12 @@ describe('DirectorTaskPanel', () => {
 
     fireEvent.click(screen.getByTestId('director-task-filter-claimed'));
     expect(screen.queryByTestId('director-task-group-unclaimed')).not.toBeInTheDocument();
-    expect(screen.getByText('实现任务合同落盘')).toBeInTheDocument();
+    expect(within(screen.getByTestId('director-task-board')).getByText('实现任务合同落盘')).toBeInTheDocument();
   });
 
   it('renders selected task details from real task fields', () => {
     const onExecute = vi.fn();
+    const onTaskCancel = vi.fn();
     render(
       <DirectorTaskPanel
         tasks={[task]}
@@ -114,7 +115,38 @@ describe('DirectorTaskPanel', () => {
         selectedTaskId={task.id}
         onTaskSelect={() => undefined}
         onExecute={onExecute}
+        onTaskCancel={onTaskCancel}
         isExecuting
+        taskCancelMessage="取消请求已提交: PM-42"
+        taskBackendDetail={{
+          taskId: task.id,
+          loading: false,
+          error: null,
+          data: {
+            id: task.id,
+            subject: task.name,
+            status: 'RUNNING',
+            priority: 'HIGH',
+            worker: 'worker-a',
+            pm_task_id: 'PM-42',
+            goal: '后端权威详情',
+            acceptance: ['detail loaded'],
+          },
+        }}
+        taskLLMEvents={{
+          taskId: task.id,
+          loading: false,
+          error: null,
+          stats: { total: 1, call_error: 0, call_retry: 0 },
+          events: [
+            {
+              event_type: 'llm_call_start',
+              model: 'gpt-test',
+              status: 'started',
+              timestamp: '2026-05-23T00:00:00Z',
+            },
+          ],
+        }}
       />,
     );
 
@@ -128,11 +160,59 @@ describe('DirectorTaskPanel', () => {
     expect(within(detail).getByText(/retryable writer timeout/)).toBeInTheDocument();
     expect(within(detail).getByText(/src\/backend\/runtime\/tasks\/director.json/)).toBeInTheDocument();
     expect(within(detail).getByText(/\+12/)).toBeInTheDocument();
+    expect(within(screen.getByTestId('director-task-llm-events')).getByText('llm call start')).toBeInTheDocument();
+    expect(within(screen.getByTestId('director-task-llm-events')).getByText('gpt-test')).toBeInTheDocument();
     expect(within(screen.getByTestId('director-task-provenance')).getByText('PM-42')).toBeInTheDocument();
     expect(within(screen.getByTestId('director-task-provenance')).getByText('BP-42')).toBeInTheDocument();
     expect(within(screen.getByTestId('director-task-provenance')).getByText('workflow')).toBeInTheDocument();
+    expect(screen.getByTestId('director-task-cancel-evidence')).toHaveTextContent('/v2/director/tasks/PM-42/cancel');
+    expect(screen.getByTestId('director-task-cancel-evidence')).toHaveTextContent('取消请求已提交: PM-42');
+    expect(screen.getByTestId('director-task-backend-detail')).toHaveTextContent('/v2/director/tasks/PM-42');
+    expect(screen.getByTestId('director-task-backend-detail')).toHaveTextContent('后端权威详情');
+    expect(screen.getByTestId('director-task-backend-detail')).toHaveTextContent('验收项: 1');
 
     fireEvent.click(screen.getByTestId('director-task-execute-selected'));
     expect(onExecute).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('director-task-cancel-selected'));
+    expect(onTaskCancel).toHaveBeenCalledWith('PM-42');
+  });
+
+  it('submits a desktop Director task creation draft through the provided handler', () => {
+    const onTaskCreate = vi.fn();
+    render(
+      <DirectorTaskPanel
+        tasks={[]}
+        workers={[]}
+        taskMap={new Map()}
+        selectedTaskId={null}
+        onTaskSelect={() => undefined}
+        onExecute={() => undefined}
+        onTaskCreate={onTaskCreate}
+        isExecuting={false}
+        taskCreateMessage="已创建 Director 任务: director-created-1"
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId('director-task-create-subject'), {
+      target: { value: 'Create regression task' },
+    });
+    fireEvent.change(screen.getByTestId('director-task-create-description'), {
+      target: { value: 'Run focused role desktop regression' },
+    });
+    fireEvent.change(screen.getByTestId('director-task-create-priority'), {
+      target: { value: 'HIGH' },
+    });
+    fireEvent.change(screen.getByTestId('director-task-create-timeout'), {
+      target: { value: '420' },
+    });
+    fireEvent.click(screen.getByTestId('director-task-create-submit'));
+
+    expect(onTaskCreate).toHaveBeenCalledWith({
+      subject: 'Create regression task',
+      description: 'Run focused role desktop regression',
+      priority: 'HIGH',
+      timeoutSeconds: 420,
+    });
+    expect(screen.getByTestId('director-task-create-evidence')).toHaveTextContent('已创建 Director 任务: director-created-1');
   });
 });

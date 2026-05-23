@@ -7,15 +7,25 @@ import {
   Eye,
   FileText,
   FolderOpen,
+  GitCompare,
+  History,
   RefreshCw,
   Save,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { cn } from '@/app/components/ui/utils';
 import { sanitizeMarkdown } from '@/app/utils/xssSanitizer';
-import { pmDocumentService, type PmDocumentInfo } from '@/services/pmService';
+import {
+  pmDocumentService,
+  type PmDocumentDeleteResponse,
+  type PmDocumentDiffResponse,
+  type PmDocumentInfo,
+  type PmDocumentSearchResult,
+  type PmDocumentVersionInfo,
+} from '@/services/pmService';
 import { toast } from 'sonner';
 
 interface PMDocumentPanelProps {
@@ -45,10 +55,27 @@ export function PMDocumentPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [isTreeLoading, setIsTreeLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [treeError, setTreeError] = useState<string | null>(null);
   const [contentError, setContentError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteResult, setDeleteResult] = useState<PmDocumentDeleteResponse | null>(null);
+  const [showDeletePanel, setShowDeletePanel] = useState(false);
+  const [deleteBackingFile, setDeleteBackingFile] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<PmDocumentSearchResult[]>([]);
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [documentVersions, setDocumentVersions] = useState<PmDocumentVersionInfo[]>([]);
+  const [isVersionsLoading, setIsVersionsLoading] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [documentDiff, setDocumentDiff] = useState<PmDocumentDiffResponse | null>(null);
+  const [isDiffLoading, setIsDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'preview' | 'edit'>('preview');
+  const [selectedDocumentVersion, setSelectedDocumentVersion] = useState<string | null>(null);
+  const [isVersionLoading, setIsVersionLoading] = useState(false);
+  const [versionReadError, setVersionReadError] = useState<string | null>(null);
 
   const loadFileTree = useCallback(async () => {
     setIsTreeLoading(true);
@@ -70,6 +97,39 @@ export function PMDocumentPanel({
     void loadFileTree();
   }, [loadFileTree]);
 
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setSearchResults([]);
+      setSearchError(null);
+      setIsSearchLoading(false);
+      return undefined;
+    }
+
+    let isCurrent = true;
+    setIsSearchLoading(true);
+    setSearchError(null);
+
+    const timeoutId = window.setTimeout(async () => {
+      const result = await pmDocumentService.search(query, 20);
+      if (!isCurrent) return;
+
+      if (result.ok && result.data) {
+        setSearchResults(result.data.results || []);
+      } else {
+        setSearchResults([]);
+        setSearchError(result.error || 'PM 文档搜索不可用');
+      }
+
+      setIsSearchLoading(false);
+    }, 250);
+
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [searchQuery]);
+
   const toggleDirectory = useCallback((node: FileNode) => {
     const updateTree = (nodes: FileNode[]): FileNode[] =>
       nodes.map((current) => {
@@ -85,20 +145,42 @@ export function PMDocumentPanel({
     setFileTree((currentTree) => updateTree(currentTree));
   }, []);
 
-  const handleFileSelect = useCallback(async (node: FileNode) => {
-    if (node.type === 'directory') {
-      toggleDirectory(node);
-      return;
+  const loadDocumentVersions = useCallback(async (path: string) => {
+    setIsVersionsLoading(true);
+    setVersionsError(null);
+
+    const result = await pmDocumentService.versions(path);
+    if (result.ok && result.data) {
+      setDocumentVersions(result.data.versions || []);
+    } else {
+      setDocumentVersions([]);
+      setVersionsError(result.error || '加载 PM 文档版本失败');
     }
 
+    setIsVersionsLoading(false);
+  }, []);
+
+  const loadDocumentNode = useCallback(async (node: FileNode) => {
     setIsLoading(true);
     setContentError(null);
+    setDocumentDiff(null);
+    setDiffError(null);
+    setDeleteError(null);
+    setDeleteResult(null);
+    setShowDeletePanel(false);
+    setDeleteBackingFile(false);
+    setSelectedDocumentVersion(null);
+    setVersionReadError(null);
     setSelectedFile(node);
     onDocumentSelect(node.path);
+    void loadDocumentVersions(node.path);
 
     const result = await pmDocumentService.get(node.path);
     if (result.ok && result.data) {
       setFileContent(result.data.content || '');
+      setSelectedFile((current) => current?.path === node.path
+        ? { ...current, document: result.data }
+        : current);
     } else {
       const message = result.error || '加载 PM 文档失败';
       setFileContent('');
@@ -107,10 +189,37 @@ export function PMDocumentPanel({
     }
 
     setIsLoading(false);
-  }, [onDocumentSelect, toggleDirectory]);
+  }, [loadDocumentVersions, onDocumentSelect]);
+
+  const handleFileSelect = useCallback(async (node: FileNode) => {
+    if (node.type === 'directory') {
+      toggleDirectory(node);
+      return;
+    }
+
+    await loadDocumentNode(node);
+  }, [loadDocumentNode, toggleDirectory]);
+
+  const handleSearchResultSelect = useCallback(async (result: PmDocumentSearchResult) => {
+    const path = readSearchResultPath(result);
+    if (!path) return;
+
+    const displayPath = displayDocumentPath(path, workspace);
+    await loadDocumentNode({
+      name: basenameFromPath(displayPath, path),
+      path,
+      displayPath,
+      type: 'file',
+      document: findDocumentInfo(fileTree, path),
+    });
+  }, [fileTree, loadDocumentNode, workspace]);
 
   const handleSave = async () => {
     if (!selectedFile) return;
+    if (selectedDocumentVersion) {
+      toast.error('历史版本为只读，无法保存');
+      return;
+    }
 
     setIsSaving(true);
     const result = await pmDocumentService.save(
@@ -136,6 +245,7 @@ export function PMDocumentPanel({
         }
         : previous);
       await loadFileTree();
+      await loadDocumentVersions(selectedFile.path);
     } else {
       toast.error(result.error || '保存失败');
     }
@@ -143,9 +253,83 @@ export function PMDocumentPanel({
     setIsSaving(false);
   };
 
+  const handleLoadDocumentVersion = async (version: string | null) => {
+    if (!selectedFile) return;
+
+    setIsVersionLoading(true);
+    setVersionReadError(null);
+    setDocumentDiff(null);
+    setDiffError(null);
+
+    const result = await pmDocumentService.get(selectedFile.path, version);
+    if (result.ok && result.data) {
+      setFileContent(result.data.content || '');
+      setSelectedDocumentVersion(version);
+      setViewMode('preview');
+      setSelectedFile((current) => current?.path === selectedFile.path
+        ? { ...current, document: result.data }
+        : current);
+    } else {
+      setVersionReadError(result.error || '读取 PM 文档版本失败');
+    }
+
+    setIsVersionLoading(false);
+  };
+
+  const handleDelete = async () => {
+    if (!selectedFile) return;
+
+    const deletedPath = selectedFile.path;
+    setIsDeleting(true);
+    setDeleteError(null);
+    setDeleteResult(null);
+
+    const result = await pmDocumentService.delete(deletedPath, deleteBackingFile);
+    if (result.ok && result.data?.success && result.data.deleted) {
+      setDeleteResult(result.data);
+      toast.success(deleteBackingFile ? 'PM 文档和文件已删除' : 'PM 文档记录已删除');
+      setSelectedFile(null);
+      setFileContent('');
+      setDocumentVersions([]);
+      setDocumentDiff(null);
+      setVersionsError(null);
+      setDiffError(null);
+      setShowDeletePanel(false);
+      setDeleteBackingFile(false);
+      await loadFileTree();
+    } else {
+      setDeleteError(result.error || '删除 PM 文档失败');
+    }
+
+    setIsDeleting(false);
+  };
+
+  const handleCompareLatest = async () => {
+    if (!selectedFile) return;
+
+    const pair = latestDocumentVersionPair(documentVersions);
+    if (!pair) return;
+
+    setIsDiffLoading(true);
+    setDiffError(null);
+    setDocumentDiff(null);
+
+    const result = await pmDocumentService.compare(selectedFile.path, pair.oldVersion, pair.newVersion);
+    if (result.ok && result.data) {
+      setDocumentDiff(result.data);
+    } else {
+      setDiffError(result.error || '比较 PM 文档版本失败');
+    }
+
+    setIsDiffLoading(false);
+  };
+
   const filteredTree = searchQuery.trim()
     ? filterTree(fileTree, searchQuery.toLowerCase())
     : fileTree;
+  const searchTerm = searchQuery.trim();
+  const showBackendSearch = searchTerm.length >= 2;
+  const validSearchResults = searchResults.filter((result) => Boolean(readSearchResultPath(result)));
 
   return (
     <div className="flex h-full">
@@ -175,6 +359,48 @@ export function PMDocumentPanel({
             />
           </div>
         </div>
+
+        {showBackendSearch && (
+          <div className="border-b border-white/10 px-2 py-2" data-testid="pm-document-search-panel">
+            <div className="mb-1 flex items-center justify-between px-1 text-[10px] uppercase tracking-wider text-slate-500">
+              <span>内容搜索</span>
+              <span data-testid="pm-document-search-count">
+                {isSearchLoading ? 'searching' : `${validSearchResults.length} matches`}
+              </span>
+            </div>
+            {isSearchLoading ? (
+              <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2 py-2 text-[11px] text-slate-400">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                正在调用 /v2/pm/search/documents
+              </div>
+            ) : searchError ? (
+              <div
+                className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-2 text-[11px] leading-relaxed text-red-200"
+                data-testid="pm-document-search-error"
+              >
+                {searchError}
+              </div>
+            ) : validSearchResults.length > 0 ? (
+              <div className="max-h-52 space-y-1 overflow-auto" data-testid="pm-document-search-results">
+                {validSearchResults.map((result, index) => (
+                  <SearchResultRow
+                    key={`${readSearchResultPath(result)}-${index}`}
+                    result={result}
+                    workspace={workspace}
+                    onSelect={() => void handleSearchResultSelect(result)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div
+                className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-2 text-[11px] text-slate-500"
+                data-testid="pm-document-search-empty"
+              >
+                后端未返回匹配文档
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex-1 overflow-auto py-2" data-testid="pm-document-tree">
           {treeError ? (
@@ -246,11 +472,15 @@ export function PMDocumentPanel({
                   </button>
                   <button
                     onClick={() => setViewMode('edit')}
+                    disabled={Boolean(selectedDocumentVersion)}
+                    title={selectedDocumentVersion ? '历史版本为只读' : undefined}
                     className={cn(
                       'flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all',
                       viewMode === 'edit'
                         ? 'bg-amber-500/20 text-amber-400'
-                        : 'text-slate-500 hover:text-slate-300',
+                        : selectedDocumentVersion
+                          ? 'cursor-not-allowed text-slate-700'
+                          : 'text-slate-500 hover:text-slate-300',
                     )}
                   >
                     <Edit3 className="h-3 w-3" />
@@ -269,8 +499,98 @@ export function PMDocumentPanel({
                     {isSaving ? '保存中' : '保存'}
                   </Button>
                 )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowDeletePanel((current) => !current)}
+                  disabled={isDeleting}
+                  data-testid="pm-document-delete-toggle"
+                  className={cn(
+                    'text-red-200 hover:bg-red-500/10 hover:text-red-100',
+                    showDeletePanel && 'bg-red-500/10 text-red-100',
+                  )}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  删除
+                </Button>
               </div>
             </div>
+
+            {(showDeletePanel || deleteError || deleteResult) && (
+              <div
+                className={cn(
+                  'border-b px-4 py-3 text-xs',
+                  deleteError
+                    ? 'border-red-500/20 bg-red-500/10 text-red-100'
+                    : 'border-red-500/15 bg-slate-950/45 text-slate-300',
+                )}
+                data-testid="pm-document-delete-panel"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 font-semibold text-red-100">
+                      <Trash2 className="h-3.5 w-3.5" />
+                      PM document delete
+                    </div>
+                    <div className="mt-1 truncate font-mono text-[10px] text-red-200/80" title={selectedFile.path}>
+                      DELETE /v2/pm/documents/{selectedFile.displayPath}
+                    </div>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1.5 text-[11px] text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={deleteBackingFile}
+                      onChange={(event) => setDeleteBackingFile(event.target.checked)}
+                      data-testid="pm-document-delete-delete-file"
+                      className="h-3.5 w-3.5 accent-red-500"
+                    />
+                    删除实际文件
+                  </label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { void handleDelete(); }}
+                    disabled={isDeleting}
+                    data-testid="pm-document-delete-submit"
+                    className="border-red-500/35 bg-red-500/10 text-red-100 hover:bg-red-500/20 hover:text-red-50"
+                  >
+                    <Trash2 className={cn('mr-1.5 h-3.5 w-3.5', isDeleting && 'animate-pulse')} />
+                    {isDeleting ? '删除中' : '确认删除'}
+                  </Button>
+                </div>
+                <div
+                  className="mt-2 rounded-md border border-white/10 bg-slate-950/55 px-2 py-1.5 text-[11px]"
+                  data-testid="pm-document-delete-evidence"
+                >
+                  {deleteError ? (
+                    <span className="text-red-100">{deleteError}</span>
+                  ) : deleteResult ? (
+                    <span className="text-emerald-300">
+                      deleted · {deleteResult.path} · delete_file={String(deleteBackingFile)}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">
+                      默认仅删除 PM 文档记录；勾选后同时删除工作区文件。delete_file={String(deleteBackingFile)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <DocumentVersionPanel
+              versions={documentVersions}
+              isLoading={isVersionsLoading}
+              error={versionsError}
+              diff={documentDiff}
+              isDiffLoading={isDiffLoading}
+              diffError={diffError}
+              selectedVersion={selectedDocumentVersion}
+              versionReadError={versionReadError}
+              isVersionLoading={isVersionLoading}
+              onLoadVersion={(version) => void handleLoadDocumentVersion(version)}
+              onLoadCurrent={() => void handleLoadDocumentVersion(null)}
+              onCompareLatest={() => void handleCompareLatest()}
+            />
 
             <div className="flex-1 overflow-auto">
               {isLoading ? (
@@ -321,6 +641,65 @@ function buildDocumentProvenance(node: FileNode): string {
   const version = String(node.document?.current_version || '-').trim() || '-';
   const modified = formatDocumentTimestamp(node.document?.last_modified);
   return `PM docs API · v${version} · ${modified}`;
+}
+
+function normalizeDocumentPath(path: string): string {
+  return path.replace(/\\/g, '/').toLowerCase();
+}
+
+function findDocumentInfo(nodes: FileNode[], path: string): PmDocumentInfo | undefined {
+  const targetPath = normalizeDocumentPath(path);
+
+  for (const node of nodes) {
+    if (node.type === 'file' && normalizeDocumentPath(node.path) === targetPath) {
+      return node.document;
+    }
+
+    if (node.children) {
+      const nested = findDocumentInfo(node.children, path);
+      if (nested) return nested;
+    }
+  }
+
+  return undefined;
+}
+
+function readSearchResultPath(result: PmDocumentSearchResult): string {
+  return typeof result.path === 'string' ? result.path.trim() : '';
+}
+
+function readSearchResultString(result: PmDocumentSearchResult, keys: string[]): string {
+  for (const key of keys) {
+    const value = result[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+function readSearchResultSnippet(result: PmDocumentSearchResult): string {
+  return readSearchResultString(result, ['snippet', 'match', 'preview', 'content', 'line_text']);
+}
+
+function basenameFromPath(displayPath: string, fallbackPath: string): string {
+  const segments = displayPath.split('/').filter(Boolean);
+  if (segments.length > 0) return segments[segments.length - 1];
+
+  const fallbackSegments = fallbackPath.replace(/\\/g, '/').split('/').filter(Boolean);
+  return fallbackSegments[fallbackSegments.length - 1] || fallbackPath;
+}
+
+function formatSearchResultMeta(result: PmDocumentSearchResult): string {
+  const parts = ['PM search API'];
+  const line = typeof result.line === 'number' ? result.line : result.line_number;
+  if (typeof line === 'number') {
+    parts.push(`line ${line}`);
+  }
+  if (typeof result.score === 'number') {
+    parts.push(`score ${result.score.toFixed(2)}`);
+  }
+  return parts.join(' · ');
 }
 
 function displayDocumentPath(path: string, workspace: string): string {
@@ -420,6 +799,229 @@ function PanelMessage({
       </div>
       <p className="text-xs font-medium text-slate-300">{title}</p>
       <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function SearchResultRow({
+  result,
+  workspace,
+  onSelect,
+}: {
+  result: PmDocumentSearchResult;
+  workspace: string;
+  onSelect: () => void;
+}) {
+  const path = readSearchResultPath(result);
+  const displayPath = displayDocumentPath(path, workspace);
+  const snippet = readSearchResultSnippet(result);
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="w-full cursor-pointer rounded-md border border-white/10 bg-white/[0.035] px-2 py-2 text-left transition-colors hover:border-amber-400/30 hover:bg-amber-500/10"
+      data-testid="pm-document-search-result"
+      title={displayPath}
+    >
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="truncate text-xs font-medium text-slate-200">
+          {basenameFromPath(displayPath, path)}
+        </span>
+        <span className="shrink-0 text-[9px] text-slate-500">{formatSearchResultMeta(result)}</span>
+      </div>
+      <p className="mt-0.5 truncate text-[10px] text-slate-500">{displayPath}</p>
+      {snippet ? (
+        <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-300">{snippet}</p>
+      ) : null}
+    </button>
+  );
+}
+
+function parseDocumentVersion(value: string): number | null {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sortedDocumentVersions(versions: PmDocumentVersionInfo[]): PmDocumentVersionInfo[] {
+  return [...versions].sort((left, right) => {
+    const leftNumber = parseDocumentVersion(left.version);
+    const rightNumber = parseDocumentVersion(right.version);
+    if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
+    return left.version.localeCompare(right.version);
+  });
+}
+
+function latestDocumentVersionPair(
+  versions: PmDocumentVersionInfo[],
+): { oldVersion: string; newVersion: string } | null {
+  const sorted = sortedDocumentVersions(versions);
+  if (sorted.length < 2) return null;
+  return {
+    oldVersion: sorted[sorted.length - 2].version,
+    newVersion: sorted[sorted.length - 1].version,
+  };
+}
+
+function DocumentVersionPanel({
+  versions,
+  isLoading,
+  error,
+  diff,
+  isDiffLoading,
+  diffError,
+  selectedVersion,
+  versionReadError,
+  isVersionLoading,
+  onLoadVersion,
+  onLoadCurrent,
+  onCompareLatest,
+}: {
+  versions: PmDocumentVersionInfo[];
+  isLoading: boolean;
+  error: string | null;
+  diff: PmDocumentDiffResponse | null;
+  isDiffLoading: boolean;
+  diffError: string | null;
+  selectedVersion: string | null;
+  versionReadError: string | null;
+  isVersionLoading: boolean;
+  onLoadVersion: (version: string) => void;
+  onLoadCurrent: () => void;
+  onCompareLatest: () => void;
+}) {
+  const latestPair = latestDocumentVersionPair(versions);
+  const visibleVersions = sortedDocumentVersions(versions).slice(-4).reverse();
+
+  return (
+    <div className="border-b border-white/10 bg-slate-950/20 px-4 py-2" data-testid="pm-document-version-panel">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+          <History className="h-3.5 w-3.5 text-amber-300" />
+          版本历史
+          <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-500">
+            {versions.length}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedVersion ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onLoadCurrent}
+              disabled={isVersionLoading}
+              data-testid="pm-document-current-version"
+              className="h-7 text-xs text-slate-400 hover:text-slate-200"
+            >
+              <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', isVersionLoading && 'animate-spin')} />
+              当前版本
+            </Button>
+          ) : null}
+          {latestPair ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onCompareLatest}
+              disabled={isDiffLoading}
+              className="h-7 text-xs text-slate-400 hover:text-slate-200"
+            >
+              <GitCompare className={cn('mr-1.5 h-3.5 w-3.5', isDiffLoading && 'animate-pulse')} />
+              {isDiffLoading ? '比较中' : '比较最新'}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {(selectedVersion || versionReadError || isVersionLoading) ? (
+        <div
+          className={cn(
+            'mb-2 rounded-md border px-2 py-1.5 text-[11px]',
+            versionReadError
+              ? 'border-red-500/20 bg-red-500/10 text-red-200'
+              : 'border-amber-400/20 bg-amber-500/5 text-amber-100',
+          )}
+          data-testid="pm-document-version-read-evidence"
+        >
+          {versionReadError ? (
+            versionReadError
+          ) : isVersionLoading ? (
+            '正在读取 /v2/pm/documents/{path}?version=...'
+          ) : (
+            `只读历史版本 · /v2/pm/documents/{path}?version=${selectedVersion}`
+          )}
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-400" />
+          正在读取 /v2/pm/documents/*/versions
+        </div>
+      ) : error ? (
+        <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-200">
+          {error}
+        </div>
+      ) : visibleVersions.length > 0 ? (
+        <div className="flex gap-2 overflow-x-auto pb-1" data-testid="pm-document-version-list">
+          {visibleVersions.map((version) => (
+            <div
+              key={version.version}
+              className="min-w-36 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-amber-200">v{version.version}</span>
+                <span className="truncate text-[9px] text-slate-500">{version.created_by || 'unknown'}</span>
+              </div>
+              <p className="mt-1 truncate text-[10px] text-slate-400" title={version.change_summary}>
+                {version.change_summary || 'no summary'}
+              </p>
+              <p className="mt-0.5 truncate text-[9px] text-slate-600">{version.created_at}</p>
+              <button
+                type="button"
+                onClick={() => onLoadVersion(version.version)}
+                disabled={isVersionLoading}
+                data-testid="pm-document-version-open"
+                className={cn(
+                  'mt-2 w-full rounded border px-2 py-1 text-[10px] transition-colors',
+                  selectedVersion === version.version
+                    ? 'border-amber-400/40 bg-amber-500/15 text-amber-100'
+                    : 'border-white/10 bg-slate-950/40 text-slate-400 hover:border-amber-400/30 hover:text-amber-100',
+                )}
+              >
+                {selectedVersion === version.version ? '正在查看' : '查看版本'}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-[11px] text-slate-500" data-testid="pm-document-version-empty">
+          后端未返回版本历史
+        </div>
+      )}
+
+      {diffError ? (
+        <div
+          className="mt-2 rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-200"
+          data-testid="pm-document-diff-error"
+        >
+          {diffError}
+        </div>
+      ) : null}
+
+      {diff ? (
+        <div className="mt-2 rounded-md border border-cyan-400/20 bg-cyan-500/5 p-2" data-testid="pm-document-diff">
+          <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-cyan-100">
+            <span>v{diff.old_version} {'->'} v{diff.new_version}</span>
+            <span>impact {diff.impact_score}</span>
+            <span>sections {diff.changed_sections.length}</span>
+            <span>+req {diff.added_requirements.length}</span>
+            <span>-req {diff.removed_requirements.length}</span>
+          </div>
+          <pre className="max-h-28 overflow-auto rounded border border-white/10 bg-slate-950/70 p-2 text-[10px] leading-relaxed text-slate-300">
+            {diff.diff_text || 'No textual diff returned'}
+          </pre>
+        </div>
+      ) : null}
     </div>
   );
 }

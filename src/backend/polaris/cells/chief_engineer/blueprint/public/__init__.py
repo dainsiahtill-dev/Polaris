@@ -13,6 +13,8 @@ from .service import (
     GetBlueprintStatusQueryV1,
     TaskBlueprintGeneratedEventV1,
     TaskBlueprintResultV1,
+    generate_task_blueprint,
+    get_blueprint_status,
     run_pre_dispatch_chief_engineer,
 )
 
@@ -26,5 +28,7 @@ __all__ = [
     "GetBlueprintStatusQueryV1",
     "TaskBlueprintGeneratedEventV1",
     "TaskBlueprintResultV1",
+    "generate_task_blueprint",
+    "get_blueprint_status",
     "run_pre_dispatch_chief_engineer",
 ]

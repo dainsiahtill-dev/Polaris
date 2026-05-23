@@ -8,6 +8,7 @@ External services are mocked to avoid DI container and LLM dependencies.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -214,6 +215,110 @@ async def test_pm_status(client: AsyncClient) -> None:
         assert data["state"] == "IDLE"
 
 
+@pytest.mark.asyncio
+async def test_pm_diagnostics_ready(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should aggregate LanceDB, LLM, and workspace readiness."""
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    mock_settings.workspace = workspace
+    mock_settings.workspace_path = workspace
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": True}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "READY",
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ),
+    ):
+        response = await client.get("/v2/pm/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["issues"] == []
+    assert data["lancedb"]["state"] == "ready"
+    assert data["llm"]["state"] == "ready"
+    assert data["workspace"]["workspace"] == str(workspace)
+    assert data["workspace"]["docs_present"] is True
+
+
+@pytest.mark.asyncio
+async def test_pm_diagnostics_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should inspect the active desktop workspace_path first."""
+    stale_workspace = tmp_path / "repo"
+    active_workspace = tmp_path / "product"
+    (active_workspace / "docs").mkdir(parents=True)
+    mock_settings.workspace = stale_workspace
+    mock_settings.workspace_path = active_workspace
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": True}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "READY",
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ),
+    ):
+        response = await client.get("/v2/pm/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["workspace"]["workspace"] == str(active_workspace)
+    assert data["workspace"]["docs_present"] is True
+
+
+@pytest.mark.asyncio
+async def test_pm_diagnostics_reports_blockers(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should return deterministic issue tokens for blocked startup."""
+    missing_workspace = tmp_path / "missing"
+    mock_settings.workspace = missing_workspace
+    mock_settings.workspace_path = missing_workspace
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": False, "error": "missing"}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "BLOCKED",
+                "blocked_roles": ["pm"],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ),
+    ):
+        response = await client.get("/v2/pm/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["issues"] == ["lancedb_unavailable", "llm_not_ready", "workspace_unavailable"]
+    assert data["lancedb"]["error"] == "missing"
+    assert data["llm"]["blocked_roles"] == ["pm"]
+    assert data["workspace"]["status"] == "missing"
+
+
 # ---------------------------------------------------------------------------
 # PM Orchestration
 # ---------------------------------------------------------------------------
@@ -258,6 +363,93 @@ async def test_pm_run_orchestration(client: AsyncClient) -> None:
         assert data["run_id"] == "run-123"
         assert data["status"] == "running"
         assert data["stage"] == "pm"
+
+
+@pytest.mark.asyncio
+async def test_pm_run_orchestration_defaults_to_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """PM run should resolve omitted workspace through active desktop settings."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_result = MagicMock()
+    mock_result.run_id = "run-active"
+    mock_result.status = "running"
+    mock_result.message = "PM run started"
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.pm.get_orchestration_service",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.cells.roles.adapters.public.service.register_all_adapters",
+        ),
+    ):
+        mock_service = MagicMock()
+        mock_service.execute_pm_run = AsyncMock(return_value=mock_result)
+        mock_service_cls.return_value = mock_service
+
+        response = await client.post(
+            "/v2/pm/run",
+            json={
+                "directive": "test directive",
+                "stage": "pm",
+            },
+        )
+
+    assert response.status_code == 200
+    _, kwargs = mock_service.execute_pm_run.await_args
+    assert kwargs["workspace"] == "C:/Temp/Product"
+    assert response.json()["workspace"] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_pm_run_orchestration_preserves_explicit_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """PM run should not override explicit non-dot API workspace values."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+    mock_result = MagicMock()
+    mock_result.run_id = "run-explicit"
+    mock_result.status = "running"
+    mock_result.message = "PM run started"
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.pm.get_orchestration_service",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.cells.roles.adapters.public.service.register_all_adapters",
+        ),
+    ):
+        mock_service = MagicMock()
+        mock_service.execute_pm_run = AsyncMock(return_value=mock_result)
+        mock_service_cls.return_value = mock_service
+
+        response = await client.post(
+            "/v2/pm/run",
+            json={
+                "workspace": "D:/Explicit/Product",
+                "directive": "test directive",
+                "stage": "pm",
+            },
+        )
+
+    assert response.status_code == 200
+    _, kwargs = mock_service.execute_pm_run.await_args
+    assert kwargs["workspace"] == "D:/Explicit/Product"
+    assert response.json()["workspace"] == "D:/Explicit/Product"
 
 
 @pytest.mark.asyncio
@@ -326,6 +518,87 @@ async def test_pm_get_orchestration_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_pm_cancel_orchestration_run(client: AsyncClient) -> None:
+    """PM cancel orchestration should call the runtime cancel path."""
+    mock_current_snapshot = MagicMock()
+    mock_current_snapshot.run_id = "run-123"
+    mock_current_snapshot.status.value = "running"
+    mock_current_snapshot.workspace = "."
+    mock_current_snapshot.current_phase.value = "pm"
+    mock_current_snapshot.tasks = {}
+
+    mock_cancelled_snapshot = MagicMock()
+    mock_cancelled_snapshot.run_id = "run-123"
+    mock_cancelled_snapshot.status.value = "cancelled"
+    mock_cancelled_snapshot.workspace = "."
+    mock_cancelled_snapshot.current_phase.value = "pm"
+    mock_cancelled_snapshot.tasks = {}
+
+    with patch(
+        "polaris.delivery.http.v2.pm.get_orchestration_service",
+        new_callable=AsyncMock,
+    ) as mock_orch:
+        mock_service = MagicMock()
+        mock_service.query_run = AsyncMock(return_value=mock_current_snapshot)
+        mock_service.cancel_run = AsyncMock(return_value=mock_cancelled_snapshot)
+        mock_orch.return_value = mock_service
+
+        response = await client.post("/v2/pm/runs/run-123/cancel")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["run_id"] == "run-123"
+        assert data["status"] == "cancelled"
+        assert data["stage"] == "pm"
+        mock_service.query_run.assert_awaited_once_with("run-123")
+        mock_service.cancel_run.assert_awaited_once_with("run-123")
+
+
+@pytest.mark.asyncio
+async def test_pm_cancel_orchestration_terminal_run_is_idempotent(client: AsyncClient) -> None:
+    """PM cancel orchestration should return terminal snapshots unchanged."""
+    mock_snapshot = MagicMock()
+    mock_snapshot.run_id = "run-123"
+    mock_snapshot.status.value = "completed"
+    mock_snapshot.workspace = "."
+    mock_snapshot.current_phase.value = "done"
+    mock_snapshot.tasks = {}
+
+    with patch(
+        "polaris.delivery.http.v2.pm.get_orchestration_service",
+        new_callable=AsyncMock,
+    ) as mock_orch:
+        mock_service = MagicMock()
+        mock_service.query_run = AsyncMock(return_value=mock_snapshot)
+        mock_service.cancel_run = AsyncMock()
+        mock_orch.return_value = mock_service
+
+        response = await client.post("/v2/pm/runs/run-123/cancel")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["run_id"] == "run-123"
+        assert data["status"] == "completed"
+        assert data["stage"] == "done"
+        mock_service.query_run.assert_awaited_once_with("run-123")
+        mock_service.cancel_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pm_cancel_orchestration_not_found(client: AsyncClient) -> None:
+    """PM cancel orchestration should 404 for unknown run_id."""
+    with patch(
+        "polaris.delivery.http.v2.pm.get_orchestration_service",
+        new_callable=AsyncMock,
+    ) as mock_orch:
+        mock_service = MagicMock()
+        mock_service.query_run = AsyncMock(return_value=None)
+        mock_orch.return_value = mock_service
+
+        response = await client.post("/v2/pm/runs/nonexistent/cancel")
+        assert response.status_code == 404
+        assert "Run not found" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_pm_get_orchestration_not_found(client: AsyncClient) -> None:
     """PM get orchestration should 404 for unknown run_id."""
     with patch(
@@ -366,6 +639,7 @@ async def test_pm_get_orchestration_server_error(client: AsyncClient) -> None:
 async def test_pm_llm_events(client: AsyncClient) -> None:
     """Get PM LLM events should return events."""
     mock_event = MagicMock()
+    mock_event.event_type = "llm_call_start"
     mock_event.to_dict.return_value = {
         "event_type": "llm_call_start",
         "run_id": "run-1",
@@ -385,12 +659,47 @@ async def test_pm_llm_events(client: AsyncClient) -> None:
         assert data["run_id"] == "run-1"
         assert len(data["events"]) == 1
         assert data["count"] == 1
+        assert data["stats"]["call_start"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pm_llm_events_without_run_id_returns_latest_events(client: AsyncClient) -> None:
+    """PM diagnostics should read latest PM LLM events without a run filter."""
+    mock_event = MagicMock()
+    mock_event.event_type = "llm_error"
+    mock_event.to_dict.return_value = {
+        "event_type": "llm_error",
+        "run_id": "run-latest",
+        "role": "pm",
+    }
+
+    with patch(
+        "polaris.delivery.http.v2.pm.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [mock_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/pm/llm-events?limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_id"] is None
+    assert data["count"] == 1
+    assert data["stats"]["call_error"] == 1
+    mock_emitter.get_events.assert_called_once_with(
+        run_id=None,
+        task_id=None,
+        role="pm",
+        limit=5,
+    )
 
 
 @pytest.mark.asyncio
 async def test_pm_llm_events_with_task_filter(client: AsyncClient) -> None:
     """Get PM LLM events should filter by task_id."""
     mock_event = MagicMock()
+    mock_event.event_type = "llm_call_end"
     mock_event.to_dict.return_value = {
         "event_type": "llm_call_end",
         "run_id": "run-1",

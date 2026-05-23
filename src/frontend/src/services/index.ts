@@ -101,6 +101,7 @@ export {
 export {
   // Status
   getPmStatus,
+  getPmStartupDiagnostics,
   getDirectorStatus,
   getAllStatuses,
   // Process Control
@@ -111,18 +112,131 @@ export {
   stopDirector,
   // Director Tasks
   listDirectorTasks,
+  getDirectorTask,
+  listDirectorWorkers,
+  getDirectorWorker,
+  listDirectorTaskFallbackRows,
+  resolveDirectorTaskSources,
+  listPmTasks,
+  getPmTask,
+  listPmTaskAssignments,
+  listPmRequirements,
+  getPmRequirement,
   createDirectorTask,
+  cancelDirectorTask,
+  cancelDirectorRun,
+  runPm,
   runDirector,
+  getPmRun,
+  cancelPmRun,
+  getDirectorRun,
+  getDirectorCapabilities,
+  getRoleKernelCacheStats,
+  clearRoleKernelCache,
+  getRoleKernelTokenBudgetStats,
+  getRoleKernelLLMEvents,
+  getDirectorTaskKernelLLMEvents,
 } from './pmService';
 
 export type {
   PmStatus,
+  PmStartupDiagnosticsResponse,
+  PmDiagnosticsLanceDBStatus,
+  PmDiagnosticsLLMStatus,
+  PmDiagnosticsWorkspaceStatus,
   DirectorStatus,
   DirectorTask,
+  DirectorWorker,
   CreateDirectorTaskPayload,
+  CancelDirectorTaskResponse,
+  RunPmPayload,
   RunDirectorPayload,
   RunDirectorResponse,
+  PmOrchestrationRunResponse,
+  DirectorOrchestrationRunResponse,
+  DirectorCapabilitiesResponse,
+  DirectorFallbackTaskRow,
+  DirectorTaskSource,
+  PmTaskListParams,
+  PmTaskListResponse,
+  PmTaskAssignmentEntry,
+  PmTaskAssignmentsResponse,
+  PmRequirementEntry,
+  PmRequirementListParams,
+  PmRequirementListResponse,
+  PmTaskSearchResult,
+  PmTaskSearchResponse,
+  RoleKernelDiagnosticsRole,
+  RoleKernelCacheStats,
+  RoleKernelCacheClearResponse,
+  RoleKernelTokenBudgetStats,
+  RoleKernelLLMEvent,
+  RoleKernelLLMEventsResponse,
+  RoleKernelLLMEventsQuery,
 } from './pmService';
+
+// ============================================================================
+// Chief Engineer Service
+// ============================================================================
+
+export {
+  getChiefEngineerDiagnostics,
+  generateChiefEngineerBlueprint,
+  getChiefEngineerBlueprintStatus,
+  listChiefEngineerBlueprints,
+  getChiefEngineerBlueprint,
+} from './chiefEngineerService';
+
+export type {
+  ChiefEngineerDiagnosticsResponse,
+  ChiefEngineerDiagnosticsWorkspaceStatus,
+  ChiefEngineerDiagnosticsBlueprintStatus,
+  GenerateChiefEngineerBlueprintPayload,
+  ChiefEngineerTaskBlueprintResultResponse,
+  ChiefEngineerBlueprintListResponse,
+  ChiefEngineerBlueprintDetailResponse,
+} from './chiefEngineerService';
+
+// ============================================================================
+// Role Session Service
+// ============================================================================
+
+export {
+  attachRoleSession,
+  createRoleSession,
+  detachRoleSession,
+  exportRoleSessionSnapshot,
+  exportRoleSessionToWorkflow,
+  getRoleCapabilities,
+  getRoleSession,
+  listRoleSessionArtifacts,
+  listRoleSessionAuditEvents,
+  listRoleSessionMessages,
+  listRoleSessions,
+  readRoleSessionMemoryArtifact,
+  readRoleSessionMemoryEpisode,
+  readRoleSessionMemoryState,
+  resolveRoleCapabilities,
+  searchRoleSessionMemory,
+} from './roleSessionService';
+
+export type {
+  AttachRoleSessionPayload,
+  CreateRoleSessionPayload,
+  ExportRoleSessionSnapshotPayload,
+  ExportRoleSessionToWorkflowPayload,
+  ListRoleSessionsParams,
+  RoleCapabilitiesResponse,
+  RoleSessionArtifactItem,
+  RoleSessionAuditEventItem,
+  RoleSessionDetailItem,
+  RoleSessionListItem,
+  RoleSessionMemoryDetailItem,
+  RoleSessionMemoryItem,
+  RoleSessionMessageItem,
+  RoleSessionSnapshotExportFormat,
+  RoleSessionWorkflowExportResponse,
+} from './roleSessionService';
 
 // ============================================================================
 // Factory Service

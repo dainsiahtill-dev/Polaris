@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { ContextSidebar } from '../ContextSidebar';
 
@@ -82,6 +82,15 @@ describe('ContextSidebar', () => {
       expect(screen.getByRole('heading', { name: /对话流/i })).toBeInTheDocument();
     });
 
+    it('passes dialogue log clear actions to the dialogue panel', () => {
+      const onClearDialogueLogs = vi.fn();
+      render(<ContextSidebar {...baseProps} onClearDialogueLogs={onClearDialogueLogs} />);
+
+      fireEvent.click(screen.getByText('清空日志'));
+
+      expect(onClearDialogueLogs).toHaveBeenCalledTimes(1);
+    });
+
     it('should display connection status badge', () => {
       const { rerender } = render(<ContextSidebar {...baseProps} live={true} />);
 
@@ -152,6 +161,41 @@ describe('ContextSidebar', () => {
 
       const memoryButton = screen.getByRole('button', { name: /忆库/i });
       expect(memoryButton).toHaveAttribute('title', '忆库');
+    });
+
+    it('can be controlled by the parent to open the memory tab', () => {
+      const onActiveTabChange = vi.fn();
+      render(
+        <ContextSidebar
+          {...baseProps}
+          activeTab="memory"
+          onActiveTabChange={onActiveTabChange}
+          settingsShowMemory={true}
+        />,
+      );
+
+      expect(screen.getByText('记忆')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /快照/i }));
+
+      expect(onActiveTabChange).toHaveBeenCalledWith('snapshot');
+    });
+
+    it('routes cognition mode changes through the provided state setter', () => {
+      const setShowCognition = vi.fn();
+      render(
+        <ContextSidebar
+          {...baseProps}
+          activeTab="memory"
+          showCognition={false}
+          setShowCognition={setShowCognition}
+          settingsShowMemory={true}
+        />,
+      );
+
+      fireEvent.click(screen.getByText('认知'));
+
+      expect(setShowCognition).toHaveBeenCalledWith(true);
     });
   });
 });

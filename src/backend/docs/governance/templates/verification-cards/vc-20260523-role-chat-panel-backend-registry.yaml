@@ -1,0 +1,70 @@
+card_id: "vc-20260523-role-chat-panel-backend-registry"
+bug_summary: >
+  RoleChatPanel used a static local role list even though the backend exposes
+  the authoritative /v2/role/chat/roles registry for generic role chat.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/v2/RoleChatPanel.tsx"
+  method: "role selector"
+  symptom: >
+    The UI could drift from backend-registered PM, Architect, Chief Engineer,
+    Director, and QA role-chat templates if the registry changed.
+
+assumptions:
+  - id: "A1"
+    statement: "The backend role registry route is the authoritative role-chat source."
+    status: verified_true
+    evidence: >
+      role_chat.py exposes /v2/role/chat/roles and returns get_registered_roles()
+      from llm.dialogue.
+
+  - id: "A2"
+    statement: "Frontend still needs typed filtering before using backend role strings."
+    status: verified_true
+    evidence: >
+      RoleChatRole excludes Scout because Scout is not registered as a
+      role-chat prompt template.
+
+  - id: "A3"
+    statement: "A local role list remains useful as a bounded startup fallback."
+    status: verified_true
+    evidence: >
+      Existing desktop surfaces render backend fallback provenance instead of
+      hiding unavailable backend evidence.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Rendering backend strings directly would reintroduce unsupported roles into
+    the selector if the route returns broader role IDs.
+  guardrail: >
+    Filter backend strings through RoleChatRole metadata and fall back to the
+    local typed list only when no known backend role is available.
+
+verification_plan:
+  - command: "npm run test -- RoleChatPanel api.roleChatService roleContracts llmService"
+    expected: "Focused panel, service, and role contract tests pass."
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes."
+  - command: "npm run lint"
+    expected: "ESLint passes."
+
+verification_results:
+  - command: "npm run test -- RoleChatPanel api.roleChatService roleContracts llmService"
+    status: passed
+    evidence: "4 focused frontend test files passed; 28 tests passed."
+  - command: "npm run typecheck"
+    status: passed
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    status: passed
+    evidence: "ESLint completed without findings."
+  - command: "npm run test -- AIDialoguePanel ChiefEngineerWorkspace PMWorkbenchPanel DirectorWorkbenchPanel RoleChatPanel api.roleChatService roleContracts llmService"
+    status: passed
+    evidence: "8 cross-role desktop dialogue/workbench test files passed; 41 tests passed."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -k \"list_supported_roles or chief_engineer\" -v"
+    status: passed
+    evidence: "2 backend role-router tests passed for registered roles and Chief Engineer status."
+
+status: passed

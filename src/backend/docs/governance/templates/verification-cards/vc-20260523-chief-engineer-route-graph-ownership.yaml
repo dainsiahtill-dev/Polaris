@@ -1,0 +1,86 @@
+card_id: "vc-20260523-chief-engineer-route-graph-ownership"
+bug_summary: >
+  The active Chief Engineer v2 desktop route was not declared in the graph
+  catalog or cell manifest, and the cell manifest omitted its runtime/blueprints
+  state/effect declaration.
+
+classification: structural
+
+bug_path:
+  file: "docs/graph/catalog/cells.yaml and polaris/cells/chief_engineer/blueprint/cell.yaml"
+  method: "chief_engineer.blueprint ownership declaration"
+  symptom: >
+    PM and Director desktop v2 routes had explicit graph ownership while the
+    Chief Engineer desktop route remained outside the declared cell boundary.
+
+assumptions:
+  - id: "A1"
+    statement: "polaris/delivery/http/v2/chief_engineer.py is the active Chief Engineer desktop backend route."
+    status: verified_true
+    evidence: >
+      frontend chiefEngineerService calls /v2/chief-engineer/* and the v2 router
+      mounts chief_engineer.py; route tests exercise diagnostics, list,
+      generate, status, and detail endpoints.
+
+  - id: "A2"
+    statement: "Chief Engineer blueprint persistence writes runtime/blueprints/*.json."
+    status: verified_true
+    evidence: >
+      BlueprintPersistence stores blueprints under {workspace}/runtime/blueprints
+      and the route returns blueprint_path values in runtime/blueprints.
+
+  - id: "A3"
+    statement: "PM and Director v2 desktop routes are graph-owned by their role cells."
+    status: verified_true
+    evidence: >
+      cells.yaml declares polaris/delivery/http/v2/pm.py under
+      orchestration.pm_planning and polaris/delivery/http/v2/director.py under
+      director.execution.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Registering the route only in docs/graph/catalog/cells.yaml would leave the
+    cell manifest stale and weaken generated context for future agents.
+  guardrail: >
+    Update both the catalog and cell.yaml, and add a governance regression test
+    that asserts the route module/path and runtime/blueprints state/effect are
+    declared.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/tests/test_cell_yaml_governance.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/tests/test_cell_yaml_governance.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/tests/test_cell_yaml_governance.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_cell_yaml_governance.py -v"
+    expected: "Cell YAML governance tests pass"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -v"
+    expected: "Chief Engineer route tests pass"
+  - command: ".venv\\Scripts\\python.exe src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace src/backend --mode audit-only"
+    expected: "Audit report has exit_code 0 and no new hard failure"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/tests/test_cell_yaml_governance.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/tests/test_cell_yaml_governance.py"
+    result: pass
+    evidence: "1 file left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/tests/test_cell_yaml_governance.py"
+    result: pass
+    evidence: "Success: no issues found in 1 source file."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_cell_yaml_governance.py -v"
+    result: pass
+    evidence: "9 passed in 2.44s."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -v"
+    result: pass
+    evidence: "10 passed in 5.77s."
+  - command: ".venv\\Scripts\\python.exe src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace src/backend --mode audit-only"
+    result: pass
+    evidence: "exit_code=0; mismatch_count=0; blocker_count=0; known high issue remains director.execution -> llm.dialogue depends_on."
+  - command: "git diff --check -- src/backend/docs/graph/catalog/cells.yaml src/backend/polaris/cells/chief_engineer/blueprint/cell.yaml src/backend/polaris/tests/test_cell_yaml_governance.py src/backend/docs/blueprints/CHIEF_ENGINEER_ROUTE_GRAPH_OWNERSHIP_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-chief-engineer-route-graph-ownership.yaml src/backend/docs/governance/decisions/adr-0086-chief-engineer-desktop-route-graph-ownership.md"
+    result: pass
+    evidence: "No whitespace errors; Git reported LF-to-CRLF normalization warnings for catalog and cell.yaml."
+
+status: passed

@@ -1,0 +1,56 @@
+id: vc-20260523-pm-task-create-desktop-panel
+title: PM task create desktop panel
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/components/pm/PMTaskPanel.tsx
+  - src/frontend/src/app/components/pm/PMTaskPanel.test.tsx
+related_blueprint: src/backend/docs/blueprints/PM_TASK_CREATE_DESKTOP_PANEL_20260523.md
+assumption_register:
+  - id: A1
+    statement: Backend PM task creation already exists at POST /v2/pm/tasks.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_management.py
+    verified: true
+  - id: A2
+    statement: Frontend typed service already wraps PM task creation.
+    evidence:
+      - src/frontend/src/services/api.ts
+      - src/frontend/src/services/__tests__/api.pmTaskService.test.ts
+    verified: true
+  - id: A3
+    statement: PMTaskPanel can reuse backendSelectedTask for created task projection.
+    evidence:
+      - src/frontend/src/app/components/pm/PMTaskPanel.tsx
+    verified: true
+pre_mortem:
+  - risk: The panel posts an incomplete payload that backend rejects.
+    mitigation: Require non-empty subject, send status pending, and split acceptance text into a string array.
+  - risk: The created task is acknowledged but not visible to the user.
+    mitigation: Project the returned task into backendSelectedTask and select it immediately.
+  - risk: The create route becomes another hidden backend action with no audit trail.
+    mitigation: Render an explicit `POST /v2/pm/tasks` evidence strip.
+verification_plan:
+  - command: npm run test -- PMTaskPanel pmService api.pmTaskService
+    expected: PM task panel create flow and service route tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: npm run test -- PMTaskPanel pmService api.pmTaskService
+    result: PASS
+    evidence: 3 test files passed, 72 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: PASS
+    evidence: 15 test files passed, 131 tests passed.

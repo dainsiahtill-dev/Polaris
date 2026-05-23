@@ -12,26 +12,26 @@ import {
   useMemory,
   useNotifications,
   useAgentsReview,
+  useBackendHealthPing,
 } from '@/hooks';
 
 import { ControlPanel } from '@/app/components/ControlPanel';
 import { RealTimeStatusBar } from '@/app/components/RealTimeStatusBar';
 import { devLogger } from '@/app/utils/devLogger';
-import { ContextSidebar } from '@/app/components/ContextSidebar';
+import { ContextSidebar, type ContextTab } from '@/app/components/ContextSidebar';
 import { ProjectProgressPanel } from '@/app/components/ProjectProgressPanel';
 import { HistoryDrawer } from '@/app/components/HistoryDrawer';
 import { EnhancedNotificationManager } from '@/app/components/EnhancedNotificationManager';
 import { AgentsReviewDialog } from '@/app/components/AgentsReviewDialog';
 import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { RuntimeErrorDialog } from '@/app/components/RuntimeErrorDialog';
-import { PMWorkspace } from '@/app/components/pm';
-import { DirectorWorkspace } from '@/app/components/director';
-import { ChiefEngineerWorkspace } from '@/app/components/chief-engineer';
+import { ChiefEngineerPage, DirectorPage, PMPage } from '@/app/pages';
 import { FactoryWorkspace } from '@/app/components/factory/FactoryWorkspace';
 import { ResidentWorkspace } from '@/app/components/resident';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
 import { apiFetch, apiFetchFresh, openPath, pickWorkspace } from '@/api';
+import { runtimeService } from '@/services';
 import { useRuntime } from './hooks/useRuntime';
 import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
 import { RuntimeTransportProvider } from '@/runtime/transport';
@@ -206,6 +206,8 @@ function AppContent() {
 
   const { state: ui, actions: uiActions } = useUIState();
   const [activeRoleView, setActiveRoleView] = useState<'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics'>('main');
+  const [contextSidebarTab, setContextSidebarTab] = useState<ContextTab>('dialogue');
+  const [clearingDialogueLogs, setClearingDialogueLogs] = useState(false);
   const { settings, load: loadSettings, update: updateSettings } = useSettings();
   const { notifications, remove: removeNotification, error: notifyError } = useNotifications();
   const workspace = settings?.workspace || '';
@@ -222,6 +224,7 @@ function AppContent() {
     snapshot,
     anthroState,
     dialogueEvents,
+    setDialogueEvents,
     qualityGate,
     executionLogs,
     llmStreamEvents,
@@ -332,6 +335,7 @@ function AppContent() {
     isStoppingDirector,
     pmActionError,
     directorActionError,
+    startPmLoop,
     togglePm,
     runPmOnce,
     toggleDirector,
@@ -357,6 +361,7 @@ function AppContent() {
     workspace,
     ramdiskRoot: settings?.ramdisk_root
   });
+  const backendHealth = useBackendHealthPing();
 
   const agentsReview = useAgentsReview({
     agentsReview: snapshot?.agents_review ?? null,
@@ -581,6 +586,26 @@ function AppContent() {
     setLlmDirectorBlockedReason(shouldBlockDirector ? 'LLM 就绪检查未通过' : '');
   }, []);
 
+  const handleLlmStatusChange = useCallback((status: {
+    state?: unknown;
+    blocked_roles?: unknown;
+    required_ready_roles?: unknown;
+    last_updated?: unknown;
+  } | null) => {
+    if (status) {
+      applyLlmStatusPayload(status);
+      return;
+    }
+
+    setLlmDirectorBlockedReason('');
+    setLlmRuntimeState({
+      state: 'UNKNOWN',
+      blockedRoles: [],
+      requiredRoles: [],
+      lastUpdated: null,
+    });
+  }, [applyLlmStatusPayload]);
+
   useEffect(() => {
     if (!llmStatus) return;
     applyLlmStatusPayload(llmStatus);
@@ -714,6 +739,31 @@ function AppContent() {
     reconnectWebSocket();
   };
 
+  const handleOpenBrain = () => {
+    uiActions.setShowCognition(true);
+    setContextSidebarTab(settings?.show_memory ? 'memory' : 'agi');
+  };
+
+  const handleClearDialogueLogs = async () => {
+    if (clearingDialogueLogs) return;
+
+    setClearingDialogueLogs(true);
+    try {
+      const result = await runtimeService.clearDialogue();
+      if (result.ok) {
+        setDialogueEvents([]);
+        toast.success('Dialogue logs cleared');
+        reconnectWebSocket();
+      } else {
+        toast.error(result.error || '清空对话日志失败');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '清空对话日志失败');
+    } finally {
+      setClearingDialogueLogs(false);
+    }
+  };
+
   const handlePickWorkspace = async () => {
     try {
       const picked = await pickWorkspace(workspace);
@@ -789,143 +839,106 @@ function AppContent() {
 
   if (activeRoleView === 'chief_engineer') {
     return (
-      <ErrorBoundaryClass onError={(error) => {
-        notifyError(error.message || '发生未知错误');
-      }}>
-        <ChiefEngineerWorkspace
-          workspace={workspace}
-          engineStatus={engineStatus}
-          tasks={directorWorkspaceTasks}
-          workers={runtimeWorkers}
-          pmState={snapshot?.pm_state ?? null}
-          directorRunning={directorRunning}
-          isStartingDirector={isStartingDirector}
-          onBackToMain={handleBackToMain}
-          onEnterDirectorWorkspace={handleEnterDirectorWorkspace}
-          onToggleDirector={() => toggleDirector(directorRunning, {
-            required: agentsRequired,
-            draftReady: agentsDraftReady,
-          }, directorSeedTasks)}
-        />
-        <LlmRuntimeOverlay
-          activeView={activeRoleView}
-          websocketLive={live}
-          websocketReconnecting={reconnecting}
-          websocketAttemptCount={attemptCount}
-          pmRunning={effectivePmRunning}
-          directorRunning={directorRunning}
-          llmState={llmRuntimeState.state}
-          llmBlockedRoles={llmRuntimeState.blockedRoles}
-          llmRequiredRoles={llmRuntimeState.requiredRoles}
-          llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={effectiveCurrentPhase}
-          qualityGate={qualityGate}
-          executionLogs={executionLogs}
-          llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
-          fileEditEvents={fileEditEvents}
-        />
-        <Toaster position="bottom-right" />
-      </ErrorBoundaryClass>
+      <ChiefEngineerPage
+        workspace={workspace}
+        engineStatus={engineStatus}
+        tasks={directorWorkspaceTasks}
+        workers={runtimeWorkers}
+        pmState={snapshot?.pm_state ?? null}
+        pmRunning={effectivePmRunning}
+        directorRunning={directorRunning}
+        isStartingDirector={isStartingDirector}
+        onBackToMain={handleBackToMain}
+        onEnterDirectorWorkspace={handleEnterDirectorWorkspace}
+        onOpenSettings={() => uiActions.openSettings()}
+        onToggleDirector={() => toggleDirector(directorRunning, {
+          required: agentsRequired,
+          draftReady: agentsDraftReady,
+        }, directorSeedTasks)}
+        websocketLive={live}
+        websocketReconnecting={reconnecting}
+        websocketAttemptCount={attemptCount}
+        llmRuntimeState={llmRuntimeState}
+        currentPhase={effectiveCurrentPhase}
+        qualityGate={qualityGate}
+        executionLogs={executionLogs}
+        llmStreamEvents={llmStreamEvents}
+        processStreamEvents={processStreamEvents}
+        fileEditEvents={fileEditEvents}
+        notifyError={notifyError}
+      />
     );
   }
 
   // Render Director Workspace
   if (activeRoleView === 'director') {
     return (
-      <ErrorBoundaryClass onError={(error) => {
-        notifyError(error.message || '发生未知错误');
-      }}>
-        <DirectorWorkspace
-          workspace={workspace}
-          onBackToMain={handleBackToMain}
-          tasks={directorWorkspaceTasks}
-          workers={runtimeWorkers}
-          directorRunning={directorRunning}
-          isStarting={isStartingDirector}
-          onToggleDirector={() => toggleDirector(directorRunning, {
-            required: agentsRequired,
-            draftReady: agentsDraftReady,
-          }, directorSeedTasks)}
-          currentTaskId={engineStatus?.roles?.Director?.task_id ?? null}
-          currentTaskTitle={engineStatus?.roles?.Director?.task_title ?? null}
-          currentTaskStatus={engineStatus?.roles?.Director?.status ?? null}
-          fileEditEvents={fileEditEvents}
-          executionLogs={executionLogs}
-          llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
-          currentPhase={effectiveCurrentPhase}
-          taskProgressMap={taskProgressMap}
-        />
-        <LlmRuntimeOverlay
-          activeView={activeRoleView}
-          websocketLive={live}
-          websocketReconnecting={reconnecting}
-          websocketAttemptCount={attemptCount}
-          pmRunning={effectivePmRunning}
-          directorRunning={directorRunning}
-          llmState={llmRuntimeState.state}
-          llmBlockedRoles={llmRuntimeState.blockedRoles}
-          llmRequiredRoles={llmRuntimeState.requiredRoles}
-          llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={effectiveCurrentPhase}
-          qualityGate={qualityGate}
-          executionLogs={executionLogs}
-          llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
-          fileEditEvents={fileEditEvents}
-        />
-        <Toaster position="bottom-right" />
-      </ErrorBoundaryClass>
+      <DirectorPage
+        workspace={workspace}
+        onBackToMain={handleBackToMain}
+        tasks={directorWorkspaceTasks}
+        workers={runtimeWorkers}
+        directorRunning={directorRunning}
+        pmRunning={effectivePmRunning}
+        isStarting={isStartingDirector}
+        isStopping={isStoppingDirector}
+        onToggleDirector={() => toggleDirector(directorRunning, {
+          required: agentsRequired,
+          draftReady: agentsDraftReady,
+        }, directorSeedTasks)}
+        onOpenSettings={() => uiActions.openSettings()}
+        currentTaskId={engineStatus?.roles?.Director?.task_id ?? null}
+        currentTaskTitle={engineStatus?.roles?.Director?.task_title ?? null}
+        currentTaskStatus={engineStatus?.roles?.Director?.status ?? null}
+        fileEditEvents={fileEditEvents}
+        executionLogs={executionLogs}
+        llmStreamEvents={llmStreamEvents}
+        processStreamEvents={processStreamEvents}
+        currentPhase={effectiveCurrentPhase}
+        taskProgressMap={taskProgressMap}
+        taskTraceMap={taskTraceMap}
+        websocketLive={live}
+        websocketReconnecting={reconnecting}
+        websocketAttemptCount={attemptCount}
+        llmRuntimeState={llmRuntimeState}
+        agentsRequired={agentsRequired}
+        agentsDraftReady={agentsDraftReady}
+        qualityGate={qualityGate}
+        notifyError={notifyError}
+      />
     );
   }
 
   // Render PM Workspace
   if (activeRoleView === 'pm') {
     return (
-      <ErrorBoundaryClass onError={(error) => {
-        notifyError(error.message || '发生未知错误');
-      }}>
-        <PMWorkspace
-          tasks={pmTasks}
-          pmState={snapshot?.pm_state ?? null}
-          pmRunning={effectivePmRunning}
-          pmTerminalStatus={pmStatus}
-          pmStartBlockedReason={pmStartBlockedReason}
-          runtimeIssue={activeRuntimeIssue}
-          isStarting={isStartingPM}
-          onBackToMain={handleBackToMain}
-          onTogglePm={() => togglePm(rawPmRunning)}
-          onRunPmOnce={runPmOnce}
-          workspace={workspace}
-          executionLogs={executionLogs}
-          llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
-          currentPhase={effectiveCurrentPhase}
-          qualityGate={qualityGate}
-          taskTraceMap={taskTraceMap}
-          onOpenSettings={() => uiActions.openSettings()}
-        />
-        <LlmRuntimeOverlay
-          activeView={activeRoleView}
-          websocketLive={live}
-          websocketReconnecting={reconnecting}
-          websocketAttemptCount={attemptCount}
-          pmRunning={effectivePmRunning}
-          directorRunning={directorRunning}
-          llmState={llmRuntimeState.state}
-          llmBlockedRoles={llmRuntimeState.blockedRoles}
-          llmRequiredRoles={llmRuntimeState.requiredRoles}
-          llmLastUpdated={llmRuntimeState.lastUpdated}
-          currentPhase={effectiveCurrentPhase}
-          qualityGate={qualityGate}
-          executionLogs={executionLogs}
-          llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
-          fileEditEvents={fileEditEvents}
-        />
-        <Toaster position="bottom-right" />
-      </ErrorBoundaryClass>
+      <PMPage
+        tasks={pmTasks}
+        pmState={snapshot?.pm_state ?? null}
+        pmRunning={effectivePmRunning}
+        directorRunning={directorRunning}
+        pmTerminalStatus={pmStatus}
+        pmStartBlockedReason={pmStartBlockedReason}
+        runtimeIssue={activeRuntimeIssue}
+        isStarting={isStartingPM}
+        onBackToMain={handleBackToMain}
+        onTogglePm={() => togglePm(rawPmRunning)}
+        onRunPmOnce={runPmOnce}
+        workspace={workspace}
+        executionLogs={executionLogs}
+        llmStreamEvents={llmStreamEvents}
+        processStreamEvents={processStreamEvents}
+        fileEditEvents={fileEditEvents}
+        currentPhase={effectiveCurrentPhase}
+        qualityGate={qualityGate}
+        taskTraceMap={taskTraceMap}
+        onOpenSettings={() => uiActions.openSettings()}
+        websocketLive={live}
+        websocketReconnecting={reconnecting}
+        websocketAttemptCount={attemptCount}
+        llmRuntimeState={llmRuntimeState}
+        notifyError={notifyError}
+      />
     );
   }
 
@@ -1085,13 +1098,13 @@ function AppContent() {
           onPickWorkspace={handlePickWorkspace}
           onTogglePm={() => togglePm(rawPmRunning)}
           onRunPmOnce={runPmOnce}
-          onResumePm={() => { }}
+          onResumePm={() => startPmLoop(true)}
           onToggleDirector={() => toggleDirector(directorRunning, {
             required: agentsRequired,
             draftReady: agentsDraftReady,
           }, directorSeedTasks)}
           onRefresh={handleRefresh}
-          onOpenBrain={() => { }}
+          onOpenBrain={handleOpenBrain}
           agentsNeeded={agentsRequired}
           agentsDraftReady={agentsDraftReady}
           agentsDraftFailed={agentsDraftFailed}
@@ -1101,7 +1114,9 @@ function AppContent() {
           isStoppingPM={isStoppingPM}
           isStartingDirector={isStartingDirector}
           isStoppingDirector={isStoppingDirector}
-          onPingHealth={async () => { }}
+          healthStatus={backendHealth.status}
+          healthStatusDetail={backendHealth.evidence}
+          onPingHealth={() => { void backendHealth.ping(); }}
           onOpenLogs={() => uiActions.openLogs('pm-subprocess')}
           isArtifactsOpen={ui.isMonitorOpen}
           onToggleArtifacts={() => uiActions.toggleMonitor()}
@@ -1243,8 +1258,8 @@ function AppContent() {
               dialogueEvents={dialogueEvents}
               live={live}
               dialogueLoading={!live && dialogueEvents.length === 0}
-              onClearDialogueLogs={() => { }}
-              clearingDialogueLogs={false}
+              onClearDialogueLogs={handleClearDialogueLogs}
+              clearingDialogueLogs={clearingDialogueLogs}
               memoItems={memos.memoItems}
               memoSelected={memos.memoSelected}
               memoContent={memos.memoData.content}
@@ -1257,8 +1272,10 @@ function AppContent() {
               memoryLoading={memory.memoryLoading}
               memoryError={memory.memoryError}
               showCognition={ui.showCognition}
-              setShowCognition={(v) => { }}
+              setShowCognition={uiActions.setShowCognition}
               settingsShowMemory={!!settings?.show_memory}
+              activeTab={contextSidebarTab}
+              onActiveTabChange={setContextSidebarTab}
               anthroState={anthroState}
               snapshotTimestamp={displaySnapshot?.timestamp ?? null}
               snapshotFileStatus={displaySnapshot?.file_status ?? null}
@@ -1274,7 +1291,7 @@ function AppContent() {
             isOpen={ui.isSettingsOpen}
             initialTab={ui.settingsInitialTab}
             onClose={() => uiActions.closeSettings()}
-            onLlmStatusChange={() => { }}
+            onLlmStatusChange={handleLlmStatusChange}
             settings={settings}
             onSave={handleSaveSettings}
           />
@@ -1300,7 +1317,7 @@ function AppContent() {
             onClose={() => uiActions.closeLogs()}
             initialSourceId={ui.logsSourceId}
             banner={ui.logsBanner}
-            onDismissBanner={() => { }}
+            onDismissBanner={uiActions.dismissLogsBanner}
           />
         </Suspense>
 

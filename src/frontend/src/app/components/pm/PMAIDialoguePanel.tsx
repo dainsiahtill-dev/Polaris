@@ -4,6 +4,7 @@ interface PMAIDialoguePanelProps {
   pmRunning: boolean;
   workspace?: string;
   taskCount?: number;
+  selectedTaskId?: string | null;
   interactionBlockedReason?: string;
 }
 
@@ -17,6 +18,7 @@ export function PMAIDialoguePanel({
   pmRunning,
   workspace,
   taskCount,
+  selectedTaskId,
   interactionBlockedReason = '',
 }: PMAIDialoguePanelProps) {
   const blockedReason = String(interactionBlockedReason || '').trim();
@@ -37,9 +39,15 @@ export function PMAIDialoguePanel({
       context={{
         workspace,
         task_count: taskCount,
+        selected_task_id: selectedTaskId || null,
         pm_running: pmRunning,
         blocked_reason: blockedReason,
       }}
+      workspace={workspace}
+      attachmentMode={selectedTaskId ? 'attached_readonly' : 'isolated'}
+      attachedTaskId={selectedTaskId || undefined}
+      workflowExportTarget="pm"
+      workflowExportLabel="导出PM"
       interactionBlockedReason={blockedReason}
     />
   );

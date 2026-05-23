@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 
 import type { ProviderConfig } from '../types';
 import { ProviderContextProvider } from '../state';

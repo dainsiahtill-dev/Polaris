@@ -5,10 +5,12 @@ import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
+  Brain,
   CheckCircle2,
   Clock,
   Code2,
   FileCode,
+  FilePlus,
   Filter,
   GitBranch,
   Layers,
@@ -20,6 +22,7 @@ import {
   ShieldCheck,
   Target,
   User,
+  XCircle,
   Zap,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
@@ -28,6 +31,7 @@ import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
 import type { TaskTraceMap } from '@/app/types/taskTrace';
 import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
 import type { ExecutionTask } from './hooks/useDirectorWorkspace';
+import type { DirectorTask, DirectorWorker, RoleKernelLLMEvent } from '@/services';
 
 export type TaskBoardFilter = 'all' | 'unclaimed' | 'claimed' | 'attention' | 'completed';
 
@@ -45,8 +49,50 @@ interface DirectorTaskPanelProps {
   selectedTaskId: string | null;
   onTaskSelect: (taskId: string) => void;
   onExecute: () => void;
+  onTaskCancel?: (taskId: string) => void;
   isExecuting: boolean;
+  isTaskCancelling?: boolean;
+  taskCancelMessage?: string | null;
+  taskCancelError?: string | null;
   taskTraceMap?: TaskTraceMap;
+  workerFallbackError?: string | null;
+  workerBackendDetail?: DirectorWorkerDetailState;
+  onWorkerSelect?: (workerId: string) => void;
+  onTaskCreate?: (draft: DirectorTaskCreateDraft) => void;
+  isTaskCreating?: boolean;
+  taskCreateMessage?: string | null;
+  taskCreateError?: string | null;
+  taskBackendDetail?: DirectorTaskBackendDetailState;
+  taskLLMEvents?: DirectorTaskLLMEventsState;
+}
+
+export interface DirectorTaskBackendDetailState {
+  taskId: string | null;
+  data: DirectorTask | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface DirectorTaskLLMEventsState {
+  taskId: string | null;
+  events: RoleKernelLLMEvent[];
+  stats: Record<string, unknown> | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface DirectorWorkerDetailState {
+  workerId: string | null;
+  data: DirectorWorker | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface DirectorTaskCreateDraft {
+  subject: string;
+  description: string;
+  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  timeoutSeconds: number;
 }
 
 const FILTERS: Array<{ id: TaskBoardFilter; label: string }> = [
@@ -162,6 +208,66 @@ function formatListValue(items?: string[]) {
   return Array.isArray(items) ? items.filter((item) => String(item || '').trim().length > 0) : [];
 }
 
+function readEventText(event: RoleKernelLLMEvent, keys: string[]): string {
+  for (const key of keys) {
+    const value = event[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return '';
+}
+
+function readStatNumber(stats: Record<string, unknown> | null | undefined, keys: string[]): number | null {
+  if (!stats) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = stats[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
+function readWorkerDetailText(worker: DirectorWorker | null | undefined, keys: string[]): string {
+  if (!worker) {
+    return '';
+  }
+  for (const key of keys) {
+    const value = worker[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'true' : 'false';
+    }
+  }
+  return '';
+}
+
+function formatEventType(value: string): string {
+  return value.replace(/_/g, ' ') || 'event';
+}
+
+function formatEventTimestamp(value: string): string {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+}
+
 function DetailSection({ icon, title, items, emptyText }: {
   icon: React.ReactNode;
   title: string;
@@ -198,10 +304,27 @@ export function DirectorTaskPanel({
   selectedTaskId,
   onTaskSelect,
   onExecute,
+  onTaskCancel,
   isExecuting,
+  isTaskCancelling = false,
+  taskCancelMessage,
+  taskCancelError,
   taskTraceMap,
+  workerFallbackError,
+  workerBackendDetail,
+  onWorkerSelect,
+  onTaskCreate,
+  isTaskCreating = false,
+  taskCreateMessage,
+  taskCreateError,
+  taskBackendDetail,
+  taskLLMEvents,
 }: DirectorTaskPanelProps) {
   const [activeFilter, setActiveFilter] = useState<TaskBoardFilter>('all');
+  const [createSubject, setCreateSubject] = useState('');
+  const [createDescription, setCreateDescription] = useState('');
+  const [createPriority, setCreatePriority] = useState<DirectorTaskCreateDraft['priority']>('MEDIUM');
+  const [createTimeout, setCreateTimeout] = useState(300);
   const groups = useMemo(() => buildTaskBoardGroups(tasks, activeFilter), [tasks, activeFilter]);
   const selectedTask = selectedTaskId ? taskMap.get(selectedTaskId) || null : null;
   const selectedExecuteLabel = selectedTask?.status === 'failed' || selectedTask?.status === 'blocked'
@@ -239,6 +362,37 @@ export function DirectorTaskPanel({
   const selectedWorker = selectedTask
     ? workerRows.find((worker) => worker.taskId === selectedTask.id || worker.id === selectedTask.assignedWorker)
     : null;
+  const hasSelectedBackendDetail = Boolean(selectedTask && taskBackendDetail?.taskId === selectedTask.id);
+  const backendTask = hasSelectedBackendDetail ? taskBackendDetail?.data ?? null : null;
+  const idleWorkerCount = workerRows.filter((worker) => worker.status === 'idle').length;
+  const busyWorkerCount = workerRows.filter((worker) => worker.status === 'busy' || worker.status === 'running').length;
+  const failedWorkerCount = workerRows.filter((worker) => worker.status === 'failed' || worker.healthy === false).length;
+  const workerDetail = workerBackendDetail?.data ?? null;
+  const workerDetailTask = readWorkerDetailText(workerDetail, ['currentTaskId', 'current_task_id', 'task_id', 'current_task']);
+  const workerDetailCompleted = readWorkerDetailText(workerDetail, ['tasksCompleted', 'tasks_completed', 'completed_tasks']) || '0';
+  const workerDetailFailed = readWorkerDetailText(workerDetail, ['tasksFailed', 'tasks_failed', 'failed_tasks']) || '0';
+  const hasSelectedTaskLLMEvents = Boolean(selectedTask && taskLLMEvents?.taskId === selectedTask.id);
+  const llmEventRows = hasSelectedTaskLLMEvents ? taskLLMEvents?.events ?? [] : [];
+  const llmStats = hasSelectedTaskLLMEvents ? taskLLMEvents?.stats ?? null : null;
+  const llmStatsTotal = readStatNumber(llmStats, ['total', 'count']) ?? llmEventRows.length;
+  const llmStatsErrors = readStatNumber(llmStats, ['call_error', 'llm_error', 'errors']) ?? 0;
+  const llmStatsRetries = readStatNumber(llmStats, ['call_retry', 'llm_retry', 'retries']) ?? 0;
+  const canCancelSelectedTask = Boolean(selectedTask && selectedTask.status !== 'completed');
+  const normalizedCreateSubject = createSubject.trim();
+  const normalizedCreateDescription = createDescription.trim() || normalizedCreateSubject;
+  const canCreateTask = Boolean(onTaskCreate && normalizedCreateSubject && !isTaskCreating);
+
+  const submitCreateTask = () => {
+    if (!canCreateTask) {
+      return;
+    }
+    onTaskCreate?.({
+      subject: normalizedCreateSubject,
+      description: normalizedCreateDescription,
+      priority: createPriority,
+      timeoutSeconds: Math.max(30, Math.round(Number(createTimeout) || 300)),
+    });
+  };
 
   const TaskCard = ({ task }: { task: ExecutionTask }) => {
     const isSelected = selectedTaskId === task.id;
@@ -367,6 +521,178 @@ export function DirectorTaskPanel({
           </div>
         </div>
 
+        <div
+          className="mx-4 mb-3 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-2"
+          data-testid="director-task-create-panel"
+        >
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-indigo-100">
+              <FilePlus className="h-3.5 w-3.5 text-indigo-300" />
+              创建 Director 任务
+            </span>
+            <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
+              POST /v2/director/tasks
+            </span>
+          </div>
+          <div className="grid gap-2">
+            <input
+              aria-label="Director task subject"
+              data-testid="director-task-create-subject"
+              value={createSubject}
+              onChange={(event) => setCreateSubject(event.target.value)}
+              placeholder="任务标题"
+              className="h-8 min-w-0 rounded-md border border-white/10 bg-slate-950/65 px-2 text-xs text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-indigo-300/60"
+            />
+            <textarea
+              aria-label="Director task description"
+              data-testid="director-task-create-description"
+              value={createDescription}
+              onChange={(event) => setCreateDescription(event.target.value)}
+              placeholder="执行说明"
+              rows={2}
+              className="min-h-14 min-w-0 resize-none rounded-md border border-white/10 bg-slate-950/65 px-2 py-1.5 text-xs text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-indigo-300/60"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                aria-label="Director task priority"
+                data-testid="director-task-create-priority"
+                value={createPriority}
+                onChange={(event) => setCreatePriority(event.target.value as DirectorTaskCreateDraft['priority'])}
+                className="h-8 rounded-md border border-white/10 bg-slate-950/65 px-2 text-xs text-slate-100 outline-none transition-colors focus:border-indigo-300/60"
+              >
+                <option value="CRITICAL">CRITICAL</option>
+                <option value="HIGH">HIGH</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="LOW">LOW</option>
+              </select>
+              <input
+                aria-label="Director task timeout seconds"
+                data-testid="director-task-create-timeout"
+                type="number"
+                min={30}
+                step={30}
+                value={createTimeout}
+                onChange={(event) => setCreateTimeout(Number(event.target.value))}
+                className="h-8 w-24 rounded-md border border-white/10 bg-slate-950/65 px-2 text-xs text-slate-100 outline-none transition-colors focus:border-indigo-300/60"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={submitCreateTask}
+                disabled={!canCreateTask}
+                data-testid="director-task-create-submit"
+                className="h-8 bg-indigo-600 px-2 text-xs text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isTaskCreating ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FilePlus className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                创建
+              </Button>
+            </div>
+          </div>
+          {(taskCreateMessage || taskCreateError || isTaskCreating) ? (
+            <div
+              className={cn(
+                'mt-2 rounded-md border px-2 py-1.5 text-[11px]',
+                taskCreateError
+                  ? 'border-amber-500/25 bg-amber-500/10 text-amber-100'
+                  : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-100',
+              )}
+              data-testid="director-task-create-evidence"
+            >
+              {isTaskCreating ? '正在提交 Director 任务...' : taskCreateError || taskCreateMessage}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="px-4 pb-3" data-testid="director-worker-strip">
+          <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-400">
+            <span className="flex items-center gap-1.5"><Layers className="h-3 w-3" />Worker 后端证据</span>
+            <span>
+              总计 {workerRows.length} / 空闲 {idleWorkerCount} / 执行中 {busyWorkerCount}
+              {failedWorkerCount > 0 ? ` / 异常 ${failedWorkerCount}` : ''}
+            </span>
+          </div>
+          {workerFallbackError ? (
+            <div
+              className="rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
+              data-testid="director-worker-fallback-error"
+            >
+              {workerFallbackError}
+            </div>
+          ) : workerRows.length === 0 ? (
+            <div className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[11px] text-slate-500">
+              暂无 worker 记录；等待 `/v2/director/workers` 或实时流返回数据。
+            </div>
+          ) : (
+            <div className="flex gap-2 overflow-x-auto">
+              {workerRows.slice(0, 6).map((worker) => (
+                <button
+                  type="button"
+                  key={worker.id}
+                  className={cn(
+                    'flex shrink-0 items-center gap-2 rounded-md border px-2 py-1 text-left text-[10px] transition-colors',
+                    worker.healthy === false || worker.status === 'failed'
+                      ? 'border-red-500/25 bg-red-500/10 text-red-100'
+                      : worker.status === 'busy' || worker.status === 'running'
+                        ? 'border-blue-500/25 bg-blue-500/10 text-blue-100'
+                        : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-100',
+                    workerBackendDetail?.workerId === worker.id && 'ring-1 ring-cyan-300/40',
+                  )}
+                  title={worker.taskName ? `${worker.name}: ${worker.taskName}` : worker.name}
+                  onClick={() => onWorkerSelect?.(worker.id)}
+                  data-testid="director-worker-item"
+                >
+                  <span className="max-w-28 truncate font-medium">{worker.name}</span>
+                  <span className="rounded bg-slate-950/45 px-1.5 py-0.5 font-mono">{worker.status}</span>
+                  {worker.taskName ? <span className="max-w-32 truncate text-slate-300">{worker.taskName}</span> : null}
+                </button>
+              ))}
+            </div>
+          )}
+          {workerBackendDetail?.workerId ? (
+            <section
+              className="mt-2 rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-2 text-[11px]"
+              data-testid="director-worker-backend-detail"
+            >
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 font-medium text-cyan-100">
+                  <User className="h-3.5 w-3.5" />
+                  Worker 详情
+                </span>
+                <span className="truncate rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
+                  /v2/director/workers/{workerBackendDetail.workerId}
+                </span>
+              </div>
+              {workerBackendDetail.loading ? (
+                <div className="flex items-center gap-1.5 text-cyan-100">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  正在读取 worker 快照...
+                </div>
+              ) : workerBackendDetail.error ? (
+                <div className="rounded border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-amber-100">
+                  {workerBackendDetail.error}
+                </div>
+              ) : workerDetail ? (
+                <div className="flex flex-wrap gap-1.5">
+                  <ProvenanceChip label="Name" value={readWorkerDetailText(workerDetail, ['name', 'display_name', 'worker_name']) || workerBackendDetail.workerId} />
+                  <ProvenanceChip label="Status" value={readWorkerDetailText(workerDetail, ['status', 'state']) || 'unknown'} />
+                  <ProvenanceChip label="Task" value={workerDetailTask || '空闲'} />
+                  <ProvenanceChip label="Healthy" value={readWorkerDetailText(workerDetail, ['healthy', 'is_healthy']) || 'unknown'} />
+                  <ProvenanceChip label="Done" value={workerDetailCompleted} />
+                  <ProvenanceChip label="Failed" value={workerDetailFailed} />
+                </div>
+              ) : (
+                <div className="rounded border border-dashed border-white/10 px-2 py-2 text-slate-500">
+                  选择 worker 后读取后端快照。
+                </div>
+              )}
+            </section>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
           <span className="flex items-center gap-1 text-[10px] text-slate-500"><Filter className="h-3 w-3" />筛选</span>
           {FILTERS.map((filter) => (
@@ -441,18 +767,35 @@ export function DirectorTaskPanel({
                     </div>
                     <p className="text-xs leading-5 text-slate-400">{selectedTask.description || selectedTask.goal || '暂无描述'}</p>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={onExecute}
-                    data-testid="director-task-execute-selected"
-                    className={cn(
-                      isExecuting ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700',
-                      'shrink-0 text-white',
-                    )}
-                  >
-                    {isExecuting ? <Pause className="mr-1.5 h-3.5 w-3.5" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
-                    {selectedExecuteLabel}
-                  </Button>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <Button
+                      size="sm"
+                      onClick={onExecute}
+                      data-testid="director-task-execute-selected"
+                      className={cn(
+                        isExecuting ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700',
+                        'text-white',
+                      )}
+                    >
+                      {isExecuting ? <Pause className="mr-1.5 h-3.5 w-3.5" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+                      {selectedExecuteLabel}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => selectedTask && onTaskCancel?.(selectedTask.id)}
+                      disabled={!onTaskCancel || !canCancelSelectedTask || isTaskCancelling}
+                      data-testid="director-task-cancel-selected"
+                      className="border-red-500/35 bg-red-500/10 text-red-100 hover:bg-red-500/20 hover:text-red-50"
+                    >
+                      {isTaskCancelling ? (
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                      )}
+                      取消任务
+                    </Button>
+                  </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                   <span className="flex items-center gap-1.5"><User className="h-3.5 w-3.5" />Worker: {selectedWorker?.name || selectedTask.assignedWorker || '未分配'}</span>
@@ -470,7 +813,70 @@ export function DirectorTaskPanel({
                   <ProvenanceChip label="Owner" value={selectedTask.claimedBy || selectedTask.assignedWorker || selectedWorker?.name || '未分配'} />
                   <ProvenanceChip label="Source" value={selectedTask.source || 'runtime'} />
                 </div>
+                <div
+                  className="mt-3 rounded-md border border-red-500/20 bg-red-500/10 px-2 py-2 text-[11px] text-red-100"
+                  data-testid="director-task-cancel-evidence"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5">
+                      <XCircle className="h-3.5 w-3.5" />
+                      取消端点
+                    </span>
+                    <span className="font-mono text-[10px] text-red-100/80">
+                      /v2/director/tasks/{selectedTask.id}/cancel
+                    </span>
+                  </div>
+                  {isTaskCancelling ? (
+                    <div className="mt-1.5 flex items-center gap-1.5 text-red-50">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      正在提交取消请求
+                    </div>
+                  ) : null}
+                  {taskCancelMessage ? <div className="mt-1.5 text-red-50">{taskCancelMessage}</div> : null}
+                  {taskCancelError ? <div className="mt-1.5 text-amber-100">{taskCancelError}</div> : null}
+                </div>
               </div>
+
+              <section className="rounded-lg border border-white/10 bg-white/[0.03] p-3" data-testid="director-task-backend-detail">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-200">
+                    <Code2 className="h-3.5 w-3.5 text-cyan-300" />
+                    <span>后端任务详情</span>
+                  </div>
+                  <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
+                    /v2/director/tasks/{selectedTask.id}
+                  </span>
+                </div>
+                {hasSelectedBackendDetail && taskBackendDetail?.loading ? (
+                  <div className="flex items-center gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2 py-2 text-[11px] text-cyan-100">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    正在读取后端任务详情...
+                  </div>
+                ) : hasSelectedBackendDetail && taskBackendDetail?.error ? (
+                  <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-2 text-[11px] text-amber-100">
+                    {taskBackendDetail.error}
+                  </div>
+                ) : backendTask ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5 text-[10px]">
+                      <ProvenanceChip label="Status" value={String(backendTask.status || 'unknown')} />
+                      <ProvenanceChip label="Priority" value={String(backendTask.priority || 'MEDIUM')} />
+                      <ProvenanceChip label="Worker" value={String(backendTask.worker || backendTask.claimed_by || '未分配')} />
+                      <ProvenanceChip label="PM" value={String(backendTask.pm_task_id || backendTask.metadata?.pm_task_id || backendTask.id)} />
+                      <ProvenanceChip label="BP" value={String(backendTask.blueprint_id || backendTask.blueprint_path || '未绑定')} />
+                    </div>
+                    <div className="grid gap-1.5 text-[11px] text-slate-300">
+                      <div className="break-words">目标: {backendTask.goal || backendTask.description || '暂无'}</div>
+                      <div className="break-words">当前文件: {backendTask.current_file || '暂无'}</div>
+                      <div>验收项: {Array.isArray(backendTask.acceptance) ? backendTask.acceptance.length : 0}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-white/10 px-2 py-3 text-[11px] text-slate-500">
+                    选择任务后读取 `/v2/director/tasks/{selectedTask.id}` 的权威快照。
+                  </div>
+                )}
+              </section>
 
               <DetailSection icon={<Target className="h-3.5 w-3.5 text-indigo-300" />} title="PM目标" items={selectedTask.goal ? [selectedTask.goal] : []} emptyText="暂无 PM 目标" />
               <DetailSection icon={<ListChecks className="h-3.5 w-3.5 text-blue-300" />} title="执行步骤" items={selectedTask.executionSteps} emptyText="暂无执行步骤" />
@@ -497,6 +903,62 @@ export function DirectorTaskPanel({
                   ) : null}
                   <div>更新时间: {selectedTask.activityUpdatedAt || '暂无'}</div>
                 </div>
+              </section>
+
+              <section className="rounded-lg border border-white/10 bg-white/[0.03] p-3" data-testid="director-task-llm-events">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-200">
+                    <Brain className="h-3.5 w-3.5 text-indigo-300" />
+                    <span>LLM 调用证据</span>
+                  </div>
+                  <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
+                    /v2/director/tasks/{selectedTask.id}/llm-events
+                  </span>
+                </div>
+                <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
+                  <ProvenanceChip label="Total" value={String(llmStatsTotal)} />
+                  <ProvenanceChip label="Errors" value={String(llmStatsErrors)} />
+                  <ProvenanceChip label="Retries" value={String(llmStatsRetries)} />
+                </div>
+                {taskLLMEvents?.taskId === selectedTask.id && taskLLMEvents.loading ? (
+                  <div className="flex items-center gap-2 rounded-md border border-indigo-500/20 bg-indigo-500/10 px-2 py-2 text-[11px] text-indigo-100">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    正在读取任务 LLM 事件...
+                  </div>
+                ) : taskLLMEvents?.taskId === selectedTask.id && taskLLMEvents.error ? (
+                  <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-2 text-[11px] text-amber-100">
+                    {taskLLMEvents.error}
+                  </div>
+                ) : llmEventRows.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-white/10 px-2 py-3 text-[11px] text-slate-500">
+                    该任务暂无后端 LLM 事件记录。
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {llmEventRows.slice(0, 5).map((event, index) => {
+                      const eventType = readEventText(event, ['event_type', 'type', 'name']);
+                      const timestamp = formatEventTimestamp(readEventText(event, ['timestamp', 'created_at', 'time']));
+                      const model = readEventText(event, ['model', 'provider', 'provider_type']);
+                      const status = readEventText(event, ['status', 'state', 'result']);
+                      return (
+                        <div
+                          key={`${eventType || 'event'}-${timestamp || index}-${index}`}
+                          className="grid grid-cols-[minmax(90px,0.45fr)_minmax(70px,0.35fr)_minmax(70px,0.2fr)] gap-2 rounded-md border border-white/10 bg-slate-950/45 px-2 py-1.5 text-[11px]"
+                        >
+                          <span className="truncate font-medium text-indigo-100" title={eventType}>
+                            {formatEventType(eventType)}
+                          </span>
+                          <span className="truncate text-slate-300" title={model}>
+                            {model || 'model -'}
+                          </span>
+                          <span className="truncate text-right text-slate-500" title={status || timestamp}>
+                            {status || timestamp || '-'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
 
               {(selectedTask.error || selectedTask.output) && (

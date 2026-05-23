@@ -1,0 +1,90 @@
+card_id: "vc-20260523-chief-engineer-dialogue-role-parity"
+bug_summary: >
+  Chief Engineer was supported by the backend role dialogue cell and active
+  desktop dialogue panel, but stale shared frontend role-chat types still
+  excluded it.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/ai-dialogue/useRoleChat.ts"
+  method: "DialogueRole type"
+  symptom: >
+    The legacy role-chat hook narrowed dialogue roles to pm, architect,
+    director, and qa, while the active shared dialogue stack accepts
+    chief_engineer.
+
+assumptions:
+  - id: "A1"
+    statement: "The backend dialogue cell registers chief_engineer as a role."
+    status: verified_true
+    evidence: >
+      roles.kernel prompt templates include chief_engineer and
+      llm.dialogue.get_registered_roles returns ROLE_PROMPT_TEMPLATES keys.
+
+  - id: "A2"
+    statement: "The desktop dialogue panel already accepts chief_engineer."
+    status: verified_true
+    evidence: >
+      AIDialoguePanel imports DialogueRole from conversationApi, whose union
+      includes chief_engineer, and ChiefEngineerWorkspace renders
+      dialogueRole=\"chief_engineer\".
+
+  - id: "A3"
+    statement: "There should be one shared frontend role type for dialogue surfaces."
+    status: verified_true
+    evidence: >
+      conversationApi owns the broader shared DialogueRole contract used by
+      AIDialoguePanel and role contract tests.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Adding another Chief Engineer-specific chat hook or service would duplicate
+    the generic role dialogue route and preserve type drift.
+  guardrail: >
+    Reuse the existing conversationApi DialogueRole in useRoleChat and add
+    route/service tests for the generic chief_engineer role path.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -v"
+    expected: "Generic role router tests pass, including Chief Engineer status coverage."
+  - command: "npm run test -- llmService roleContracts"
+    expected: "Frontend service and role contract tests pass with Chief Engineer role-chat coverage."
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes with Chief Engineer accepted by shared role-chat types."
+  - command: "npm run lint"
+    expected: "ESLint passes."
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py --fix"
+    status: passed
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py"
+    status: passed
+    evidence: "1 file left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py"
+    status: passed
+    evidence: "Success: no issues found in 1 source file."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -v"
+    status: passed
+    evidence: "16 role chat router tests passed, including Chief Engineer status coverage."
+  - command: "npm run test -- llmService roleContracts"
+    status: passed
+    evidence: "2 frontend test files passed; 23 tests passed."
+  - command: "npm run typecheck"
+    status: passed
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    status: passed
+    evidence: "ESLint completed without findings."
+  - command: "npm run test -- AIDialoguePanel ChiefEngineerWorkspace PMWorkbenchPanel DirectorWorkbenchPanel llmService roleContracts"
+    status: passed
+    evidence: "6 focused desktop dialogue/workbench test files passed; 36 tests passed."
+  - command: "rg --encoding utf-8 -n \"export type DialogueRole = 'pm' \\| 'architect' \\| 'director' \\| 'qa'|chief_engineer\" src\\frontend\\src\\services\\api.types.ts src\\frontend\\src\\app\\components\\ai-dialogue\\useRoleChat.ts src\\frontend\\src\\services\\llmService.ts src\\frontend\\src\\types\\roleContracts.test.ts src\\frontend\\src\\services\\__tests__\\llmService.test.ts"
+    status: passed
+    evidence: "No stale four-role DialogueRole definition remains in the checked role-chat surfaces; Chief Engineer coverage is present."
+  - command: "git diff --check -- src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py src/frontend/src/services/api.types.ts src/frontend/src/app/components/ai-dialogue/useRoleChat.ts src/frontend/src/services/llmService.ts src/frontend/src/services/__tests__/llmService.test.ts src/frontend/src/types/roleContracts.test.ts src/backend/docs/blueprints/CHIEF_ENGINEER_DIALOGUE_ROLE_PARITY_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-chief-engineer-dialogue-role-parity.yaml"
+    status: passed
+    evidence: "No whitespace errors; Git reported existing LF-to-CRLF normalization warnings only."
+
+status: passed

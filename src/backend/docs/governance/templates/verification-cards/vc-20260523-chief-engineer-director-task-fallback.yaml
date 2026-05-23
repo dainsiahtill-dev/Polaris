@@ -1,0 +1,77 @@
+card_id: "vc-20260523-chief-engineer-director-task-fallback"
+bug_summary: >
+  Chief Engineer desktop Director task lifecycle metrics used only incoming
+  runtime task props and ignored available backend Director task fallback rows.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx"
+  method: "Director task pool metrics"
+  symptom: >
+    When realtime task rows were absent, the CE workspace could show zero
+    Director task evidence while /v2/director/tasks had backend rows.
+
+assumptions:
+  - id: "A1"
+    statement: "Director worker fallback is already used by the CE workspace."
+    status: verified_true
+    evidence: >
+      ChiefEngineerWorkspace calls listDirectorWorkers and renders
+      /v2/director/workers evidence.
+
+  - id: "A2"
+    statement: "Director task fallback should reuse the existing frontend service."
+    status: verified_true
+    evidence: >
+      pmService exposes listDirectorTaskFallbackRows(directorRunning), already
+      used by DirectorWorkspace.
+
+  - id: "A3"
+    statement: "Backend Director rows must not become CE blueprint-generation candidates."
+    status: verified_true
+    evidence: >
+      The intended fallback only powers metrics, blueprint evidence, and
+      dialogue context; candidate generation remains based on incoming task
+      props.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Reusing backend Director rows as CE blueprint candidate tasks would allow CE
+    to generate blueprints from execution rows rather than PM planning rows.
+  guardrail: >
+    Keep blueprintCandidateTasks sourced from the original tasks prop and use
+    merged rows only for metrics/evidence/context.
+
+verification_plan:
+  - command: "npm run test -- ChiefEngineerWorkspace"
+    expected: "ChiefEngineerWorkspace tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run lint"
+    expected: "ESLint passes"
+
+verification_results:
+  - command: "npm run test -- ChiefEngineerWorkspace"
+    result: pass
+    evidence: "1 file passed; 8 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    result: pass
+    evidence: "eslint completed successfully."
+  - command: "npm run test -- PMWorkspace PMWorkbenchPanel PMTaskPanel PMDocumentPanel PMDiagnosticsPanel ChiefEngineerWorkspace DirectorWorkspace DirectorWorkbenchPanel DirectorTaskPanel"
+    result: pass
+    evidence: "10 files passed; 52 tests passed."
+  - command: "npm run test:e2e -- src/backend/polaris/tests/electron/role-workspaces-visual.spec.ts"
+    result: pass
+    evidence: "Renderer build passed and Electron role workspace visual audit passed."
+  - command: "npm run test"
+    result: pass
+    evidence: "76 files passed; 677 tests passed. jsdom emitted its existing non-fatal navigation warning."
+  - command: "git diff --check -- src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx src/backend/docs/blueprints/CHIEF_ENGINEER_DESKTOP_DIRECTOR_TASK_FALLBACK_20260523.md src/backend/docs/governance/templates/verification-cards/vc-20260523-chief-engineer-director-task-fallback.yaml"
+    result: pass
+    evidence: "No whitespace errors; Git reported LF-to-CRLF normalization warnings for existing frontend files."
+
+status: passed

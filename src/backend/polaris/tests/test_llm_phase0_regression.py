@@ -299,6 +299,67 @@ class TestRoleRuntimeSupportConsistency:
         ):
             _ensure_llm_ready(mock_state, "pm")
 
+    def test_role_gate_prefers_active_workspace_path_for_llm_config(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/stale_repo"
+        mock_settings.workspace_path = "/tmp/active_project"
+        mock_settings.ramdisk_root = "/tmp/ram"
+        mock_state = AppState(settings=mock_settings)
+
+        index_payload = {
+            "roles": {
+                "pm": {"ready": True, "provider_id": "openai_compat", "model": "gpt-4.1"},
+            }
+        }
+        config_payload = {
+            "providers": {"openai_compat": {"type": "openai_compat"}},
+            "roles": {"pm": {"provider_id": "openai_compat", "model": "gpt-4.1"}},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/cache") as cache_root,
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch(
+                "polaris.delivery.http.routers._shared.llm_config.load_llm_config",
+                return_value=config_payload,
+            ) as load_config,
+        ):
+            _ensure_llm_ready(mock_state, "pm")
+
+        cache_root.assert_called_once_with("/tmp/ram", "/tmp/active_project")
+        load_config.assert_called_once_with("/tmp/active_project", "/tmp/cache", settings=mock_settings)
+
+    def test_required_ready_roles_prefers_active_workspace_path_for_policy(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import required_ready_roles
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/stale_repo"
+        mock_settings.workspace_path = "/tmp/active_project"
+        mock_settings.ramdisk_root = "/tmp/ram"
+        mock_settings.qa_enabled = True
+        mock_state = AppState(settings=mock_settings)
+
+        config_payload = {
+            "policies": {"required_ready_roles": ["pm", "director"]},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/cache") as cache_root,
+            patch(
+                "polaris.delivery.http.routers._shared.llm_config.load_llm_config",
+                return_value=config_payload,
+            ) as load_config,
+        ):
+            roles = required_ready_roles(mock_state, default_roles=["qa"])
+
+        assert roles == ["pm", "director"]
+        cache_root.assert_called_once_with("/tmp/ram", "/tmp/active_project")
+        load_config.assert_called_once_with("/tmp/active_project", "/tmp/cache", settings=mock_settings)
+
     def test_director_start_requires_all_required_roles(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
         from polaris.delivery.http.routers._shared import ensure_required_roles_ready

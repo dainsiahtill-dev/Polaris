@@ -1,0 +1,80 @@
+id: vc-20260523-director-run-cancel-desktop
+title: Director run cancel desktop
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/delivery/http/v2/director.py
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py
+  - src/frontend/src/services/pmService.ts
+  - src/frontend/src/services/__tests__/pmService.test.ts
+  - src/frontend/src/app/components/director/DirectorWorkspace.tsx
+  - src/frontend/src/app/components/director/__tests__/DirectorWorkspace.capabilities.test.tsx
+related_blueprint: src/backend/docs/blueprints/DIRECTOR_RUN_CANCEL_DESKTOP_20260523.md
+assumption_register:
+  - id: A1
+    statement: Existing orchestration service query snapshots are sufficient for Director run cancel responses.
+    evidence:
+      - src/backend/polaris/delivery/http/v2/director.py
+      - src/backend/polaris/cells/orchestration/workflow_runtime/public/service.py
+    verified: true
+  - id: A2
+    statement: Terminal run statuses must be returned unchanged instead of being cancelled again.
+    evidence:
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py
+    verified: true
+  - id: A3
+    statement: Director desktop run evidence strip is the correct place for orchestration-run controls.
+    evidence:
+      - src/frontend/src/app/components/director/DirectorWorkspace.tsx
+    verified: true
+pre_mortem:
+  - risk: Runtime could reject cancellation for settled runs.
+    mitigation: Route checks terminal status before calling cancel_run.
+  - risk: Run ID encoding could break cancellation links.
+    mitigation: Service wrapper encodes run IDs with encodeURIComponent.
+  - risk: Run cancel evidence could be mistaken for per-task cancel evidence.
+    mitigation: UI displays `/v2/director/runs/{run_id}/cancel` beside the run snapshot.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py --fix
+    expected: Python lint fixes complete with no remaining issues.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py
+    expected: Python formatting completes.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/director.py
+    expected: Director router type check passes.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q
+    expected: Director router unit tests pass.
+  - command: npm run test -- DirectorWorkspace pmService
+    expected: Director workspace and typed service tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    expected: PM, Chief Engineer, and Director page/workspace regression passes.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py --fix
+    result: PASS
+    evidence: All checks passed.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py
+    result: PASS
+    evidence: 2 files left unchanged.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/director.py
+    result: PASS
+    evidence: "Success: no issues found in 1 source file."
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q
+    result: PASS
+    evidence: 38 tests passed.
+  - command: npm run test -- DirectorWorkspace pmService
+    result: PASS
+    evidence: 3 test files passed, 94 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMWorkbenchPanel DirectorWorkbenchPanel PMTaskPanel PMDocumentPanel DirectorTaskPanel PMDiagnosticsPanel pmService chiefEngineerService RoleChatPanel api.roleChatService
+    result: PASS
+    evidence: 16 test files passed, 146 tests passed.
