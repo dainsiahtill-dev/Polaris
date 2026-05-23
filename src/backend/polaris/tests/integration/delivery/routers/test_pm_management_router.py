@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ from polaris.delivery.http.routers._shared import require_auth
 def _build_app() -> FastAPI:
     app = FastAPI()
     setup_exception_handlers(app)
+    app.include_router(pm_management_router.v2_router)
     app.include_router(pm_management_router.router)
     app.dependency_overrides[require_auth] = lambda: None
     app.state.app_state = MagicMock()
@@ -223,19 +225,75 @@ class TestPMManagementRouter:
 
     async def test_get_document_versions_returns_200(self) -> None:
         """GET /pm/documents/{doc_path}/versions returns 200."""
-        # Skip this test due to FastAPI route matching issue
-        # The path parameter {doc_path:path} matches everything including /versions
-        pytest.skip("FastAPI route matching issue with {doc_path:path}")
+        app = _build_app()
+        pm = _mock_pm_instance()
+        pm.get_document_versions.return_value = [
+            {
+                "version": "1.0",
+                "created_at": "2026-01-01",
+                "created_by": "pm",
+                "change_summary": "Initial",
+                "checksum": "abc123",
+            }
+        ]
+        with (
+            patch(
+                "polaris.delivery.http.routers.pm_management._get_pm_instance",
+                return_value=pm,
+            ),
+            patch(
+                "polaris.delivery.http.routers.pm_management._resolve_document_path",
+                return_value="/test/path.md",
+            ),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get("/pm/documents/test.md/versions")
+
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["path"] == "/test/path.md"
+        assert payload["versions"][0]["version"] == "1.0"
+        pm.get_document_versions.assert_called_once_with("/test/path.md")
 
     async def test_compare_versions_returns_200(self) -> None:
         """GET /pm/documents/{doc_path}/compare returns 200."""
-        # Skip this test due to FastAPI route matching issue
-        pytest.skip("FastAPI route matching issue with {doc_path:path}")
+        app = _build_app()
+        pm = _mock_pm_instance()
+        with (
+            patch(
+                "polaris.delivery.http.routers.pm_management._get_pm_instance",
+                return_value=pm,
+            ),
+            patch(
+                "polaris.delivery.http.routers.pm_management._resolve_document_path",
+                return_value="/test/path.md",
+            ),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get(
+                    "/pm/documents/test.md/compare",
+                    params={"old_version": "1.0", "new_version": "1.1"},
+                )
+
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["path"] == "/test/path.md"
+        assert payload["old_version"] == "1.0"
+        assert payload["new_version"] == "1.1"
+        assert payload["diff_text"] == "diff"
+        pm.compare_document_versions.assert_called_once_with("/test/path.md", "1.0", "1.1")
 
     async def test_compare_versions_returns_422_without_versions(self) -> None:
         """GET /pm/documents/{doc_path}/compare returns 422 without version params."""
-        # Skip this test due to FastAPI route matching issue
-        pytest.skip("FastAPI route matching issue with {doc_path:path}")
+        app = _build_app()
+        with patch(
+            "polaris.delivery.http.routers.pm_management._get_pm_instance",
+            return_value=_mock_pm_instance(),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get("/pm/documents/test.md/compare")
+
+        assert response.status_code == 422
 
     async def test_search_documents_returns_200(self) -> None:
         """GET /pm/search/documents returns 200."""
@@ -275,6 +333,19 @@ class TestPMManagementRouter:
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert "tasks" in payload
+
+    async def test_v2_list_tasks_uses_real_adapter_without_placeholder_import_error(self, tmp_path: Path) -> None:
+        """GET /v2/pm/tasks uses the real adapter and returns a controlled uninitialized error."""
+        app = _build_app()
+        app.state.app_state.settings.workspace_path = str(tmp_path)
+        app.state.app_state.settings.workspace = str(tmp_path)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/v2/pm/tasks")
+
+        assert response.status_code == 400
+        payload: dict[str, Any] = response.json()
+        assert payload["error"]["code"] == "PM_NOT_INITIALIZED"
 
     async def test_get_task_returns_200(self) -> None:
         """GET /pm/tasks/{task_id} returns 200 with task info."""

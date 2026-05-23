@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Resolve provider_manager from the Cell layer (which delegates to kernelone)
 _provider_manager: ProviderManager = get_provider_manager()
+_RUNTIME_ROLE_IDS = ("pm", "chief_engineer", "director", "qa", "architect")
 
 
 def _workspace_and_cache_root(settings: Any) -> tuple[str, str]:
@@ -158,7 +159,7 @@ def get_runtime_status(request: Request) -> dict[str, Any]:
     runtime_dir = resolve_artifact_path(workspace, cache_root, "runtime")
 
     roles_status: dict[str, dict[str, Any]] = {}
-    for role_id in ("pm", "director", "qa", "architect"):
+    for role_id in _RUNTIME_ROLE_IDS:
         roles_status[role_id] = _build_role_runtime_status(runtime_dir, role_id)
 
     return {
@@ -172,7 +173,7 @@ def get_runtime_status(request: Request) -> dict[str, Any]:
 )
 def get_role_runtime_status(request: Request, role_id: str) -> dict[str, Any]:
     normalized_role_id = _normalize_runtime_role_id(role_id)
-    if normalized_role_id not in ("pm", "director", "qa", "architect"):
+    if normalized_role_id not in _RUNTIME_ROLE_IDS:
         raise StructuredHTTPException(status_code=400, code="INVALID_ROLE_ID", message="invalid role_id")
 
     state = get_state(request)

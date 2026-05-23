@@ -1,0 +1,64 @@
+card_id: "vc-20260523-http-active-workspace-canonical-resolver"
+bug_summary: >
+  PM, Chief Engineer, Director, RoleChat, and RoleSession HTTP surfaces can
+  resolve the active Electron workspace differently, leaving some endpoints to
+  read stale LLM readiness evidence or mock placeholder paths.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/workspace.py and role HTTP routers"
+  method: "active_workspace_value / local _workspace_value helpers"
+  symptom: >
+    A workspace that already passed PM LLM tests can still appear PM-blocked
+    because config and readiness indexes are read from different workspaces.
+
+assumptions:
+  - id: "A1"
+    statement: "Electron stores the active target workspace on settings.workspace_path when populated."
+    status: verified_true
+    evidence: >
+      Existing PM chat, Chief Engineer, Director, RoleChat, and RoleSession
+      regressions all expect workspace_path to override workspace.
+
+  - id: "A2"
+    statement: "Tests may pass MagicMock settings where unset attributes should not become paths."
+    status: verified_true
+    evidence: >
+      Prior regressions in llm_status and HTTP route tests use MagicMock
+      settings objects; stringifying an unset attribute creates a fake path.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Updating only one router leaves RoleChat status, RoleSession, or shared
+    role readiness gates using stale workspace data.
+  guardrail: >
+    Move all delivery workspace resolution through polaris.delivery.http.workspace
+    and assert the LLM test index is loaded with the same active workspace as
+    the LLM config.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q"
+    expected: "All targeted tests pass"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py --fix"
+    result: pass
+    evidence: "Found 3 errors (3 fixed, 0 remaining)."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+    result: pass
+    evidence: "1 file reformatted, 9 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/workspace.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/delivery/http/routers/role_chat.py src/backend/polaris/delivery/http/routers/role_session.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+    result: pass
+    evidence: "Success: no issues found in 10 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/test_workspace.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q"
+    result: pass
+    evidence: "176 passed, 1 deprecated endpoint warning."
+
+status: passed

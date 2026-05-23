@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
@@ -118,7 +118,7 @@ class TestArsenalRouter:
         """GET /arsenal/code_map returns 400 for invalid workspace."""
         client = _build_client()
         # Override settings to use invalid workspace
-        app = client.app
+        app = cast(FastAPI, client.app)
         app.state.app_state.settings.workspace = "/nonexistent/path"
         with patch(
             "os.path.isdir",
@@ -216,15 +216,23 @@ class TestArsenalRouter:
         assert "Server file not found" in payload["error"]
 
     def test_director_capabilities_happy_path(self) -> None:
-        """GET /arsenal/director/capabilities returns 200 with capability matrix.
+        """GET /arsenal/director/capabilities returns 200 with capability matrix."""
+        client = _build_client()
+        capabilities = {
+            "electron_workbench": ["read_files", "write_files"],
+            "workflow": ["execute_tests"],
+        }
+        with patch(
+            "polaris.domain.entities.capability.get_role_capabilities",
+            return_value=capabilities,
+        ):
+            response = client.get("/arsenal/director/capabilities")
 
-        NOTE: The router returns {"role": ..., "capabilities": ...} but the
-        response model requires an "ok" field. This is a pre-existing router
-        bug (missing "ok" in the return dict), not a test fixture issue.
-        """
-        import pytest
-
-        pytest.skip("Router bug: director_capabilities() missing 'ok' field in response")
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["ok"] is True
+        assert payload["role"] == "director"
+        assert payload["capabilities"] == capabilities
 
     def test_director_capabilities_error_handling(self) -> None:
         """GET /arsenal/director/capabilities handles errors with 500."""

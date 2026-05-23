@@ -15,6 +15,7 @@ import type {
   VisualNodeState,
   VisualViewport,
 } from './canonicalState';
+import { getRoleDisplayLabel } from '@/app/constants/roleLabels';
 import { createInitialState, canonicalSelectors } from './canonicalState';
 import type { ProviderConfig, ProviderKind, ProviderStatus } from '../types';
 
@@ -158,13 +159,7 @@ export class ListViewAdapter implements ViewAdapter<ListViewData> {
   }
 
   private getRoleLabel(roleId: string): string {
-    const labels: Record<string, string> = {
-      pm: 'PM',
-      director: 'Chief Engineer',
-      qa: 'QA',
-      architect: 'Architect',
-    };
-    return labels[roleId] || roleId;
+    return getRoleDisplayLabel(roleId);
   }
 }
 
@@ -249,13 +244,7 @@ export class VisualGraphViewAdapter implements ViewAdapter<VisualGraphViewData> 
   }
 
   private getRoleLabel(roleId: string): string {
-    const labels: Record<string, string> = {
-      pm: 'PM',
-      director: 'Chief Engineer',
-      qa: 'QA',
-      architect: 'Architect',
-    };
-    return labels[roleId] || roleId;
+    return getRoleDisplayLabel(roleId);
   }
 }
 

@@ -114,16 +114,59 @@ class TestPMChatRouter:
 
     async def test_chat_stream_returns_sse_response(self) -> None:
         """POST /v2/pm/chat/stream returns SSE response."""
-        _build_app()
-        # Skip SSE test as it requires streaming response handling
-        # The endpoint is tested for basic functionality
-        pytest.skip("SSE streaming test requires special handling")
+        app = _build_app()
+
+        async def _fake_streaming_response(**kwargs: Any) -> None:
+            output_queue = kwargs["output_queue"]
+            await output_queue.put({"type": "thinking_chunk", "data": {"content": "PM thinking"}})
+            await output_queue.put({"type": "content_chunk", "data": {"content": "PM content"}})
+            await output_queue.put({"type": "complete", "data": {"response": "PM complete"}})
+
+        with patch(
+            "polaris.delivery.http.routers.pm_chat.generate_role_response_streaming",
+            new_callable=AsyncMock,
+            side_effect=_fake_streaming_response,
+        ) as mock_generate:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/v2/pm/chat/stream",
+                    json={"message": "Hello PM", "context": {"source": "pm-integration"}},
+                    headers={"Accept": "text/event-stream"},
+                )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        body = response.text
+        assert "event: thinking_chunk" in body
+        assert '"content": "PM thinking"' in body
+        assert "event: content_chunk" in body
+        assert '"content": "PM content"' in body
+        assert "event: complete" in body
+        assert '"response": "PM complete"' in body
+        mock_generate.assert_awaited_once()
+        assert mock_generate.await_args is not None
+        call_kwargs = mock_generate.await_args.kwargs
+        assert call_kwargs["workspace"] == "."
+        assert call_kwargs["role"] == "pm"
+        assert call_kwargs["message"] == "Hello PM"
+        assert call_kwargs["context"] == {"source": "pm-integration"}
 
     async def test_chat_stream_returns_error_without_message(self) -> None:
         """POST /v2/pm/chat/stream returns SSE error when message is missing."""
-        _build_app()
-        # Skip SSE test as it requires streaming response handling
-        pytest.skip("SSE streaming test requires special handling")
+        app = _build_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/v2/pm/chat/stream",
+                json={},
+                headers={"Accept": "text/event-stream"},
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        body = response.text
+        assert "event: error" in body
+        assert "message is required" in body
+        assert "event: complete" in body
 
     async def test_status_returns_200(self) -> None:
         """GET /v2/pm/chat/status returns 200 with status info."""

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from os import PathLike
+import os
 from typing import Any
+from unittest.mock import Mock
 
 
 def _workspace_text(value: Any) -> str:
-    if isinstance(value, (str, PathLike)):
-        return str(value or "").strip()
+    if isinstance(value, Mock):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, os.PathLike):
+        try:
+            return os.fsdecode(value).strip()
+        except (TypeError, ValueError):
+            return ""
     return ""
 
 

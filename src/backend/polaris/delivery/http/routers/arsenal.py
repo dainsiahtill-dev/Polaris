@@ -572,6 +572,7 @@ def director_capabilities(request: Request) -> dict[str, Any]:
         from polaris.domain.entities.capability import get_role_capabilities
 
         return {
+            "ok": True,
             "role": "director",
             "capabilities": get_role_capabilities("director"),
         }

@@ -384,7 +384,7 @@ async def test_get_runtime_status_no_files(client: AsyncClient, tmp_path) -> Non
         assert response.status_code == 200
         data = response.json()
         assert "roles" in data
-        for role_id in ("pm", "director", "qa", "architect"):
+        for role_id in ("pm", "chief_engineer", "director", "qa", "architect"):
             assert data["roles"][role_id]["running"] is False
             assert data["roles"][role_id]["config"]["provider_id"] is None
 

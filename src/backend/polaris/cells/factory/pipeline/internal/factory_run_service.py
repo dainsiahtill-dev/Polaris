@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from polaris.cells.orchestration.orchestration_engine.public.service import OrchestrationCommandService
 
+from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
@@ -49,6 +50,7 @@ TERMINAL_RUN_STATUSES = {
 SUPPORTED_FACTORY_STAGES = {
     "docs_generation",
     "pm_planning",
+    "chief_engineer_review",
     "director_dispatch",
     "quality_gate",
 }
@@ -149,6 +151,7 @@ class OrchestrationStageExecutor:
         handlers = {
             "docs_generation": self._execute_docs_generation,
             "pm_planning": self._execute_pm_planning,
+            "chief_engineer_review": self._execute_chief_engineer_review,
             "director_dispatch": self._execute_director_dispatch,
             "quality_gate": self._execute_quality_gate,
         }
@@ -159,6 +162,8 @@ class OrchestrationStageExecutor:
 
     def _artifact_path(self, relative_path: str) -> Path:
         rel = str(relative_path or "").replace("\\", "/").strip().lstrip("/")
+        if rel.startswith(("tasks/", "dispatch/")):
+            rel = f"runtime/{rel}"
         # 使用逻辑路径解析：workspace/* -> runtime/workspace/*, runtime/* -> runtime/...
         resolved = resolve_logical_path(str(self.workspace), rel)
         return Path(resolved).resolve()
@@ -342,6 +347,67 @@ class OrchestrationStageExecutor:
         if not lines:
             return "Execute ready tasks from PM contract"
         return "Execute PM tasks strictly in order:\n" + "\n".join(lines)
+
+    @staticmethod
+    def _task_string(task: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = task.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if value is not None and not isinstance(value, (dict, list, tuple, set)):
+                token = str(value).strip()
+                if token:
+                    return token
+        return ""
+
+    @staticmethod
+    def _task_string_list(task: dict[str, Any], *keys: str) -> list[str]:
+        rows: list[str] = []
+        for key in keys:
+            value = task.get(key)
+            if isinstance(value, list):
+                for item in value:
+                    token = str(item or "").strip()
+                    if token:
+                        rows.append(token)
+            elif isinstance(value, str) and value.strip():
+                rows.append(value.strip())
+        return rows
+
+    def _task_id(self, task: dict[str, Any], index: int) -> str:
+        return self._task_string(task, "id", "task_id", "uid") or f"task-{index}"
+
+    def _task_objective(self, task: dict[str, Any]) -> str:
+        return (
+            self._task_string(task, "goal", "objective", "title", "subject", "description")
+            or "Prepare Director implementation blueprint"
+        )
+
+    def _task_blueprint_context(self, task: dict[str, Any], *, run_id: str, index: int) -> dict[str, Any]:
+        context = dict(task)
+        context["source_artifact"] = "tasks/plan.json"
+        context["factory_run_id"] = run_id
+        context["task_index"] = index
+        title = self._task_string(task, "title", "subject", "goal")
+        if title:
+            context["task_title"] = title
+        scope = self._task_string(task, "scope")
+        if scope:
+            context.setdefault("scope_paths", [scope])
+        return context
+
+    def _task_blueprint_constraints(self, task: dict[str, Any]) -> dict[str, Any]:
+        constraints: dict[str, Any] = {}
+        acceptance = self._task_string_list(task, "acceptance", "acceptance_criteria")
+        steps = self._task_string_list(task, "steps")
+        scope = self._task_string(task, "scope")
+        if acceptance:
+            constraints["acceptance"] = acceptance
+        if steps:
+            constraints["steps"] = steps
+        if scope:
+            constraints["scope"] = scope
+        return constraints
 
     def _read_taskboard_stats(self) -> dict[str, int]:
         baseline = {
@@ -579,6 +645,131 @@ class OrchestrationStageExecutor:
             status=stage_status,
             output=(
                 f"PM planning {final_result.status}: {final_result.message or 'N/A'}; "
+                f"signals={len(stage_signals)}; "
+                f"error_code={error_code or 'none'}; root_cause_hint={root_cause_hint or 'none'}"
+            ),
+            artifacts=artifacts,
+        )
+
+    async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
+        logger.info("Executing Chief Engineer review for run %s", run.id)
+        del context
+
+        pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
+        stage_signals: list[dict[str, Any]] = []
+        blueprint_rows: list[dict[str, Any]] = []
+
+        if not pm_tasks:
+            stage_signals.append(
+                {
+                    "code": "chief_engineer.plan_missing",
+                    "severity": "error",
+                    "detail": "tasks/plan.json missing or empty tasks array",
+                }
+            )
+
+        for index, task in enumerate(pm_tasks, start=1):
+            task_id = self._task_id(task, index)
+            objective = self._task_objective(task)
+            try:
+                result = generate_task_blueprint(
+                    GenerateTaskBlueprintCommandV1(
+                        task_id=task_id,
+                        workspace=str(self.workspace),
+                        objective=objective,
+                        run_id=run.id,
+                        constraints=self._task_blueprint_constraints(task),
+                        context=self._task_blueprint_context(task, run_id=run.id, index=index),
+                    )
+                )
+            except (RuntimeError, TypeError, ValueError) as exc:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.blueprint_generation_failed",
+                        "severity": "error",
+                        "detail": f"{type(exc).__name__}: {exc}",
+                        "task_id": task_id,
+                    }
+                )
+                continue
+
+            if not result.ok or not result.blueprint_id or not result.blueprint_path:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.blueprint_result_invalid",
+                        "severity": "error",
+                        "detail": result.summary or result.status,
+                        "task_id": task_id,
+                    }
+                )
+                continue
+
+            blueprint_rows.append(
+                {
+                    "task_id": result.task_id,
+                    "status": result.status,
+                    "blueprint_id": result.blueprint_id,
+                    "blueprint_path": result.blueprint_path,
+                    "summary": result.summary,
+                    "recommendations": list(result.recommendations),
+                    "risks": list(result.risks),
+                }
+            )
+
+        review_artifact = ""
+        if blueprint_rows or stage_signals:
+            review_artifact = f"runtime/state/blueprints/{run.id}.review.json"
+            self._write_json_artifact(
+                review_artifact,
+                {
+                    "schema_version": "factory.chief_engineer_review.v1",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "factory_stage_executor",
+                    "factory_run_id": run.id,
+                    "task_plan": "tasks/plan.json",
+                    "total_tasks": len(pm_tasks),
+                    "generated_blueprints": len(blueprint_rows),
+                    "blueprints": blueprint_rows,
+                    "signals": stage_signals,
+                },
+            )
+
+        stage_signal_path = ""
+        if stage_signals:
+            stage_signal_path = self._write_stage_signal_artifact(
+                stage="chief_engineer_review",
+                run_id=run.id,
+                signals=stage_signals,
+            )
+
+        has_errors = any(
+            str(item.get("severity") or "").strip().lower() == "error"
+            for item in stage_signals
+            if isinstance(item, dict)
+        )
+        stage_status = "failed" if has_errors else "success"
+        artifacts = [row["blueprint_path"] for row in blueprint_rows if row.get("blueprint_path")]
+        if review_artifact:
+            artifacts.append(review_artifact)
+        if stage_signal_path:
+            artifacts.append(stage_signal_path)
+
+        error_code = ""
+        root_cause_hint = ""
+        if has_errors:
+            for signal in stage_signals:
+                if str(signal.get("severity") or "").strip().lower() != "error":
+                    continue
+                error_code = str(signal.get("code") or "").strip()
+                root_cause_hint = str(signal.get("detail") or "").strip()
+                if error_code:
+                    break
+
+        return StageResult(
+            stage="chief_engineer_review",
+            status=stage_status,
+            output=(
+                f"Chief Engineer review generated {len(blueprint_rows)}/{len(pm_tasks)} blueprints; "
                 f"signals={len(stage_signals)}; "
                 f"error_code={error_code or 'none'}; root_cause_hint={root_cause_hint or 'none'}"
             ),

@@ -67,6 +67,19 @@ class TestLLMDefaultConfigUniqueProviderKeys:
                 f"Expected minimax type 'minimax', got '{minimax_config.get('type')}'"
             )
 
+    def test_default_config_includes_chief_engineer_role(self):
+        """Default LLM config should cover all desktop role workspaces."""
+        from polaris.kernelone.llm.config_store import build_default_config
+
+        config = build_default_config()
+        roles = config.get("roles", {})
+
+        assert "pm" in roles
+        assert "chief_engineer" in roles
+        assert "director" in roles
+        assert roles["chief_engineer"]["profile"] == "chief-engineer-blueprint"
+        assert roles["chief_engineer"]["provider_id"] in config["providers"]
+
 
 class TestLLMStatusLastUpdated:
     """Test that LLMStatus response includes last_updated field."""
@@ -321,7 +334,9 @@ class TestRoleRuntimeSupportConsistency:
 
         with (
             patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/cache") as cache_root,
-            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch(
+                "polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload
+            ) as load_index,
             patch(
                 "polaris.delivery.http.routers._shared.llm_config.load_llm_config",
                 return_value=config_payload,
@@ -331,6 +346,75 @@ class TestRoleRuntimeSupportConsistency:
 
         cache_root.assert_called_once_with("/tmp/ram", "/tmp/active_project")
         load_config.assert_called_once_with("/tmp/active_project", "/tmp/cache", settings=mock_settings)
+        load_index.assert_called_once_with("/tmp/active_project")
+
+    def test_llm_status_prefers_active_workspace_path_for_readiness(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/stale_repo"
+        mock_settings.workspace_path = "/tmp/active_project"
+        mock_settings.ramdisk_root = "/tmp/ram"
+        mock_settings.qa_enabled = False
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {"openai_compat-1": {"type": "openai_compat"}},
+            "roles": {
+                "pm": {"provider_id": "openai_compat-1", "model": "qwen3-max"},
+            },
+            "policies": {"required_ready_roles": ["pm"]},
+        }
+        index_payload = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "provider_id": "openai_compat-1",
+                    "model": "qwen3-max",
+                    "grade": "PASS",
+                },
+            },
+            "providers": {
+                "openai_compat-1": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "model": "qwen3-max",
+                    "role": "pm",
+                },
+            },
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/cache",
+            ) as cache_root,
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ) as load_config,
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ) as load_index,
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.llm_config_path",
+                return_value="/tmp/cache/llm_config.json",
+            ) as config_path,
+        ):
+            response = build_llm_status(mock_settings)
+
+        cache_root.assert_called_once_with("/tmp/ram", "/tmp/active_project")
+        load_config.assert_called_once_with("/tmp/active_project", "/tmp/cache", settings=mock_settings)
+        load_index.assert_called_once_with("/tmp/active_project")
+        config_path.assert_called_once_with("/tmp/active_project", "/tmp/cache")
+        assert response["state"] == "READY"
+        assert response["blocked_roles"] == []
+        assert response["roles"]["pm"]["ready"] is True
 
     def test_required_ready_roles_prefers_active_workspace_path_for_policy(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState

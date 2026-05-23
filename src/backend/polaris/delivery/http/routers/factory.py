@@ -64,6 +64,7 @@ router = APIRouter(tags=["factory"], dependencies=[Depends(require_auth)])
 STAGE_TO_PHASE: dict[str, RunPhase] = {
     "docs_generation": RunPhase.ARCHITECT,
     "pm_planning": RunPhase.PLANNING,
+    "chief_engineer_review": RunPhase.PLANNING,
     "director_dispatch": RunPhase.IMPLEMENTATION,
     "quality_gate": RunPhase.QA_GATE,
 }
@@ -71,6 +72,7 @@ STAGE_TO_PHASE: dict[str, RunPhase] = {
 STAGE_TO_ROLE: dict[str, str] = {
     "docs_generation": "architect",
     "pm_planning": "pm",
+    "chief_engineer_review": "chief_engineer",
     "director_dispatch": "director",
     "quality_gate": "qa",
 }
@@ -146,7 +148,7 @@ def _build_roles(run: FactoryRun, phase: RunPhase) -> dict[str, RoleStatus]:
     completed_roles = {STAGE_TO_ROLE[stage] for stage in run.stages_completed if stage in STAGE_TO_ROLE}
 
     roles: dict[str, RoleStatus] = {}
-    for role_name in ("pm", "architect", "director", "qa"):
+    for role_name in ("pm", "architect", "chief_engineer", "director", "qa"):
         status = "idle"
         progress = 0.0
         detail: str | None = None
@@ -291,12 +293,14 @@ def _build_stage_list(start_from: str, run_director: bool) -> list[str]:
         return [
             "docs_generation",
             "pm_planning",
+            "chief_engineer_review",
             *(["director_dispatch"] if run_director else []),
             "quality_gate",
         ]
     if normalized == "pm":
         return [
             "pm_planning",
+            "chief_engineer_review",
             *(["director_dispatch"] if run_director else []),
             "quality_gate",
         ]
@@ -308,6 +312,7 @@ def _build_stage_list(start_from: str, run_director: bool) -> list[str]:
     # fallback：auto 已在 _normalize_start_from 归一化，这里保守回退到 pm->qa
     return [
         "pm_planning",
+        "chief_engineer_review",
         *(["director_dispatch"] if run_director else []),
         "quality_gate",
     ]
@@ -318,6 +323,8 @@ def _build_stage_context(stage: str, payload: FactoryStartRequest, state: AppSta
         "settings": getattr(state, "settings", None),
     }
     if stage in {"docs_generation", "pm_planning"}:
+        context["directive"] = payload.directive
+    if stage == "chief_engineer_review":
         context["directive"] = payload.directive
     if stage == "director_dispatch":
         context["execution_mode"] = getattr(state.settings, "director_execution_mode", "parallel")
@@ -337,6 +344,8 @@ def _json_payload(data: Any) -> str:
 
 def _resolve_runtime_path(workspace: str, relative_path: str) -> Path:
     rel = str(relative_path or "").replace("\\", "/").strip().lstrip("/")
+    if rel.startswith(("tasks/", "dispatch/")):
+        rel = f"runtime/{rel}"
     resolved = resolve_logical_path(str(workspace), rel)
     return Path(resolved).resolve()
 
@@ -576,6 +585,66 @@ def _list_run_artifacts(
         )
 
     return artifacts
+
+
+def _artifact_item_from_stage_ref(workspace: str, relative_path: str) -> dict[str, Any] | None:
+    rel = str(relative_path or "").replace("\\", "/").strip().lstrip("/")
+    if not rel:
+        return None
+    try:
+        artifact_path = _resolve_runtime_path(workspace, rel)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not artifact_path.exists() or not artifact_path.is_file():
+        return None
+    return {
+        "name": artifact_path.name,
+        "path": rel,
+        "size": artifact_path.stat().st_size,
+    }
+
+
+def _list_stage_artifacts(
+    *,
+    workspace: str,
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in events:
+        if str(event.get("type") or "").strip() != "stage_completed":
+            continue
+        result = event.get("result")
+        if not isinstance(result, dict):
+            continue
+        raw_artifacts = result.get("artifacts")
+        if not isinstance(raw_artifacts, list):
+            continue
+        for raw_path in raw_artifacts:
+            rel = str(raw_path or "").replace("\\", "/").strip().lstrip("/")
+            if not rel or rel in seen:
+                continue
+            item = _artifact_item_from_stage_ref(workspace, rel)
+            if item is None:
+                continue
+            seen.add(rel)
+            artifacts.append(item)
+    return artifacts
+
+
+def _merge_artifact_items(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            path = str(item.get("path") or "").strip()
+            name = str(item.get("name") or "").strip()
+            key = path or name
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
 
 
 def _build_artifacts_response(
@@ -968,7 +1037,10 @@ async def _get_factory_run_audit_bundle_core(
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     events = await service.get_run_events(run_id)
-    artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
+    artifacts = _merge_artifact_items(
+        _list_run_artifacts(service=service, workspace=workspace, run_id=run_id),
+        _list_stage_artifacts(workspace=workspace, events=events),
+    )
     bundle = _build_factory_audit_bundle(
         run=run,
         events=events,
@@ -1040,6 +1112,7 @@ async def _stream_factory_run_events_core(
 
             if current_run.status in TERMINAL_RUN_STATUSES:
                 yield f"event: complete\ndata: {snapshot_payload}\n\n"
+                yield f"event: done\ndata: {snapshot_payload}\n\n"
                 return
 
             await asyncio.sleep(0.5)
@@ -1086,7 +1159,11 @@ async def _get_factory_run_artifacts_core(
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
-    artifacts = _list_run_artifacts(service=service, workspace=workspace, run_id=run_id)
+    events = await service.get_run_events(run_id)
+    artifacts = _merge_artifact_items(
+        _list_run_artifacts(service=service, workspace=workspace, run_id=run_id),
+        _list_stage_artifacts(workspace=workspace, events=events),
+    )
     response_data = _build_artifacts_response(run=run, artifacts=artifacts)
     return FactoryRunArtifactsResponse(**response_data)
 

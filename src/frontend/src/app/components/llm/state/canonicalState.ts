@@ -215,12 +215,14 @@ export function createInitialState(): LlmSettingsState {
       providers: {},
       roleAssignments: {
         pm: { roleId: 'pm', ready: false },
+        chief_engineer: { roleId: 'chief_engineer', ready: false },
         director: { roleId: 'director', ready: false },
         qa: { roleId: 'qa', ready: false },
         architect: { roleId: 'architect', ready: false },
       },
       roleRequirements: {
         pm: { roleId: 'pm', requiresThinking: true, minConfidence: 0.8 },
+        chief_engineer: { roleId: 'chief_engineer', requiresThinking: true, minConfidence: 0.85 },
         director: { roleId: 'director', requiresThinking: true, minConfidence: 0.9 },
         qa: { roleId: 'qa', requiresThinking: false, minConfidence: 0.7 },
         architect: { roleId: 'architect', requiresThinking: false, minConfidence: 0.6 },

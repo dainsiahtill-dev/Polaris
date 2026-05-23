@@ -1,0 +1,62 @@
+id: vc-20260523-factory-desktop-role-layer-layout
+title: Factory desktop role layer layout
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/frontend/src/app/components/factory/FactoryWorkspace.tsx
+  - src/frontend/src/app/components/factory/FactoryWorkspace.test.tsx
+  - src/frontend/src/app/components/LlmRuntimeOverlay.tsx
+  - src/frontend/src/app/App.tsx
+  - src/frontend/src/app/pages/FactoryPage.tsx
+related_blueprint: src/backend/docs/blueprints/FACTORY_DESKTOP_ROLE_LAYER_LAYOUT_20260523.md
+assumption_register:
+  - id: A1
+    statement: Factory mode is currently visually crowded because PM, Director, realtime activity, and LLM runtime are all competing simultaneously.
+    evidence:
+      - src/frontend/src/app/components/factory/FactoryWorkspace.tsx
+      - user-supplied screenshot, 2026-05-23
+    verified: true
+  - id: A2
+    statement: The desktop needs a PM, Chief Engineer, Director role hierarchy rather than parallel full-width consoles.
+    evidence:
+      - src/frontend/src/app/components/pm/PMWorkspace.tsx
+      - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+      - src/frontend/src/app/components/director/DirectorWorkspace.tsx
+    verified: true
+  - id: A3
+    statement: Factory role status and task blueprint fields are enough to render a Chief Engineer layer without backend changes.
+    evidence:
+      - src/frontend/src/services/api.types.ts
+      - src/frontend/src/types/task.ts
+    verified: true
+pre_mortem:
+  - risk: Showing all role workspaces at once would preserve the same clutter under a new skin.
+    mitigation: Render one focused role layer at a time and keep all role states visible in the role rail.
+  - risk: Adding a Chief Engineer layer could invent backend state that is not present.
+    mitigation: Only derive CE state from Factory roles and existing PM task blueprint fields.
+  - risk: The floating LLM runtime overlay could still cover the redesigned operations rail.
+    mitigation: Add compact Factory overlay behavior and suppress auto-expand in Factory mode.
+verification_plan:
+  - command: npm run test -- FactoryWorkspace LlmRuntimeOverlay
+    expected: Factory layout and runtime overlay tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: ESLint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage FactoryWorkspace LlmRuntimeOverlay
+    expected: Role pages plus Factory layout regressions pass.
+verification_results:
+  - command: npm run typecheck
+    result: pass
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: pass
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- FactoryWorkspace LlmRuntimeOverlay PMPage ChiefEngineerPage DirectorPage factoryService
+    result: pass
+    evidence: 6 frontend test files passed, 22 tests passed.
+  - command: npm run build:renderer
+    result: pass
+    evidence: Vite production renderer build completed; existing circular chunk warning reported for vendor-three-drei/vendor-react.

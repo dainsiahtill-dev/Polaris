@@ -2,7 +2,7 @@ id: vc-20260523-director-legacy-capabilities-desktop-contract
 title: Director legacy capabilities desktop contract
 date: "2026-05-23"
 classification: one_off
-status: pending
+status: passed
 owner: codex
 scope:
   - src/backend/polaris/delivery/http/routers/arsenal.py
@@ -35,6 +35,12 @@ pre_mortem:
   - risk: The existing skipped integration test could keep hiding the regression.
     mitigation: Replace the skip with concrete response assertions.
 verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py --fix
+    expected: Backend route and integration test style checks pass.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py
+    expected: Backend route and integration test formatting is stable.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py
+    expected: Backend route and integration test type checks pass.
   - command: pytest src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py -q
     expected: Deprecated Arsenal Director capabilities contract passes without skip.
   - command: npm run test -- SystemServicesTab
@@ -43,4 +49,35 @@ verification_plan:
     expected: TypeScript compilation passes.
   - command: npm run lint
     expected: Frontend lint passes.
-verification_results: []
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace SystemServicesTab
+    expected: PM, Chief Engineer, Director, and settings desktop regressions pass.
+  - command: pytest src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_arsenal_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q
+    expected: Arsenal and canonical Director capability route regressions pass.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py --fix
+    result: PASS
+    evidence: All checks passed.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py
+    result: PASS
+    evidence: 1 file reformatted, 1 file left unchanged.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py
+    result: PASS
+    evidence: Success, no issues found in 2 source files.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py -q
+    result: PASS
+    evidence: 19 tests passed.
+  - command: npm run test -- SystemServicesTab
+    result: PASS
+    evidence: 1 test file passed, 2 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace SystemServicesTab
+    result: PASS
+    evidence: 8 test files passed, 46 tests passed.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_arsenal_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q
+    result: PASS
+    evidence: 76 tests passed.

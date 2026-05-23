@@ -455,7 +455,7 @@ class TestFactoryRunService:
         run = await service.create_run(config)
         await service.start_run(run.id)
 
-        stages = ["docs_generation", "pm_planning", "director_dispatch", "quality_gate"]
+        stages = ["docs_generation", "pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"]
 
         for stage in stages:
             result = await service.execute_stage(run.id, stage)
@@ -809,6 +809,67 @@ class TestOrchestrationStageExecutor:
 
         assert result.status == "success"
         assert result.artifacts == ["tasks/plan.json"]
+
+    @pytest.mark.asyncio
+    async def test_chief_engineer_stage_requires_pm_plan_artifact(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_ce_missing_plan",
+            config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        result = await executor._execute_chief_engineer_review(run, context={})
+
+        assert result.status == "failed"
+        assert "error_code=chief_engineer.plan_missing" in str(result.output)
+        assert "runtime/signals/chief_engineer_review.signals.json" in result.artifacts
+
+    @pytest.mark.asyncio
+    async def test_chief_engineer_stage_generates_blueprint_artifacts(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_ce_blueprints",
+            config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(
+            """{
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "实现账户实体",
+      "goal": "完成账单核心实体与校验",
+      "scope": "src/account",
+      "steps": ["实现实体", "补充测试"],
+      "acceptance": ["`pytest` 通过", "接口返回字段正确"]
+    }
+  ]
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_chief_engineer_review(run, context={})
+
+        assert result.status == "success"
+        assert any(path.startswith("runtime/blueprints/ce_TASK-1_") for path in result.artifacts)
+        assert f"runtime/state/blueprints/{run.id}.review.json" in result.artifacts
+        review_path = Path(
+            resolve_runtime_path(
+                str(temp_workspace),
+                f"runtime/state/blueprints/{run.id}.review.json",
+            )
+        )
+        payload = json.loads(review_path.read_text(encoding="utf-8"))
+        assert payload["generated_blueprints"] == 1
+        assert payload["blueprints"][0]["task_id"] == "TASK-1"
 
     @pytest.mark.asyncio
     async def test_director_stage_fails_when_plan_lineage_missing(self, temp_workspace):

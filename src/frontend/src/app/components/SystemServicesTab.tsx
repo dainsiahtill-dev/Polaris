@@ -17,6 +17,7 @@ interface ServiceStatus {
   detail: string;
   extra?: {
     capabilities?: string[];
+    capability_matrix?: unknown;
     tools?: string[];
     [key: string]: unknown;
   };
@@ -29,6 +30,40 @@ export interface SearchResult {
   line_end: number;
   text?: string;
   score?: number;
+}
+
+export function normalizeCapabilityLabels(capabilities: unknown): string[] {
+  const labels = new Set<string>();
+
+  if (Array.isArray(capabilities)) {
+    for (const capability of capabilities) {
+      const label = String(capability || '').trim();
+      if (label) labels.add(label);
+    }
+    return Array.from(labels).sort();
+  }
+
+  if (!capabilities || typeof capabilities !== 'object') {
+    return [];
+  }
+
+  for (const [hostKind, values] of Object.entries(capabilities as Record<string, unknown>)) {
+    if (Array.isArray(values)) {
+      for (const capability of values) {
+        const name = String(capability || '').trim();
+        if (name) labels.add(`${hostKind}: ${name}`);
+      }
+      continue;
+    }
+
+    if (values && typeof values === 'object') {
+      for (const [name, enabled] of Object.entries(values as Record<string, unknown>)) {
+        if (enabled) labels.add(`${hostKind}: ${name}`);
+      }
+    }
+  }
+
+  return Array.from(labels).sort();
 }
 
 export function SystemServicesTab() {
@@ -69,14 +104,19 @@ export function SystemServicesTab() {
     try {
       const res = await apiFetch('/arsenal/director/capabilities');
       const data = await res.json();
+      const capabilityLabels = normalizeCapabilityLabels(data.capabilities);
       results.push({
         name: 'Director Capabilities Overview',
         icon: <Cpu className="w-4 h-4" />,
-        status: data.capabilities?.length > 0 ? 'online' : 'offline',
-        detail: data.capabilities?.length
-          ? `${data.capabilities.length} 项权限已启用`
+        status: capabilityLabels.length > 0 ? 'online' : 'offline',
+        detail: capabilityLabels.length
+          ? `${capabilityLabels.length} 项权限已启用`
           : '尚未配置',
-        extra: data,
+        extra: {
+          ...data,
+          capabilities: capabilityLabels,
+          capability_matrix: data.capabilities,
+        },
       });
     } catch {
       results.push({

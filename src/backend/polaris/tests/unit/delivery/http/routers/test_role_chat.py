@@ -162,6 +162,58 @@ async def test_role_chat_prefers_active_workspace_path(
 
 
 @pytest.mark.asyncio
+async def test_role_chat_status_reads_test_index_from_active_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Role status should read config and test evidence from workspace_path."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Product"
+
+    config_payload = {
+        "providers": {"openai_compat": {"type": "openai_compat"}},
+        "roles": {
+            "pm": {
+                "provider_id": "openai_compat",
+                "model": "qwen3-max",
+                "profile": "pm",
+            },
+        },
+    }
+    index_payload = {
+        "roles": {
+            "pm": {
+                "ready": True,
+                "provider_id": "openai_compat",
+                "model": "qwen3-max",
+            },
+        },
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.role_chat._load_llm_test_index_async",
+            new_callable=AsyncMock,
+            return_value=index_payload,
+        ) as mock_index,
+        patch(
+            "polaris.delivery.http.routers.role_chat._load_llm_config_async",
+            new_callable=AsyncMock,
+            return_value=config_payload,
+        ) as mock_config,
+    ):
+        response = await client.get("/v2/role/pm/chat/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ready"] is True
+    assert data["llm_test_ready"] is True
+    mock_index.assert_awaited_once_with("C:/Temp/Product")
+    assert mock_config.await_args is not None
+    assert mock_config.await_args.args[0] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
 async def test_role_chat_empty_message(client: AsyncClient) -> None:
     """Empty message should return 400 INVALID_REQUEST."""
     with (
@@ -281,12 +333,47 @@ async def test_role_chat_with_context(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_role_chat_stream_success(client: AsyncClient) -> None:
-    """Streaming role chat should return SSE response headers.
+    """PM streaming role chat should return framed SSE chunks."""
 
-    Full SSE event consumption is skipped because testing async generators
-    with background tasks inside httpx test clients is non-trivial.
-    """
-    pytest.skip("SSE streaming test requires special async generator handling")
+    async def _fake_streaming_response(**kwargs: Any) -> None:
+        output_queue = kwargs["output_queue"]
+        await output_queue.put({"type": "thinking_chunk", "data": {"content": "plan"}})
+        await output_queue.put({"type": "content_chunk", "data": {"content": "Hello"}})
+        await output_queue.put({"type": "complete", "data": {"response": "Hello from PM"}})
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.role_chat.get_registered_roles",
+            return_value=["pm", "architect", "director", "qa", "chief_engineer"],
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            new_callable=AsyncMock,
+            side_effect=_fake_streaming_response,
+        ) as mock_generate,
+    ):
+        response = await client.post(
+            "/v2/role/pm/chat/stream",
+            json={"message": "hello", "context": {"source": "desktop"}},
+            headers={"Accept": "text/event-stream"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "event: thinking_chunk" in body
+    assert '"content": "plan"' in body
+    assert "event: content_chunk" in body
+    assert '"content": "Hello"' in body
+    assert "event: complete" in body
+    assert '"response": "Hello from PM"' in body
+    mock_generate.assert_awaited_once()
+    assert mock_generate.await_args is not None
+    assert mock_generate.await_args.kwargs["role"] == "pm"
+    assert mock_generate.await_args.kwargs["context"] == {"source": "desktop"}
 
 
 @pytest.mark.asyncio
@@ -399,10 +486,41 @@ async def test_role_chat_stream_llm_not_ready(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_role_chat_stream_architect(client: AsyncClient) -> None:
-    """Architect streaming role chat should return SSE response headers.
+@pytest.mark.parametrize("role", ["director", "chief_engineer"])
+async def test_role_chat_stream_engineering_roles(client: AsyncClient, role: str) -> None:
+    """Director and Chief Engineer streaming role chat should return framed SSE chunks."""
 
-    Full SSE event consumption is skipped because testing async generators
-    with background tasks inside httpx test clients is non-trivial.
-    """
-    pytest.skip("SSE streaming test requires special async generator handling")
+    async def _fake_streaming_response(**kwargs: Any) -> None:
+        output_queue = kwargs["output_queue"]
+        await output_queue.put({"type": "content_chunk", "data": {"content": f"{role} chunk"}})
+        await output_queue.put({"type": "complete", "data": {"response": f"{role} complete"}})
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.role_chat.get_registered_roles",
+            return_value=["pm", "architect", "director", "qa", "chief_engineer"],
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
+        ),
+        patch(
+            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            new_callable=AsyncMock,
+            side_effect=_fake_streaming_response,
+        ) as mock_generate,
+    ):
+        response = await client.post(
+            f"/v2/role/{role}/chat/stream",
+            json={"message": f"{role} hello"},
+            headers={"Accept": "text/event-stream"},
+        )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "event: content_chunk" in body
+    assert f'"content": "{role} chunk"' in body
+    assert "event: complete" in body
+    assert f'"response": "{role} complete"' in body
+    mock_generate.assert_awaited_once()
+    assert mock_generate.await_args is not None
+    assert mock_generate.await_args.kwargs["role"] == role

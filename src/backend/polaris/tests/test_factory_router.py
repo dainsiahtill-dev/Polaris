@@ -46,7 +46,10 @@ class LoopingStageExecutor:
         self.qa_calls = 0
 
     def _write_json(self, relative_path: str, payload: dict) -> None:
-        target = Path(resolve_logical_path(str(self.workspace), relative_path))
+        rel = str(relative_path or "").replace("\\", "/").strip().lstrip("/")
+        if rel.startswith(("tasks/", "dispatch/")):
+            rel = f"runtime/{rel}"
+        target = Path(resolve_logical_path(str(self.workspace), rel))
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -194,19 +197,28 @@ def test_cancel_factory_run_without_workspace(
     assert payload["phase"] == "cancelled"
 
 
-def test_stream_emits_status_and_done_events(client: TestClient, temp_workspace: Path) -> None:
-    response = client.post(
-        "/v2/factory/runs",
-        json={
-            "workspace": str(temp_workspace),
-            "start_from": "architect",
-            "directive": "Run the full factory pipeline",
-            "run_director": True,
-        },
-    )
-    run_id = response.json()["run_id"]
+def test_stream_emits_status_and_done_events(
+    client: TestClient,
+    service: FactoryRunService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DisconnectedConsumer:
+        is_connected = False
 
-    with client.stream("GET", f"/v2/factory/runs/{run_id}/stream") as stream_response:
+        async def connect(self) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        factory_router_module,
+        "create_sse_jetstream_consumer",
+        lambda **_: DisconnectedConsumer(),
+    )
+
+    run = asyncio.run(service.create_run(FactoryConfig(name="stream-run", stages=["pm_planning"])))
+    asyncio.run(service.start_run(run.id))
+    asyncio.run(service.complete_run(run.id, success=True))
+
+    with client.stream("GET", f"/v2/factory/runs/{run.id}/stream") as stream_response:
         assert stream_response.status_code == 200
         events = _collect_sse_events(stream_response.iter_lines())
 
@@ -239,6 +251,84 @@ def test_start_from_director_builds_director_to_qa_chain(
     run = asyncio.run(service.get_run(run_id))
     assert run is not None
     assert list(run.config.stages) == ["director_dispatch", "quality_gate"]
+
+
+def test_start_from_pm_builds_pm_chief_engineer_director_chain(
+    client: TestClient,
+    service: FactoryRunService,
+    temp_workspace: Path,
+) -> None:
+    response = client.post(
+        "/v2/factory/runs",
+        json={
+            "workspace": str(temp_workspace),
+            "start_from": "pm",
+            "directive": "Plan and execute implementation",
+            "run_director": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    run_id = str(payload.get("run_id") or "")
+    assert run_id
+
+    run = asyncio.run(service.get_run(run_id))
+    assert run is not None
+    assert list(run.config.stages) == [
+        "pm_planning",
+        "chief_engineer_review",
+        "director_dispatch",
+        "quality_gate",
+    ]
+
+
+def test_factory_role_projection_marks_chief_engineer_stage_running() -> None:
+    run = factory_router_module.FactoryRun(
+        id="factory_ce_role",
+        config=factory_router_module.FactoryConfig(name="test", stages=["chief_engineer_review"]),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-05-23T00:00:00Z",
+        metadata={"current_stage": "chief_engineer_review"},
+    )
+
+    status = factory_router_module._map_service_run_to_contract(run)
+
+    assert status.phase == factory_router_module.RunPhase.PLANNING
+    assert status.roles["chief_engineer"].status == "running"
+    assert status.roles["chief_engineer"].current_task == "chief_engineer_review"
+
+
+def test_artifact_endpoint_includes_existing_stage_result_artifacts(
+    client: TestClient,
+    service: FactoryRunService,
+    temp_workspace: Path,
+) -> None:
+    run = asyncio.run(service.create_run(FactoryConfig(name="artifact-stage-run", stages=["chief_engineer_review"])))
+    blueprint_path = Path(resolve_logical_path(str(temp_workspace), "runtime/blueprints/ce-test.json"))
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text('{"blueprint_id":"ce-test"}\n', encoding="utf-8")
+    asyncio.run(
+        service._append_event(
+            run.id,
+            {
+                "type": "stage_completed",
+                "stage": "chief_engineer_review",
+                "message": "Chief Engineer review completed",
+                "result": {
+                    "stage": "chief_engineer_review",
+                    "status": "success",
+                    "artifacts": ["runtime/blueprints/ce-test.json"],
+                },
+            },
+        )
+    )
+
+    response = client.get(f"/v2/factory/runs/{run.id}/artifacts")
+
+    assert response.status_code == 200
+    artifacts = response.json()["artifacts"]
+    assert any(item["path"] == "runtime/blueprints/ce-test.json" for item in artifacts)
 
 
 def test_delivery_loop_replans_until_pipeline_complete_and_stable(temp_workspace: Path) -> None:

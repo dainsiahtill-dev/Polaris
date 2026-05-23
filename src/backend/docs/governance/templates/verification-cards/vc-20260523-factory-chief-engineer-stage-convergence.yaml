@@ -1,0 +1,82 @@
+id: vc-20260523-factory-chief-engineer-stage-convergence
+title: Factory Chief Engineer stage convergence
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py
+  - src/backend/polaris/delivery/http/routers/factory.py
+  - src/backend/polaris/tests/test_factory_run_service.py
+  - src/backend/polaris/tests/test_factory_router.py
+  - src/frontend/src/app/components/factory/FactoryWorkspace.tsx
+  - src/frontend/src/app/components/factory/FactoryWorkspace.test.tsx
+related_blueprint: src/backend/docs/blueprints/FACTORY_CHIEF_ENGINEER_STAGE_CONVERGENCE_20260523.md
+assumption_register:
+  - id: A1
+    statement: Factory backend lacks a Chief Engineer stage even though the graph declares Chief Engineer between PM and Director.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/factory.py
+      - src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py
+      - src/backend/docs/graph/subgraphs/execution_governance_pipeline.yaml
+    verified: true
+  - id: A2
+    statement: The Chief Engineer blueprint cell already exposes a public command that can persist blueprint artifacts.
+    evidence:
+      - src/backend/polaris/cells/chief_engineer/blueprint/public/contracts.py
+      - src/backend/polaris/cells/chief_engineer/blueprint/public/service.py
+      - src/backend/polaris/cells/chief_engineer/blueprint/cell.yaml
+    verified: true
+  - id: A3
+    statement: PM false blocking can be reduced by making the next handoff role explicit after PM succeeds.
+    evidence:
+      - user-supplied Factory screenshot, 2026-05-23
+      - src/backend/polaris/delivery/http/routers/factory.py
+    verified: true
+pre_mortem:
+  - risk: Adding a UI-only Chief Engineer stage would leave backend audit evidence missing.
+    mitigation: Add the factory pipeline stage and persist stage artifacts.
+  - risk: Mutating PM task contracts could violate state ownership.
+    mitigation: Generate blueprint artifacts and review summaries without rewriting tasks/plan.json.
+  - risk: Director-only resume flows could unexpectedly rerun Chief Engineer.
+    mitigation: Keep start_from=director mapped to director_dispatch -> quality_gate.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py --fix
+    expected: Ruff reports no remaining issues.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py
+    expected: Formatting completes.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py
+    expected: Mypy succeeds.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py -q
+    expected: Factory backend regressions pass.
+  - command: npm run test -- FactoryWorkspace
+    expected: Factory role layer tests pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: ESLint passes.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py --fix
+    result: pass
+    evidence: Ruff reported no remaining issues.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py
+    result: pass
+    evidence: Four backend files left unchanged after formatting.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py
+    result: pass
+    evidence: Success, no issues found in four source files.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/test_factory_router.py -q
+    result: pass
+    evidence: 47 Factory backend tests passed.
+  - command: npm run test -- FactoryWorkspace
+    result: pass
+    evidence: 1 frontend test file passed, 8 tests passed.
+  - command: npm run typecheck
+    result: pass
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: pass
+    evidence: ESLint completed with no diagnostics.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/adapters/test_scripts_pm.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py -q
+    result: pass
+    evidence: 32 PM adapter/router tests passed; canonical pm_integration exposes get_pm.

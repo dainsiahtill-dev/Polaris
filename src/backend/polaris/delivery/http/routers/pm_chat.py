@@ -14,12 +14,18 @@ from polaris.delivery.http.routers.sse_utils import (
     sse_event_generator,
 )
 from polaris.delivery.http.schemas.common import PMChatPingResponse, PMChatStatusResponse
+from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
 from ._shared import StructuredHTTPException, get_state, require_auth
 
 router = APIRouter()
+
+
+def _workspace_value(settings: Any) -> str:
+    """Resolve the active desktop workspace with legacy fallback."""
+    return active_workspace_value(settings)
 
 
 @router.get("/v2/pm/chat/ping", response_model=PMChatPingResponse, dependencies=[Depends(require_auth)])
@@ -36,6 +42,7 @@ async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
         Response, thinking trace, and model metadata.
     """
     state = get_state(request)
+    workspace = _workspace_value(state.settings)
 
     message = str(payload.get("message") or "").strip()
     if not message:
@@ -47,7 +54,7 @@ async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         result = await generate_role_response(
-            workspace=str(state.settings.workspace),
+            workspace=workspace,
             settings=state.settings,
             role="pm",
             message=message,
@@ -71,6 +78,7 @@ async def pm_chat_stream(request: Request, payload: dict[str, Any]):
         thinking_chunk, content_chunk, complete, and error events.
     """
     state = get_state(request)
+    workspace = _workspace_value(state.settings)
 
     message = str(payload.get("message") or "").strip()
     if not message:
@@ -79,7 +87,7 @@ async def pm_chat_stream(request: Request, payload: dict[str, Any]):
     async def _run_pm_dialogue(queue: asyncio.Queue) -> None:
         """运行PM对话并输出到队列"""
         await generate_role_response_streaming(
-            workspace=str(state.settings.workspace),
+            workspace=workspace,
             settings=state.settings,
             role="pm",
             message=message,
@@ -104,17 +112,18 @@ def pm_chat_status(request: Request) -> dict[str, Any]:
         Ready state, provider info, and debug details.
     """
     state = get_state(request)
+    workspace = _workspace_value(state.settings)
 
     try:
-        cache_root = build_cache_root(state.settings.ramdisk_root or "", str(state.settings.workspace))
+        cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace)
 
         # 评测索引用于补充状态，不应误判为“未配置”。
-        index = load_llm_test_index(state.settings)
+        index = load_llm_test_index(workspace)
         role_status = (index.get("roles") or {}).get("pm") if isinstance(index, dict) else None
         llm_test_ready = bool(isinstance(role_status, dict) and role_status.get("ready"))
 
         # 加载配置获取详细信息
-        config = llm_config.load_llm_config(str(state.settings.workspace), cache_root, settings=state.settings)
+        config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
 
         roles_raw = config.get("roles")
         providers_raw = config.get("providers")

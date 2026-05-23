@@ -563,7 +563,7 @@ export const visualToRuntimeConfig = (config: VisualGraphConfig): RuntimeLLMConf
 export const validateRoleAssignments = (
   config: VisualGraphConfig
 ): { valid: boolean; missing: VisualRoleId[]; incomplete: VisualRoleId[] } => {
-  const requiredRoles: VisualRoleId[] = ['pm', 'director', 'qa', 'architect'];
+  const requiredRoles: VisualRoleId[] = ['pm', 'chief_engineer', 'director', 'qa', 'architect'];
   const missing: VisualRoleId[] = [];
   const incomplete: VisualRoleId[] = [];
 
@@ -589,7 +589,7 @@ export const validateRoleAssignments = (
 export const getConfigSummary = (config: VisualGraphConfig): string => {
   const assignments: string[] = [];
 
-  const roleOrder: VisualRoleId[] = ['pm', 'director', 'qa', 'architect'];
+  const roleOrder: VisualRoleId[] = ['pm', 'chief_engineer', 'director', 'qa', 'architect'];
   roleOrder.forEach((roleId) => {
     const roleCfg = config.roles?.[roleId] || (roleId === 'architect' ? config.roles?.docs : undefined);
     if (roleCfg?.provider_id && roleCfg?.model) {

@@ -185,7 +185,7 @@ class TestLlmRouter:
         payload: dict[str, Any] = response.json()
         assert "roles" in payload
         assert "timestamp" in payload
-        for role in ("pm", "director", "qa", "architect"):
+        for role in ("pm", "chief_engineer", "director", "qa", "architect"):
             assert role in payload["roles"]
 
     def test_get_role_runtime_status_happy_path(self) -> None:
@@ -215,6 +215,33 @@ class TestLlmRouter:
         payload: dict[str, Any] = response.json()
         assert payload["roleId"] == "director"
         assert "running" in payload
+
+    def test_get_role_runtime_status_chief_engineer(self) -> None:
+        """GET /llm/runtime-status/{role_id} returns 200 for Chief Engineer."""
+        client = _build_client()
+        with (
+            patch(
+                "polaris.delivery.http.routers.llm.build_cache_root",
+                return_value="/tmp/cache",
+            ),
+            patch(
+                "polaris.delivery.http.routers.llm.resolve_artifact_path",
+                return_value="/tmp/runtime",
+            ),
+            patch(
+                "polaris.delivery.http.routers.llm.os.path.exists",
+                return_value=False,
+            ),
+            patch(
+                "polaris.delivery.http.routers.llm.load_role_config",
+                return_value=None,
+            ),
+        ):
+            response = client.get("/llm/runtime-status/chief_engineer")
+
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["roleId"] == "chief_engineer"
 
     def test_get_role_runtime_status_invalid_role(self) -> None:
         """GET /llm/runtime-status/{role_id} returns 400 for invalid role."""

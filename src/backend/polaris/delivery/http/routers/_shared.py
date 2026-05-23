@@ -30,7 +30,7 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
     workspace = _workspace_value(state.settings)
     cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
-    index = load_llm_test_index(state.settings)
+    index = load_llm_test_index(workspace)
     role_status = (index.get("roles") or {}).get(role) if isinstance(index, dict) else None
     if not isinstance(role_status, dict) or not role_status.get("ready"):
         raise HTTPException(status_code=409, detail=f"{role} LLM not ready; run tests first")

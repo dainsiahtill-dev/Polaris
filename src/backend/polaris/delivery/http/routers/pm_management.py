@@ -28,6 +28,7 @@ from polaris.delivery.http.schemas.common import (
     TaskListResponse,
     TaskSearchResponse,
 )
+from polaris.delivery.http.workspace import active_workspace_value
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/pm", tags=["PM Management"])
@@ -46,12 +47,7 @@ def _resolve_document_path(workspace: str, doc_path: str) -> str:
 
 def _workspace_value(settings: Any) -> str:
     """Resolve the active PM workspace from desktop settings."""
-    for attr in ("workspace_path", "workspace"):
-        raw_value = getattr(settings, attr, "")
-        value = str(raw_value or "").strip()
-        if value:
-            return value
-    return ""
+    return active_workspace_value(settings)
 
 
 def _workspace_from_request(request: Request) -> str:
@@ -238,35 +234,6 @@ def list_documents(
     return result
 
 
-@router.get("/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDetailResponse)
-def get_document(
-    request: Request,
-    doc_path: str,
-    version: str | None = Query(None, description="Specific version (default: current)"),
-) -> dict[str, Any]:
-    """Get document information including versions and analysis."""
-    workspace = _workspace_from_request(request)
-
-    pm = _get_pm_instance(workspace)
-
-    if not pm.is_initialized():
-        raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
-
-    # Resolve full path
-    full_path = _resolve_document_path(workspace, doc_path)
-
-    doc_info = pm.get_document(full_path)
-    if doc_info is None:
-        raise StructuredHTTPException(status_code=404, code="DOCUMENT_NOT_FOUND", message="Document not found")
-
-    # Add content if requested
-    content = pm.get_document_content(full_path, version)
-    if content is not None:
-        doc_info["content"] = content
-
-    return doc_info
-
-
 @router.post("/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentWriteResponse)
 def create_or_update_document(
     request: Request,
@@ -404,6 +371,35 @@ def compare_document_versions(
         else diff.get("removed_requirements", []),
         "impact_score": diff.impact_score if hasattr(diff, "impact_score") else diff.get("impact_score", 0.0),
     }
+
+
+@router.get("/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentDetailResponse)
+def get_document(
+    request: Request,
+    doc_path: str,
+    version: str | None = Query(None, description="Specific version (default: current)"),
+) -> dict[str, Any]:
+    """Get document information including versions and analysis."""
+    workspace = _workspace_from_request(request)
+
+    pm = _get_pm_instance(workspace)
+
+    if not pm.is_initialized():
+        raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
+
+    # Resolve full path
+    full_path = _resolve_document_path(workspace, doc_path)
+
+    doc_info = pm.get_document(full_path)
+    if doc_info is None:
+        raise StructuredHTTPException(status_code=404, code="DOCUMENT_NOT_FOUND", message="Document not found")
+
+    # Add content if requested
+    content = pm.get_document_content(full_path, version)
+    if content is not None:
+        doc_info["content"] = content
+
+    return doc_info
 
 
 @router.get("/search/documents", dependencies=[Depends(require_auth)], response_model=DocumentSearchResponse)

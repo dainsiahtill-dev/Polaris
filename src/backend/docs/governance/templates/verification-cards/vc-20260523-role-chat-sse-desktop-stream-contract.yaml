@@ -1,0 +1,81 @@
+id: vc-20260523-role-chat-sse-desktop-stream-contract
+title: Role chat SSE desktop stream contract
+date: "2026-05-23"
+classification: one_off
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py
+related_blueprint: src/backend/docs/blueprints/ROLE_CHAT_SSE_DESKTOP_STREAM_CONTRACT_20260523.md
+assumption_register:
+  - id: A1
+    statement: PM, Director, and Chief Engineer desktop dialogue can use the generic role chat stream endpoint.
+    evidence:
+      - src/frontend/src/app/components/ai-dialogue/useAIDialogue.ts
+      - src/frontend/src/services/llmService.ts
+    verified: true
+  - id: A2
+    statement: The role chat stream router emits SSE frames through sse_event_generator.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/role_chat.py
+      - src/backend/polaris/delivery/http/routers/sse_utils.py
+    verified: true
+  - id: A3
+    statement: Deterministic fake stream producers can be consumed by the current httpx ASGI test client.
+    evidence:
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py
+    verified: true
+pre_mortem:
+  - risk: Tests could assert only HTTP 200 and miss broken event framing.
+    mitigation: Assert thinking_chunk, content_chunk, and complete SSE event frames.
+  - risk: PM-only coverage could miss role-specific validation drift for Director and Chief Engineer.
+    mitigation: Add a registered-role success test for director and chief_engineer.
+  - risk: Fake streaming could bypass readiness checks.
+    mitigation: Keep get_registered_roles and ensure_required_roles_ready patches explicit in each test.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py --fix
+    expected: Role chat router tests pass Ruff checks.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py
+    expected: Role chat router tests are formatted.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py
+    expected: Role chat router tests type-check.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -q
+    expected: Role chat stream success tests pass without skips.
+  - command: npm run test -- useAIDialogue AIDialoguePanel RoleChatPanel llmService
+    expected: Frontend generic dialogue stream regressions pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace useAIDialogue AIDialoguePanel RoleChatPanel llmService
+    expected: PM, Chief Engineer, Director, and dialogue desktop regressions pass.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -q
+    expected: Role chat, RoleSession, and v2 role route regressions pass.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py --fix
+    result: PASS
+    evidence: All checks passed.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py
+    result: PASS
+    evidence: 1 file left unchanged.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py
+    result: PASS
+    evidence: Success, no issues found in 1 source file.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -q
+    result: PASS
+    evidence: 14 tests passed.
+  - command: npm run test -- useAIDialogue AIDialoguePanel RoleChatPanel llmService
+    result: PASS
+    evidence: 4 test files passed, 25 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace useAIDialogue AIDialoguePanel RoleChatPanel llmService
+    result: PASS
+    evidence: 11 test files passed, 69 tests passed.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_session_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py -q
+    result: PASS
+    evidence: 56 tests passed.

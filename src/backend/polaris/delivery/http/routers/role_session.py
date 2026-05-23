@@ -49,6 +49,7 @@ from polaris.delivery.http.schemas.common import (
     SessionResponse,
     WorkflowExportResponse,
 )
+from polaris.delivery.http.workspace import active_workspace_value
 from polaris.domain.entities.capability import get_role_capabilities as get_caps
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.context.session_continuity import (
@@ -205,12 +206,7 @@ def _build_task_filter_from_artifacts(artifacts: list[Any]) -> str:
 
 def _workspace_value(settings: Any) -> str:
     """Resolve active desktop workspace with legacy fallback."""
-    for attr in ("workspace_path", "workspace"):
-        value = getattr(settings, attr, "")
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
+    return active_workspace_value(settings)
 
 
 def _active_workspace(request: Request) -> str:

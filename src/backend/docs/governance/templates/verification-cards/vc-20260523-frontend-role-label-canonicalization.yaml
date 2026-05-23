@@ -1,0 +1,61 @@
+card_id: "vc-20260523-frontend-role-label-canonicalization"
+bug_summary: >
+  Frontend role label maps can swap Director and Chief Engineer, breaking the
+  PM -> Chief Engineer -> Director desktop hierarchy.
+
+classification: pattern
+
+bug_path:
+  file: "src/frontend/src/app/components/**"
+  method: "duplicated role-label maps"
+  symptom: >
+    Director can appear as Chief Engineer in LLM settings and process monitor
+    surfaces, while Chief Engineer can appear as Director in process monitor
+    surfaces.
+
+assumptions:
+  - id: "A1"
+    statement: "UI_TERMS.roles is already the canonical frontend role wording source."
+    status: verified_true
+    evidence: >
+      uiTerminology.ts defines pm, director, chief_engineer, qa, architect,
+      cfo, and hr labels; ControlPanel and RealTimeStatusBar already consume it.
+
+  - id: "A2"
+    statement: "The affected surfaces are user-visible for PM/Chief Engineer/Director desktop workflows."
+    status: verified_true
+    evidence: >
+      ProcessMonitorSidebar is part of desktop monitoring, while
+      UnifiedLlmDataManagerV2 and VisualModelNode feed LLM role assignment UI.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Replacing only one incorrect string leaves the next role surface with the
+    same swapped wording.
+  guardrail: >
+    Create one role label helper and test Director/Chief Engineer labels from
+    each affected projection.
+
+verification_plan:
+  - command: "npm run test -- roleLabels UnifiedLlmDataManagerV2 VisualModelNode ProcessMonitorSidebar copySync"
+    expected: "All targeted frontend tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run lint"
+    expected: "ESLint passes"
+
+verification_results:
+  - command: "npm run test -- roleLabels UnifiedLlmDataManagerV2 VisualModelNode ProcessMonitorSidebar copySync"
+    result: pass
+    evidence: "5 test files passed; 9 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    result: pass
+    evidence: "eslint completed successfully."
+  - command: "npm run test -- PMPage ChiefEngineerPage DirectorPage FactoryWorkspace LlmRuntimeOverlay"
+    result: pass
+    evidence: "5 test files passed; 20 tests passed."
+
+status: passed

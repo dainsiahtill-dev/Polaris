@@ -1,0 +1,81 @@
+card_id: "vc-20260523-chief-engineer-llm-role-coverage"
+bug_summary: >
+  Chief Engineer is a desktop role workspace but is missing from several LLM
+  default/config/runtime role lists.
+
+classification: pattern
+
+bug_path:
+  file: "backend LLM config/runtime status and frontend LLM canonical state"
+  method: "hard-coded role arrays"
+  symptom: >
+    Chief Engineer can be visible in role workspaces and visual graph surfaces
+    but absent from default LLM config, runtime status, and frontend canonical
+    assignment state.
+
+assumptions:
+  - id: "A1"
+    statement: "Chief Engineer is a first-class supported role."
+    status: verified_true
+    evidence: >
+      RoleChat tests, role router tests, visual role types, CE workspace, and
+      graph assets all reference chief_engineer.
+
+  - id: "A2"
+    statement: "Default LLM config should expose every desktop role that needs LLM configuration."
+    status: verified_true
+    evidence: >
+      LLM settings and runtime status are the desktop surfaces used to assign
+      providers/models and inspect role runtime readiness.
+
+pre_mortem:
+  likely_wrong_fix: >
+    Adding Chief Engineer only to the frontend would still leave new/default
+    backend configs without a CE role binding.
+  guardrail: >
+    Update backend defaults, backend runtime status, frontend canonical state,
+    and visual validation together with targeted tests.
+
+verification_plan:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/kernelone/llm/config_store.py src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py --fix"
+    expected: "All checks passed"
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/kernelone/llm/config_store.py src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py"
+    expected: "Formatting complete"
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/kernelone/llm/config_store.py src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py"
+    expected: "Success: no issues found"
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py -q"
+    expected: "All targeted backend tests pass"
+  - command: "npm run test -- UnifiedLlmDataManagerV2 copySync"
+    expected: "All targeted frontend tests pass"
+  - command: "npm run typecheck"
+    expected: "TypeScript typecheck passes"
+  - command: "npm run lint"
+    expected: "ESLint passes"
+
+verification_results:
+  - command: ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/kernelone/llm/config_store.py src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py --fix"
+    result: pass
+    evidence: "All checks passed."
+  - command: ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/kernelone/llm/config_store.py src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py"
+    result: pass
+    evidence: "5 files left unchanged."
+  - command: ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/kernelone/llm/config_store.py src/backend/polaris/delivery/http/routers/llm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py"
+    result: pass
+    evidence: "Success: no issues found in 5 source files."
+  - command: ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_llm_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py -q"
+    result: pass
+    evidence: "63 passed."
+  - command: "npm run test -- UnifiedLlmDataManagerV2 copySync"
+    result: pass
+    evidence: "2 test files passed; 6 tests passed."
+  - command: "npm run typecheck"
+    result: pass
+    evidence: "tsc --noEmit completed successfully."
+  - command: "npm run lint"
+    result: pass
+    evidence: "eslint completed successfully."
+  - command: "npm run test -- PMPage ChiefEngineerPage DirectorPage LlmRuntimeOverlay roleLabels ProcessMonitorSidebar"
+    result: pass
+    evidence: "6 test files passed; 17 tests passed."
+
+status: passed

@@ -1,4 +1,5 @@
 import type { Connection, Node } from '@xyflow/react';
+import { getRoleDisplayLabel } from '@/app/constants/roleLabels';
 import type { VisualGraphConfig, ValidationIssue, VisualNodeData, VisualRoleId } from '../types/visual';
 
 export const isValidVisualConnection = (
@@ -92,17 +93,7 @@ export const validateVisualGraph = (
 };
 
 export const getRoleLabel = (roleId: VisualRoleId | string): string => {
-  const labels: Record<string, string> = {
-    pm: 'PM',
-    director: 'Director',
-    chief_engineer: 'Chief Engineer',
-    qa: 'QA',
-    architect: 'Architect',
-    cfo: 'CFO',
-    hr: 'HR',
-    docs: 'Architect',
-  };
-  return labels[roleId] || roleId;
+  return getRoleDisplayLabel(roleId);
 };
 
 export const getValidationSeverity = (issue: ValidationIssue): 'error' | 'warning' => {

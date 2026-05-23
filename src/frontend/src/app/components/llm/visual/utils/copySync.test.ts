@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildVisualGraph } from './configConverter';
+import { buildVisualGraph, getConfigSummary, validateRoleAssignments } from './configConverter';
 import { getRoleLabel, validateVisualGraph } from './validation';
 import type { VisualGraphConfig } from '../types/visual';
 
@@ -19,6 +19,7 @@ describe('visual copy sync', () => {
 
     expect(roleLabels.get('role:pm')).toBe('PM');
     expect(roleLabels.get('role:director')).toBe('Director');
+    expect(roleLabels.get('role:chief_engineer')).toBe('Chief Engineer');
     expect(roleLabels.get('role:qa')).toBe('QA');
     expect(roleLabels.get('role:architect')).toBe('Architect');
   });
@@ -40,5 +41,23 @@ describe('visual copy sync', () => {
     expect(getRoleLabel('qa')).toBe('QA');
     expect(getRoleLabel('architect')).toBe('Architect');
     expect(getRoleLabel('docs')).toBe('Architect');
+  });
+
+  it('requires Chief Engineer in role assignment validation and summary', () => {
+    const config: VisualGraphConfig = {
+      providers: {
+        openai_compat: { type: 'openai_compat' },
+      },
+      roles: {
+        pm: { provider_id: 'openai_compat', model: 'qwen3-max' },
+        director: { provider_id: 'openai_compat', model: 'qwen3-max' },
+        qa: { provider_id: 'openai_compat', model: 'qwen3-max' },
+        architect: { provider_id: 'openai_compat', model: 'qwen3-max' },
+      },
+    };
+
+    const validation = validateRoleAssignments(config);
+    expect(validation.missing).toContain('chief_engineer');
+    expect(getConfigSummary(config)).toContain('chief_engineer: [未配置]');
   });
 });

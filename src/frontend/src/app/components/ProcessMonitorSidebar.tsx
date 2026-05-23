@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { FileJson, Terminal, Activity, Folder, TrendingUp, PieChart, RefreshCw, Zap, Cpu, Bot, Sparkles, Shield, BookOpen, Server } from 'lucide-react';
+import { getRoleDisplayLabel } from '@/app/constants/roleLabels';
 import { LogViewer } from './LogViewer';
 import { ArtifactsSidebar, type ArtifactItem } from './ArtifactsSidebar';
 import type { UsageStats } from './UsageHUD';
@@ -7,14 +8,14 @@ import type { UsageStats } from './UsageHUD';
 /**
  * 映射后端类型为可读的中文名称
  */
-function getReadableBackendName(mode: string): { label: string; icon: React.ReactNode; description: string } {
+export function getReadableBackendName(mode: string): { label: string; icon: React.ReactNode; description: string } {
   const modeMap: Record<string, { label: string; icon: React.ReactNode; description: string }> = {
     // 角色相关
-    pm: { label: 'PM', icon: <Bot className="size-3 text-blue-400" />, description: 'PM 任务规划' },
-    director: { label: 'Chief Engineer', icon: <Server className="size-3 text-purple-400" />, description: '代码执行' },
-    architect: { label: 'Architect', icon: <BookOpen className="size-3 text-emerald-400" />, description: '架构设计' },
-    chief_engineer: { label: 'Director', icon: <Shield className="size-3 text-amber-400" />, description: '技术审查' },
-    qa: { label: 'QA', icon: <Shield className="size-3 text-red-400" />, description: '质量审查' },
+    pm: { label: getRoleDisplayLabel('pm'), icon: <Bot className="size-3 text-blue-400" />, description: 'PM 任务规划' },
+    director: { label: getRoleDisplayLabel('director'), icon: <Server className="size-3 text-purple-400" />, description: '代码执行' },
+    architect: { label: getRoleDisplayLabel('architect'), icon: <BookOpen className="size-3 text-emerald-400" />, description: '架构设计' },
+    chief_engineer: { label: getRoleDisplayLabel('chief_engineer'), icon: <Shield className="size-3 text-amber-400" />, description: '技术审查' },
+    qa: { label: getRoleDisplayLabel('qa'), icon: <Shield className="size-3 text-red-400" />, description: '质量审查' },
     
     // Provider 类型
     generic: { label: '通用 Provider', icon: <Sparkles className="size-3 text-cyan-400" />, description: '默认运行时 Provider' },

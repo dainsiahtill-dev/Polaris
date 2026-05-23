@@ -77,6 +77,23 @@ describe('LlmRuntimeOverlay', () => {
     expect(screen.getByText('blocked: pm, director')).toBeInTheDocument();
   });
 
+  it('keeps Factory runtime details collapsed until the user opens them', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        activeView="factory"
+        pmRunning={true}
+        llmState="blocked"
+        llmRequiredRoles={['pm', 'director', 'qa']}
+        llmBlockedRoles={['pm']}
+      />
+    );
+
+    expect(screen.getByTestId('llm-runtime-overlay')).toHaveClass('sm:w-[320px]');
+    expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('grid-rows-[0fr]');
+    expect(screen.getByText('LLM Runtime')).toBeInTheDocument();
+  });
+
   it('filters structured JSON fragments from the real-time event list', () => {
     const timestamp = new Date().toISOString();
     render(

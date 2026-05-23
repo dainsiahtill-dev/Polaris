@@ -262,6 +262,7 @@ export function LlmRuntimeOverlay({
   fileEditEvents = [],
 }: LlmRuntimeOverlayProps) {
   const [expanded, setExpanded] = useState(false);
+  const compactFactoryMode = activeView === 'factory';
   const running = pmRunning || directorRunning;
   const llmStateToken = normalizeStateToken(llmState);
   const runtimeActive = running || isActiveRuntimePhase(currentPhase);
@@ -280,10 +281,13 @@ export function LlmRuntimeOverlay({
   );
 
   useEffect(() => {
+    if (compactFactoryMode) {
+      return;
+    }
     if (running || websocketReconnecting || isLlmBlocked) {
       setExpanded(true);
     }
-  }, [running, websocketReconnecting, isLlmBlocked]);
+  }, [compactFactoryMode, running, websocketReconnecting, isLlmBlocked]);
 
   const recentSteps = useMemo(() => {
     const now = Date.now();
@@ -341,7 +345,15 @@ export function LlmRuntimeOverlay({
   const socketBadgeColor = websocketLive ? 'success' : websocketReconnecting ? 'warning' : 'error';
 
   return (
-    <div data-testid="llm-runtime-overlay" className="pointer-events-none fixed bottom-16 right-3 z-40 w-[min(94vw,420px)] sm:bottom-6 sm:right-4 sm:w-[400px]">
+    <div
+      data-testid="llm-runtime-overlay"
+      className={cn(
+        'pointer-events-none fixed right-3 z-40 w-[min(94vw,420px)] sm:right-4',
+        compactFactoryMode
+          ? 'bottom-3 sm:bottom-4 sm:w-[320px]'
+          : 'bottom-16 sm:bottom-6 sm:w-[400px]',
+      )}
+    >
       {/* Cyberpunk + Han/Tang fusion container */}
       <div className="pointer-events-auto rounded-2xl border border-amber-400/20 bg-gradient-to-br from-[#0a0f1a] via-[#0d1525] to-[#0a0f1a] shadow-[0_18px_40px_rgba(0,0,0,0.5),0_0_30px_rgba(200,160,60,0.05)] backdrop-blur-xl">
         {/* Glow accent line */}
@@ -394,6 +406,7 @@ export function LlmRuntimeOverlay({
         </button>
 
         <div
+          data-testid="llm-runtime-overlay-details"
           className={cn(
             'grid transition-all duration-300',
             expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',

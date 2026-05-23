@@ -4,6 +4,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
 from polaris.cells.llm.provider_runtime.public.service import is_role_runtime_supported
@@ -25,10 +26,30 @@ def load_interview_history_summary(settings: Settings) -> dict[str, Any]:
     }
 
 
+def _workspace_text(value: Any) -> str:
+    if isinstance(value, Mock):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, os.PathLike):
+        path = os.fspath(value)
+        return path.strip() if isinstance(path, str) else ""
+    return ""
+
+
+def _active_workspace(settings: Settings) -> str:
+    for attr in ("workspace_path", "workspace"):
+        text = _workspace_text(getattr(settings, attr, ""))
+        if text:
+            return text
+    return ""
+
+
 def build_llm_status(settings: Settings) -> dict[str, Any]:
-    cache_root = build_cache_root(str(settings.ramdisk_root or ""), str(settings.workspace))
-    config = llm_config.load_llm_config(str(settings.workspace), cache_root, settings=settings)
-    index = load_llm_test_index(settings)
+    workspace = _active_workspace(settings)
+    cache_root = build_cache_root(str(settings.ramdisk_root or ""), workspace)
+    config = llm_config.load_llm_config(workspace, cache_root, settings=settings)
+    index = load_llm_test_index(workspace)
 
     roles_cfg = config.get("roles", {}) if isinstance(config.get("roles"), dict) else {}
     providers_cfg = config.get("providers", {}) if isinstance(config.get("providers"), dict) else {}
@@ -94,7 +115,7 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
 
     interview_summary = load_interview_history_summary(settings)
 
-    config_path = llm_config.llm_config_path(str(settings.workspace), cache_root)
+    config_path = llm_config.llm_config_path(workspace, cache_root)
     last_updated: str | None = None
     if os.path.isfile(config_path):
         try:

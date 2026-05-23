@@ -1,0 +1,26 @@
+id: vc-20260523-pm-desktop-tasks-adapter-llm-gate-contract
+title: PM desktop task adapter and LLM gate contract
+date: 2026-05-23
+status: passed
+scope:
+  - src/backend/polaris/delivery/http/adapters/scripts_pm.py
+  - src/backend/polaris/delivery/http/routers/pm_management.py
+  - src/backend/polaris/cells/runtime/projection/internal/llm_status.py
+  - src/backend/polaris/tests/unit/delivery/http/adapters/test_scripts_pm.py
+  - src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py
+  - src/backend/polaris/tests/test_llm_phase0_regression.py
+checks:
+  - ruff check backend changed files --fix
+  - ruff format backend changed files
+  - mypy backend changed files
+  - pytest targeted PM adapter, PM management router, and LLM regression tests
+evidence:
+  blueprint: src/backend/docs/blueprints/PM_DESKTOP_TASKS_ADAPTER_LLM_GATE_CONTRACT_20260523.md
+  command_logs:
+    - ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/adapters/scripts_pm.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/adapters/test_scripts_pm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py --fix"
+    - ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/adapters/scripts_pm.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/adapters/test_scripts_pm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py"
+    - ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/adapters/scripts_pm.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/unit/delivery/http/adapters/test_scripts_pm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py"
+    - ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/adapters/test_scripts_pm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py -q"
+    - ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/adapters/test_scripts_pm.py src/backend/polaris/tests/test_llm_phase0_regression.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -q"
+risks:
+  - Full Electron Factory E2E remains a separate end-to-end acceptance run.

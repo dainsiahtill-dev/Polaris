@@ -161,12 +161,12 @@ export const processService = {
 
   async startDirector(): Promise<ApiResult<void>> {
     const res = await apiFetch('/v2/director/start', { method: 'POST' });
-    return handleResponse(res, 'Failed to start Chief Engineer');
+    return handleResponse(res, 'Failed to start Director');
   },
 
   async stopDirector(): Promise<ApiResult<void>> {
     const res = await apiFetch('/v2/director/stop', { method: 'POST' });
-    return handleResponse(res, 'Failed to stop Chief Engineer');
+    return handleResponse(res, 'Failed to stop Director');
   },
 };
 

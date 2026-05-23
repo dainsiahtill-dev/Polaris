@@ -1,13 +1,6 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
+import { getRoleDisplayLabel } from '@/app/constants/roleLabels';
 import type { VisualModelNodeData } from '../types/visual';
-
-const ROLE_LABELS: Record<string, string> = {
-  pm: 'PM',
-  director: 'Chief Engineer',
-  qa: 'QA',
-  architect: 'Architect',
-  docs: 'Architect',
-};
 
 export function VisualModelNode({ data }: NodeProps<Node<VisualModelNodeData>>) {
   return (
@@ -20,7 +13,7 @@ export function VisualModelNode({ data }: NodeProps<Node<VisualModelNodeData>>) 
         <div className="mt-2 flex flex-wrap gap-1">
           {data.assignedRoles.map((role) => (
             <span key={role} className="rounded bg-emerald-500/20 px-2 py-0.5 text-[9px] text-emerald-200">
-              {ROLE_LABELS[role] || role}
+              {getRoleDisplayLabel(role)}
             </span>
           ))}
         </div>

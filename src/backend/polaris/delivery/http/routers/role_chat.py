@@ -27,6 +27,7 @@ from polaris.delivery.http.schemas import (
     RoleListResponse,
     RoleLLMEventsResponse,
 )
+from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
@@ -51,11 +52,9 @@ async def role_chat_ping() -> dict[str, Any]:
     }
 
 
-async def _load_llm_test_index_async(settings: Any) -> dict[str, Any]:
+async def _load_llm_test_index_async(workspace: str) -> dict[str, Any]:
     """异步加载 LLM 测试索引（将同步文件 I/O 移到线程池）"""
-    import asyncio
-
-    return await asyncio.to_thread(load_llm_test_index, settings)
+    return await asyncio.to_thread(load_llm_test_index, workspace)
 
 
 async def _load_llm_config_async(workspace: str, cache_root: str, settings: Any) -> dict[str, Any]:
@@ -67,12 +66,7 @@ async def _load_llm_config_async(workspace: str, cache_root: str, settings: Any)
 
 def _workspace_value(settings: Any) -> str:
     """Resolve the active desktop workspace with legacy fallback."""
-    for attr in ("workspace_path", "workspace"):
-        value = getattr(settings, attr, "")
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
+    return active_workspace_value(settings)
 
 
 @router.get("/v2/role/{role}/chat/status", dependencies=[Depends(require_auth)], response_model=RoleChatStatusResponse)
@@ -96,7 +90,7 @@ async def role_chat_status(
 
         # 评测索引用于补充状态，不应误判为“未配置”。
         # 使用线程池执行文件 I/O 操作，避免阻塞事件循环
-        index = await _load_llm_test_index_async(state.settings)
+        index = await _load_llm_test_index_async(workspace)
         role_status = (index.get("roles") or {}).get(role) if isinstance(index, dict) else None
         llm_test_ready = bool(isinstance(role_status, dict) and role_status.get("ready"))
 

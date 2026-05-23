@@ -1,0 +1,82 @@
+id: vc-20260523-pm-document-subroute-order-contract
+title: PM document subroute order contract
+date: "2026-05-23"
+classification: one_off
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/delivery/http/routers/pm_management.py
+  - src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py
+related_blueprint: src/backend/docs/blueprints/PM_DOCUMENT_SUBROUTE_ORDER_CONTRACT_20260523.md
+assumption_register:
+  - id: A1
+    statement: PM document versions and compare are desktop-facing document workflow APIs.
+    evidence:
+      - src/frontend/src/app/components/pm/PMDocumentPanel.tsx
+      - src/frontend/src/services/pmService.ts
+    verified: true
+  - id: A2
+    statement: Legacy PM document versions and compare tests are skipped because the generic path route shadows them.
+    evidence:
+      - src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py
+      - src/backend/polaris/delivery/http/routers/pm_management.py
+    verified: true
+  - id: A3
+    statement: FastAPI dispatch uses route declaration order for overlapping path patterns.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_management.py
+    verified: true
+pre_mortem:
+  - risk: Moving the generic document detail route could break normal document reads.
+    mitigation: Keep the same handler and retain existing get document integration tests.
+  - risk: Only legacy routes might be fixed while v2 desktop aliases regress.
+    mitigation: Run PMDocumentPanel and pmService frontend tests plus backend PM management integration tests.
+  - risk: The skipped tests might still not assert the intended handler.
+    mitigation: Assert versions and diff payload fields and query validation status.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py --fix
+    expected: Backend route and integration tests pass Ruff checks.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py
+    expected: Backend route and integration tests are formatted.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py
+    expected: Backend route and integration tests type-check.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py -q
+    expected: PM management integration tests pass with document subroute tests active.
+  - command: npm run test -- PMDocumentPanel pmService
+    expected: PM desktop document panel and service URL regressions pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMDocumentPanel pmService
+    expected: PM, Chief Engineer, Director, and PM document desktop regressions pass.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q
+    expected: Legacy and v2 PM management route regressions pass.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py --fix
+    result: PASS
+    evidence: All checks passed.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py
+    result: PASS
+    evidence: 2 files left unchanged.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/pm_management.py src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py
+    result: PASS
+    evidence: Success, no issues found in 2 source files.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py -q
+    result: PASS
+    evidence: 30 tests passed.
+  - command: npm run test -- PMDocumentPanel pmService
+    result: PASS
+    evidence: 2 test files passed, 77 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace PMDocumentPanel pmService
+    result: PASS
+    evidence: 9 test files passed, 121 tests passed.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_management_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_management_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q
+    result: PASS
+    evidence: 93 tests passed, 1 expected deprecation warning for /pm/start_loop.

@@ -1,0 +1,85 @@
+id: vc-20260523-pm-chat-active-workspace-stream-contract
+title: PM chat active workspace stream contract
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/delivery/http/routers/pm_chat.py
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py
+related_blueprint: src/backend/docs/blueprints/PM_CHAT_ACTIVE_WORKSPACE_STREAM_CONTRACT_20260523.md
+assumption_register:
+  - id: A1
+    statement: Desktop routes should prefer settings.workspace_path and fall back to settings.workspace.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/role_chat.py
+      - src/backend/polaris/delivery/http/routers/role_session.py
+    verified: true
+  - id: A2
+    statement: PM-specific chat routes still use settings.workspace directly.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_chat.py
+    verified: true
+  - id: A3
+    statement: PM-specific stream success coverage is skipped even though deterministic SSE consumption is supported.
+    evidence:
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py
+    verified: true
+pre_mortem:
+  - risk: Fixing chat but not status would leave PM LLM readiness bound to the wrong workspace.
+    mitigation: Use the resolver in chat, stream, and status.
+  - risk: The stream test could assert only HTTP 200 and miss broken SSE frames.
+    mitigation: Assert content_chunk and complete event frames.
+  - risk: Active workspace tests could pass without checking the generated service call.
+    mitigation: Assert the mocked LLM/config calls receive workspace_path.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py --fix
+    expected: PM chat route and tests pass Ruff checks.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py
+    expected: PM chat route and tests are formatted.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py
+    expected: PM chat route and tests type-check.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py -q
+    expected: PM chat tests pass without stream success skip.
+  - command: npm run test -- PMPage PMWorkspace PMAIDialoguePanel useAIDialogue llmService
+    expected: PM desktop dialogue and generic stream regressions pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: Frontend lint passes.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace useAIDialogue AIDialoguePanel llmService
+    expected: PM, Chief Engineer, Director, and dialogue desktop regressions pass.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q
+    expected: PM chat, generic role chat, and v2 PM route regressions pass.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py --fix
+    result: PASS
+    evidence: All checks passed.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py
+    result: PASS
+    evidence: 2 files left unchanged.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py
+    result: PASS
+    evidence: Success, no issues found in 2 source files.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py -q
+    result: PASS
+    evidence: 15 tests passed.
+  - command: npm run test -- PMPage PMWorkspace useAIDialogue AIDialoguePanel llmService
+    result: PASS
+    evidence: 5 test files passed, 30 tests passed.
+  - command: npm run typecheck
+    result: PASS
+    evidence: TypeScript compilation completed with no diagnostics.
+  - command: npm run lint
+    result: PASS
+    evidence: ESLint completed with no diagnostics.
+  - command: npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace useAIDialogue AIDialoguePanel llmService
+    result: PASS
+    evidence: 10 test files passed, 67 tests passed.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q
+    result: PASS
+    evidence: 55 tests passed, 1 expected deprecation warning for /pm/start_loop.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -q
+    result: PASS
+    evidence: Included in combined backend run; PM chat integration SSE, active workspace status, and generic role chat regressions passed.

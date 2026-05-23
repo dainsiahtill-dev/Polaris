@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -41,16 +42,16 @@ class ScriptsPMAdapter:
             return self._pm_module
 
         try:
-            from polaris.delivery.cli.pm import pm_integration as module
-
-            self._pm_module = module
-            return module
+            module = importlib.import_module("polaris.delivery.cli.pm.pm_integration")
         except ImportError as exc:
             raise ImportError(
                 "Unable to import 'polaris.delivery.cli.pm.pm_integration'. "
                 "Ensure backend bootstrap adds src/backend to PYTHONPATH before "
                 "constructing ScriptsPMAdapter."
             ) from exc
+
+        self._pm_module = module
+        return module
 
     def get_pm(self) -> Any:
         """Get the PM instance for the workspace.

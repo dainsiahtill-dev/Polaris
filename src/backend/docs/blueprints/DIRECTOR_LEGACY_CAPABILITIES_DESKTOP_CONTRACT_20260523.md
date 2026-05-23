@@ -44,7 +44,12 @@ SystemServicesTab
 
 ## Verification Plan
 
+- `.venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py --fix`
+- `.venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py`
+- `.venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/arsenal.py src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py`
 - `pytest src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py -q`
 - `npm run test -- SystemServicesTab`
 - `npm run typecheck`
 - `npm run lint`
+- `npm run test -- PMPage ChiefEngineerPage DirectorPage PMWorkspace ChiefEngineerWorkspace DirectorWorkspace SystemServicesTab`
+- `pytest src/backend/polaris/tests/integration/delivery/routers/test_arsenal_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_arsenal_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q`

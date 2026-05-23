@@ -656,6 +656,11 @@ def build_default_config(settings: Any | None = None) -> dict[str, Any]:
         "providers": providers,
         "roles": {
             "pm": {"provider_id": pm_provider_id, "model": pm_model, "profile": "pm-default"},
+            "chief_engineer": {
+                "provider_id": docs_provider_id,
+                "model": docs_model,
+                "profile": "chief-engineer-blueprint",
+            },
             "director": {"provider_id": "ollama", "model": director_model, "profile": "director-default"},
             "qa": {"provider_id": "ollama", "model": director_model, "profile": "qa-strict"},
             "architect": {"provider_id": docs_provider_id, "model": docs_model, "profile": "architect-writer"},

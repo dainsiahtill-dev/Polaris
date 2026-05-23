@@ -1,0 +1,54 @@
+id: vc-20260523-factory-chief-engineer-evidence-projection
+title: Factory Chief Engineer evidence projection
+date: "2026-05-23"
+classification: pattern
+status: planned
+owner: codex
+scope:
+  - src/backend/polaris/delivery/http/routers/factory.py
+  - src/backend/polaris/tests/test_factory_router.py
+  - src/frontend/src/app/components/factory/FactoryWorkspace.tsx
+  - src/frontend/src/app/components/factory/FactoryWorkspace.test.tsx
+related_blueprint: src/backend/docs/blueprints/FACTORY_CHIEF_ENGINEER_EVIDENCE_PROJECTION_20260523.md
+assumption_register:
+  - id: A1
+    statement: Factory CE stage artifacts are currently stored in stage result events, not surfaced through the artifacts endpoint unless copied to the run artifact directory.
+    evidence:
+      - src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py
+      - src/backend/polaris/delivery/http/routers/factory.py
+    verified: true
+  - id: A2
+    statement: FactoryWorkspace already receives artifact endpoint data and can use it without adding another backend endpoint.
+    evidence:
+      - src/frontend/src/hooks/useFactory.ts
+      - src/frontend/src/app/components/factory/FactoryWorkspace.tsx
+    verified: true
+  - id: A3
+    statement: Chief Engineer blueprint artifacts can be identified by runtime/blueprints and runtime/state/blueprints paths.
+    evidence:
+      - src/backend/polaris/cells/chief_engineer/blueprint/public/service.py
+      - src/backend/polaris/cells/chief_engineer/blueprint/cell.yaml
+    verified: true
+pre_mortem:
+  - risk: Including every stage artifact could expose stale or non-existent paths.
+    mitigation: Only include event artifact paths that resolve and exist as files.
+  - risk: Frontend evidence could duplicate PM task blueprint fields and runtime artifacts.
+    mitigation: Deduplicate Chief Engineer evidence by path or id.
+  - risk: Changing the status response would break contract snapshots.
+    mitigation: Keep status response unchanged; extend artifact response behavior only.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_router.py --fix
+    expected: Ruff reports no remaining issues.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_router.py
+    expected: Formatting completes.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_router.py
+    expected: Mypy succeeds.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/test_factory_router.py src/backend/polaris/tests/test_factory_run_service.py -q
+    expected: Factory backend regressions pass.
+  - command: npm run test -- FactoryWorkspace useFactory
+    expected: Factory frontend and hook regressions pass.
+  - command: npm run typecheck
+    expected: TypeScript compilation passes.
+  - command: npm run lint
+    expected: ESLint passes.
+verification_results: []

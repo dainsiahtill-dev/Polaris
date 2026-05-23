@@ -1,0 +1,58 @@
+id: vc-20260523-pm-chat-legacy-integration-sse-contract
+title: PM chat legacy integration SSE contract
+date: "2026-05-23"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py
+related_blueprint: src/backend/docs/blueprints/PM_CHAT_LEGACY_INTEGRATION_SSE_CONTRACT_20260523.md
+assumption_register:
+  - id: A1
+    statement: The PM stream router can be consumed deterministically through httpx ASGITransport.
+    evidence:
+      - src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py
+      - src/backend/polaris/delivery/http/routers/sse_utils.py
+    verified: true
+  - id: A2
+    statement: The legacy PM integration router suite still skips stream success and missing-message SSE checks.
+    evidence:
+      - src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py
+    verified: true
+  - id: A3
+    statement: The assembled PM integration app should pass role, workspace, message, and context to llm.dialogue.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/pm_chat.py
+      - src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py
+    verified: true
+pre_mortem:
+  - risk: The integration test could only assert HTTP 200 and miss malformed SSE frames.
+    mitigation: Assert event names and JSON payload fragments for thinking, content, and complete frames.
+  - risk: The test could exercise a mocked route without verifying desktop context propagation.
+    mitigation: Assert the mocked streaming service receives workspace, role, message, and context.
+  - risk: The missing-message path could regress to a plain JSON error while still returning 200.
+    mitigation: Assert text/event-stream content type plus error and complete SSE frames.
+verification_plan:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py --fix
+    expected: PM chat integration tests pass Ruff checks.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py
+    expected: PM chat integration tests are formatted.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py
+    expected: PM chat integration tests type-check.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py -q
+    expected: PM chat integration router tests pass with no SSE skips.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -q
+    expected: PM integration, PM unit, and generic role stream regressions pass together.
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py --fix
+    result: PASS
+    evidence: All checks passed.
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py
+    result: PASS
+    evidence: 3 files left unchanged.
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/pm_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py
+    result: PASS
+    evidence: Success, no issues found in 3 source files.
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py -q
+    result: PASS
+    evidence: Included in combined backend run; PM chat and role chat regressions passed.
