@@ -1,0 +1,25 @@
+id: vc-20260523-llm-role-readiness-model-identity-normalization
+title: LLM role readiness model identity normalization
+date: 2026-05-23
+status: passed
+scope:
+  - src/backend/polaris/kernelone/llm/model_identity.py
+  - src/backend/polaris/kernelone/llm/__init__.py
+  - src/backend/polaris/cells/runtime/projection/internal/llm_status.py
+  - src/backend/polaris/delivery/http/routers/_shared.py
+  - src/backend/polaris/tests/test_llm_phase0_regression.py
+checks:
+  - ruff check runtime projection and LLM regression tests --fix
+  - ruff format runtime projection and LLM regression tests
+  - mypy runtime projection and LLM regression tests
+  - pytest LLM phase 0 regression suite
+evidence:
+  blueprint: src/backend/docs/blueprints/LLM_ROLE_READINESS_MODEL_IDENTITY_NORMALIZATION_20260523.md
+  command_logs:
+    - ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/kernelone/llm/model_identity.py src/backend/polaris/kernelone/llm/__init__.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py --fix"
+    - ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/kernelone/llm/model_identity.py src/backend/polaris/kernelone/llm/__init__.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py"
+    - ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/kernelone/llm/model_identity.py src/backend/polaris/kernelone/llm/__init__.py src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/delivery/http/routers/_shared.py src/backend/polaris/tests/test_llm_phase0_regression.py"
+    - ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_llm_phase0_regression.py -q"
+    - ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q"
+risks:
+  - Full Electron Factory E2E remains a separate end-to-end acceptance run.

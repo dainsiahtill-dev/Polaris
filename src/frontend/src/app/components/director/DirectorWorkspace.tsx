@@ -2108,6 +2108,9 @@ export function DirectorWorkspace({
   const totalTasks = executionTasks.length;
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
   const directorToggleBusy = directorToggleStatusEvidence.loading;
+  const executionDisabledReason = factoryMode
+    ? '工厂模式下由 Factory 编排 Director，不能在嵌入层直接启动。'
+    : '';
   const directorRunCancelDisabled =
     !directorRunEvidence.runId ||
     directorRunEvidence.loading ||
@@ -2117,6 +2120,7 @@ export function DirectorWorkspace({
   return (
     <div data-testid="director-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
       {/* Director Header - Director 主题 */}
+      {!factoryMode && (
       <header className="h-14 flex items-center justify-between px-4 border-b border-indigo-500/20 bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/20">
         <div className="flex items-center gap-4">
           <Button
@@ -2219,7 +2223,7 @@ export function DirectorWorkspace({
             onClick={handleExecute}
             data-testid="director-workspace-execute"
             disabled={factoryMode || directorToggleBusy}
-            title={factoryMode ? "工厂模式下无法使用此功能" : undefined}
+            title={executionDisabledReason || undefined}
             className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
           >
             {isStarting || directorToggleBusy ? (
@@ -2278,6 +2282,7 @@ export function DirectorWorkspace({
           </Button>
         </div>
       </header>
+      )}
 
       <DirectorCapabilityStrip
         hosts={capabilityHosts}
@@ -2443,6 +2448,7 @@ export function DirectorWorkspace({
                   onWorkerSelect={handleWorkerSelect}
                   taskBackendDetail={taskBackendDetail}
                   taskLLMEvents={taskLLMEvents}
+                  executionDisabledReason={executionDisabledReason}
                 />
               )}
               {activeView === 'activity' && (

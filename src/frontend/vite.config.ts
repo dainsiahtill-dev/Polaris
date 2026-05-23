@@ -17,55 +17,72 @@ const backendPort = process.env.KERNELONE_BACKEND_PORT || String(DEFAULT_BACKEND
 const backendHttpTarget = `http://127.0.0.1:${backendPort}`;
 const backendWsTarget = `ws://127.0.0.1:${backendPort}`;
 
+function getNodeModulePackageName(normalizedId: string): string | null {
+  const marker = "/node_modules/";
+  const markerIndex = normalizedId.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const packagePath = normalizedId.slice(markerIndex + marker.length);
+  const [firstPart, secondPart] = packagePath.split("/");
+  if (!firstPart) {
+    return null;
+  }
+  if (firstPart.startsWith("@")) {
+    return secondPart ? `${firstPart}/${secondPart}` : null;
+  }
+  return firstPart;
+}
+
 function manualChunks(id: string): string | undefined {
   const normalizedId = id.replace(/\\/g, "/");
+  const packageName = getNodeModulePackageName(normalizedId);
 
-  if (normalizedId.includes("/node_modules/")) {
+  if (packageName) {
     if (
-      normalizedId.includes("/react/") ||
-      normalizedId.includes("/react-dom/") ||
-      normalizedId.includes("/scheduler/")
+      packageName === "react" ||
+      packageName === "react-dom" ||
+      packageName === "scheduler"
     ) {
       return "vendor-react";
     }
 
     if (
-      normalizedId.includes("/@radix-ui/") ||
-      normalizedId.includes("/cmdk/") ||
-      normalizedId.includes("/vaul/") ||
-      normalizedId.includes("/lucide-react/") ||
-      normalizedId.includes("/react-icons/") ||
-      normalizedId.includes("/class-variance-authority/") ||
-      normalizedId.includes("/clsx/") ||
-      normalizedId.includes("/tailwind-merge/") ||
-      normalizedId.includes("/sonner/") ||
-      normalizedId.includes("/framer-motion/") ||
-      normalizedId.includes("/next-themes/")
+      packageName.startsWith("@radix-ui/") ||
+      packageName === "cmdk" ||
+      packageName === "vaul" ||
+      packageName === "lucide-react" ||
+      packageName === "react-icons" ||
+      packageName === "class-variance-authority" ||
+      packageName === "clsx" ||
+      packageName === "tailwind-merge" ||
+      packageName === "sonner" ||
+      packageName === "framer-motion" ||
+      packageName === "next-themes"
     ) {
       return "vendor-ui";
     }
 
-    if (normalizedId.includes("/xterm/") || normalizedId.includes("/xterm-addon-fit/")) {
+    if (packageName === "xterm" || packageName === "xterm-addon-fit") {
       return "vendor-terminal";
     }
 
-    if (normalizedId.includes("/@react-three/drei/")) {
-      return "vendor-three-drei";
-    }
-
-    if (normalizedId.includes("/@react-three/fiber/")) {
-      return "vendor-three-fiber";
-    }
-
-    if (normalizedId.includes("/three/")) {
+    if (
+      packageName === "three" ||
+      packageName === "@react-three/drei" ||
+      packageName === "@react-three/fiber" ||
+      packageName === "react-reconciler" ||
+      packageName === "zustand"
+    ) {
       return "vendor-three";
     }
 
-    if (normalizedId.includes("/@xyflow/")) {
+    if (packageName.startsWith("@xyflow/")) {
       return "vendor-flow";
     }
 
-    if (normalizedId.includes("/recharts/")) {
+    if (packageName === "recharts") {
       return "vendor-charts";
     }
   }

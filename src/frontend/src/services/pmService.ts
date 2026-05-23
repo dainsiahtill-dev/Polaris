@@ -905,6 +905,7 @@ export interface PmDocumentInfo {
 export interface PmDocumentListResponse {
   documents: PmDocumentInfo[];
   pagination: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface PmDocumentDetailResponse extends PmDocumentInfo {

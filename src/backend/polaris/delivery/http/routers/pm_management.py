@@ -152,6 +152,60 @@ def _with_desktop_collection_aliases(
     return response
 
 
+def _empty_v2_collection_response(
+    collection_key: str,
+    *,
+    limit: int,
+    offset: int,
+    reason: str,
+    normalize_item: bool = False,
+) -> dict[str, Any]:
+    """Return an idle desktop collection projection when PM has not started."""
+    return _with_desktop_collection_aliases(
+        {
+            "ok": True,
+            collection_key: [],
+            "pagination": {"total": 0, "limit": limit, "offset": offset},
+            "initialized": False,
+            "state": "idle",
+            "reason": reason,
+        },
+        collection_key,
+        normalize_item=normalize_item,
+    )
+
+
+def _empty_v2_task_list_response(*, limit: int, offset: int, reason: str) -> dict[str, Any]:
+    """Return an idle desktop task-list projection when PM has not started."""
+    return _empty_v2_collection_response(
+        "tasks",
+        limit=limit,
+        offset=offset,
+        reason=reason,
+        normalize_item=True,
+    )
+
+
+def _empty_v2_document_list_response(*, limit: int, offset: int, reason: str) -> dict[str, Any]:
+    """Return an idle desktop document-list projection when PM has not started."""
+    return _empty_v2_collection_response("documents", limit=limit, offset=offset, reason=reason)
+
+
+def _empty_v2_document_search_response(*, query: str, reason: str) -> dict[str, Any]:
+    """Return an idle desktop document-search projection when PM has not started."""
+    return {
+        "ok": True,
+        "query": query,
+        "results": [],
+        "count": 0,
+        "items": [],
+        "total": 0,
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+
+
 # ===== Request/Response Models =====
 
 
@@ -687,7 +741,13 @@ def v2_list_documents(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """List tracked documents in the workspace."""
-    return list_documents(request, doc_type, pattern, limit, offset)
+    try:
+        result = list_documents(request, doc_type, pattern, limit, offset)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_document_list_response(limit=limit, offset=offset, reason=exc.code)
+    return _with_desktop_collection_aliases(result, "documents")
 
 
 @v2_router.get(
@@ -781,7 +841,12 @@ def v2_search_documents(
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     """Search documents by content or path."""
-    return search_documents(request, q, limit)
+    try:
+        return search_documents(request, q, limit)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_document_search_response(query=q, reason=exc.code)
 
 
 @v2_router.get("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskListResponse)
@@ -794,7 +859,12 @@ def v2_list_tasks(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """List tasks with optional filtering."""
-    result = list_tasks(request, status, assignee, limit, offset)
+    try:
+        result = list_tasks(request, status, assignee, limit, offset)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_task_list_response(limit=limit, offset=offset, reason=exc.code)
     return _with_desktop_collection_aliases(result, "tasks", normalize_item=True)
 
 
@@ -821,7 +891,12 @@ def v2_get_task_history(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """Get task history with filtering and pagination."""
-    return get_task_history(request, task_id, assignee, status, start_date, end_date, limit, offset)
+    try:
+        return get_task_history(request, task_id, assignee, status, start_date, end_date, limit, offset)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_collection_response("history", limit=limit, offset=offset, reason=exc.code)
 
 
 @v2_router.get("/v2/pm/tasks/director", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
@@ -833,7 +908,12 @@ def v2_get_director_task_history(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """Get tasks dispatched to Director by iteration."""
-    return get_director_task_history(request, iteration, limit, offset)
+    try:
+        return get_director_task_history(request, iteration, limit, offset)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_collection_response("iterations", limit=limit, offset=offset, reason=exc.code)
 
 
 @v2_router.get(
@@ -882,7 +962,12 @@ def v2_list_requirements(
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
     """List requirements with optional filtering."""
-    result = list_requirements(request, status, priority, limit, offset)
+    try:
+        result = list_requirements(request, status, priority, limit, offset)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_collection_response("requirements", limit=limit, offset=offset, reason=exc.code)
     return _with_desktop_collection_aliases(result, "requirements")
 
 

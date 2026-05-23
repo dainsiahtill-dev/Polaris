@@ -427,7 +427,6 @@ export const test = base.extend<Fixtures>({
   },
   window: async ({ electronApp }, use, testInfo) => {
     const page = await electronApp.firstWindow();
-    await page.waitForLoadState("domcontentloaded");
     const capturedDialogTexts = new Set<string>();
     const rendererConsole: string[] = [];
     const rendererPageErrors: string[] = [];
@@ -522,6 +521,8 @@ export const test = base.extend<Fixtures>({
         }),
       );
     });
+
+    await page.waitForLoadState("domcontentloaded");
 
     // Initial dismiss attempt
     await dismissDialog();

@@ -1,11 +1,7 @@
-/** RealtimeActivityPanel - 实时活动面板 (比Manus更酷炫)
+/** RealtimeActivityPanel - 角色实时活动面板
  *
- * 特色：
- * - 赛博朋克 + 汉唐古风融合
- * - 实时流式动画
- * - 多视图切换 (思考/工具/日志/文件)
- * - 状态描述实时显示
- * - 脉冲发光效果
+ * 统一承载 PM、Chief Engineer 和 Director 的流式思考、工具调用、
+ * 运行日志与文件活动，保持角色色仅用于状态识别。
  */
 import { useState, useMemo, useEffect, useRef } from 'react';
 import {
@@ -51,10 +47,53 @@ interface RealtimeActivityPanelProps {
   processStreamEvents?: LogEntry[];
   currentPhase?: string;
   isRunning?: boolean;
-  role?: 'pm' | 'director';
+  role?: RealtimeActivityRole;
 }
 
 type ActivityView = 'thinking' | 'tools' | 'logs' | 'files';
+type RealtimeActivityRole = 'pm' | 'chief_engineer' | 'director';
+type ActivityViewTone = 'purple' | 'cyan' | 'blue' | 'emerald';
+
+const ROLE_ACTIVITY_THEMES: Record<RealtimeActivityRole, {
+  label: string;
+  primaryColor: string;
+  runningDot: string;
+  border: string;
+  bg: string;
+  tag: string;
+}> = {
+  pm: {
+    label: 'PM',
+    primaryColor: 'text-amber-100',
+    runningDot: 'bg-amber-400',
+    border: 'border-amber-500/30',
+    bg: 'bg-amber-500/5',
+    tag: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+  },
+  chief_engineer: {
+    label: 'Chief Engineer',
+    primaryColor: 'text-cyan-100',
+    runningDot: 'bg-cyan-400',
+    border: 'border-cyan-500/30',
+    bg: 'bg-cyan-500/5',
+    tag: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20',
+  },
+  director: {
+    label: 'Director',
+    primaryColor: 'text-indigo-100',
+    runningDot: 'bg-indigo-400',
+    border: 'border-indigo-500/30',
+    bg: 'bg-indigo-500/5',
+    tag: 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20',
+  },
+};
+
+const VIEW_TAB_TONES: Record<ActivityViewTone, string> = {
+  purple: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
+  cyan: 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30',
+  blue: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+  emerald: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
+};
 
 function streamEventToken(log: LogEntry): string {
   const meta = log.meta && typeof log.meta === 'object' ? (log.meta as Record<string, unknown>) : null;
@@ -98,7 +137,7 @@ export function RealtimeActivityPanel({
     const processExecutionLogs = filterExecutionActivityLogs(processStreamEvents);
     const logs = [
       ...llmStreamEvents,
-      ...executionLogs.map(l => ({ ...l, source: 'EXEC' })),
+      ...executionLogs.map(l => ({ ...l, source: l.source || 'EXEC' })),
       ...processExecutionLogs.map(l => ({ ...l, source: 'PROC' })),
     ];
     return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -139,9 +178,7 @@ export function RealtimeActivityPanel({
   const currentStatus = PHASE_DESCRIPTIONS[currentPhase] || PHASE_DESCRIPTIONS['idle'];
 
   // 角色主题色
-  const theme = role === 'pm'
-    ? { primary: 'amber', primaryColor: 'text-amber-100', gradient: 'from-amber-500 to-amber-700', glow: 'shadow-amber-500/20', border: 'border-amber-500/30', bg: 'bg-amber-500/5' }
-    : { primary: 'indigo', primaryColor: 'text-indigo-100', gradient: 'from-indigo-500 to-indigo-700', glow: 'shadow-indigo-500/20', border: 'border-indigo-500/30', bg: 'bg-indigo-500/5' };
+  const theme = ROLE_ACTIVITY_THEMES[role];
 
   const toggleLogExpand = (id: string) => {
     setExpandedLogs(prev => {
@@ -156,7 +193,7 @@ export function RealtimeActivityPanel({
   };
 
   return (
-    <div className="h-full flex flex-col bg-[linear-gradient(165deg,rgba(50,35,18,0.40),rgba(28,18,48,0.65),rgba(14,20,40,0.80))]">
+    <div className="h-full flex flex-col bg-slate-950">
       {/* Header - 状态指示器 */}
       <div className={cn(
         'h-16 flex items-center justify-between px-4 border-b',
@@ -167,12 +204,12 @@ export function RealtimeActivityPanel({
           <div className="relative">
             <div className={cn(
               'w-3 h-3 rounded-full',
-              isRunning ? (role === 'pm' ? 'bg-amber-400 animate-pulse' : 'bg-indigo-400 animate-pulse') : 'bg-slate-500'
+              isRunning ? `${theme.runningDot} animate-pulse` : 'bg-slate-500'
             )} />
             {isRunning && (
               <div className={cn(
                 'absolute inset-0 w-3 h-3 rounded-full',
-                role === 'pm' ? 'bg-amber-400 animate-ping opacity-75' : 'bg-indigo-400 animate-ping opacity-75'
+                `${theme.runningDot} animate-ping opacity-75`
               )} />
             )}
           </div>
@@ -229,14 +266,8 @@ export function RealtimeActivityPanel({
       </div>
 
       {/* Content - 日志流 */}
-      <div className="flex-1 overflow-hidden relative">
-        {/* 背景装饰 */}
-        <div className="absolute inset-0 opacity-30 pointer-events-none">
-          <div className="absolute top-0 left-0 w-64 h-64 bg-gradient-to-br from-purple-500/10 to-transparent rounded-full blur-3xl" />
-          <div className="absolute bottom-0 right-0 w-64 h-64 bg-gradient-to-tl from-amber-500/10 to-transparent rounded-full blur-3xl" />
-        </div>
-
-        <div className="relative h-full overflow-y-auto p-4 space-y-2 custom-scrollbar">
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full overflow-y-auto p-4 space-y-2 custom-scrollbar">
           {filteredLogs.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
               <Sparkles className="w-8 h-8 mb-2 opacity-50" />
@@ -261,7 +292,7 @@ export function RealtimeActivityPanel({
       <div className="h-12 flex items-center justify-between px-4 border-t border-white/10 bg-white/5">
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <TerminalSquare className="w-3.5 h-3.5" />
-          <span>{role === 'pm' ? 'PM' : 'Director'} 监控</span>
+          <span>{theme.label} 监控</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <Layers className="w-3.5 h-3.5" />
@@ -277,7 +308,7 @@ interface ViewTabProps {
   label: string;
   active: boolean;
   onClick: () => void;
-  color: string;
+  color: ActivityViewTone;
 }
 
 function ViewTab({ icon, label, active, onClick, color }: ViewTabProps) {
@@ -288,7 +319,7 @@ function ViewTab({ icon, label, active, onClick, color }: ViewTabProps) {
       className={cn(
         'flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all',
         active
-          ? `bg-${color}-500/20 text-${color}-300 border border-${color}-500/30`
+          ? VIEW_TAB_TONES[color]
           : 'text-slate-500 hover:text-slate-300'
       )}
     >
@@ -302,7 +333,7 @@ interface LogItemProps {
   log: LogEntry & { source?: string };
   isExpanded: boolean;
   onToggle: () => void;
-  role: 'pm' | 'director';
+  role: RealtimeActivityRole;
 }
 
 function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
@@ -383,12 +414,7 @@ function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
               {log.tags.map((tag, i) => (
                 <span
                   key={i}
-                  className={cn(
-                    'px-1.5 py-0.5 text-[10px] rounded border',
-                    role === 'pm'
-                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                      : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20'
-                  )}
+                  className={cn('px-1.5 py-0.5 text-[10px] rounded border', ROLE_ACTIVITY_THEMES[role].tag)}
                 >
                   {tag}
                 </span>

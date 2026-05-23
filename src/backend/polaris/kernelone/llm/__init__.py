@@ -26,6 +26,7 @@ from .exceptions import (
     tool_execution_context,
     wrap_tool_result_error,
 )
+from .model_identity import model_identity_equal, model_identity_key
 from .provider_contract import KernelLLMRuntimeAdapter, RuntimeProviderInvokeResult
 from .runtime import (
     KernelLLM,
@@ -64,6 +65,8 @@ __all__ = [
     # Utilities
     "is_retryable",
     "json_parsing_context",
+    "model_identity_equal",
+    "model_identity_key",
     "normalize_provider_type",
     "resolve_provider_api_key",
     # Context managers

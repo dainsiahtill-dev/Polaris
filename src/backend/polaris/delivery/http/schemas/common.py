@@ -136,6 +136,7 @@ class FactoryRunArtifactItem(BaseModel):
     name: str
     path: str
     size: int
+    task_id: str | None = None
 
 
 class FactoryRunArtifactsResponse(BaseModel):
@@ -252,6 +253,7 @@ class DocumentInfo(BaseModel):
 
 
 class DocumentListResponse(BaseModel):
+    model_config = {"extra": "allow"}
     documents: list[DocumentInfo]
     pagination: dict[str, Any]
 
@@ -287,6 +289,7 @@ class DocumentDeleteResponse(BaseModel):
 
 
 class DocumentSearchResponse(BaseModel):
+    model_config = {"extra": "allow"}
     query: str
     results: list[dict[str, Any]]
     count: int

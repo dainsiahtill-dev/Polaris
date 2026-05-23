@@ -58,9 +58,13 @@ interface FactoryWorkspaceProps {
 type FactoryPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'completed' | 'failed' | 'cancelled';
 type FactoryRoleLayer = 'pm' | 'chief_engineer' | 'director';
 type RunRoleStatus = FactoryRunStatus['roles'][string];
+const CANCELLED_RUN_STATUSES = new Set(['cancelled', 'canceled']);
+const FAILED_RUN_STATUSES = new Set(['failed', 'error', 'blocked', 'timeout']);
+const TERMINAL_RUN_STATUSES = new Set(['completed', ...CANCELLED_RUN_STATUSES, ...FAILED_RUN_STATUSES]);
 
 interface RoleLayerView {
   id: FactoryRoleLayer;
+  order: string;
   title: string;
   subtitle: string;
   status: string;
@@ -78,10 +82,18 @@ interface RoleLayerView {
 
 interface BlueprintEvidenceView {
   id: string;
+  taskId: string;
   title: string;
   path: string;
   summary: string;
   source: 'task' | 'artifact';
+}
+
+interface BlueprintCoverageSummary {
+  required: number;
+  covered: number;
+  completed: number;
+  missing: PmTask[];
 }
 
 const PHASE_CONFIG: Record<FactoryPhase, { label: string; color: string; icon: React.ReactNode }> = {
@@ -94,6 +106,12 @@ const PHASE_CONFIG: Record<FactoryPhase, { label: string; color: string; icon: R
   cancelled: { label: '已取消', color: 'text-orange-300', icon: <XCircle className="h-4 w-4" /> },
 };
 
+const ROLE_LAYER_LABELS: Record<FactoryRoleLayer, { short: string; route: string }> = {
+  pm: { short: 'PM', route: '任务合同' },
+  chief_engineer: { short: 'CE', route: '技术蓝图' },
+  director: { short: 'DIR', route: '执行交付' },
+};
+
 function normalizeToken(value: string | null | undefined): string {
   return String(value || '').trim().toLowerCase();
 }
@@ -103,8 +121,8 @@ function mapRunToFactoryPhase(run?: FactoryRunStatus | null): FactoryPhase {
   const phase = normalizeToken(run?.phase);
   const stage = normalizeToken(run?.current_stage);
 
-  if (status === 'cancelled' || phase === 'cancelled') return 'cancelled';
-  if (status === 'failed' || phase === 'failed') return 'failed';
+  if (CANCELLED_RUN_STATUSES.has(status) || CANCELLED_RUN_STATUSES.has(phase)) return 'cancelled';
+  if (FAILED_RUN_STATUSES.has(status) || FAILED_RUN_STATUSES.has(phase)) return 'failed';
   if (phase === 'completed' || status === 'completed') return 'completed';
   if (['verification', 'qa_gate', 'handover', 'quality_gate'].includes(phase) || stage.includes('quality')) {
     return 'verifying';
@@ -139,8 +157,8 @@ function toEventLevel(event: FactoryAuditEvent): LogEntry['level'] {
   const type = normalizeToken(event.type);
   const resultStatus = normalizeToken(String((event.result as Record<string, unknown> | undefined)?.status || ''));
 
-  if (type === 'cancelled') return 'warning';
-  if (type === 'failed' || type === 'error') return 'error';
+  if (CANCELLED_RUN_STATUSES.has(type)) return 'warning';
+  if (FAILED_RUN_STATUSES.has(type)) return 'error';
   if (type === 'stage_started') return 'exec';
   if (type === 'stage_completed' && resultStatus === 'failed') return 'error';
   if (type === 'stage_completed' && resultStatus === 'success') return 'success';
@@ -228,6 +246,18 @@ function roleStatusTone(status: string): string {
   return 'border-slate-500/30 bg-slate-500/10 text-slate-300';
 }
 
+function roleStatusLabel(status: string): string {
+  const token = normalizeToken(status);
+  if (['completed', 'complete', 'ready', 'success', 'passed'].includes(token)) return '已就绪';
+  if (['running', 'active', 'in_progress'].includes(token)) return '运行中';
+  if (['failed', 'error'].includes(token)) return '失败';
+  if (token === 'blocked') return '阻塞';
+  if (token === 'waiting') return '等待';
+  if (token === 'pending') return '待处理';
+  if (token === 'cancelled' || token === 'canceled') return '已取消';
+  return token || '空闲';
+}
+
 function taskStatusToken(task: PmTask): string {
   return normalizeToken(String(task.status || task.state || ''));
 }
@@ -266,6 +296,32 @@ function hasBlueprintEvidence(task: PmTask): boolean {
   return Boolean(readTaskString(task, ['blueprint_id', 'blueprint_path', 'runtime_blueprint_path']));
 }
 
+function taskIdentityTokens(task: PmTask): string[] {
+  const metadata = taskMetadata(task);
+  const direct = taskRecord(task);
+  const values = [
+    task.id,
+    direct.task_id,
+    direct.pm_task_id,
+    direct.taskId,
+    direct.subject,
+    metadata.task_id,
+    metadata.pm_task_id,
+    metadata.taskId,
+    metadata.id,
+    metadata.subject,
+  ];
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const value of values) {
+    const token = normalizeToken(String(value || ''));
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    tokens.push(token);
+  }
+  return tokens;
+}
+
 function isChiefEngineerArtifact(artifact: FactoryRunArtifact): boolean {
   const path = normalizeToken(artifact.path);
   const name = normalizeToken(artifact.name);
@@ -281,6 +337,27 @@ function basename(path: string): string {
   return normalized.split('/').filter(Boolean).pop() || normalized || 'blueprint';
 }
 
+function artifactTaskIdFromName(value: string): string {
+  const base = basename(value).replace(/\.[^.]+$/, '').trim();
+  if (!base) return '';
+  const normalized = base.toLowerCase();
+  for (const prefix of ['ce_', 'ce-', 'blueprint_', 'blueprint-', 'chief_engineer_', 'chief-engineer-']) {
+    if (normalized.startsWith(prefix)) {
+      return base.slice(prefix.length).trim();
+    }
+  }
+  return '';
+}
+
+function artifactTaskId(artifact: FactoryRunArtifact): string {
+  const record = artifact as unknown as Record<string, unknown>;
+  for (const key of ['task_id', 'pm_task_id', 'taskId']) {
+    const value = String(record[key] || '').trim();
+    if (value) return value;
+  }
+  return artifactTaskIdFromName(artifact.name) || artifactTaskIdFromName(artifact.path);
+}
+
 function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]): BlueprintEvidenceView[] {
   const rows: BlueprintEvidenceView[] = [];
   const seen = new Set<string>();
@@ -294,6 +371,7 @@ function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]
     seen.add(key);
     rows.push({
       id: blueprintId,
+      taskId: String(task.id || '').trim(),
       title: task.title || task.id || blueprintId,
       path,
       summary: task.summary || task.goal || task.description || '任务合同携带的 Chief Engineer 蓝图字段',
@@ -309,6 +387,7 @@ function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]
     seen.add(key);
     rows.push({
       id: name,
+      taskId: artifactTaskId(artifact),
       title: name,
       path: path || name,
       summary: path.includes('runtime/state/blueprints/')
@@ -319,6 +398,42 @@ function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]
   }
 
   return rows;
+}
+
+function buildBlueprintCoverage(tasks: PmTask[], blueprintEvidence: BlueprintEvidenceView[]): BlueprintCoverageSummary {
+  const evidenceTaskIds = new Set(blueprintEvidence.map((item) => normalizeToken(item.taskId)).filter(Boolean));
+  const byTaskKey = new Map<string, { task: PmTask; covered: boolean; completed: boolean }>();
+
+  for (const task of tasks) {
+    const tokens = taskIdentityTokens(task);
+    const key = tokens[0] || normalizeToken(task.id);
+    if (!key) continue;
+
+    const covered = hasBlueprintEvidence(task) || tokens.some((token) => evidenceTaskIds.has(token));
+    const completed = isTaskDone(task);
+    const existing = byTaskKey.get(key);
+    if (!existing) {
+      byTaskKey.set(key, { task, covered, completed });
+      continue;
+    }
+
+    existing.covered = existing.covered || covered;
+    existing.completed = existing.completed && completed;
+    if (!existing.covered && covered) {
+      existing.task = task;
+    }
+  }
+
+  const rows = Array.from(byTaskKey.values());
+  const activeRows = rows.filter((row) => !row.completed);
+  const missing = activeRows.filter((row) => !row.covered).map((row) => row.task);
+
+  return {
+    required: activeRows.length,
+    covered: activeRows.length - missing.length,
+    completed: rows.length - activeRows.length,
+    missing,
+  };
 }
 
 function getRunRole(roles: FactoryRunStatus['roles'] | undefined, keys: string[]): RunRoleStatus | null {
@@ -348,11 +463,13 @@ function buildRoleLayers({
   pmTasks,
   directorTasks,
   blueprintEvidenceCount,
+  blueprintCoverage,
 }: {
   currentRun: FactoryRunStatus | null;
   pmTasks: PmTask[];
   directorTasks: PmTask[];
   blueprintEvidenceCount: number;
+  blueprintCoverage: BlueprintCoverageSummary;
 }): RoleLayerView[] {
   const pmRole = getRunRole(currentRun?.roles, ['pm']);
   const chiefRole = getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect']);
@@ -362,7 +479,18 @@ function buildRoleLayers({
   const runningDirectorTasks = directorTasks.filter(isTaskRunning).length;
   const completedDirectorTasks = directorTasks.filter(isTaskDone).length;
   const pmProgress = pmRole ? percent(pmRole.progress) : pmTasks.length > 0 ? percent((completedPmTasks / pmTasks.length) * 100) : 0;
-  const chiefProgress = chiefRole ? percent(chiefRole.progress) : blueprintEvidenceCount > 0 ? 100 : 0;
+  const chiefProgress = chiefRole
+    ? percent(chiefRole.progress)
+    : blueprintCoverage.required > 0
+      ? percent((blueprintCoverage.covered / blueprintCoverage.required) * 100)
+      : blueprintEvidenceCount > 0
+        ? 100
+        : 0;
+  const chiefFallbackStatus = blueprintCoverage.missing.length > 0
+    ? 'waiting'
+    : blueprintCoverage.required > 0 || blueprintEvidenceCount > 0
+      ? 'ready'
+      : 'waiting';
   const directorProgress = directorRole
     ? percent(directorRole.progress)
     : directorTasks.length > 0
@@ -372,6 +500,7 @@ function buildRoleLayers({
   return [
     {
       id: 'pm',
+      order: '01',
       title: 'PM',
       subtitle: '任务合同层',
       status: pmRole?.status || (pmTasks.length > 0 ? 'ready' : 'idle'),
@@ -388,12 +517,19 @@ function buildRoleLayers({
     },
     {
       id: 'chief_engineer',
+      order: '02',
       title: 'Chief Engineer',
       subtitle: '蓝图交接层',
-      status: chiefRole?.status || (blueprintEvidenceCount > 0 ? 'ready' : 'waiting'),
+      status: chiefRole?.status || chiefFallbackStatus,
       progress: chiefProgress,
-      metric: `${blueprintEvidenceCount} evidence`,
-      detail: chiefRole?.detail || chiefRole?.current_task || '审阅任务，沉淀施工蓝图与 Director 交接条件',
+      metric: blueprintCoverage.required > 0
+        ? `${blueprintCoverage.covered}/${blueprintCoverage.required} 蓝图`
+        : `${blueprintEvidenceCount} evidence`,
+      detail: chiefRole?.detail
+        || chiefRole?.current_task
+        || (blueprintCoverage.missing.length > 0
+          ? `还有 ${blueprintCoverage.missing.length} 个任务缺少蓝图证据`
+          : '审阅任务，沉淀施工蓝图与 Director 交接条件'),
       icon: <Brain className="h-4 w-4" />,
       tone: {
         idle: 'border-cyan-500/20 bg-cyan-500/5 hover:border-cyan-400/40',
@@ -404,6 +540,7 @@ function buildRoleLayers({
     },
     {
       id: 'director',
+      order: '03',
       title: 'Director',
       subtitle: '执行交付层',
       status: directorRole?.status || (runningDirectorTasks > 0 ? 'running' : directorTasks.length > 0 ? 'ready' : 'idle'),
@@ -447,17 +584,25 @@ export function FactoryWorkspace({
   const phaseConfig = PHASE_CONFIG[factoryPhase];
   const runStatus = normalizeToken(currentRun?.status);
   const isRunActive = runStatus === 'running' || runStatus === 'recovering';
-  const canStart = !currentRun || ['completed', 'failed', 'cancelled'].includes(runStatus);
-  const canCancel = runStatus === 'running';
+  const canStart = !currentRun || TERMINAL_RUN_STATUSES.has(runStatus);
+  const canCancel = runStatus === 'running' || runStatus === 'recovering';
 
   const pmWorkflowTasks = pmTasks ?? tasks;
   const directorWorkflowTasks = directorTasks ?? tasks;
   const activityLogs = useMemo(() => toActivityLogs(events), [events]);
+  const operationsActivityLogs = useMemo(
+    () => [...activityLogs, ...executionLogs],
+    [activityLogs, executionLogs]
+  );
   const gateResults = currentRun?.gates || [];
   const deliveryArtifacts = artifacts || currentRun?.artifacts || [];
   const blueprintEvidence = useMemo(
     () => buildBlueprintEvidence(pmWorkflowTasks, deliveryArtifacts),
     [deliveryArtifacts, pmWorkflowTasks]
+  );
+  const blueprintCoverage = useMemo(
+    () => buildBlueprintCoverage(pmWorkflowTasks, blueprintEvidence),
+    [blueprintEvidence, pmWorkflowTasks]
   );
   const summaryMarkdown = String(summaryMd ?? currentRun?.summary_md ?? '').trim();
   const summaryRows = toSummaryRows(summaryJson ?? currentRun?.summary_json ?? null);
@@ -475,8 +620,9 @@ export function FactoryWorkspace({
       pmTasks: pmWorkflowTasks,
       directorTasks: directorWorkflowTasks,
       blueprintEvidenceCount: blueprintEvidence.length,
+      blueprintCoverage,
     }),
-    [blueprintEvidence.length, currentRun, directorWorkflowTasks, pmWorkflowTasks]
+    [blueprintCoverage, blueprintEvidence.length, currentRun, directorWorkflowTasks, pmWorkflowTasks]
   );
   const activeLayerView = roleLayers.find((layer) => layer.id === activeLayer) || roleLayers[0];
 
@@ -500,7 +646,7 @@ export function FactoryWorkspace({
             <div className="flex items-center gap-2">
               <h1 className="truncate text-sm font-semibold text-slate-100">Factory 模式</h1>
               <span className="rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-400">
-                role layers
+                分层视图
               </span>
             </div>
             <p className="truncate text-[11px] text-slate-500">{workspace || '未设置工作区'}</p>
@@ -528,10 +674,10 @@ export function FactoryWorkspace({
             <span className={cn('text-sm font-medium', phaseConfig.color)}>{phaseConfig.label}</span>
           </div>
 
-          <StatusChip label="phase" value={currentRun?.phase || 'pending'} />
-          <StatusChip label="status" value={currentRun?.status || 'idle'} />
-          <StatusChip label="stage" value={currentRun?.current_stage || 'n/a'} />
-          <StatusChip label="progress" value={`${Math.round(currentRun?.progress || 0)}%`} />
+          <StatusChip label="阶段" value={currentRun?.phase || 'pending'} />
+          <StatusChip label="状态" value={currentRun?.status || 'idle'} />
+          <StatusChip label="步骤" value={currentRun?.current_stage || 'n/a'} />
+          <StatusChip label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
 
           <div className="ml-1 flex items-center gap-2">
             {canStart && onStart && (
@@ -591,8 +737,8 @@ export function FactoryWorkspace({
               {activeLayerView.id === 'chief_engineer' && (
                 <FactoryChiefEngineerLayer
                   workspace={workspace}
-                  tasks={pmWorkflowTasks}
                   blueprintEvidence={blueprintEvidence}
+                  blueprintCoverage={blueprintCoverage}
                   roleStatus={getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect'])}
                   currentRun={currentRun}
                 />
@@ -623,7 +769,9 @@ export function FactoryWorkspace({
               factoryPhase={factoryPhase}
               workspacePhase={workspacePhase}
               activeLayer={activeLayerView.id}
-              activityLogs={activityLogs}
+              activityLogs={operationsActivityLogs}
+              llmStreamEvents={llmStreamEvents}
+              processStreamEvents={processStreamEvents}
               gateResults={gateResults}
               deliveryArtifacts={deliveryArtifacts}
               summaryMarkdown={summaryMarkdown}
@@ -659,80 +807,127 @@ function RoleLayerRail({
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
           <Route className="h-3.5 w-3.5" />
-          <span>PM</span>
+          <span>PM 任务合同</span>
           <ChevronRight className="h-3 w-3" />
-          <span>Chief Engineer</span>
+          <span>CE 技术蓝图</span>
           <ChevronRight className="h-3 w-3" />
-          <span>Director</span>
+          <span>Director 执行交付</span>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        {layers.map((layer) => (
-          <button
-            key={layer.id}
-            type="button"
-            onClick={() => onSelect(layer.id)}
-            data-testid={`factory-role-layer-${layer.id}`}
-            className={cn(
-              'group min-h-[92px] rounded-lg border p-3 text-left transition-colors',
-              activeLayer === layer.id ? layer.tone.active : layer.tone.idle
-            )}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <div className={cn('rounded-md border border-white/10 bg-white/10 p-1.5', layer.tone.text)}>
-                  {layer.icon}
+      <div className="grid grid-cols-[minmax(0,1fr)_28px_minmax(0,1fr)_28px_minmax(0,1fr)] items-stretch gap-0">
+        {layers.map((layer, index) => {
+          const label = ROLE_LAYER_LABELS[layer.id];
+          const isActive = activeLayer === layer.id;
+          const isSuggested = suggestedLayer === layer.id;
+          return (
+            <div key={layer.id} className="contents">
+              <button
+                type="button"
+                onClick={() => onSelect(layer.id)}
+                data-testid={`factory-role-layer-${layer.id}`}
+                aria-pressed={isActive}
+                className={cn(
+                  'group flex min-h-[108px] cursor-pointer flex-col rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70',
+                  isActive ? layer.tone.active : layer.tone.idle
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className={cn('rounded-md border border-white/10 bg-white/10 p-1.5', layer.tone.text)}>
+                      {layer.icon}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-slate-500">{layer.order}</span>
+                        <span className={cn('truncate text-sm font-semibold', layer.tone.text)}>{layer.title}</span>
+                      </div>
+                      <div className="truncate text-[11px] text-slate-500">{layer.subtitle}</div>
+                    </div>
+                  </div>
+                  <span className={cn('shrink-0 rounded-md border px-1.5 py-0.5 text-[10px]', roleStatusTone(layer.status))}>
+                    {roleStatusLabel(layer.status)}
+                  </span>
                 </div>
-                <div className="min-w-0">
-                  <div className={cn('truncate text-sm font-semibold', layer.tone.text)}>{layer.title}</div>
-                  <div className="truncate text-[11px] text-slate-500">{layer.subtitle}</div>
-                </div>
-              </div>
-              <span className={cn('rounded-md border px-1.5 py-0.5 text-[10px] uppercase', roleStatusTone(layer.status))}>
-                {layer.status}
-              </span>
-            </div>
 
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-[11px] text-slate-400">{layer.detail}</div>
-                <div className="mt-1 font-mono text-[11px] text-slate-500">{layer.metric}</div>
-              </div>
-              {suggestedLayer === layer.id ? (
-                <span className="shrink-0 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-200">
-                  current
-                </span>
+                <div className="mt-3 flex flex-1 items-end justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[11px] text-slate-400">{layer.detail}</div>
+                    <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-slate-500">
+                      <span>{label.short}</span>
+                      <span className="h-1 w-1 rounded-full bg-slate-700" />
+                      <span className="truncate">{layer.metric}</span>
+                    </div>
+                  </div>
+                  {isSuggested ? (
+                    <span className="shrink-0 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-200">
+                      当前阶段
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-900">
+                  <div
+                    className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-500', layer.tone.progress)}
+                    style={{ width: `${layer.progress}%` }}
+                  />
+                </div>
+              </button>
+              {index < layers.length - 1 ? (
+                <div className="relative flex items-center justify-center px-2">
+                  <div className="h-px w-full bg-slate-700" />
+                  <ChevronRight className="absolute h-3.5 w-3.5 text-slate-500" />
+                </div>
               ) : null}
             </div>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-900">
-              <div
-                className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-500', layer.tone.progress)}
-                style={{ width: `${layer.progress}%` }}
-              />
-            </div>
-          </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-3 text-[10px] text-slate-600">
+        {layers.map((layer) => (
+          <div key={`${layer.id}-route`} className="truncate px-1">
+            {ROLE_LAYER_LABELS[layer.id].route}
+          </div>
         ))}
       </div>
     </div>
   );
 }
 
+function roleLayerDisplayName(layer: FactoryRoleLayer): string {
+  if (layer === 'chief_engineer') return 'Chief Engineer';
+  if (layer === 'director') return 'Director';
+  return 'PM';
+}
+
 function FactoryChiefEngineerLayer({
   workspace,
-  tasks,
   blueprintEvidence,
+  blueprintCoverage,
   roleStatus,
   currentRun,
 }: {
   workspace: string;
-  tasks: PmTask[];
   blueprintEvidence: BlueprintEvidenceView[];
+  blueprintCoverage: BlueprintCoverageSummary;
   roleStatus: RunRoleStatus | null;
   currentRun: FactoryRunStatus | null;
 }) {
-  const candidateTasks = tasks.filter((task) => !hasBlueprintEvidence(task)).slice(0, 5);
-  const status = roleStatus?.status || (blueprintEvidence.length > 0 ? 'ready' : 'waiting');
-  const handoffReady = blueprintEvidence.length > 0 || normalizeToken(currentRun?.current_stage).includes('director');
+  const candidateTasks = blueprintCoverage.missing.slice(0, 5);
+  const status = roleStatus?.status || (blueprintCoverage.missing.length > 0 ? 'waiting' : blueprintEvidence.length > 0 ? 'ready' : 'waiting');
+  const directorStageActive = normalizeToken(currentRun?.current_stage).includes('director');
+  const handoffReady = blueprintCoverage.required > 0 && blueprintCoverage.missing.length === 0;
+  const handoffLabel = blueprintCoverage.missing.length > 0
+    ? '缺证据'
+    : handoffReady
+      ? '就绪'
+      : directorStageActive
+        ? '已进入 Director'
+        : '等待';
+  const handoffTone = blueprintCoverage.missing.length > 0
+    ? 'text-red-200'
+    : handoffReady || directorStageActive
+      ? 'text-emerald-200'
+      : 'text-amber-200';
 
   return (
     <div data-testid="factory-chief-layer" className="flex h-full flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/25">
@@ -747,8 +942,8 @@ function FactoryChiefEngineerLayer({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className={cn('rounded-md border px-2 py-1 text-[10px] uppercase tracking-wider', roleStatusTone(status))}>
-            {status}
+          <span className={cn('rounded-md border px-2 py-1 text-[10px] tracking-wider', roleStatusTone(status))}>
+            {roleStatusLabel(status)}
           </span>
           <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-400">
             {workspace || 'workspace n/a'}
@@ -765,7 +960,7 @@ function FactoryChiefEngineerLayer({
                 <p className="mt-1 text-xs text-slate-500">展示任务合同字段和 Factory 运行时蓝图产物。</p>
               </div>
               <span className="rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2 py-1 text-[10px] text-cyan-100">
-                {blueprintEvidence.length} ready
+                {blueprintEvidence.length} 条证据
               </span>
             </div>
           </div>
@@ -818,10 +1013,12 @@ function FactoryChiefEngineerLayer({
               交接状态
             </div>
             <div className="space-y-2">
-              <MetricRow label="Blueprint evidence" value={String(blueprintEvidence.length)} tone="text-cyan-200" />
-              <MetricRow label="Candidate tasks" value={String(candidateTasks.length)} tone="text-amber-200" />
-              <MetricRow label="Director handoff" value={handoffReady ? 'ready' : 'waiting'} tone={handoffReady ? 'text-emerald-200' : 'text-amber-200'} />
-              <MetricRow label="Factory stage" value={currentRun?.current_stage || 'n/a'} tone="text-slate-300" />
+              <MetricRow label="任务覆盖" value={`${blueprintCoverage.covered}/${blueprintCoverage.required}`} tone="text-cyan-200" />
+              <MetricRow label="蓝图证据" value={String(blueprintEvidence.length)} tone="text-cyan-200" />
+              <MetricRow label="待蓝图任务" value={String(blueprintCoverage.missing.length)} tone={blueprintCoverage.missing.length > 0 ? 'text-red-200' : 'text-emerald-200'} />
+              <MetricRow label="已完成任务" value={String(blueprintCoverage.completed)} tone="text-slate-300" />
+              <MetricRow label="Director 交接" value={handoffLabel} tone={handoffTone} />
+              <MetricRow label="Factory 阶段" value={currentRun?.current_stage || 'n/a'} tone="text-slate-300" />
             </div>
           </section>
 
@@ -857,6 +1054,8 @@ function FactoryOperationsRail({
   workspacePhase,
   activeLayer,
   activityLogs,
+  llmStreamEvents,
+  processStreamEvents,
   gateResults,
   deliveryArtifacts,
   summaryMarkdown,
@@ -870,6 +1069,8 @@ function FactoryOperationsRail({
   workspacePhase: string;
   activeLayer: FactoryRoleLayer;
   activityLogs: LogEntry[];
+  llmStreamEvents: LogEntry[];
+  processStreamEvents: LogEntry[];
   gateResults: FactoryRunStatus['gates'];
   deliveryArtifacts: FactoryRunArtifact[];
   summaryMarkdown: string;
@@ -884,28 +1085,28 @@ function FactoryOperationsRail({
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
             <Activity className="h-3.5 w-3.5 text-emerald-300" />
-            Operations
+            运行观测
           </div>
           <span className={cn('rounded-md border px-1.5 py-0.5 text-[10px] uppercase', roleStatusTone(currentRun?.status || 'idle'))}>
-            {currentRun?.status || 'idle'}
+            {roleStatusLabel(currentRun?.status || 'idle')}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <MiniMetric label="Layer" value={activeLayer === 'chief_engineer' ? 'CE' : activeLayer.toUpperCase()} />
-          <MiniMetric label="Phase" value={factoryPhase} />
-          <MiniMetric label="Run" value={currentRun?.run_id || 'n/a'} />
-          <MiniMetric label="Progress" value={`${Math.round(currentRun?.progress || 0)}%`} />
+          <MiniMetric label="角色层" value={roleLayerDisplayName(activeLayer)} />
+          <MiniMetric label="阶段" value={PHASE_CONFIG[factoryPhase].label} />
+          <MiniMetric label="运行ID" value={currentRun?.run_id || 'n/a'} />
+          <MiniMetric label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
         </div>
       </section>
 
       <section className="min-h-[260px] flex-[1.05] overflow-hidden border-b border-white/10">
         <RealtimeActivityPanel
           executionLogs={activityLogs}
-          llmStreamEvents={[]}
-          processStreamEvents={[]}
+          llmStreamEvents={llmStreamEvents}
+          processStreamEvents={processStreamEvents}
           currentPhase={workspacePhase}
           isRunning={isRunning}
-          role={activeLayer === 'pm' ? 'pm' : 'director'}
+          role={activeLayer}
         />
       </section>
 
@@ -951,7 +1152,7 @@ function FactoryAuditEvidencePanel({
       <section>
         <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-300">
           <BadgeCheck className="h-3.5 w-3.5 text-cyan-300" />
-          <span>Gates</span>
+          <span>质量门</span>
         </div>
         <div className="space-y-2">
           {gateResults.length > 0 ? (
@@ -962,7 +1163,7 @@ function FactoryAuditEvidencePanel({
                   <span className="shrink-0 uppercase">{gate.status || 'n/a'}</span>
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2 text-[10px] opacity-80">
-                  <span>{gate.passed ? 'passed' : 'blocked'}</span>
+                  <span>{gate.passed ? '通过' : '阻塞'}</span>
                   {typeof gate.score === 'number' && <span>score {gate.score}</span>}
                 </div>
                 {gate.message && (
@@ -982,7 +1183,7 @@ function FactoryAuditEvidencePanel({
       <section>
         <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-300">
           <PackageCheck className="h-3.5 w-3.5 text-emerald-300" />
-          <span>Artifacts</span>
+          <span>交付产物</span>
         </div>
         <div className="space-y-2">
           {isArtifactsLoading && (
@@ -1021,7 +1222,7 @@ function FactoryAuditEvidencePanel({
       <section>
         <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-300">
           <FileCode className="h-3.5 w-3.5 text-purple-300" />
-          <span>Summary</span>
+          <span>交付摘要</span>
         </div>
         {summaryMarkdown ? (
           <div className="max-h-28 overflow-y-auto rounded-lg border border-white/10 bg-white/5 px-3 py-2">

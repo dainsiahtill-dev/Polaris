@@ -332,6 +332,121 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
   });
 
+  it('does not list a PM task as pending when a runtime blueprint matches raw task_id', async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === '/v2/chief-engineer/blueprints') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            total: 1,
+            blueprints: [
+              {
+                blueprint_id: 'ce_PM-runtime',
+                title: 'Runtime-backed blueprint',
+                summary: 'Persisted backend blueprint',
+                status: 'generated',
+                source: 'runtime/blueprints',
+                target_files: ['src/runtime.ts'],
+                updated_at: '2026-05-23T08:20:00Z',
+                raw: {
+                  blueprint_id: 'ce_PM-runtime',
+                  task_id: 'PM-runtime',
+                  title: 'Runtime-backed blueprint',
+                  summary: 'Persisted backend blueprint',
+                  target_files: ['src/runtime.ts'],
+                },
+              },
+            ],
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/diagnostics') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            generated_at: '2026-05-23T08:20:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            blueprints: {
+              ok: true,
+              status: 'ready',
+              source: 'runtime/blueprints',
+              total: 1,
+              loadable: 1,
+              invalid_payloads: 0,
+              director_handoff_ready: true,
+              latest_updated_at: '2026-05-23T08:20:00Z',
+              error: null,
+            },
+            issues: [],
+          }),
+        });
+      }
+      if (path === '/v2/director/tasks?source=auto' || path === '/v2/director/tasks?source=local') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/director/workers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            capabilities: { electron_workbench: ['read_files', 'write_blueprint'] },
+          }),
+        });
+      }
+      if (path === '/v2/roles/sessions') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, session: { id: 'ce-session-runtime' } }),
+        });
+      }
+      if (path === '/v2/roles/sessions/ce-session-runtime') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            session: {
+              id: 'ce-session-runtime',
+              role: 'chief_engineer',
+              host_kind: 'electron_workbench',
+              attachment_mode: 'isolated',
+              state: 'active',
+              message_count: 0,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ok: true, ready: true, configured: true, role: 'chief_engineer' }),
+      });
+    });
+    const tasks: PmTask[] = [
+      {
+        id: 'PM-runtime',
+        title: 'Runtime-backed task',
+        summary: 'PM task has no inline blueprint fields',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
+      },
+    ];
+
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints'));
+    expect(screen.queryByTestId('chief-engineer-blueprint-empty')).not.toBeInTheDocument();
+    expect(screen.getByText('Runtime-backed blueprint')).toBeInTheDocument();
+    expect(screen.getByText('src/runtime.ts')).toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-runtime')).not.toBeInTheDocument();
+  });
+
   it('generates a Chief Engineer blueprint through the backend command route', async () => {
     const tasks: PmTask[] = [
       {
@@ -389,11 +504,10 @@ describe('ChiefEngineerWorkspace', () => {
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
       '/v2/chief-engineer/blueprints/status?task_id=PM-summary-only',
     ));
-    const statusResult = await screen.findByTestId('chief-engineer-blueprint-status-result-PM-summary-only');
-    expect(statusResult).toHaveTextContent('/v2/chief-engineer/blueprints/status');
-    expect(statusResult).toHaveTextContent('found / ce_existing_PM-summary-only');
-    expect(statusResult).toHaveTextContent('Existing backend blueprint status');
+    expect(await screen.findByText('已有蓝图状态')).toBeInTheDocument();
+    expect(screen.getByText('Existing backend blueprint status')).toBeInTheDocument();
     expect(await screen.findByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('src/status.ts');
+    expect(screen.queryByTestId('chief-engineer-blueprint-status-result-PM-summary-only')).not.toBeInTheDocument();
     const postCall = apiFetchMock.mock.calls.find((call) => call[0] === '/v2/chief-engineer/blueprints' && call[1]?.method === 'POST');
     expect(postCall).toBeUndefined();
   });
@@ -585,6 +699,213 @@ describe('ChiefEngineerWorkspace', () => {
     expect(directorList).toHaveTextContent('失败 1');
   });
 
+  it('counts backend Director task blueprint fields as Chief Engineer handoff evidence', async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === '/v2/director/tasks?source=auto') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            {
+              id: 'director-blueprint-backed',
+              subject: 'Backend blueprint-backed task',
+              status: 'TODO',
+              metadata: {
+                pm_task_id: 'PM-blueprint',
+                blueprint_id: 'bp-backend-task',
+                runtime_blueprint_path: 'runtime/blueprints/bp-backend-task.json',
+                target_files: ['src/backend-task.ts'],
+              },
+            },
+          ],
+        });
+      }
+      if (path === '/v2/director/tasks?source=local') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/director/workers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/chief-engineer/diagnostics') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            generated_at: '2026-05-23T08:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            blueprints: {
+              ok: true,
+              status: 'empty',
+              source: 'runtime/blueprints',
+              total: 0,
+              loadable: 0,
+              invalid_payloads: 0,
+              director_handoff_ready: false,
+              latest_updated_at: null,
+              error: null,
+            },
+            issues: [],
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/blueprints') {
+        return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
+      }
+      if (path === '/v2/roles/sessions') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, session: { id: 'ce-session-1' } }),
+        });
+      }
+      if (path === '/v2/roles/sessions/ce-session-1') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            session: {
+              id: 'ce-session-1',
+              role: 'chief_engineer',
+              host_kind: 'electron_workbench',
+              attachment_mode: 'isolated',
+              state: 'active',
+              message_count: 0,
+            },
+          }),
+        });
+      }
+      if (path === '/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            capabilities: { electron_workbench: ['read_files', 'write_blueprint'] },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ok: true, ready: true, configured: true, role: 'chief_engineer' }),
+      });
+    });
+
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/tasks?source=auto'));
+    expect(screen.queryByTestId('chief-engineer-blueprint-empty')).not.toBeInTheDocument();
+    expect(await screen.findByText('Backend blueprint-backed task')).toBeInTheDocument();
+    expect(screen.getByText('bp-backend-task')).toBeInTheDocument();
+    expect(screen.getByText('runtime/blueprints/bp-backend-task.json')).toBeInTheDocument();
+    expect(screen.getByText('src/backend-task.ts')).toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-blueprint')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-start-director')).not.toBeDisabled();
+  });
+
+  it('blocks Director start when only part of the backend task pool has blueprint coverage', async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === '/v2/director/tasks?source=auto') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            {
+              id: 'director-covered',
+              subject: 'Covered backend task',
+              status: 'TODO',
+              metadata: {
+                pm_task_id: 'PM-covered',
+                blueprint_id: 'bp-covered',
+                runtime_blueprint_path: 'runtime/blueprints/bp-covered.json',
+              },
+            },
+            {
+              id: 'director-missing',
+              subject: 'Missing blueprint backend task',
+              status: 'TODO',
+              metadata: { pm_task_id: 'PM-missing' },
+            },
+          ],
+        });
+      }
+      if (path === '/v2/director/tasks?source=local') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/director/workers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/chief-engineer/diagnostics') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            generated_at: '2026-05-23T08:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            blueprints: {
+              ok: true,
+              status: 'ready',
+              source: 'runtime/blueprints',
+              total: 1,
+              loadable: 1,
+              invalid_payloads: 0,
+              director_handoff_ready: true,
+              latest_updated_at: '2026-05-23T08:00:00Z',
+              error: null,
+            },
+            issues: [],
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/blueprints') {
+        return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
+      }
+      if (path === '/v2/roles/sessions') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, session: { id: 'ce-session-1' } }),
+        });
+      }
+      if (path === '/v2/roles/sessions/ce-session-1') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            session: {
+              id: 'ce-session-1',
+              role: 'chief_engineer',
+              host_kind: 'electron_workbench',
+              attachment_mode: 'isolated',
+              state: 'active',
+              message_count: 0,
+            },
+          }),
+        });
+      }
+      if (path === '/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            capabilities: { electron_workbench: ['read_files', 'write_blueprint'] },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ok: true, ready: true, configured: true, role: 'chief_engineer' }),
+      });
+    });
+
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/tasks?source=auto'));
+    expect(screen.getByText('Covered backend task')).toBeInTheDocument();
+    expect(screen.getByText('bp-covered')).toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-covered')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-blueprint-generate-PM-missing')).toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
+  });
+
   it('loads Director task pool metrics through the backend route when runtime tasks are absent', async () => {
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/v2/director/tasks?source=auto') {
@@ -705,5 +1026,9 @@ describe('ChiefEngineerWorkspace', () => {
     expect(within(pool).getByText('执行中').parentElement).toHaveTextContent('1');
     expect(within(pool).getByText('完成').parentElement).toHaveTextContent('1');
     expect(within(pool).getByText('总计').parentElement).toHaveTextContent('3');
+    expect(screen.getByTestId('chief-engineer-blueprint-generate-PM-backlog')).toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-blueprint-status-PM-running')).toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-done')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
   });
 });

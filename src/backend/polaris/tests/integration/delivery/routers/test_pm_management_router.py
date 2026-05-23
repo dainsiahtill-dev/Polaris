@@ -335,7 +335,7 @@ class TestPMManagementRouter:
         assert "tasks" in payload
 
     async def test_v2_list_tasks_uses_real_adapter_without_placeholder_import_error(self, tmp_path: Path) -> None:
-        """GET /v2/pm/tasks uses the real adapter and returns a controlled uninitialized error."""
+        """GET /v2/pm/tasks uses the real adapter and returns an idle empty projection before PM starts."""
         app = _build_app()
         app.state.app_state.settings.workspace_path = str(tmp_path)
         app.state.app_state.settings.workspace = str(tmp_path)
@@ -343,9 +343,50 @@ class TestPMManagementRouter:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v2/pm/tasks")
 
-        assert response.status_code == 400
+        assert response.status_code == 200
         payload: dict[str, Any] = response.json()
-        assert payload["error"]["code"] == "PM_NOT_INITIALIZED"
+        assert payload["ok"] is True
+        assert payload["tasks"] == []
+        assert payload["items"] == []
+        assert payload["total"] == 0
+        assert payload["initialized"] is False
+        assert payload["reason"] == "PM_NOT_INITIALIZED"
+
+    async def test_v2_pm_desktop_list_projections_return_idle_empty_state(self, tmp_path: Path) -> None:
+        """Desktop v2 PM list/history projections should not surface idle PM as transport errors."""
+        app = _build_app()
+        app.state.app_state.settings.workspace_path = str(tmp_path)
+        app.state.app_state.settings.workspace = str(tmp_path)
+
+        endpoints = [
+            ("/v2/pm/documents", "documents"),
+            ("/v2/pm/requirements", "requirements"),
+            ("/v2/pm/tasks/history", "history"),
+            ("/v2/pm/tasks/director", "iterations"),
+        ]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for path, collection_key in endpoints:
+                response = await client.get(path)
+                assert response.status_code == 200
+                payload: dict[str, Any] = response.json()
+                assert payload["ok"] is True
+                assert payload[collection_key] == []
+                assert payload["items"] == []
+                assert payload["total"] == 0
+                assert payload["initialized"] is False
+                assert payload["reason"] == "PM_NOT_INITIALIZED"
+
+            response = await client.get("/v2/pm/search/documents?q=plan")
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["ok"] is True
+            assert payload["query"] == "plan"
+            assert payload["results"] == []
+            assert payload["items"] == []
+            assert payload["count"] == 0
+            assert payload["total"] == 0
+            assert payload["initialized"] is False
+            assert payload["reason"] == "PM_NOT_INITIALIZED"
 
     async def test_get_task_returns_200(self) -> None:
         """GET /pm/tasks/{task_id} returns 200 with task info."""

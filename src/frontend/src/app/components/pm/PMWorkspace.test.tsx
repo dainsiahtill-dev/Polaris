@@ -231,6 +231,69 @@ describe('PMWorkspace history panel', () => {
     expect(detail).toHaveTextContent('PM-1');
   });
 
+  it('renders idle PM v2 empty projections without error banners', async () => {
+    listPmRequirementsMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        requirements: [],
+        items: [],
+        total: 0,
+        initialized: false,
+        reason: 'PM_NOT_INITIALIZED',
+      },
+    });
+    listPmTaskHistoryMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        history: [],
+        items: [],
+        total: 0,
+        initialized: false,
+        reason: 'PM_NOT_INITIALIZED',
+      },
+    });
+    listPmDirectorTaskHistoryMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        iterations: [],
+        items: [],
+        total: 0,
+        initialized: false,
+        reason: 'PM_NOT_INITIALIZED',
+      },
+    });
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{ initialized: false }}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle('需求'));
+
+    await waitFor(() => expect(listPmRequirementsMock).toHaveBeenCalledWith({ limit: 100, offset: 0 }));
+    expect(screen.queryByTestId('pm-requirements-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-requirements-list')).toHaveTextContent('暂无需求合同');
+    expect(screen.getByTestId('pm-requirements-count')).toHaveTextContent('0');
+
+    fireEvent.click(screen.getByTitle('历史'));
+
+    await waitFor(() => expect(listPmTaskHistoryMock).toHaveBeenCalledWith({ limit: 50, offset: 0 }));
+    expect(listPmDirectorTaskHistoryMock).toHaveBeenCalledWith({ limit: 25, offset: 0 });
+    expect(screen.queryByTestId('pm-history-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-history-task-list')).toHaveTextContent('暂无任务历史');
+    expect(screen.getByTestId('pm-history-director-list')).toHaveTextContent('暂无 Director 分发历史');
+  });
+
   it('runs the PM single-iteration callback and shows backend status evidence', async () => {
     const onRunPmOnce = vi.fn().mockResolvedValue(true);
 
@@ -293,5 +356,23 @@ describe('PMWorkspace history panel', () => {
     expect(evidence).toHaveTextContent('pid=5150');
     expect(evidence).toHaveTextContent('mode=loop');
     expect(evidence).toHaveTextContent('source=status_file');
+  });
+
+  it('hides the standalone PM header when embedded in Factory mode', () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+        factoryMode
+      />,
+    );
+
+    expect(screen.queryByTestId('pm-workspace-back')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-task-panel-mock')).toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PmTask } from '@/types/task';
@@ -13,7 +13,27 @@ vi.mock('@/app/components/director', () => ({
 }));
 
 vi.mock('@/app/components/common/RealtimeActivityPanel', () => ({
-  RealtimeActivityPanel: () => <div data-testid="realtime-activity-mock">Activity</div>,
+  RealtimeActivityPanel: ({
+    executionLogs = [],
+    llmStreamEvents = [],
+    processStreamEvents = [],
+    role,
+  }: {
+    executionLogs?: unknown[];
+    llmStreamEvents?: unknown[];
+    processStreamEvents?: unknown[];
+    role?: string;
+  }) => (
+    <div
+      data-testid="realtime-activity-mock"
+      data-role={role}
+      data-execution-count={executionLogs.length}
+      data-llm-count={llmStreamEvents.length}
+      data-process-count={processStreamEvents.length}
+    >
+      Activity
+    </div>
+  ),
 }));
 
 const baseProps = {
@@ -112,7 +132,107 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByTestId('factory-chief-layer')).toBeInTheDocument();
     expect(screen.getAllByText('ce_TASK-1.json').length).toBeGreaterThan(0);
     expect(screen.getAllByText('runtime/blueprints/ce_TASK-1.json').length).toBeGreaterThan(0);
-    expect(screen.getByText('1 ready')).toBeInTheDocument();
+    expect(screen.getByText('1 条证据')).toBeInTheDocument();
+  });
+
+  it('does not list a PM task as pending when a runtime blueprint artifact matches task_id', () => {
+    const pmTask = {
+      id: 'TASK-1',
+      title: 'Implement checkout workflow',
+      goal: 'Deliver checkout workflow',
+      status: 'pending',
+    } as PmTask;
+
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        tasks={[pmTask]}
+        pmTasks={[pmTask]}
+        directorTasks={[]}
+        artifacts={[
+          {
+            name: 'ce_TASK-1.json',
+            path: 'runtime/blueprints/ce_TASK-1.json',
+            size: 128,
+            task_id: 'TASK-1',
+          },
+        ]}
+        currentRun={{
+          run_id: 'run-ce-task-match',
+          phase: 'planning',
+          status: 'running',
+          current_stage: 'chief_engineer_review',
+          last_successful_stage: 'pm_planning',
+          progress: 50,
+          roles: {
+            chief_engineer: {
+              role: 'chief_engineer',
+              status: 'completed',
+              current_task: 'chief_engineer_review',
+              progress: 100,
+            },
+          },
+          gates: [],
+          created_at: '2026-05-23T00:00:00Z',
+        }}
+        events={[]}
+      />
+    );
+
+    expect(screen.getByTestId('factory-chief-layer')).toBeInTheDocument();
+    expect(screen.getAllByText('ce_TASK-1.json').length).toBeGreaterThan(0);
+    expect(screen.getByText('当前任务均已具备蓝图字段或暂无 PM 任务。')).toBeInTheDocument();
+    expect(screen.queryByText('Implement checkout workflow')).not.toBeInTheDocument();
+  });
+
+  it('keeps Factory Chief Engineer handoff blocked when only part of the PM task pool has blueprint coverage', () => {
+    const coveredTask = {
+      id: 'TASK-covered',
+      title: 'Covered implementation blueprint',
+      goal: 'This task already has a runtime blueprint',
+      status: 'pending',
+    } as PmTask;
+    const missingTask = {
+      id: 'TASK-missing',
+      title: 'Missing implementation blueprint',
+      goal: 'This task still needs Chief Engineer evidence',
+      status: 'pending',
+    } as PmTask;
+
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        tasks={[coveredTask, missingTask]}
+        pmTasks={[coveredTask, missingTask]}
+        directorTasks={[]}
+        artifacts={[
+          {
+            name: 'ce_TASK-covered.json',
+            path: 'runtime/blueprints/ce_TASK-covered.json',
+            size: 128,
+            task_id: 'TASK-covered',
+          },
+        ]}
+        currentRun={{
+          run_id: 'run-ce-partial',
+          phase: 'planning',
+          status: 'running',
+          current_stage: 'chief_engineer_review',
+          last_successful_stage: 'pm_planning',
+          progress: 50,
+          roles: {},
+          gates: [],
+          created_at: '2026-05-23T00:00:00Z',
+        }}
+        events={[]}
+      />
+    );
+
+    const chiefLayer = screen.getByTestId('factory-chief-layer');
+    expect(within(chiefLayer).getByText('1/2')).toBeInTheDocument();
+    expect(within(chiefLayer).getByText('缺证据')).toBeInTheDocument();
+    expect(within(chiefLayer).getByText('Missing implementation blueprint')).toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('Covered implementation blueprint')).not.toBeInTheDocument();
   });
 
   it('focuses Chief Engineer when the factory stage is chief_engineer_review', () => {
@@ -143,6 +263,64 @@ describe('FactoryWorkspace', () => {
 
     expect(screen.getByTestId('factory-chief-layer')).toBeInTheDocument();
     expect(screen.getAllByText('chief_engineer_review').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('realtime-activity-mock')).toHaveAttribute('data-role', 'chief_engineer');
+  });
+
+  it('passes the active role layer into the operations activity monitor', () => {
+    render(<FactoryWorkspace {...baseProps} currentRun={null} events={[]} />);
+
+    expect(screen.getByTestId('realtime-activity-mock')).toHaveAttribute('data-role', 'pm');
+
+    fireEvent.click(screen.getByTestId('factory-role-layer-director'));
+
+    expect(screen.getByTestId('realtime-activity-mock')).toHaveAttribute('data-role', 'director');
+  });
+
+  it('passes audit, LLM and process streams into the operations activity monitor', () => {
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        currentRun={null}
+        events={[
+          {
+            type: 'stage_started',
+            stage: 'pm_planning',
+            message: 'PM planning started',
+            timestamp: '2026-05-23T00:00:00Z',
+          },
+        ]}
+        llmStreamEvents={[
+          {
+            id: 'llm-1',
+            timestamp: '2026-05-23T00:00:01Z',
+            level: 'thinking',
+            message: 'thinking',
+          },
+        ]}
+        executionLogs={[
+          {
+            id: 'exec-1',
+            timestamp: '2026-05-23T00:00:01Z',
+            level: 'exec',
+            source: 'EXEC',
+            message: 'runtime execution event',
+          },
+        ]}
+        processStreamEvents={[
+          {
+            id: 'proc-1',
+            timestamp: '2026-05-23T00:00:02Z',
+            level: 'info',
+            message: 'process event',
+          },
+        ]}
+      />
+    );
+
+    const activity = screen.getByTestId('realtime-activity-mock');
+    expect(activity).toHaveAttribute('data-execution-count', '2');
+    expect(activity).toHaveAttribute('data-llm-count', '1');
+    expect(activity).toHaveAttribute('data-process-count', '1');
   });
 
   it('shows cancel button for a running run', () => {
@@ -269,5 +447,38 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByText(/Inspect the QA report/)).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('quality gate failed');
     expect(screen.getByRole('button', { name: '启动' })).toBeInTheDocument();
+  });
+
+  it('treats canceled, blocked and timeout run states as terminal restartable states', () => {
+    const terminalRuns = [
+      { run_id: 'run-canceled', status: 'canceled', phase: 'canceled', expectedLabel: '已取消' },
+      { run_id: 'run-blocked', status: 'blocked', phase: 'blocked', expectedLabel: '失败' },
+      { run_id: 'run-timeout', status: 'timeout', phase: 'timeout', expectedLabel: '失败' },
+    ];
+
+    for (const run of terminalRuns) {
+      const { unmount } = render(
+        <FactoryWorkspace
+          {...baseProps}
+          currentRun={{
+            run_id: run.run_id,
+            phase: run.phase,
+            status: run.status,
+            current_stage: run.status,
+            last_successful_stage: 'director_dispatch',
+            progress: 100,
+            roles: {},
+            gates: [],
+            created_at: '2026-05-23T00:00:00Z',
+          }}
+          events={[]}
+        />
+      );
+
+      expect(screen.getByRole('button', { name: '启动' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
+      expect(screen.getAllByText(run.expectedLabel).length).toBeGreaterThan(0);
+      unmount();
+    }
   });
 });

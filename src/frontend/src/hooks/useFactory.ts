@@ -38,17 +38,39 @@ export type {
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 1000;
+const CANCELLED_FACTORY_RUN_STATUSES = new Set(['cancelled', 'canceled']);
+const FAILED_FACTORY_RUN_STATUSES = new Set(['failed', 'error', 'blocked', 'timeout']);
+const TERMINAL_FACTORY_RUN_STATUSES = new Set([
+  'completed',
+  ...CANCELLED_FACTORY_RUN_STATUSES,
+  ...FAILED_FACTORY_RUN_STATUSES,
+]);
 
 function factoryRunArtifactsKey(runId: string) {
   return ['factory', 'run', runId, 'artifacts'] as const;
 }
 
-function isTerminalRun(run: FactoryRunStatus | null): boolean {
+function runToken(value: string | null | undefined): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function terminalRunToken(run: FactoryRunStatus | null): string {
   if (!run) {
-    return false;
+    return '';
   }
-  const status = String(run.status || '').trim().toLowerCase();
-  return ['completed', 'failed', 'cancelled'].includes(status);
+  const status = runToken(run.status);
+  if (TERMINAL_FACTORY_RUN_STATUSES.has(status)) {
+    return status;
+  }
+  const phase = runToken(run.phase);
+  if (TERMINAL_FACTORY_RUN_STATUSES.has(phase)) {
+    return phase;
+  }
+  return '';
+}
+
+function isTerminalRun(run: FactoryRunStatus | null): boolean {
+  return Boolean(terminalRunToken(run));
 }
 
 function mergeRunEvidenceFields(
@@ -331,12 +353,12 @@ export function useFactory(options: UseFactoryOptions = {}) {
           queryClient.invalidateQueries({ queryKey: factoryRunsKey });
           void fetchRunArtifacts(run.run_id);
 
-          const status = String(run.status || '').trim().toLowerCase();
+          const status = terminalRunToken(run);
           if (status === 'completed') {
             toast.success('Factory Run 完成');
-          } else if (status === 'failed') {
+          } else if (FAILED_FACTORY_RUN_STATUSES.has(status)) {
             toast.error(run.failure?.detail || 'Factory Run 失败');
-          } else if (status === 'cancelled') {
+          } else if (CANCELLED_FACTORY_RUN_STATUSES.has(status)) {
             toast.success('Factory Run 已取消');
           }
         },

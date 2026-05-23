@@ -186,6 +186,7 @@ export interface FactoryRunArtifact {
   name: string;
   path: string;
   size?: number;
+  task_id?: string | null;
 }
 
 export interface FactoryRunArtifactsResponse {

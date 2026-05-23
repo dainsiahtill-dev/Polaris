@@ -1060,7 +1060,7 @@ async def test_v2_init_pm_already_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_list_documents_not_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/documents should 400 when PM not initialized."""
+    """GET /pm/v2/pm/documents should return an idle empty projection before PM starts."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
     with patch(
@@ -1068,8 +1068,36 @@ async def test_v2_list_documents_not_initialized(client: AsyncClient) -> None:
         return_value=mock_pm,
     ):
         response = await client.get("/pm/v2/pm/documents")
-        assert response.status_code == 400
-        assert "PM_NOT_INITIALIZED" in response.json()["error"]["code"]
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["documents"] == []
+        assert data["items"] == []
+        assert data["total"] == 0
+        assert data["initialized"] is False
+        assert data["reason"] == "PM_NOT_INITIALIZED"
+
+
+@pytest.mark.asyncio
+async def test_v2_search_documents_not_initialized(client: AsyncClient) -> None:
+    """GET /pm/v2/pm/search/documents should return an idle empty projection before PM starts."""
+    mock_pm = _mock_pm_adapter(initialized=False)
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ):
+        response = await client.get("/pm/v2/pm/search/documents?q=plan")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["query"] == "plan"
+        assert data["results"] == []
+        assert data["items"] == []
+        assert data["count"] == 0
+        assert data["total"] == 0
+        assert data["initialized"] is False
+        assert data["reason"] == "PM_NOT_INITIALIZED"
 
 
 @pytest.mark.asyncio

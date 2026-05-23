@@ -1,0 +1,31 @@
+id: vc-20260523-factory-chief-engineer-artifact-task-match
+title: Factory Chief Engineer artifact task match
+date: 2026-05-23
+status: passed
+scope:
+  - src/backend/polaris/delivery/http/routers/factory.py
+  - src/backend/polaris/delivery/http/schemas/common.py
+  - src/backend/polaris/tests/test_factory_router.py
+  - src/frontend/src/services/api.types.ts
+  - src/frontend/src/app/components/factory/FactoryWorkspace.tsx
+  - src/frontend/src/app/components/factory/FactoryWorkspace.test.tsx
+checks:
+  - ruff check backend Factory router/schema/tests --fix
+  - ruff format backend Factory router/schema/tests
+  - mypy backend Factory router/schema/tests
+  - pytest backend Factory router tests
+  - vitest FactoryWorkspace
+  - npm typecheck
+  - npm lint
+evidence:
+  blueprint: src/backend/docs/blueprints/FACTORY_CHIEF_ENGINEER_ARTIFACT_TASK_MATCH_20260523.md
+  command_logs:
+    - ".venv\\Scripts\\python.exe -m ruff check src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/delivery/http/schemas/common.py src/backend/polaris/tests/test_factory_router.py --fix"
+    - ".venv\\Scripts\\python.exe -m ruff format src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/delivery/http/schemas/common.py src/backend/polaris/tests/test_factory_router.py"
+    - ".venv\\Scripts\\python.exe -m mypy src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/delivery/http/schemas/common.py src/backend/polaris/tests/test_factory_router.py"
+    - ".venv\\Scripts\\python.exe -m pytest src/backend/polaris/tests/test_factory_router.py -q"
+    - "npm run test -- FactoryWorkspace"
+    - "npm run typecheck"
+    - "npm run lint"
+risks:
+  - Full Electron Factory E2E remains a separate end-to-end acceptance run.

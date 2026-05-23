@@ -307,7 +307,7 @@ def test_artifact_endpoint_includes_existing_stage_result_artifacts(
     run = asyncio.run(service.create_run(FactoryConfig(name="artifact-stage-run", stages=["chief_engineer_review"])))
     blueprint_path = Path(resolve_logical_path(str(temp_workspace), "runtime/blueprints/ce-test.json"))
     blueprint_path.parent.mkdir(parents=True, exist_ok=True)
-    blueprint_path.write_text('{"blueprint_id":"ce-test"}\n', encoding="utf-8")
+    blueprint_path.write_text('{"blueprint_id":"ce-test","task_id":"TASK-CE-1"}\n', encoding="utf-8")
     asyncio.run(
         service._append_event(
             run.id,
@@ -329,6 +329,9 @@ def test_artifact_endpoint_includes_existing_stage_result_artifacts(
     assert response.status_code == 200
     artifacts = response.json()["artifacts"]
     assert any(item["path"] == "runtime/blueprints/ce-test.json" for item in artifacts)
+    assert any(
+        item["path"] == "runtime/blueprints/ce-test.json" and item.get("task_id") == "TASK-CE-1" for item in artifacts
+    )
 
 
 def test_delivery_loop_replans_until_pipeline_complete_and_stable(temp_workspace: Path) -> None:

@@ -266,6 +266,80 @@ describe('useFactory', () => {
     });
   });
 
+  it('does not reconnect after connection errors when fetched status is terminal blocked', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+    });
+
+    getFactoryRunMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ...baseRun,
+        phase: 'blocked',
+        status: 'blocked',
+        current_stage: 'director_dispatch',
+        progress: 60,
+      },
+    });
+
+    await act(async () => {
+      lastHandlers?.onConnectionError?.();
+    });
+
+    await waitFor(() => {
+      expect(getFactoryRunMock).toHaveBeenCalledWith('run-1');
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(connectFactoryStreamMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
+    });
+  });
+
+  it('does not reconnect after connection errors when fetched phase is terminal timeout', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+    });
+
+    getFactoryRunMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ...baseRun,
+        phase: 'timeout',
+        status: 'running',
+        current_stage: 'director_dispatch',
+        progress: 80,
+      },
+    });
+
+    await act(async () => {
+      lastHandlers?.onConnectionError?.();
+    });
+
+    await waitFor(() => {
+      expect(getFactoryRunMock).toHaveBeenCalledWith('run-1');
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(connectFactoryStreamMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
+    });
+  });
+
   it('resumes the latest non-terminal run for the active workspace', async () => {
     listFactoryRunsMock.mockResolvedValueOnce({
       ok: true,
@@ -288,6 +362,42 @@ describe('useFactory', () => {
         onStatus: expect.any(Function),
       }),
     );
+  });
+
+  it('does not connect the stream when the latest run is terminal canceled', async () => {
+    listFactoryRunsMock.mockResolvedValueOnce({
+      ok: true,
+      data: [{ ...baseRun, run_id: 'latest-canceled', phase: 'canceled', status: 'canceled' }],
+    });
+
+    const { result } = renderHook(() => useFactory({ workspace: 'X:/workspace' }), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.currentRun?.run_id).toBe('latest-canceled');
+    });
+
+    expect(connectFactoryStreamMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('latest-canceled');
+    });
+  });
+
+  it('does not connect the stream when latest run is terminal by phase only', async () => {
+    listFactoryRunsMock.mockResolvedValueOnce({
+      ok: true,
+      data: [{ ...baseRun, run_id: 'latest-timeout', phase: 'timeout', status: 'running' }],
+    });
+
+    const { result } = renderHook(() => useFactory({ workspace: 'X:/workspace' }), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.currentRun?.run_id).toBe('latest-timeout');
+    });
+
+    expect(connectFactoryStreamMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('latest-timeout');
+    });
   });
 
   it('disconnects and clears stale state when workspace changes', async () => {

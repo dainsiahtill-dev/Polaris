@@ -2,6 +2,8 @@ import type { Page } from "@playwright/test";
 import fs from "fs";
 import { expect, test } from "./fixtures";
 
+process.env.KERNELONE_E2E_SHOW_WINDOW = process.env.KERNELONE_E2E_SHOW_WINDOW || "1";
+
 type BackendFetchInit = {
   method?: string;
   headers?: Record<string, string>;
@@ -13,6 +15,20 @@ type BackendFetchResult = {
   status: number;
   text: string;
   json: unknown;
+};
+
+type DomDiagnostics = {
+  url: string;
+  readyState: string;
+  title: string;
+  bodyText: string;
+  bodyHtmlLength: number;
+  rootExists: boolean;
+  rootHtmlLength: number;
+  rootText: string;
+  scripts: string[];
+  stylesheets: string[];
+  polarisApiKeys: string[];
 };
 
 const ignoredConsoleErrorPatterns = [
@@ -78,6 +94,17 @@ async function enterRuntimeDiagnosticsWorkspace(window: Page): Promise<void> {
   await window.getByTestId("enter-runtime-diagnostics").click();
 }
 
+async function openSettings(window: Page): Promise<void> {
+  const testIdEntry = window.getByTestId("control-panel-open-settings");
+  if (await testIdEntry.isVisible().catch(() => false)) {
+    await testIdEntry.click();
+    return;
+  }
+
+  const titleEntry = window.locator("button[title='Settings'], button[title*='系统配置'], button[title*='设置']").first();
+  await titleEntry.click();
+}
+
 async function attachScreenshot(window: Page, testInfo: { outputPath: (name: string) => string; attach: (name: string, options: { path: string; contentType: string }) => Promise<void> }, name: string): Promise<void> {
   const path = testInfo.outputPath(`${name}.png`);
   await window.screenshot({ path, fullPage: true });
@@ -89,6 +116,26 @@ async function attachJson(testInfo: { outputPath: (name: string) => string; atta
   const path = testInfo.outputPath(`${name}.json`);
   fs.writeFileSync(path, JSON.stringify(payload, null, 2), { encoding: "utf8" });
   await testInfo.attach(name, { path, contentType: "application/json" });
+}
+
+async function collectDomDiagnostics(window: Page): Promise<DomDiagnostics> {
+  return window.evaluate(() => {
+    const root = document.querySelector("#root");
+    const polaris = (window as unknown as { polaris?: Record<string, unknown> }).polaris;
+    return {
+      url: window.location.href,
+      readyState: document.readyState,
+      title: document.title,
+      bodyText: document.body.innerText.slice(0, 2000),
+      bodyHtmlLength: document.body.innerHTML.length,
+      rootExists: Boolean(root),
+      rootHtmlLength: root?.innerHTML.length ?? -1,
+      rootText: root?.textContent?.slice(0, 2000) ?? "",
+      scripts: Array.from(document.scripts).map((script) => script.src || "(inline)"),
+      stylesheets: Array.from(document.styleSheets).map((sheet) => sheet.href || "(inline)"),
+      polarisApiKeys: polaris ? Object.keys(polaris).sort() : [],
+    };
+  });
 }
 
 test("settings and role workspaces expose real operational surfaces", async ({ window }, testInfo) => {
@@ -105,12 +152,15 @@ test("settings and role workspaces expose real operational surfaces", async ({ w
     }
   });
   window.on("response", (response) => {
-    if ([400, 422, 429, 500].includes(response.status())) {
+    if (response.status() >= 400) {
       failedResponses.push(`${response.status()} ${response.request().method()} ${response.url()}`);
     }
   });
 
   await expect(window.locator("#root")).toHaveCount(1);
+  await window.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
+  await attachJson(testInfo, "main-dom-before-settings", await collectDomDiagnostics(window));
+  await attachScreenshot(window, testInfo, "main-before-settings");
   await expect(window.getByText("LLM BLOCKED")).toHaveCount(0);
 
   const seededTask = await backendFetch(window, "/v2/director/tasks", {
@@ -145,7 +195,7 @@ test("settings and role workspaces expose real operational surfaces", async ({ w
   expect(localTasks.ok, localTasks.text).toBe(true);
   expect(JSON.stringify(localTasks.json)).toContain("src/frontend/src/app/components/director/DirectorTaskPanel.tsx");
 
-  await window.getByTestId("control-panel-open-settings").click();
+  await openSettings(window);
   await expect(window.getByText("系统配置")).toBeVisible();
   await window.getByTestId("settings-tab-llm").click();
   await expect(window.getByTestId("llm-config-view-list")).toBeVisible({ timeout: 30000 });
@@ -164,6 +214,32 @@ test("settings and role workspaces expose real operational surfaces", async ({ w
   await attachScreenshot(window, testInfo, "runtime-diagnostics-workspace");
   await window.getByTestId("runtime-diagnostics-back").click();
   await expect(window.getByTestId("runtime-diagnostics-workspace")).toHaveCount(0);
+
+  await window.locator("button[title*='Factory 模式']").click();
+  await expect(window.getByText("Factory 模式", { exact: false }).first()).toBeVisible();
+  await expect(window.getByTestId("factory-role-layer-pm")).toBeVisible();
+  await expect(window.getByTestId("factory-role-layer-chief_engineer")).toBeVisible();
+  await expect(window.getByTestId("factory-role-layer-director")).toBeVisible();
+  await expect(window.getByTestId("factory-focused-layer")).toBeVisible();
+  await expect(window.getByTestId("factory-operations-rail")).toBeVisible();
+  await expect(window.getByTestId("factory-operations-rail")).toContainText("运行观测");
+  await attachScreenshot(window, testInfo, "factory-role-layer-pm");
+
+  await window.getByTestId("factory-role-layer-chief_engineer").click();
+  await expect(window.getByTestId("factory-chief-layer")).toBeVisible();
+  await expect(window.getByText("施工蓝图证据")).toBeVisible();
+  await expect(window.getByText("交接状态")).toBeVisible();
+  await expect(window.getByText("任务覆盖")).toBeVisible();
+  await attachScreenshot(window, testInfo, "factory-role-layer-chief-engineer");
+
+  await window.getByTestId("factory-role-layer-director").click();
+  await expect(window.getByTestId("director-workspace")).toBeVisible();
+  await expect(window.getByTestId("director-execution-guard")).toContainText("Factory 编排 Director");
+  await expect(window.getByTestId("director-workspace-bulk-execute")).toBeDisabled();
+  await attachScreenshot(window, testInfo, "factory-role-layer-director");
+
+  await window.getByLabel("返回主界面").click();
+  await expect(window.getByTestId("factory-operations-rail")).toHaveCount(0);
 
   await enterChiefEngineerWorkspace(window);
   await expect(window.getByTestId("chief-engineer-workspace")).toBeVisible();

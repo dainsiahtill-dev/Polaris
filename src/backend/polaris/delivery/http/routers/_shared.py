@@ -11,6 +11,7 @@ from polaris.delivery.http.dependencies import require_auth as _canonical_requir
 from polaris.delivery.http.middleware.rbac import require_role as _require_role
 from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.llm import config_store as llm_config
+from polaris.kernelone.llm.model_identity import model_identity_equal
 from polaris.kernelone.storage.io_paths import build_cache_root
 from starlette.responses import JSONResponse
 
@@ -57,7 +58,7 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
         )
     if not tested_model:
         raise HTTPException(status_code=409, detail=f"{role} LLM readiness was not tested for the current model")
-    if tested_model != model:
+    if not model_identity_equal(tested_model, model):
         raise HTTPException(
             status_code=409,
             detail=f"{role} LLM readiness was tested for model {tested_model}, not {model}",

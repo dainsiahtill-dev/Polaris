@@ -64,6 +64,7 @@ interface DirectorTaskPanelProps {
   taskCreateError?: string | null;
   taskBackendDetail?: DirectorTaskBackendDetailState;
   taskLLMEvents?: DirectorTaskLLMEventsState;
+  executionDisabledReason?: string;
 }
 
 export interface DirectorTaskBackendDetailState {
@@ -319,6 +320,7 @@ export function DirectorTaskPanel({
   taskCreateError,
   taskBackendDetail,
   taskLLMEvents,
+  executionDisabledReason,
 }: DirectorTaskPanelProps) {
   const [activeFilter, setActiveFilter] = useState<TaskBoardFilter>('all');
   const [createSubject, setCreateSubject] = useState('');
@@ -381,6 +383,7 @@ export function DirectorTaskPanel({
   const normalizedCreateSubject = createSubject.trim();
   const normalizedCreateDescription = createDescription.trim() || normalizedCreateSubject;
   const canCreateTask = Boolean(onTaskCreate && normalizedCreateSubject && !isTaskCreating);
+  const executionBlocked = Boolean(executionDisabledReason);
 
   const submitCreateTask = () => {
     if (!canCreateTask) {
@@ -497,11 +500,23 @@ export function DirectorTaskPanel({
             size="sm"
             onClick={onExecute}
             data-testid="director-workspace-bulk-execute"
+            disabled={executionBlocked}
+            title={executionDisabledReason || undefined}
             className={cn(isExecuting ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700', 'text-white')}
           >
             {isExecuting ? <><Pause className="mr-1.5 h-3.5 w-3.5" />停止执行</> : <><Zap className="mr-1.5 h-3.5 w-3.5" />全部执行</>}
           </Button>
         </div>
+
+        {executionBlocked ? (
+          <div
+            className="mx-4 mb-3 flex items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
+            data-testid="director-execution-guard"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span>{executionDisabledReason}</span>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-5 gap-2 px-4 pb-3">
           <StatCard icon={<Loader2 className="h-3.5 w-3.5 text-blue-400" />} label="运行" value={runningCount} color="blue" />
@@ -772,6 +787,8 @@ export function DirectorTaskPanel({
                       size="sm"
                       onClick={onExecute}
                       data-testid="director-task-execute-selected"
+                      disabled={executionBlocked}
+                      title={executionDisabledReason || undefined}
                       className={cn(
                         isExecuting ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700',
                         'text-white',

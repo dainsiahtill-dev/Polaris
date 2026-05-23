@@ -10,6 +10,7 @@ from polaris.cells.llm.evaluation.public.service import load_llm_test_index
 from polaris.cells.llm.provider_runtime.public.service import is_role_runtime_supported
 from polaris.cells.runtime.projection.internal.io_helpers import build_cache_root
 from polaris.kernelone.llm import config_store as llm_config
+from polaris.kernelone.llm.model_identity import model_identity_equal
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ def _binding_readiness(
         issue = "provider_mismatch"
     elif not tested_model:
         issue = "tested_model_missing"
-    elif tested_model != model:
+    elif not model_identity_equal(tested_model, model):
         issue = "model_mismatch"
 
     return {

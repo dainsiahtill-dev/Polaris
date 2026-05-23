@@ -242,6 +242,71 @@ class TestRoleRuntimeSupportConsistency:
         assert response["blocked_roles"] == ["pm"]
         assert response["state"] == "BLOCKED"
 
+    def test_llm_status_allows_case_only_model_readiness_match(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "openai_compat-1": {"type": "openai_compat"},
+            },
+            "roles": {
+                "pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm"],
+            },
+        }
+        index_payload = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "openai_compat-1",
+                    "model": "qwen3-max",
+                },
+            },
+            "providers": {
+                "openai_compat-1": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "model": "qwen3-max",
+                    "role": "pm",
+                },
+            },
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["roles"]["pm"]["ready"] is True
+        assert response["roles"]["pm"]["readiness_issue"] == ""
+        assert response["roles"]["pm"]["tested_model"] == "qwen3-max"
+        assert response["blocked_roles"] == []
+        assert response["state"] == "READY"
+
     def test_director_gate_allows_codex_and_generic_provider(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
         from polaris.delivery.http.routers._shared import _ensure_llm_ready
@@ -308,6 +373,32 @@ class TestRoleRuntimeSupportConsistency:
         with (
             patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
             patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=base_index),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+        ):
+            _ensure_llm_ready(mock_state, "pm")
+
+    def test_pm_gate_allows_case_only_model_readiness_match(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_state = AppState(settings=mock_settings)
+
+        index_payload = {
+            "roles": {
+                "pm": {"ready": True, "provider_id": "openai_compat", "model": "qwen3-max"},
+            }
+        }
+        config_payload = {
+            "providers": {"openai_compat": {"type": "openai_compat"}},
+            "roles": {"pm": {"provider_id": "openai_compat", "model": "Qwen3-Max"}},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
             patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
         ):
             _ensure_llm_ready(mock_state, "pm")

@@ -2,7 +2,7 @@ id: vc-20260523-factory-chief-engineer-evidence-projection
 title: Factory Chief Engineer evidence projection
 date: "2026-05-23"
 classification: pattern
-status: planned
+status: passed
 owner: codex
 scope:
   - src/backend/polaris/delivery/http/routers/factory.py
@@ -51,4 +51,25 @@ verification_plan:
     expected: TypeScript compilation passes.
   - command: npm run lint
     expected: ESLint passes.
-verification_results: []
+verification_results:
+  - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_router.py --fix
+    result: PASS
+    evidence: "All checks passed!"
+  - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_router.py
+    result: PASS
+    evidence: "2 files left unchanged"
+  - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/tests/test_factory_router.py
+    result: PASS
+    evidence: "Success: no issues found in 2 source files"
+  - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/test_factory_router.py src/backend/polaris/tests/test_factory_run_service.py -q
+    result: PASS
+    evidence: "48 passed in 37.71s"
+  - command: npm run test -- FactoryWorkspace useFactory
+    result: PASS
+    evidence: "2 passed, 17 passed"
+  - command: npm run typecheck
+    result: PASS
+    evidence: "tsc --noEmit completed"
+  - command: npm run lint
+    result: PASS
+    evidence: "eslint completed"

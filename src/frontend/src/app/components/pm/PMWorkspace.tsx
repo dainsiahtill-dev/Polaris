@@ -526,6 +526,7 @@ export function PMWorkspace({
   return (
     <div data-testid="pm-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
       {/* PM Header - PM 主题 */}
+      {!factoryMode && (
       <header className="h-14 flex items-center justify-between px-4 border-b border-amber-500/20 bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/20">
         <div className="flex items-center gap-4">
           <Button
@@ -704,6 +705,7 @@ export function PMWorkspace({
           </Button>
         </div>
       </header>
+      )}
 
       {runOnceStatusEvidence.triggered && (
         <section

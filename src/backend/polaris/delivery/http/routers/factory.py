@@ -576,15 +576,61 @@ def _list_run_artifacts(
     for artifact_path in sorted(artifacts_dir.iterdir(), key=lambda item: item.name):
         if not artifact_path.is_file():
             continue
-        artifacts.append(
-            {
-                "name": artifact_path.name,
-                "path": _artifact_response_path(artifact_path, workspace),
-                "size": artifact_path.stat().st_size,
-            }
-        )
+        artifacts.append(_artifact_item_from_path(artifact_path, _artifact_response_path(artifact_path, workspace)))
 
     return artifacts
+
+
+def _extract_task_id_from_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for source in (
+        payload,
+        payload.get("raw") if isinstance(payload.get("raw"), dict) else None,
+        payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key in ("task_id", "pm_task_id", "taskId"):
+            value = str(source.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _task_id_from_artifact_name(name: str) -> str:
+    stem = Path(str(name or "").replace("\\", "/")).stem.strip()
+    if not stem:
+        return ""
+    lowered = stem.lower()
+    for prefix in ("ce_", "ce-", "blueprint_", "blueprint-", "chief_engineer_", "chief-engineer-"):
+        if lowered.startswith(prefix):
+            return stem[len(prefix) :].strip()
+    return ""
+
+
+def _task_id_from_artifact_file(artifact_path: Path) -> str:
+    if artifact_path.suffix.lower() == ".json":
+        try:
+            payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            payload = None
+        task_id = _extract_task_id_from_payload(payload)
+        if task_id:
+            return task_id
+    return _task_id_from_artifact_name(artifact_path.name)
+
+
+def _artifact_item_from_path(artifact_path: Path, response_path: str) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "name": artifact_path.name,
+        "path": response_path,
+        "size": artifact_path.stat().st_size,
+    }
+    task_id = _task_id_from_artifact_file(artifact_path)
+    if task_id:
+        item["task_id"] = task_id
+    return item
 
 
 def _artifact_item_from_stage_ref(workspace: str, relative_path: str) -> dict[str, Any] | None:
@@ -597,11 +643,7 @@ def _artifact_item_from_stage_ref(workspace: str, relative_path: str) -> dict[st
         return None
     if not artifact_path.exists() or not artifact_path.is_file():
         return None
-    return {
-        "name": artifact_path.name,
-        "path": rel,
-        "size": artifact_path.stat().st_size,
-    }
+    return _artifact_item_from_path(artifact_path, rel)
 
 
 def _list_stage_artifacts(

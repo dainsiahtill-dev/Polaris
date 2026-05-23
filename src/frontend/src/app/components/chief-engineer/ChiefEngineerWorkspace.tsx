@@ -230,6 +230,10 @@ function taskObjective(task: TaskEvidenceRow): string {
   return readString(task, ['goal', 'description', 'summary', 'subject', 'title']) || taskTitle(task);
 }
 
+function taskHandoffId(task: TaskEvidenceRow): string {
+  return readString(task, ['pm_task_id', 'pmTaskId', 'task_id', 'taskId', 'id']) || String(task.id || '').trim();
+}
+
 function taskHasBlueprintEvidence(task: TaskEvidenceRow): boolean {
   return Boolean(readString(task, ['blueprint_id', 'blueprintId', 'blueprint_path', 'runtime_blueprint_path']));
 }
@@ -252,7 +256,7 @@ function buildBlueprintEvidence(tasks: TaskEvidenceRow[]): BlueprintEvidence[] {
       const summary = readString(task, ['blueprint_summary', 'summary', 'goal']);
       if (!blueprintId && !blueprintPath) return null;
       return {
-        taskId: String(task.id || '').trim(),
+        taskId: taskHandoffId(task),
         taskTitle: taskTitle(task),
         blueprintId,
         blueprintPath,
@@ -268,18 +272,26 @@ function buildBlueprintEvidence(tasks: TaskEvidenceRow[]): BlueprintEvidence[] {
     .filter((item): item is BlueprintEvidence => Boolean(item));
 }
 
+function runtimeBlueprintTaskId(row: RuntimeBlueprintSummary): string {
+  const raw = row.raw && typeof row.raw === 'object' ? row.raw as Record<string, unknown> : {};
+  return String(raw.task_id || raw.pm_task_id || raw.taskId || '').trim();
+}
+
 function buildRuntimeBlueprintEvidence(rows: RuntimeBlueprintSummary[]): BlueprintEvidence[] {
   return rows
     .filter((row) => row && typeof row === 'object' && String(row.blueprint_id || '').trim())
-    .map((row) => ({
-      taskId: String(row.blueprint_id).trim(),
-      taskTitle: String(row.title || row.blueprint_id).trim(),
-      blueprintId: String(row.blueprint_id).trim(),
-      blueprintPath: '',
-      source: String(row.source || 'runtime/blueprints').trim(),
-      summary: String(row.summary || '').trim(),
-      targetFiles: Array.isArray(row.target_files) ? row.target_files.map((item) => String(item).trim()).filter(Boolean) : [],
-    }));
+    .map((row) => {
+      const blueprintId = String(row.blueprint_id).trim();
+      return {
+        taskId: runtimeBlueprintTaskId(row) || blueprintId,
+        taskTitle: String(row.title || blueprintId).trim(),
+        blueprintId,
+        blueprintPath: '',
+        source: String(row.source || 'runtime/blueprints').trim(),
+        summary: String(row.summary || '').trim(),
+        targetFiles: Array.isArray(row.target_files) ? row.target_files.map((item) => String(item).trim()).filter(Boolean) : [],
+      };
+    });
 }
 
 function mergeTaskEvidenceRows(
@@ -436,7 +448,6 @@ export function ChiefEngineerWorkspace({
     error: null,
   });
   const [showAIDialogue, setShowAIDialogue] = useState(true);
-  const taskBlueprintEvidence = useMemo(() => buildBlueprintEvidence(tasks), [tasks]);
 
   useEffect(() => {
     if (!workspace) {
@@ -642,6 +653,14 @@ export function ChiefEngineerWorkspace({
     };
   }, [workspace, directorRunning]);
 
+  const directorTaskEvidenceRows = useMemo(
+    () => mergeTaskEvidenceRows(tasks, backendDirectorTasks),
+    [tasks, backendDirectorTasks],
+  );
+  const taskBlueprintEvidence = useMemo(
+    () => buildBlueprintEvidence(directorTaskEvidenceRows),
+    [directorTaskEvidenceRows],
+  );
   const blueprintEvidence = useMemo(() => {
     const byKey = new Map<string, BlueprintEvidence>();
     for (const item of buildRuntimeBlueprintEvidence(runtimeBlueprints)) {
@@ -655,10 +674,6 @@ export function ChiefEngineerWorkspace({
     }
     return Array.from(byKey.values());
   }, [runtimeBlueprints, taskBlueprintEvidence]);
-  const directorTaskEvidenceRows = useMemo(
-    () => mergeTaskEvidenceRows(tasks, backendDirectorTasks),
-    [tasks, backendDirectorTasks],
-  );
   const stats = useMemo(() => {
     const rows = directorTaskEvidenceRows.map(taskStatus);
     return {
@@ -680,10 +695,31 @@ export function ChiefEngineerWorkspace({
     [workers, backendDirectorWorkers],
   );
   const lastDirectorStatus = String(pmState?.last_director_status || '').trim();
-  const startDirectorBlocked = !directorRunning && tasks.length > 0 && blueprintEvidence.length === 0;
+  const missingBlueprintHandoffTasks = useMemo(
+    () => {
+      const evidenceTaskIds = new Set(
+        blueprintEvidence
+          .map((item) => String(item.taskId || '').trim())
+          .filter(Boolean),
+      );
+      const seen = new Set<string>();
+      return directorTaskEvidenceRows
+        .filter((task) => {
+          const taskId = taskHandoffId(task);
+          if (!taskId || seen.has(taskId)) return false;
+          if (taskHasBlueprintEvidence(task) || evidenceTaskIds.has(taskId) || taskStatus(task) === 'completed') {
+            return false;
+          }
+          seen.add(taskId);
+          return true;
+        })
+    },
+    [blueprintEvidence, directorTaskEvidenceRows],
+  );
+  const startDirectorBlocked = !directorRunning && missingBlueprintHandoffTasks.length > 0;
   const blueprintCandidateTasks = useMemo(
-    () => tasks.filter((task) => !taskHasBlueprintEvidence(task) && taskStatus(task) !== 'completed').slice(0, 4),
-    [tasks],
+    () => missingBlueprintHandoffTasks.slice(0, 4),
+    [missingBlueprintHandoffTasks],
   );
   const diagnosticsState = diagnosticsTone(diagnostics, diagnosticsError);
   const workspaceDiagnosticTone: DiagnosticTone = !diagnostics ? 'checking' : diagnostics.workspace.ok ? 'ready' : 'error';
@@ -733,8 +769,8 @@ export function ChiefEngineerWorkspace({
     setBlueprintDetailLoading(false);
   };
 
-  const handleGenerateBlueprint = async (task: PmTask) => {
-    const taskId = String(task.id || '').trim();
+  const handleGenerateBlueprint = async (task: TaskEvidenceRow) => {
+    const taskId = taskHandoffId(task);
     if (!taskId) return;
     setGeneratingTaskId(taskId);
     setGenerateError('');
@@ -774,8 +810,8 @@ export function ChiefEngineerWorkspace({
     setGeneratingTaskId('');
   };
 
-  const handleCheckBlueprintStatus = async (task: PmTask) => {
-    const taskId = String(task.id || '').trim();
+  const handleCheckBlueprintStatus = async (task: TaskEvidenceRow) => {
+    const taskId = taskHandoffId(task);
     if (!taskId) return;
     setBlueprintStatusChecks((current) => ({
       ...current,
@@ -1171,7 +1207,7 @@ export function ChiefEngineerWorkspace({
                 </div>
                 <div className="space-y-2">
                   {blueprintCandidateTasks.map((task) => {
-                    const taskId = String(task.id || '').trim();
+                    const taskId = taskHandoffId(task);
                     const isGenerating = generatingTaskId === taskId;
                     const statusCheck = blueprintStatusChecks[taskId];
                     return (

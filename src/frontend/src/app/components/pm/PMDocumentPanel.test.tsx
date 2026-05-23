@@ -58,6 +58,45 @@ describe('PMDocumentPanel', () => {
     expect(screen.queryByText('API.md')).not.toBeInTheDocument();
   });
 
+  it('renders PM idle document projections without error banners', async () => {
+    documentServiceMock.list.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        documents: [],
+        pagination: { total: 0, limit: 100, offset: 0 },
+        initialized: false,
+        reason: 'PM_NOT_INITIALIZED',
+      },
+    });
+    documentServiceMock.search.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        query: 'plan',
+        results: [],
+        count: 0,
+        initialized: false,
+        reason: 'PM_NOT_INITIALIZED',
+      },
+    });
+
+    render(
+      <PMDocumentPanel
+        workspace="C:/Temp/SimpleGame"
+        selectedPath={null}
+        onDocumentSelect={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId('pm-document-empty')).toHaveTextContent('暂无已跟踪文档');
+    expect(screen.queryByTestId('pm-document-error')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('搜索文档...'), { target: { value: 'plan' } });
+
+    await waitFor(() => expect(documentServiceMock.search).toHaveBeenCalledWith('plan', 20));
+    expect(await screen.findByTestId('pm-document-search-empty')).toHaveTextContent('后端未返回匹配文档');
+    expect(screen.queryByTestId('pm-document-search-error')).not.toBeInTheDocument();
+  });
+
   it('loads and saves real PM documents through the PM document API', async () => {
     const onDocumentSelect = vi.fn();
     const documentPath = 'C:\\Temp\\SimpleGame\\docs\\product\\plan.md';

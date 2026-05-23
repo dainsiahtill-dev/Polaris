@@ -831,4 +831,59 @@ describe.sequential('Director capability desktop integration', () => {
     expect(statusEvidence).toHaveTextContent('mode=desktop_service');
     expect(statusEvidence).toHaveTextContent('source=status_file');
   });
+
+  it('hides the standalone Director header when embedded in Factory mode', async () => {
+    serviceMocks.getDirectorCapabilities.mockResolvedValueOnce({
+      ok: true,
+      data: { ok: true, role: 'director', capabilities: { electron_workbench: ['read_files'] } },
+    });
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+        factoryMode
+      />,
+    );
+
+    expect(screen.queryByTestId('director-workspace-back')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('director-capability-strip')).toBeInTheDocument();
+  });
+
+  it('disables Director task execution controls when embedded in Factory mode', async () => {
+    const directorTask = {
+      id: 'director-factory-task',
+      title: 'Implement from Factory queue',
+      description: 'Factory owns Director orchestration',
+      status: 'pending',
+    } as PmTask;
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[directorTask]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+        factoryMode
+      />,
+    );
+
+    const guard = await screen.findByTestId('director-execution-guard');
+    expect(guard).toHaveTextContent('工厂模式下由 Factory 编排 Director');
+
+    const bulkExecute = screen.getByTestId('director-workspace-bulk-execute');
+    expect(bulkExecute).toBeDisabled();
+    fireEvent.click(bulkExecute);
+    expect(serviceMocks.runDirector).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('director-task-item'));
+    const selectedExecute = await screen.findByTestId('director-task-execute-selected');
+    expect(selectedExecute).toBeDisabled();
+    fireEvent.click(selectedExecute);
+    expect(serviceMocks.runDirector).not.toHaveBeenCalled();
+  });
 });
